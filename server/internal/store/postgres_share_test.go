@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"os"
 	"testing"
 
@@ -52,5 +54,25 @@ func TestPostgresShares(t *testing.T) {
 	f, err := pg.CreateFile(ctx, store.FileMeta{DocID: d.ID, UploaderID: kay.ID, Name: "a.png", Mime: "image/png", Size: 3, ObjectKey: "k"})
 	if g, err2 := pg.GetFile(ctx, f.ID); err != nil || err2 != nil || g.ObjectKey != "k" {
 		t.Fatalf("file: %v %v", err, err2)
+	}
+
+	b, err := pg.CreateBase(ctx, ws.ID, kay.ID, nil, "需求池")
+	if err != nil || b.Kind != "base" {
+		t.Fatalf("base: %+v %v", b, err)
+	}
+	fd, _ := pg.AddField(ctx, store.Field{BaseID: b.ID, Name: "状态", Type: "select", Options: []string{"a"}})
+	key := strconv.FormatInt(fd.ID, 10)
+	rec, err := pg.AddRecord(ctx, store.Record{BaseID: b.ID, Cells: map[string]json.RawMessage{key: json.RawMessage(`"a"`), "x": json.RawMessage(`1`)}})
+	if err != nil || rec.Position != 1 {
+		t.Fatalf("record: %+v %v", rec, err)
+	}
+	if rec, err = pg.SetCells(ctx, b.ID, rec.ID, map[string]json.RawMessage{"x": nil}); err != nil || len(rec.Cells) != 1 {
+		t.Fatalf("set: %+v %v", rec, err)
+	}
+	if err := pg.DeleteField(ctx, b.ID, fd.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rs, _ := pg.Records(ctx, b.ID); len(rs) != 1 || len(rs[0].Cells) != 0 {
+		t.Fatalf("after field delete: %+v", rs)
 	}
 }

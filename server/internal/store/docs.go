@@ -10,6 +10,7 @@ type DocMeta struct {
 	ID          int64     `json:"id"`
 	WorkspaceID int64     `json:"workspaceId"`
 	ParentID    *int64    `json:"parentId"`
+	Kind        string    `json:"kind"` // doc | base
 	Title       string    `json:"title"`
 	Icon        string    `json:"icon"`
 	CreatorID   int64     `json:"creatorId"`
@@ -37,6 +38,7 @@ type SeqOp struct {
 // DocStore persists documents, their op logs and snapshots.
 type DocStore interface {
 	ShareStore
+	BaseStore
 	// CreateDoc creates a doc node; initial ops get seqs 1..n.
 	CreateDoc(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string, initial []RawOp) (DocMeta, error)
 	ListDocs(ctx context.Context, userID int64) ([]DocMeta, error)

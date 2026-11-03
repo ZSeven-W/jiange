@@ -27,7 +27,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := migrate.Up(ctx, pg.Pool)
-	if err != nil || len(applied) != 4 {
+	if err != nil || len(applied) != 5 {
 		t.Fatalf("migrate: %v %v", applied, err)
 	}
 	if again, err := migrate.Up(ctx, pg.Pool); err != nil || len(again) != 0 {

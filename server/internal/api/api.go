@@ -55,13 +55,21 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
 	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
 	for pat, h := range map[string]http.HandlerFunc{
-		"GET /api/docs/{id}/shares": s.getShares,
-		"PUT /api/docs/{id}/shares": s.putShare,
-		"PUT /api/docs/{id}/link":   s.putLink,
-		"POST /api/share/{token}":   s.joinLink,
-		"GET /api/shared":           s.sharedWithMe,
-		"POST /api/docs/{id}/files": s.uploadFile,
-		"GET /api/files/{id}":       s.getFile,
+		"GET /api/docs/{id}/shares":            s.getShares,
+		"PUT /api/docs/{id}/shares":            s.putShare,
+		"PUT /api/docs/{id}/link":              s.putLink,
+		"POST /api/share/{token}":              s.joinLink,
+		"GET /api/shared":                      s.sharedWithMe,
+		"POST /api/docs/{id}/files":            s.uploadFile,
+		"GET /api/files/{id}":                  s.getFile,
+		"POST /api/bases":                      s.createBase,
+		"GET /api/bases/{id}":                  s.getBase,
+		"POST /api/bases/{id}/fields":          s.addField,
+		"PATCH /api/bases/{id}/fields/{fid}":   s.patchField,
+		"DELETE /api/bases/{id}/fields/{fid}":  s.deleteField,
+		"POST /api/bases/{id}/records":         func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, true) },
+		"PATCH /api/bases/{id}/records/{rid}":  func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, false) },
+		"DELETE /api/bases/{id}/records/{rid}": s.deleteRecord,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
