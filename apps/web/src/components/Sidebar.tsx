@@ -12,14 +12,58 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const docs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list, refetchInterval: 15000 });
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
   const create = useMutation({
-    mutationFn: () => docsApi.create(""),
+    mutationFn: (parentId: number | null = null) => docsApi.create("", parentId),
     onSuccess: (d) => {
+      if (d.parentId) setOpen((o) => ({ ...o, [d.parentId!]: true }));
       qc.invalidateQueries({ queryKey: ["docs"] });
       go(`#/doc/${d.id}`);
     },
   });
   const ws = me.workspaces[0];
+  const kids = useMemo(() => {
+    const m = new Map<number | null, DocMeta[]>();
+    const ids = new Set((docs.data ?? []).map((d) => d.id));
+    for (const d of [...(docs.data ?? [])].sort((a, b) => a.id - b.id)) {
+      const p = d.parentId && ids.has(d.parentId) ? d.parentId : null;
+      m.set(p, [...(m.get(p) ?? []), d]);
+    }
+    return m;
+  }, [docs.data]);
+  // expand ancestors of the open doc
+  const activeId = route.page === "doc" ? route.id : null;
+  const ancestors = useMemo(() => {
+    const byId = new Map((docs.data ?? []).map((d) => [d.id, d]));
+    const out = new Set<number>();
+    let cur = activeId ? byId.get(activeId) : undefined;
+    while (cur?.parentId && !out.has(cur.parentId)) {
+      out.add(cur.parentId);
+      cur = byId.get(cur.parentId);
+    }
+    return out;
+  }, [docs.data, activeId]);
+  const renderTree = (parent: number | null, depth: number): React.ReactNode =>
+    (kids.get(parent) ?? []).map((d) => {
+      const has = (kids.get(d.id) ?? []).length > 0;
+      const isOpen = open[d.id] ?? ancestors.has(d.id);
+      return (
+        <div key={d.id}>
+          <TreeRow
+            depth={depth}
+            label={docTitle(d)}
+            muted={!d.title.trim()}
+            active={activeId === d.id}
+            expandable={has}
+            open={isOpen}
+            onToggle={() => setOpen((o) => ({ ...o, [d.id]: !isOpen }))}
+            onClick={() => go(`#/doc/${d.id}`)}
+            onAdd={() => create.mutate(d.id)}
+          />
+          {has && isOpen && renderTree(d.id, depth + 1)}
+        </div>
+      );
+    });
   const shown = useMemo(() => {
     const all = docs.data ?? [];
     const k = q.trim().toLowerCase();
@@ -59,29 +103,59 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       </nav>
       <div className="mt-5 flex items-center justify-between px-5 text-xs text-subtle">
         <span>文档</span>
-        <button title="新建文档" onClick={() => create.mutate()} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground">
+        <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground">
           +
         </button>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
-        {shown.map((d) => (
-          <NavItem
-            key={d.id}
-            icon={<DocIcon />}
-            label={docTitle(d)}
-            muted={!d.title.trim()}
-            active={route.page === "doc" && route.id === d.id}
-            onClick={() => go(`#/doc/${d.id}`)}
-          />
-        ))}
+        {q.trim()
+          ? shown.map((d) => (
+              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />
+            ))
+          : renderTree(null, 0)}
         {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{q ? "没有匹配的文档" : "还没有文档"}</p>}
       </div>
       <div className="border-t px-3 py-2.5">
-        <button onClick={() => create.mutate()} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
+        <button onClick={() => create.mutate(null)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
           <span className="text-base leading-none">+</span> 新建文档
         </button>
       </div>
     </aside>
+  );
+}
+
+function TreeRow({ depth, label, muted, active, expandable, open, onToggle, onClick, onAdd }: {
+  depth: number; label: string; muted: boolean; active: boolean; expandable: boolean; open: boolean;
+  onToggle: () => void; onClick: () => void; onAdd: () => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      data-tree-depth={depth}
+      className={cn(
+        "group flex h-8 w-full cursor-pointer items-center gap-1 rounded-md pr-1 text-[14px] transition-colors",
+        active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
+        muted && !active && "text-muted-foreground",
+      )}
+      style={{ paddingLeft: 4 + depth * 16 }}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+        className={cn("grid size-5 shrink-0 place-items-center rounded text-[10px] text-subtle hover:bg-black/5", !expandable && "invisible")}
+        aria-label={open ? "收起" : "展开"}
+      >
+        <span className={cn("transition-transform", open && "rotate-90")}>▶</span>
+      </button>
+      <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}><DocIcon /></span>
+      <span className="ml-1 truncate">{label}</span>
+      <button
+        title="新建子文档"
+        onClick={(e) => { e.stopPropagation(); onAdd(); }}
+        className="ml-auto hidden size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground group-hover:grid"
+      >
+        +
+      </button>
+    </div>
   );
 }
 

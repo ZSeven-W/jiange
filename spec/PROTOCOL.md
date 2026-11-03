@@ -30,6 +30,8 @@ The TypeScript (`packages/collab`) and Go (`server/collab`) implementations must
 - 字符被标记覆盖当且仅当 `slot(start) < 4*idx+1 < slot(end)`。同一 key 多个覆盖时取 OpId 最大者；其 value 为空则无格式。
 - 本地 `format(from,to)` 产生 `start = before(chars[from])`，`end = after(chars[to-1])`（不向两端扩展）。
 
+**Peritext 扩展规则**：标记起点锚在首字符之前（side 0）。可扩展标记（bold/italic/underline/strike/color）终点锚在下一个字符之前（side 0），位于块尾时用哨兵 `END = (ROOT, side 0)`，其槽位视为 +∞；不可扩展标记（link/code）终点锚在末字符之后（side 1）。
+
 ## 5. 块树 / Block tree
 - 子块按 `(pos, id)` 排序，`pos` 为分数索引字符串，按字节序比较。
 - 有效父块：沿父链上溯；遇到缺失或已删除的祖先 → 隐藏；遇到环 → 该块挂到 ROOT 下。

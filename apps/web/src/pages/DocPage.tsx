@@ -5,13 +5,13 @@ import { docsApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
+import { Editor } from "@/editor/Editor";
 import { Avatar } from "@/components/brand";
 import { docTitle } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
-const BODY: OpId = { client: 0, clock: 2 };
 
 export function DocPage({ id, me }: { id: number; me: Me }) {
   const qc = useQueryClient();
@@ -57,7 +57,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             singleLine
             placeholder="请输入标题"
             onLocalEdit={onTitle}
-            onEnter={() => body.current?.querySelector("textarea")?.focus()}
+            onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
             className="text-[34px] font-bold leading-[1.3] tracking-tight [&_textarea]:leading-[1.3]"
           />
           <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
@@ -70,14 +70,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               </>
             )}
           </div>
-          <div ref={body} className="mt-8">
-            <CollabText
-              sync={sync}
-              block={BODY}
-              me={presence}
-              placeholder={sync.ready ? "输入正文，与协作者实时同步…" : "正在连接…"}
-              className="text-[16px] leading-[1.75] text-foreground"
-            />
+          <div ref={body} className="mt-8 pl-1">
+            <Editor sync={sync} me={presence} />
           </div>
         </article>
       </div>

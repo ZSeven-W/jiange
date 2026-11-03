@@ -71,3 +71,43 @@ function shell(name, x, presence) {
 }
 shell("App · Doc", 1360, false);
 shell("App · Presence", 2720, true);
+
+/* ---------- P3: rich block editor, slash menu, format toolbar, nested tree ---------- */
+{
+  const base = I(null, {type:"frame", name:"Editor · Rich", x:4080, y:0, width:1280, height:800, layout:"horizontal", fill:C.w, clipContent:true});
+  const sb = col(base, {name:"Sidebar", width:248, height:"fill_container", fill:C.sb, padding:[12,8,12,8], gap:4, stroke:{thickness:1, fill:C.b}});
+  const ws = row(sb, {width:"fill_container", padding:[6,8,6,8], gap:8}); logo(ws, 24); txt(ws, "Kay 的空间", 14, C.t, 600);
+  const search = row(sb, {width:"fill_container", height:32, cornerRadius:6, fill:C.w, stroke:{thickness:1, fill:C.b}, padding:[0,10,0,10]}); txt(search, "⌕  搜索", 13, C.t3);
+  I(sb, {type:"frame", width:"fill_container", height:8});
+  txt(sb, "  文档", 12, C.t3, 500);
+  const tree = [["▾  产品规划", 0], ["▾  编辑器", 1], ["P3 块编辑器设计", 2, true], ["输入法与选区", 2], ["▸  同步服务", 1], ["▸  周报", 0], ["会议纪要 11-03", 0]];
+  for (const [l, d, act] of tree) { const r = row(sb, {width:"fill_container", height:30, cornerRadius:6, padding:[0,10,0,10+d*16], fill: act? C.ps : "#00000000"}); txt(r, (l.startsWith("▸")||l.startsWith("▾")? "" : "▤ ") + l, 14, act? C.p : C.t, act?500:400); }
+  const main = col(base, {width:"fill_container", height:"fill_container", gap:0});
+  const top = row(main, {width:"fill_container", height:52, padding:[0,20,0,20], justifyContent:"space_between", stroke:{thickness:1, fill:C.b}});
+  const bc = row(top, {gap:6}); txt(bc, "产品规划 / 编辑器 /", 14, C.t2); txt(bc, "P3 块编辑器设计", 14, C.t, 500);
+  const acts = row(top, {gap:12}); const avs = row(acts, {gap:-6}); avatar(avs, "K", C.p); avatar(avs, "A", C.r1);
+  const sh = I(acts, {type:"frame", height:32, cornerRadius:6, fill:C.p, padding:[0,16,0,16], layout:"horizontal", alignItems:"center"}); txt(sh, "分享", 14, C.w, 500);
+  const sc = I(main, {type:"frame", width:"fill_container", height:"fill_container", layout:"vertical", alignItems:"center", padding:[44,0,0,0]});
+  const doc = col(sc, {width:720, gap:12});
+  txt(doc, "P3 块编辑器设计", 34, C.t, 700);
+  txt(doc, "目标", 24, C.t, 600);
+  const tbw = row(doc, {padding:[0,0,0,120]});
+  // format toolbar over the bold text
+  const tb = I(tbw, {type:"frame", name:"FormatToolbar", width:300, height:38, cornerRadius:8, fill:C.w, stroke:{thickness:1, fill:C.b}, layout:"horizontal", alignItems:"center", gap:2, padding:[0,6,0,6]});
+  for (const [s, on] of [["正文 ⌄", 0], ["B", 1], ["I", 0], ["U", 0], ["S", 0], ["</>", 0], ["🔗", 0]]) { const b = I(tb, {type:"frame", height:28, cornerRadius:4, padding:[0,8,0,8], fill: on? C.ps : "#00000000", layout:"horizontal", alignItems:"center"}); txt(b, s, 14, on? C.p : C.t, on?700:500); }
+  const p = row(doc, {gap:0}); txt(p, "块编辑器完全自研：", 16, C.t); txt(p, "加粗", 16, C.t, 700); txt(p, "、", 16, C.t); txt(p, "行内代码", 14, "#D83931"); txt(p, " 与 ", 16, C.t); txt(p, "链接", 16, C.p);
+  for (const s of ["• 斜杠菜单支持拼音缩写", "• 中文输入法组合输入"]) txt(doc, s, 16, C.t);
+  for (const [box, s] of [["☑", "Markdown 快捷键"], ["☐", "块拖拽"]]) { const r = row(doc, {gap:8}); txt(r, box, 16, box==="☑"?C.p:C.t3); txt(r, s, 16, box==="☑"?C.t3:C.t); }
+  const q = row(doc, {width:"fill_container", gap:12}); I(q, {type:"rectangle", width:3, height:24, fill:C.b}); txt(q, "撤销只回滚自己的操作。", 16, C.t2);
+  const code = col(doc, {width:"fill_container", padding:[12,16,12,16], cornerRadius:6, fill:C.sb}); txt(code, "doc.format(block, 0, 4, \"bold\", \"true\")", 14, C.t);
+  I(doc, {type:"rectangle", width:720, height:1, fill:C.b});
+  const typing = row(doc, {gap:0}); txt(typing, "/bt", 16, C.t); I(typing, {type:"rectangle", width:2, height:20, fill:C.p});
+  // slash menu under "/bt"
+  const sm = I(doc, {type:"frame", name:"SlashMenu", width:260, height:176, cornerRadius:8, fill:C.w, stroke:{thickness:1, fill:C.b}, layout:"vertical", gap:2, padding:[6,6,6,6]});
+  txt(sm, "  基础", 12, C.t3, 500);
+  for (const [ic, l, k, on] of [["H1", "一级标题", "yjbt", 1], ["H2", "二级标题", "ejbt", 0], ["H3", "三级标题", "sjbt", 0], ["≡", "有序列表", "yxlb", 0]]) {
+    const r = row(sm, {width:"fill_container", height:34, cornerRadius:6, padding:[0,8,0,8], fill: on? C.hv : "#00000000", justifyContent:"space_between"});
+    const l2 = row(r, {gap:10}); const ib = I(l2, {type:"frame", width:24, height:24, cornerRadius:4, stroke:{thickness:1, fill:C.b}, layout:"horizontal", justifyContent:"center", alignItems:"center"}); txt(ib, ic, 11, C.t2, 600); txt(l2, l, 14, C.t);
+    txt(r, k, 12, C.t3);
+  }
+}
