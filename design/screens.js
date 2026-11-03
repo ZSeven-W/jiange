@@ -111,3 +111,22 @@ shell("App · Presence", 2720, true);
     txt(r, k, 12, C.t3);
   }
 }
+
+/* ---------- P4: trash + doc actions menu ---------- */
+{
+  const base = I(null, {type:"frame", name:"Trash", x:5440, y:0, width:1280, height:800, layout:"horizontal", fill:C.w, clipContent:true});
+  const sb = col(base, {width:248, height:"fill_container", fill:C.sb, padding:[12,8,12,8], gap:4, stroke:{thickness:1, fill:C.b}});
+  const ws = row(sb, {width:"fill_container", padding:[6,8,6,8], gap:8}); logo(ws, 24); txt(ws, "Kay 的空间", 14, C.t, 600);
+  for (const [l, a] of [["⌂  主页", 0], ["◷  最近访问", 0], ["☆  收藏", 0], ["🗑  回收站", 1]]) { const r = row(sb, {width:"fill_container", height:32, cornerRadius:6, padding:[0,10,0,10], fill: a? C.ps : "#00000000"}); txt(r, l, 14, a? C.p : C.t2, a?500:400); }
+  const main = col(base, {width:"fill_container", height:"fill_container", gap:0});
+  const top = row(main, {width:"fill_container", height:52, padding:[0,24,0,24], stroke:{thickness:1, fill:C.b}}); txt(top, "回收站", 14, C.t, 500);
+  const body = col(main, {width:"fill_container", padding:[40,120,0,120], gap:16});
+  txt(body, "删除的文档会连同子文档一起移到这里，可随时还原。", 14, C.t2);
+  const table = col(body, {width:"fill_container", gap:0, cornerRadius:8, stroke:{thickness:1, fill:C.b}});
+  for (const [n, t] of [["周报", "今天 23:10"], ["会议纪要 11-03", "今天 22:41"], ["旧版同步方案", "昨天 18:02"]]) {
+    const r = row(table, {width:"fill_container", height:48, padding:[0,16,0,16], justifyContent:"space_between", stroke:{thickness:1, fill:C.b}});
+    const l = row(r, {gap:10}); txt(l, "▤", 14, C.p); txt(l, n, 14, C.t);
+    const rr = row(r, {gap:16}); txt(rr, "删除于 " + t, 13, C.t3);
+    const btn = I(rr, {type:"frame", height:28, cornerRadius:6, padding:[0,12,0,12], stroke:{thickness:1, fill:C.b}, layout:"horizontal", alignItems:"center"}); txt(btn, "还原", 13, C.t);
+  }
+}

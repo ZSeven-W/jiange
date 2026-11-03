@@ -100,6 +100,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label="收藏" />
+        <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-5 flex items-center justify-between px-5 text-xs text-subtle">
         <span>文档</span>
@@ -197,6 +198,11 @@ const ClockIcon = () => (
 const StarIcon = () => (
   <svg {...svg}>
     <path d="m8 2.3 1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11l-3.4 1.8.7-3.8L2.5 6.3l3.8-.5z" />
+  </svg>
+);
+const TrashIcon = () => (
+  <svg {...svg}>
+    <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9" />
   </svg>
 );
 const SearchIcon = () => (

@@ -40,6 +40,12 @@ type DocStore interface {
 	// GetDoc returns the doc if userID is a member of its workspace, else ErrNotFound.
 	GetDoc(ctx context.Context, userID, docID int64) (DocMeta, error)
 	UpdateTitle(ctx context.Context, docID int64, title string) (DocMeta, error)
+	// Trash soft-deletes a doc and its descendants; Restore undoes it.
+	Trash(ctx context.Context, docID int64) error
+	Restore(ctx context.Context, docID int64) error
+	ListTrash(ctx context.Context, userID int64) ([]DocMeta, error)
+	// Move re-parents a doc (nil = workspace root); ErrConflict on cycles.
+	Move(ctx context.Context, docID int64, parentID *int64) error
 	CanCreateIn(ctx context.Context, userID, workspaceID int64) (bool, error)
 
 	AllocClient(ctx context.Context, userID, docID int64) (int64, error)

@@ -16,6 +16,8 @@ type docInput struct {
 	WorkspaceID int64   `json:"workspaceId"`
 	ParentID    *int64  `json:"parentId"`
 	Title       *string `json:"title"`
+	// Move: when true, ParentID (null = root) re-parents the doc.
+	Move bool `json:"move"`
 }
 
 func cleanTitle(w http.ResponseWriter, t string) (string, bool) {
@@ -122,5 +124,65 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.Move {
+		if in.ParentID != nil {
+			u, _ := UserFrom(r.Context())
+			if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID {
+				httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
+				return
+			}
+		}
+		if err := s.Store.Move(r.Context(), d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
+			httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
+			return
+		} else if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		d.ParentID = in.ParentID
+	}
 	httpx.JSON(w, http.StatusOK, d)
+}
+
+func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.docFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Store.Trash(r.Context(), d.ID); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	docs, err := s.Store.ListTrash(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"docs": docs})
+}
+
+func (s *Server) restoreDoc(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	trash, err := s.Store.ListTrash(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	for _, d := range trash {
+		if d.ID == id {
+			if err := s.Store.Restore(r.Context(), id); err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	httpx.Error(w, http.StatusNotFound, "not_found", "not in trash")
 }

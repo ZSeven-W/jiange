@@ -57,5 +57,9 @@ export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   create: (title = "", parentId: number | null = null) => request<DocMeta>("POST", "/api/docs", { title, parentId }),
+  trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
+  listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
+  restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),
+  move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
 };
