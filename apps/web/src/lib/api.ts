@@ -15,7 +15,11 @@ export interface Me {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -36,8 +40,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   me: () => request<Me>("GET", "/api/me"),
   login: (email: string, password: string) => request<Me>("POST", "/api/auth/login", { email, password }),
-  register: (email: string, name: string, password: string) =>
-    request<Me>("POST", "/api/auth/register", { email, name, password }),
+  register: (email: string, name: string, password: string) => request<Me>("POST", "/api/auth/register", { email, name, password }),
   logout: () => request<void>("POST", "/api/auth/logout"),
 };
 
@@ -51,12 +54,48 @@ export interface DocMeta {
   creatorName: string;
   createdAt: string;
   updatedAt: string;
+  role?: Role;
+}
+export type Role = "view" | "edit" | "manage";
+export interface Share {
+  userId: number;
+  name: string;
+  email: string;
+  role: Role;
+}
+export interface ShareInfo {
+  members: Share[];
+  link: { role: "none" | "view" | "edit"; token?: string };
+  role: Role;
+}
+export interface FileMeta {
+  id: number;
+  name: string;
+  mime: string;
+  size: number;
 }
 
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   create: (title = "", parentId: number | null = null) => request<DocMeta>("POST", "/api/docs", { title, parentId }),
+  shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
+  share: (id: number, email: string, role: Role | "") => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role }),
+  setLink: (id: number, role: "none" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),
+  join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
+  shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
+  upload: async (id: number, f: File): Promise<FileMeta> => {
+    const fd = new FormData();
+    fd.append("file", f);
+    const res = await fetch(`/api/docs/${id}/files`, {
+      method: "POST",
+      body: fd,
+      headers: { "X-Jiange-Upload": "1" },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
+    return data as FileMeta;
+  },
   trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
   listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),

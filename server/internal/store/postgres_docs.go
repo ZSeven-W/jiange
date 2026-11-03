@@ -82,9 +82,14 @@ func prefixed(p, cols string) string {
 }
 
 func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
-	return scanDoc(p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id) FROM nodes n
-		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.id = $2 AND n.kind = 'doc' AND n.deleted_at IS NULL`, uid, id))
+	var d DocMeta
+	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+` FROM nodes n`+roleJoins+`
+		WHERE n.id = $2 AND n.kind = 'doc' AND n.deleted_at IS NULL`, uid, id).
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.CreatorName, &d.Role)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
+		return DocMeta{}, ErrNotFound
+	}
+	return d, err
 }
 
 func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (DocMeta, error) {

@@ -75,10 +75,16 @@ func (m *Memory) GetDoc(_ context.Context, uid, id int64) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(id)
-	if d == nil || d.deleted || !m.member(uid, d.meta.WorkspaceID) {
+	if d == nil || d.deleted {
 		return DocMeta{}, ErrNotFound
 	}
-	return d.meta, nil
+	role := m.roleLocked(uid, d)
+	if role == "" {
+		return DocMeta{}, ErrNotFound
+	}
+	meta := d.meta
+	meta.Role = role
+	return meta, nil
 }
 
 func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta, error) {

@@ -9,16 +9,24 @@ import { Editor } from "@/editor/Editor";
 import { Avatar } from "@/components/brand";
 import { docTitle } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
+import { ShareDialog } from "@/components/ShareDialog";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
 
 export function DocPage({ id, me }: { id: number; me: Me }) {
   const qc = useQueryClient();
-  const meta = useQuery({ queryKey: ["doc", id], queryFn: () => docsApi.get(id) });
+  const meta = useQuery({
+    queryKey: ["doc", id],
+    queryFn: () => docsApi.get(id),
+  });
   const sync = useSyncDoc(id);
   const presence = useMemo<Presence>(() => ({ name: me.user.name, color: colorFor(me.user.id - 1) }), [me.user]);
   const body = useRef<HTMLDivElement>(null);
+  const [sharing, setSharing] = useState(false);
+  const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
+  const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
+  const readOnly = meta.data?.role === "view";
 
   useEffect(() => {
     qc.invalidateQueries({ queryKey: ["docs"] });
@@ -46,35 +54,48 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   if (meta.isError) return <div className="grid flex-1 place-items-center text-muted-foreground">文档不存在或无权访问</div>;
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <TopBar meta={meta.data} title={title} workspace={me.workspaces[0]?.name ?? ""} status={sync.status} peers={sync.peers} me={presence} />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <article className="mx-auto max-w-[820px] px-16 pb-40 pt-14">
-          <CollabText
-            sync={sync}
-            block={TITLE}
-            me={presence}
-            singleLine
-            placeholder="请输入标题"
-            onLocalEdit={onTitle}
-            onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
-            className="text-[34px] font-bold leading-[1.3] tracking-tight [&_textarea]:leading-[1.3]"
-          />
-          <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
-            {meta.data && (
-              <>
-                <Avatar name={meta.data.creatorName} color={colorFor(meta.data.creatorId - 1)} size={18} />
-                <span>{meta.data.creatorName}</span>
-                <span>·</span>
-                <span>最近修改于 {formatTime(meta.data.updatedAt)}</span>
-              </>
-            )}
-          </div>
-          <div ref={body} className="mt-8 pl-1">
-            <Editor sync={sync} me={presence} />
-          </div>
-        </article>
+    <div className="flex min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar
+          onShare={() => setSharing((v) => !v)}
+          readOnly={readOnly}
+          meta={meta.data}
+          title={title}
+          workspace={me.workspaces[0]?.name ?? ""}
+          status={sync.status}
+          peers={sync.peers}
+          me={presence}
+        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <article className="mx-auto max-w-[820px] px-16 pb-40 pt-14">
+            <CollabText
+              sync={sync}
+              block={TITLE}
+              me={presence}
+              singleLine
+              readOnly={readOnly}
+              placeholder="请输入标题"
+              onLocalEdit={onTitle}
+              onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
+              className="text-[34px] font-bold leading-[1.3] tracking-tight [&_textarea]:leading-[1.3]"
+            />
+            <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
+              {meta.data && (
+                <>
+                  <Avatar name={meta.data.creatorName} color={colorFor(meta.data.creatorId - 1)} size={18} />
+                  <span>{meta.data.creatorName}</span>
+                  <span>·</span>
+                  <span>最近修改于 {formatTime(meta.data.updatedAt)}</span>
+                </>
+              )}
+            </div>
+            <div ref={body} className="mt-8 pl-1">
+              <Editor sync={sync} me={presence} readOnly={readOnly} docs={mentionDocs} upload={readOnly ? undefined : (f) => docsApi.upload(id, f)} />
+            </div>
+          </article>
+        </div>
       </div>
+      {sharing && meta.data && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} />}
     </div>
   );
 }
@@ -82,7 +103,11 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
 function formatTime(iso: string) {
   const d = new Date(iso);
   const now = new Date();
-  const hm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const hm = d.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
   return d.toDateString() === now.toDateString() ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
 }
 
@@ -93,14 +118,26 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
   offline: { label: "离线，恢复后自动同步", color: "#8F959E" },
 };
 
-function TopBar({ meta, title, workspace, status, peers, me }: { meta?: DocMeta; title: string; workspace: string; status: SyncStatus; peers: RemotePeer[]; me: Presence }) {
-  const [copied, setCopied] = useState(false);
+function TopBar({
+  meta,
+  title,
+  workspace,
+  status,
+  peers,
+  me,
+  onShare,
+  readOnly,
+}: {
+  onShare: () => void;
+  readOnly: boolean;
+  meta?: DocMeta;
+  title: string;
+  workspace: string;
+  status: SyncStatus;
+  peers: RemotePeer[];
+  me: Presence;
+}) {
   const s = STATUS[status];
-  const share = async () => {
-    await navigator.clipboard?.writeText(location.href).catch(() => undefined);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-3 border-b px-4">
       <nav className="flex min-w-0 items-center gap-1.5 text-[14px]">
@@ -122,10 +159,11 @@ function TopBar({ meta, title, workspace, status, peers, me }: { meta?: DocMeta;
           ))}
           {peers.length > 5 && <span className="grid size-[26px] place-items-center rounded-full bg-hover text-[11px] ring-2 ring-white">+{peers.length - 5}</span>}
         </div>
-        <Button size="sm" className="h-8 px-4" onClick={share}>
-          {copied ? "已复制链接" : "分享"}
+        {readOnly && <span className="rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground">只读</span>}
+        <Button size="sm" className="h-8 px-4" onClick={onShare}>
+          分享
         </Button>
-        <DocMenu meta={meta} />
+        {meta?.role === "manage" && <DocMenu meta={meta} />}
       </div>
     </header>
   );

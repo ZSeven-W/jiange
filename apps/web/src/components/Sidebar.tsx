@@ -9,7 +9,16 @@ export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命
 
 export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
   const qc = useQueryClient();
-  const docs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list, refetchInterval: 15000 });
+  const docs = useQuery({
+    queryKey: ["docs"],
+    queryFn: docsApi.list,
+    refetchInterval: 15000,
+  });
+  const shared = useQuery({
+    queryKey: ["shared"],
+    queryFn: docsApi.shared,
+    refetchInterval: 30000,
+  });
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Record<number, boolean>>({});
@@ -110,11 +119,17 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
         {q.trim()
-          ? shown.map((d) => (
-              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />
-            ))
+          ? shown.map((d) => <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />)
           : renderTree(null, 0)}
         {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{q ? "没有匹配的文档" : "还没有文档"}</p>}
+        {!q.trim() && (shared.data?.length ?? 0) > 0 && (
+          <>
+            <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
+            {shared.data!.map((d) => (
+              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />
+            ))}
+          </>
+        )}
       </div>
       <div className="border-t px-3 py-2.5">
         <button onClick={() => create.mutate(null)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
@@ -125,9 +140,26 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   );
 }
 
-function TreeRow({ depth, label, muted, active, expandable, open, onToggle, onClick, onAdd }: {
-  depth: number; label: string; muted: boolean; active: boolean; expandable: boolean; open: boolean;
-  onToggle: () => void; onClick: () => void; onAdd: () => void;
+function TreeRow({
+  depth,
+  label,
+  muted,
+  active,
+  expandable,
+  open,
+  onToggle,
+  onClick,
+  onAdd,
+}: {
+  depth: number;
+  label: string;
+  muted: boolean;
+  active: boolean;
+  expandable: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onClick: () => void;
+  onAdd: () => void;
 }) {
   return (
     <div
@@ -141,17 +173,25 @@ function TreeRow({ depth, label, muted, active, expandable, open, onToggle, onCl
       style={{ paddingLeft: 4 + depth * 16 }}
     >
       <button
-        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
         className={cn("grid size-5 shrink-0 place-items-center rounded text-[10px] text-subtle hover:bg-black/5", !expandable && "invisible")}
         aria-label={open ? "收起" : "展开"}
       >
         <span className={cn("transition-transform", open && "rotate-90")}>▶</span>
       </button>
-      <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}><DocIcon /></span>
+      <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}>
+        <DocIcon />
+      </span>
       <span className="ml-1 truncate">{label}</span>
       <button
         title="新建子文档"
-        onClick={(e) => { e.stopPropagation(); onAdd(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAdd();
+        }}
         className="ml-auto hidden size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground group-hover:grid"
       >
         +
@@ -176,7 +216,16 @@ function NavItem({ icon, label, active, muted, onClick }: { icon: React.ReactNod
   );
 }
 
-const svg = { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+const svg = {
+  width: 16,
+  height: 16,
+  viewBox: "0 0 16 16",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.4,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
 export const DocIcon = () => (
   <svg {...svg}>
     <path d="M4 1.75h5.5L12.5 4.8v9.45H4z" />

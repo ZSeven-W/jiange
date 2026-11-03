@@ -20,7 +20,7 @@ def walk(n):
     for c in n.get("children", []) if isinstance(n.get("children"), list) else []:
         walk(c)
 for r in roots: walk(r)
-names = {"Login": "login", "App · Doc": "app-doc", "App · Presence": "app-presence", "Editor · Rich": "editor-rich", "Trash": "trash"}
+names = {"Login": "login", "App · Doc": "app-doc", "App · Presence": "app-presence", "Editor · Rich": "editor-rich", "Trash": "trash", "Share": "share"}
 for r in roots:
     op("export", "--item", r["id"], "--output", f"previews/{names[r['name']]}.png", "--format", "png", "--scale", "1")
 op("save_document", "filePath=/workspace/jiange/design/jiange.op")

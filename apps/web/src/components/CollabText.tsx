@@ -6,6 +6,7 @@ import type { SyncDoc } from "@/lib/useSyncDoc";
 import { cn } from "@/lib/utils";
 
 interface Props {
+  readOnly?: boolean;
   sync: SyncDoc;
   block: OpId;
   me: Presence;
@@ -21,7 +22,7 @@ interface Props {
  * Fugue ops; remote edits keep the caret in place via anchors; remote carets
  * are drawn on a mirror layer that shares the textarea's text metrics.
  */
-export function CollabText({ sync, block, me, placeholder, singleLine, className, onLocalEdit, onEnter }: Props) {
+export function CollabText({ sync, block, me, placeholder, singleLine, className, onLocalEdit, onEnter, readOnly }: Props) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const shown = useRef("");
@@ -77,7 +78,11 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
     const v = el.value;
     sync.client.setAwareness({
       ...me,
-      cursor: { block, anchor: d.anchorAt(block, cpIndex(v, el.selectionEnd)), focus: d.anchorAt(block, cpIndex(v, el.selectionStart)) },
+      cursor: {
+        block,
+        anchor: d.anchorAt(block, cpIndex(v, el.selectionEnd)),
+        focus: d.anchorAt(block, cpIndex(v, el.selectionStart)),
+      },
     } satisfies Presence);
   }, [sync, block, me]);
 
@@ -104,7 +109,12 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
   const carets = doc
     ? sync.peers
         .filter((p) => p.state.cursor && eqId(p.state.cursor.block, block))
-        .map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, at: doc.resolveAnchor(block, p.state.cursor!.anchor) }))
+        .map((p) => ({
+          id: p.clientId,
+          name: p.state.name,
+          color: p.state.color,
+          at: doc.resolveAnchor(block, p.state.cursor!.anchor),
+        }))
         .sort((x, y) => x.at - y.at)
     : [];
   const cps = [...text];
@@ -132,7 +142,10 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
   }
   pieces.push(cps.slice(last).join("") + "\u200b");
 
-  const shared: CSSProperties = { whiteSpace: "pre-wrap", overflowWrap: "break-word" };
+  const shared: CSSProperties = {
+    whiteSpace: "pre-wrap",
+    overflowWrap: "break-word",
+  };
   return (
     <div className={cn("relative", className)}>
       <div ref={mirror} aria-hidden className="pointer-events-none absolute inset-0 text-transparent" style={shared}>
@@ -145,6 +158,7 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
         placeholder={placeholder}
         spellCheck={false}
         disabled={!doc}
+        readOnly={readOnly}
         onInput={onInput}
         onSelect={publishCursor}
         onFocus={publishCursor}

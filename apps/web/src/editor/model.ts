@@ -11,7 +11,7 @@ export interface Sel {
 }
 
 export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
-export const TEXTLESS = new Set(["divider"]);
+export const TEXTLESS = new Set(["divider", "image", "file"]);
 export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link"] as const;
 
 /** Body blocks in document order (the title block is edited separately). */

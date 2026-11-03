@@ -7,12 +7,16 @@ import { DocPage } from "@/pages/DocPage";
 import { Playground } from "@/pages/Playground";
 import { Sidebar } from "@/components/Sidebar";
 import { Trash } from "@/pages/Trash";
+import { JoinLink } from "@/pages/JoinLink";
 
 export default function App() {
   const route = useRoute();
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const logout = useMutation({ mutationFn: api.logout, onSuccess: () => qc.clear() });
+  const logout = useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => qc.clear(),
+  });
   const unauth = (me.error instanceof ApiError && me.error.status === 401) || me.data === null;
 
   if (me.isPending) return <div className="grid h-full place-items-center text-subtle">加载中…</div>;
@@ -24,6 +28,8 @@ export default function App() {
       <Sidebar me={me.data} route={route} onLogout={() => logout.mutate()} />
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me.data} />
+      ) : route.page === "join" ? (
+        <JoinLink token={route.token} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "playground" ? (

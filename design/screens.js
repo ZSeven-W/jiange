@@ -130,3 +130,43 @@ shell("App · Presence", 2720, true);
     const btn = I(rr, {type:"frame", height:28, cornerRadius:6, padding:[0,12,0,12], stroke:{thickness:1, fill:C.b}, layout:"horizontal", alignItems:"center"}); txt(btn, "还原", 13, C.t);
   }
 }
+
+/* ---------- P4: share dialog (three roles + link), @doc mention, attachments ---------- */
+{
+  const base = I(null, {type:"frame", name:"Share", x:6800, y:0, width:1280, height:800, layout:"horizontal", fill:"#F2F3F5", clipContent:true});
+  const main = col(base, {width:"fill_container", height:"fill_container", gap:0, fill:C.w});
+  const top = row(main, {width:"fill_container", height:52, padding:[0,20,0,20], justifyContent:"space_between", stroke:{thickness:1, fill:C.b}});
+  const bc = row(top, {gap:6}); txt(bc, "产品规划 /", 14, C.t2); txt(bc, "P4 权限方案", 14, C.t, 500);
+  const sh = I(top, {type:"frame", height:32, cornerRadius:6, fill:C.p, padding:[0,16,0,16], layout:"horizontal", alignItems:"center"}); txt(sh, "分享", 14, C.w, 500);
+  const sc = I(main, {type:"frame", width:"fill_container", height:"fill_container", layout:"vertical", alignItems:"center", padding:[40,0,0,0]});
+  const doc = col(sc, {width:620, gap:14});
+  txt(doc, "P4 权限方案", 32, C.t, 700);
+  const p = row(doc, {gap:4}); txt(p, "背景见", 16, C.t);
+  const chip = row(p, {gap:4, padding:[1,6,1,6], cornerRadius:4, fill:C.ps}); txt(chip, "▤ P3 块编辑器设计", 15, C.p, 500);
+  txt(p, "，角色分三档。", 16, C.t);
+  const img = col(doc, {width:"fill_container", height:200, cornerRadius:8, fill:"#E8EEFC", justifyContent:"center", alignItems:"center"}); txt(img, "架构图.png", 14, C.t2);
+  const file = row(doc, {width:360, height:56, cornerRadius:8, stroke:{thickness:1, fill:C.b}, padding:[0,14,0,14], gap:12});
+  const fi = I(file, {type:"frame", width:32, height:32, cornerRadius:6, fill:"#FFF3E8", layout:"horizontal", justifyContent:"center", alignItems:"center"}); txt(fi, "PDF", 10, "#FF8800", 700);
+  const fm = col(file, {gap:2}); txt(fm, "权限矩阵.pdf", 14, C.t, 500); txt(fm, "248 KB", 12, C.t3);
+  const mention = I(doc, {type:"frame", name:"MentionMenu", width:280, cornerRadius:8, fill:C.w, stroke:{thickness:1, fill:C.b}, layout:"vertical", gap:2, padding:[6,6,6,6]});
+  txt(mention, "  提及文档", 12, C.t3, 500);
+  for (const [n, on] of [["P3 块编辑器设计", 1], ["P2 同步协议", 0], ["周报", 0]]) { const r = row(mention, {width:"fill_container", height:32, cornerRadius:6, padding:[0,8,0,8], fill: on? C.hv : "#00000000"}); txt(r, "▤  " + n, 14, C.t); }
+  // share panel
+  const panel = col(base, {name:"ShareDialog", width:420, height:"fill_container", fill:C.w, padding:[24,24,24,24], gap:16, stroke:{thickness:1, fill:C.b}});
+  txt(panel, "分享「P4 权限方案」", 16, C.t, 600);
+  const inv = row(panel, {width:"fill_container", gap:8});
+  const inp = row(inv, {width:"fill_container", height:34, cornerRadius:6, stroke:{thickness:1, fill:C.b}, padding:[0,10,0,10]}); txt(inp, "输入邮箱邀请协作者", 13, C.t3);
+  const rs = row(inv, {height:34, cornerRadius:6, stroke:{thickness:1, fill:C.b}, padding:[0,10,0,10]}); txt(rs, "可编辑 ⌄", 13, C.t);
+  const ib = I(inv, {type:"frame", height:34, cornerRadius:6, fill:C.p, padding:[0,14,0,14], layout:"horizontal", alignItems:"center"}); txt(ib, "邀请", 13, C.w, 500);
+  txt(panel, "协作者", 12, C.t3, 500);
+  for (const [l, n, e, r, c] of [["K", "Kay", "kay@jiange.dev", "所有者", C.p], ["A", "Alice", "alice@jiange.dev", "可编辑 ⌄", C.r1], ["B", "Bob", "bob@jiange.dev", "可阅读 ⌄", C.r2]]) {
+    const r0 = row(panel, {width:"fill_container", justifyContent:"space_between"}); const l0 = row(r0, {gap:10}); avatar(l0, l, c, 32);
+    const t = col(l0, {gap:0}); txt(t, n, 14, C.t, 500); txt(t, e, 12, C.t3); txt(r0, r, 13, C.t2);
+  }
+  I(panel, {type:"rectangle", width:372, height:1, fill:C.b});
+  txt(panel, "链接分享", 12, C.t3, 500);
+  const lr = row(panel, {width:"fill_container", justifyContent:"space_between"}); txt(lr, "获得链接的登录用户", 14, C.t); txt(lr, "可阅读 ⌄", 13, C.p, 500);
+  const link = row(panel, {width:"fill_container", gap:8});
+  const lu = row(link, {width:"fill_container", height:34, cornerRadius:6, fill:C.sb, padding:[0,10,0,10]}); txt(lu, "localhost:5173/#/s/7f3a…", 13, C.t2);
+  const cb = I(link, {type:"frame", height:34, cornerRadius:6, stroke:{thickness:1, fill:C.b}, padding:[0,12,0,12], layout:"horizontal", alignItems:"center"}); txt(cb, "复制链接", 13, C.t);
+}

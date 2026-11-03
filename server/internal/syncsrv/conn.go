@@ -17,11 +17,12 @@ const (
 )
 
 type conn struct {
-	hub    *Hub
-	ws     *websocket.Conn
-	user   store.User
-	out    chan []byte
-	cancel context.CancelFunc
+	hub      *Hub
+	ws       *websocket.Conn
+	user     store.User
+	readOnly bool
+	out      chan []byte
+	cancel   context.CancelFunc
 
 	// guarded by room.mu once joined
 	room     *room
@@ -116,6 +117,10 @@ func (c *conn) readLoop(ctx context.Context) error {
 				c.room.sendErr(c, "bad_ops", err.Error())
 				continue
 			}
+			if c.readOnly {
+				c.room.sendErr(c, "read_only", "you can only view this document")
+				continue
+			}
 			if !c.mayAuthor(ctx, ops) {
 				c.room.sendErr(c, "forbidden", "ops authored by a replica you don't own")
 				return errors.New("forbidden ops")
@@ -140,10 +145,12 @@ func (c *conn) readLoop(ctx context.Context) error {
 func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 	st := c.hub.Store
 	doc := int64(m.DocID)
-	if _, err := st.GetDoc(ctx, c.user.ID, doc); err != nil {
+	meta, err := st.GetDoc(ctx, c.user.ID, doc)
+	if err != nil {
 		c.fail("not_found", "document not found")
 		return err
 	}
+	c.readOnly = meta.Role == store.RoleView
 	id := int64(m.ClientID)
 	if id != 0 {
 		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {
