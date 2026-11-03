@@ -18,6 +18,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/config"
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
 	"github.com/ZSeven-W/jiange/server/internal/store"
+	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
 
 func main() {
@@ -47,9 +48,15 @@ func run(log *slog.Logger) error {
 		return nil
 	}
 
+	hub := &syncsrv.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	go func() {
+		if err := hub.Run(ctx); err != nil {
+			log.Error("listen/notify", "err", err)
+		}
+	}()
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies}).Handler(),
+		Handler:           (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies, Hub: hub}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)

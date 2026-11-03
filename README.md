@@ -21,7 +21,7 @@ ci/               GitHub Actions workflow (see ci/README.md to enable)
 | 层 Layer | 依赖 Dependencies |
 |---|---|
 | Web | react, react-dom, @tanstack/react-query, tailwindcss, shadcn/ui（及其 @radix-ui/*, class-variance-authority, clsx, tailwind-merge） |
-| Go | 标准库 stdlib, github.com/jackc/pgx/v5（`github.com/coder/websocket` 将在 P2 引入） |
+| Go | 标准库 stdlib, github.com/jackc/pgx/v5, github.com/coder/websocket |
 | Dev | vite, typescript, vitest, tsx |
 
 不使用 Yjs / Tiptap / ProseMirror / 任何 Web 框架或 ORM。No Yjs, Tiptap, ProseMirror, web frameworks or ORMs.
@@ -68,8 +68,12 @@ pnpm gen:vectors                         # 修改内核后重新生成 spec/vect
 
 ## 路线图 / Roadmap
 
-P0 脚手架 ✅ · P1 协同内核 ✅ · P2 Go 同步服务 · P3 块编辑器 · P4 文档树与权限 · P5 多维表格 MVP · P6 版本、导入导出、发布
+P0 脚手架 ✅ · P1 协同内核 ✅ · P2 Go 同步服务 ✅ · P3 块编辑器 · P4 文档树与权限 · P5 多维表格 MVP · P6 版本、导入导出、发布
 
 ## License
 
 MIT
+
+## 设计 / Design
+UI 先在 OpenPencil 中设计（`design/jiange.op`），预览见 `design/previews/`，
+设计变量（`design/vars.json`）映射为 `apps/web/src/index.css` 中的 Tailwind/shadcn 主题变量。

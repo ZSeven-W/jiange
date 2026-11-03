@@ -36,4 +36,5 @@ type Store interface {
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	Workspaces(ctx context.Context, userID int64) ([]Workspace, error)
 	Ping(ctx context.Context) error
+	DocStore
 }

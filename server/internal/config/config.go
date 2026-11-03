@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -11,6 +12,8 @@ type Config struct {
 	DatabaseURL   string
 	SessionTTL    time.Duration
 	SecureCookies bool
+	// AllowedOrigins are extra browser origins (host[:port]) allowed to open sync sockets.
+	AllowedOrigins []string
 }
 
 func getenv(k, def string) string {
@@ -30,5 +33,7 @@ func Load() Config {
 		DatabaseURL:   getenv("DATABASE_URL", "postgres://jiange:jiange@localhost:5432/jiange?sslmode=disable"),
 		SessionTTL:    ttl,
 		SecureCookies: getenv("JIANGE_SECURE_COOKIES", "false") == "true",
+		AllowedOrigins: strings.FieldsFunc(getenv("JIANGE_ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173"),
+			func(r rune) bool { return r == ',' || r == ' ' }),
 	}
 }

@@ -1,0 +1,16 @@
+{
+  "primary": { "type": "color", "value": "#3370FF" },
+  "primary-hover": { "type": "color", "value": "#245BDB" },
+  "primary-subtle": { "type": "color", "value": "#E1EAFF" },
+  "text": { "type": "color", "value": "#1F2329" },
+  "text-secondary": { "type": "color", "value": "#646A73" },
+  "text-tertiary": { "type": "color", "value": "#8F959E" },
+  "border": { "type": "color", "value": "#DEE0E3" },
+  "sidebar": { "type": "color", "value": "#F5F6F7" },
+  "hover": { "type": "color", "value": "#EBECED" },
+  "canvas": { "type": "color", "value": "#FFFFFF" },
+  "peer-1": { "type": "color", "value": "#F54A45" },
+  "peer-2": { "type": "color", "value": "#00B42A" },
+  "peer-3": { "type": "color", "value": "#FF8800" },
+  "radius": { "type": "number", "value": 8 }
+}

@@ -40,3 +40,22 @@ export const api = {
     request<Me>("POST", "/api/auth/register", { email, name, password }),
   logout: () => request<void>("POST", "/api/auth/logout"),
 };
+
+export interface DocMeta {
+  id: number;
+  workspaceId: number;
+  parentId: number | null;
+  title: string;
+  icon: string;
+  creatorId: number;
+  creatorName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const docsApi = {
+  list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
+  get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
+  create: (title = "", parentId: number | null = null) => request<DocMeta>("POST", "/api/docs", { title, parentId }),
+  rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
+};
