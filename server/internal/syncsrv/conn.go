@@ -1,0 +1,186 @@
+package syncsrv
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/ZSeven-W/jiange/server/collab"
+	"github.com/ZSeven-W/jiange/server/internal/store"
+)
+
+const (
+	maxAwareness = 4096
+	ackFlushGap  = 50
+)
+
+type conn struct {
+	hub    *Hub
+	ws     *websocket.Conn
+	user   store.User
+	out    chan []byte
+	cancel context.CancelFunc
+
+	// guarded by room.mu once joined
+	room     *room
+	clientID uint64
+	acked    int64
+	dbAcked  int64
+	aware    string
+	owned    map[uint64]bool // replica ids this user may author ops for (read loop only)
+	closed   bool
+}
+
+// send queues a frame; a client that can't keep up is disconnected rather
+// than letting the room block or buffer without bound.
+func (c *conn) send(b []byte) {
+	if c.closed {
+		return
+	}
+	select {
+	case c.out <- b:
+	default:
+		c.closed = true
+		c.cancel()
+	}
+}
+
+// writeLoop runs until stop ends; conn (the read side) is used to abort writes.
+func (c *conn) writeLoop(stop, ctx context.Context) {
+	ping := time.NewTicker(c.hub.PingInterval)
+	defer ping.Stop()
+	for {
+		select {
+		case <-stop.Done():
+			return
+		case <-ctx.Done():
+			return
+		case b := <-c.out:
+			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := c.ws.Write(wctx, websocket.MessageBinary, b)
+			cancel()
+			if err != nil {
+				c.cancel()
+				return
+			}
+		case <-ping.C:
+			pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err := c.ws.Ping(pctx)
+			cancel()
+			if err != nil {
+				c.cancel()
+				return
+			}
+		}
+	}
+}
+
+func (c *conn) fail(code, msg string) {
+	c.out <- collab.EncodeError(code, msg) // best effort; writer drains before close
+}
+
+func (c *conn) readLoop(ctx context.Context) error {
+	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	typ, b, err := c.ws.Read(hctx)
+	cancel()
+	if err != nil {
+		return err
+	}
+	m, err := collab.DecodeClientMsg(b)
+	if err != nil || typ != websocket.MessageBinary || m.Type != collab.MsgHello {
+		c.fail("bad_hello", "first message must be HELLO")
+		return errors.New("bad hello")
+	}
+	if err := c.hello(ctx, m); err != nil {
+		return err
+	}
+	for {
+		typ, b, err := c.ws.Read(ctx)
+		if err != nil {
+			return err
+		}
+		if typ != websocket.MessageBinary {
+			continue
+		}
+		m, err := collab.DecodeClientMsg(b)
+		if err != nil {
+			c.room.sendErr(c, "bad_message", err.Error())
+			continue
+		}
+		switch m.Type {
+		case collab.MsgOps:
+			ops, err := collab.DecodeOps(m.Batch)
+			if err != nil {
+				c.room.sendErr(c, "bad_ops", err.Error())
+				continue
+			}
+			if !c.mayAuthor(ctx, ops) {
+				c.room.sendErr(c, "forbidden", "ops authored by a replica you don't own")
+				return errors.New("forbidden ops")
+			}
+			if err := c.room.handleOps(ctx, c, ops); err != nil {
+				return err
+			}
+		case collab.MsgAck:
+			c.room.handleAck(ctx, c, int64(m.Seq))
+		case collab.MsgAware:
+			if len(m.State) > maxAwareness {
+				c.room.sendErr(c, "too_large", "awareness state too large")
+				continue
+			}
+			c.room.handleAware(c, m.State)
+		default:
+			c.room.sendErr(c, "bad_message", "unexpected message type")
+		}
+	}
+}
+
+func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
+	st := c.hub.Store
+	doc := int64(m.DocID)
+	if _, err := st.GetDoc(ctx, c.user.ID, doc); err != nil {
+		c.fail("not_found", "document not found")
+		return err
+	}
+	id := int64(m.ClientID)
+	if id != 0 {
+		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {
+			id = 0 // unknown or foreign id: issue a fresh one
+		}
+	}
+	if id == 0 {
+		var err error
+		if id, err = st.AllocClient(ctx, c.user.ID, doc); err != nil {
+			c.fail("internal", "could not allocate client id")
+			return err
+		}
+	}
+	c.clientID = uint64(id)
+	c.owned[c.clientID] = true
+	if m.ClientID != 0 && m.ClientID != c.clientID {
+		// pending ops from the old id may only be resent if that id is ours too
+		if uid, _, err := st.ClientOwner(ctx, int64(m.ClientID)); err == nil && uid == c.user.ID {
+			c.owned[m.ClientID] = true
+		}
+	}
+	c.room = c.hub.room(doc)
+	return c.room.join(ctx, c, int64(m.LastSeq))
+}
+
+// mayAuthor checks every op is stamped with a replica id issued to this user for this doc.
+func (c *conn) mayAuthor(ctx context.Context, ops []collab.Op) bool {
+	for _, op := range ops {
+		id := op.ID.Client
+		if c.owned[id] {
+			continue
+		}
+		uid, doc, err := c.hub.Store.ClientOwner(ctx, int64(id))
+		if err != nil || uid != c.user.ID || doc != c.room.id {
+			return false
+		}
+		c.owned[id] = true
+	}
+	return true
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
+	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
 
 const CookieName = "jiange_session"
@@ -25,6 +26,7 @@ type Server struct {
 	SecureCookies bool
 	Iterations    int // PBKDF2 iterations; tests lower this
 	Now           func() time.Time
+	Hub           *syncsrv.Hub // nil disables /api/sync
 }
 
 func (s *Server) now() time.Time {
@@ -45,6 +47,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
+	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
+	mux.Handle("POST /api/docs", s.requireUser(http.HandlerFunc(s.createDoc)))
+	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
+	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
+	if s.Hub != nil {
+		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, _ := UserFrom(r.Context())
+			s.Hub.Serve(w, r, u)
+		})))
+	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})

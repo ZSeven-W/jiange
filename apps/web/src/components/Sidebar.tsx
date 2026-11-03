@@ -1,0 +1,138 @@
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { docsApi, type DocMeta, type Me } from "@/lib/api";
+import { go, type Route } from "@/lib/route";
+import { cn } from "@/lib/utils";
+import { Logo } from "./brand";
+
+export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
+
+export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
+  const qc = useQueryClient();
+  const docs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list, refetchInterval: 15000 });
+  const [q, setQ] = useState("");
+  const [menu, setMenu] = useState(false);
+  const create = useMutation({
+    mutationFn: () => docsApi.create(""),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ["docs"] });
+      go(`#/doc/${d.id}`);
+    },
+  });
+  const ws = me.workspaces[0];
+  const shown = useMemo(() => {
+    const all = docs.data ?? [];
+    const k = q.trim().toLowerCase();
+    return k ? all.filter((d) => docTitle(d).toLowerCase().includes(k)) : [...all].sort((a, b) => a.id - b.id);
+  }, [docs.data, q]);
+
+  return (
+    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-sidebar">
+      <div className="relative px-3 pt-3">
+        <button onClick={() => setMenu((v) => !v)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover">
+          <Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" />
+          <span className="truncate text-[14px] font-semibold">{ws?.name ?? "我的空间"}</span>
+          <Chevron className="ml-0.5 text-subtle" />
+        </button>
+        {menu && (
+          <div className="absolute left-3 right-3 top-12 z-20 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setMenu(false)}>
+            <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
+            {me.workspaces.map((w) => (
+              <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">
+                {w.name} <span>✓</span>
+              </div>
+            ))}
+            <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>
+              退出登录
+            </button>
+          </div>
+        )}
+        <label className="mt-2 flex h-8 items-center gap-2 rounded-md border bg-white px-2.5 text-[13px] text-subtle focus-within:border-primary">
+          <SearchIcon />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="w-full bg-transparent text-foreground outline-none placeholder:text-subtle" />
+        </label>
+      </div>
+      <nav className="mt-3 space-y-0.5 px-3">
+        <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
+        <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
+        <NavItem icon={<StarIcon />} label="收藏" />
+      </nav>
+      <div className="mt-5 flex items-center justify-between px-5 text-xs text-subtle">
+        <span>文档</span>
+        <button title="新建文档" onClick={() => create.mutate()} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground">
+          +
+        </button>
+      </div>
+      <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
+        {shown.map((d) => (
+          <NavItem
+            key={d.id}
+            icon={<DocIcon />}
+            label={docTitle(d)}
+            muted={!d.title.trim()}
+            active={route.page === "doc" && route.id === d.id}
+            onClick={() => go(`#/doc/${d.id}`)}
+          />
+        ))}
+        {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{q ? "没有匹配的文档" : "还没有文档"}</p>}
+      </div>
+      <div className="border-t px-3 py-2.5">
+        <button onClick={() => create.mutate()} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
+          <span className="text-base leading-none">+</span> 新建文档
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function NavItem({ icon, label, active, muted, onClick }: { icon: React.ReactNode; label: string; active?: boolean; muted?: boolean; onClick?: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[14px] transition-colors",
+        active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
+        muted && !active && "text-muted-foreground",
+      )}
+    >
+      <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}>{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+const svg = { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+export const DocIcon = () => (
+  <svg {...svg}>
+    <path d="M4 1.75h5.5L12.5 4.8v9.45H4z" />
+    <path d="M6 7.5h4.5M6 10h4.5" />
+  </svg>
+);
+const HomeIcon = () => (
+  <svg {...svg}>
+    <path d="M2.5 7 8 2.5 13.5 7v6.5h-11z" />
+    <path d="M6.5 13.5v-4h3v4" />
+  </svg>
+);
+const ClockIcon = () => (
+  <svg {...svg}>
+    <circle cx="8" cy="8" r="5.75" />
+    <path d="M8 5v3.2l2 1.3" />
+  </svg>
+);
+const StarIcon = () => (
+  <svg {...svg}>
+    <path d="m8 2.3 1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11l-3.4 1.8.7-3.8L2.5 6.3l3.8-.5z" />
+  </svg>
+);
+const SearchIcon = () => (
+  <svg {...svg} width={14} height={14}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="m10.5 10.5 3 3" />
+  </svg>
+);
+export const Chevron = ({ className }: { className?: string }) => (
+  <svg {...svg} width={12} height={12} className={className}>
+    <path d="m4 6 4 4 4-4" />
+  </svg>
+);

@@ -1,11 +1,23 @@
 import { cmpId, eqId, idKey, ROOT, type OpId } from "./id";
 import { keyBetween } from "./fracindex";
 import { opSpan, type Anchor, type Op, type Side } from "./ops";
+import { MAGIC, Reader, VERSION, Writer } from "./encoding";
+
+export const STATE_TAG = 0x53;
+
+/** Byte-wise (UTF-8 order) comparison, identical to Go string comparison. */
+function byteCmp(a: string, b: string): number {
+  const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
+  for (let i = 0; i < Math.min(ea.length, eb.length); i++) if (ea[i] !== eb[i]) return ea[i] - eb[i];
+  return ea.length - eb.length;
+}
 
 interface CharNode {
   id: OpId;
   ch: string;
   deleted: boolean;
+  parent: CharNode | null;
+  side: Side;
   left: CharNode[];
   right: CharNode[];
 }
@@ -58,7 +70,7 @@ function insertSorted(arr: CharNode[], n: CharNode): void {
 }
 
 function newBlock(id: OpId, parent: OpId, pos: string): Block {
-  const root: CharNode = { id: ROOT, ch: "", deleted: true, left: [], right: [] };
+  const root: CharNode = { id: ROOT, ch: "", deleted: true, parent: null, side: 1, left: [], right: [] };
   return {
     id,
     loc: { value: { parent, pos }, ts: id },
@@ -79,7 +91,7 @@ function newBlock(id: OpId, parent: OpId, pos: string): Block {
  * dependencies are missing are buffered until they become applicable.
  */
 export class Doc {
-  readonly client: number;
+  client: number;
   private clock = 0;
   private blocks = new Map<string, Block>();
   private seen = new Set<string>();
@@ -148,6 +160,7 @@ export class Doc {
     if (top > this.clock) this.clock = top;
     switch (op.t) {
       case "bcreate": {
+        if (this.blocks.has(idKey(op.id))) return; // idempotent (e.g. after loading a snapshot)
         const b = newBlock(op.id, op.parent, op.pos);
         b.props.set("type", { value: op.type, ts: op.id });
         this.blocks.set(idKey(op.id), b);
@@ -170,11 +183,12 @@ export class Doc {
       }
       case "tins": {
         const b = this.blocks.get(idKey(op.block))!;
+        if (b.chars.has(idKey(op.id))) return; // idempotent
         let parent = b.chars.get(idKey(op.parent))!;
         let side: Side = op.side;
         let i = 0;
         for (const ch of op.text) {
-          const n: CharNode = { id: { client: op.id.client, clock: op.id.clock + i }, ch, deleted: false, left: [], right: [] };
+          const n: CharNode = { id: { client: op.id.client, clock: op.id.clock + i }, ch, deleted: false, parent, side, left: [], right: [] };
           insertSorted(side === 0 ? parent.left : parent.right, n);
           b.chars.set(idKey(n.id), n);
           parent = n;
@@ -194,6 +208,7 @@ export class Doc {
       }
       case "mark": {
         const b = this.blocks.get(idKey(op.block))!;
+        if (b.marks.some((m) => eqId(m.id, op.id))) return;
         b.marks.push({ id: op.id, key: op.key, value: op.value, start: op.start, end: op.end });
         return;
       }
@@ -244,6 +259,12 @@ export class Doc {
   }
 
   /* ------------------------------------------------------------ local API */
+
+  /** True if the block exists and is not deleted. */
+  hasBlock(id: OpId): boolean {
+    const b = this.blocks.get(idKey(id));
+    return !!b && !b.deleted;
+  }
 
   text(block: OpId): string {
     return this.visible(this.block(block)).map((c) => c.ch).join("");
@@ -352,6 +373,167 @@ export class Doc {
       start: { char: vis[from].id, side: 0 },
       end: { char: vis[to - 1].id, side: 1 },
     });
+  }
+
+  /** Current Lamport clock (highest clock observed or generated). */
+  get lamport(): number {
+    return this.clock;
+  }
+
+  /** Visible block ids in document order. */
+  blockIds(): OpId[] {
+    return this.view().blocks.map((b) => {
+      const [c, k] = b.id.split(":");
+      return { client: Number(c), clock: Number(k) };
+    });
+  }
+
+  /** Stable position for a caret at visible `index` (survives concurrent edits). */
+  anchorAt(block: OpId, index: number): Anchor {
+    const vis = this.visible(this.block(block));
+    if (index <= 0 || vis.length === 0) return { char: ROOT, side: 1 };
+    return { char: vis[Math.min(index, vis.length) - 1].id, side: 1 };
+  }
+
+  /** Visible index of an anchor; unknown anchors resolve to the end. */
+  resolveAnchor(block: OpId, a: Anchor): number {
+    const b = this.blocks.get(idKey(block));
+    if (!b) return 0;
+    if (eqId(a.char, ROOT)) return 0;
+    const target = b.chars.get(idKey(a.char));
+    const ord = this.order(b);
+    if (!target) return ord.filter((c) => !c.deleted).length;
+    let n = 0;
+    for (const c of ord) {
+      if (c === target) return n + (!c.deleted && a.side === 1 ? 1 : 0);
+      if (!c.deleted) n++;
+    }
+    return n;
+  }
+
+  /** Drops buffered ops that can never apply (used after resync). Returns how many were dropped. */
+  dropPending(): number {
+    const n = this.pending.length;
+    this.pending = [];
+    return n;
+  }
+
+  /* ------------------------------------------------------------ state (snapshot) encoding */
+
+  /** Encodes the full replica state (spec/PROTOCOL.md §State). */
+  encodeState(): Uint8Array {
+    const w = new Writer();
+    w.u8(MAGIC);
+    w.u8(STATE_TAG);
+    w.u8(VERSION);
+    w.uvar(this.clock);
+    const blocks = [...this.blocks.values()].filter((b) => !eqId(b.id, ROOT)).sort((x, y) => cmpId(x.id, y.id));
+    w.uvar(blocks.length);
+    for (const b of blocks) {
+      w.id(b.id);
+      w.id(b.loc.value.parent);
+      w.str(b.loc.value.pos);
+      w.id(b.loc.ts);
+      w.u8(b.deleted ? 1 : 0);
+      const keys = [...b.props.keys()].sort(byteCmp);
+      w.uvar(keys.length);
+      for (const k of keys) {
+        const r = b.props.get(k)!;
+        w.str(k);
+        w.str(r.value);
+        w.id(r.ts);
+      }
+      // chars in pre-order (node, left subtrees, right subtrees): parents precede children
+      const list: CharNode[] = [];
+      const index = new Map<CharNode, number>([[b.root, 0]]);
+      const stack: CharNode[] = [...b.root.right].reverse().concat([...b.root.left].reverse());
+      while (stack.length) {
+        const n = stack.pop()!;
+        list.push(n);
+        index.set(n, list.length);
+        for (let i = n.right.length - 1; i >= 0; i--) stack.push(n.right[i]);
+        for (let i = n.left.length - 1; i >= 0; i--) stack.push(n.left[i]);
+      }
+      w.uvar(list.length);
+      for (const n of list) {
+        w.id(n.id);
+        w.u8(n.side);
+        w.uvar(index.get(n.parent!)!);
+        w.u8(n.deleted ? 1 : 0);
+        w.str(n.ch);
+      }
+      const marks = [...b.marks].sort((x, y) => cmpId(x.id, y.id));
+      w.uvar(marks.length);
+      for (const m of marks) {
+        w.id(m.id);
+        w.str(m.key);
+        if (m.value === null) w.u8(0);
+        else {
+          w.u8(1);
+          w.str(m.value);
+        }
+        w.id(m.start.char);
+        w.u8(m.start.side);
+        w.id(m.end.char);
+        w.u8(m.end.side);
+      }
+    }
+    return w.bytes();
+  }
+
+  /** Rebuilds a replica from `encodeState` output. */
+  static fromState(client: number, bytes: Uint8Array): Doc {
+    const d = new Doc(client);
+    const r = new Reader(bytes);
+    if (r.u8() !== MAGIC || r.u8() !== STATE_TAG) throw new RangeError("not a state blob");
+    if (r.u8() !== VERSION) throw new RangeError("unsupported state version");
+    d.clock = r.uvar();
+    const nb = r.uvar();
+    for (let i = 0; i < nb; i++) {
+      const id = r.id();
+      const parent = r.id();
+      const pos = r.str();
+      const ts = r.id();
+      const b = newBlock(id, parent, pos);
+      b.loc.ts = ts;
+      b.deleted = r.u8() === 1;
+      const np = r.uvar();
+      for (let k = 0; k < np; k++) {
+        const key = r.str();
+        const value = r.str();
+        b.props.set(key, { value, ts: r.id() });
+      }
+      const nc = r.uvar();
+      const list: CharNode[] = [b.root];
+      for (let k = 0; k < nc; k++) {
+        const cid = r.id();
+        const side = r.u8();
+        const pi = r.uvar();
+        const deleted = r.u8() === 1;
+        const ch = r.str();
+        if ((side !== 0 && side !== 1) || pi >= list.length) throw new RangeError("corrupt state");
+        const parentNode = list[pi];
+        const n: CharNode = { id: cid, ch, deleted, parent: parentNode, side: side as Side, left: [], right: [] };
+        insertSorted(side === 0 ? parentNode.left : parentNode.right, n);
+        b.chars.set(idKey(cid), n);
+        list.push(n);
+      }
+      const nm = r.uvar();
+      for (let k = 0; k < nm; k++) {
+        const mid = r.id();
+        const key = r.str();
+        const has = r.u8();
+        const value = has ? r.str() : null;
+        const sc = r.id();
+        const ss = r.u8() as Side;
+        const ec = r.id();
+        const es = r.u8() as Side;
+        b.marks.push({ id: mid, key, value, start: { char: sc, side: ss }, end: { char: ec, side: es } });
+      }
+      d.blocks.set(idKey(id), b);
+    }
+    if (!r.done) throw new RangeError("trailing bytes in state");
+    return d;
   }
 
   /* ------------------------------------------------------------ view */

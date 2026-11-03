@@ -19,6 +19,7 @@ type Memory struct {
 	workspaces []Workspace
 	members    map[int64][]int64 // user -> workspace ids
 	sessions   map[string]session
+	d          memDocs
 }
 
 func NewMemory() *Memory {

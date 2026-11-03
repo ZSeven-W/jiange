@@ -6,6 +6,8 @@ type charNode struct {
 	id          OpID
 	ch          rune
 	deleted     bool
+	parent      *charNode
+	side        uint8
 	left, right []*charNode
 }
 
@@ -35,7 +37,7 @@ type block struct {
 }
 
 func newBlock(id, parent OpID, pos string) *block {
-	root := &charNode{id: Root, deleted: true}
+	root := &charNode{id: Root, deleted: true, side: 1}
 	return &block{id: id, parent: parent, pos: pos, locTS: id, props: map[string]propReg{}, root: root, chars: map[OpID]*charNode{Root: root}}
 }
 
@@ -126,6 +128,9 @@ func (d *Doc) integrate(op *Op) {
 	}
 	switch op.T {
 	case TBlockCreate:
+		if d.blocks[op.ID] != nil {
+			return
+		}
 		b := newBlock(op.ID, op.Parent, op.Pos)
 		b.props["type"] = propReg{op.Type, op.ID}
 		d.blocks[op.ID] = b
@@ -143,10 +148,13 @@ func (d *Doc) integrate(op *Op) {
 		d.blocks[op.Block].deleted = true
 	case TTextInsert:
 		b := d.blocks[op.Block]
+		if b.chars[op.ID] != nil {
+			return
+		}
 		parent, side := b.chars[op.Parent], op.Side
 		i := uint64(0)
 		for _, ch := range op.Text {
-			n := &charNode{id: OpID{op.ID.Client, op.ID.Clock + i}, ch: ch}
+			n := &charNode{id: OpID{op.ID.Client, op.ID.Clock + i}, ch: ch, parent: parent, side: side}
 			if side == 0 {
 				parent.left = insertSorted(parent.left, n)
 			} else {
@@ -165,6 +173,11 @@ func (d *Doc) integrate(op *Op) {
 		b.order = nil
 	case TMark:
 		b := d.blocks[op.Block]
+		for _, m := range b.marks {
+			if m.id == op.ID {
+				return
+			}
+		}
 		b.marks = append(b.marks, markRec{op.ID, op.Key, op.Value, op.Start, op.End})
 	}
 }

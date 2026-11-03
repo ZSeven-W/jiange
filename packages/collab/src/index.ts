@@ -5,3 +5,5 @@ export * from "./encoding";
 export * from "./doc";
 export * from "./random";
 export * from "./scenarios";
+export * from "./protocol";
+export * from "./sync";
