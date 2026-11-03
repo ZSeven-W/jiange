@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"log/slog"
 	"net/http"
 	"os"
@@ -54,9 +55,18 @@ func run(log *slog.Logger) error {
 			log.Error("listen/notify", "err", err)
 		}
 	}()
+	var blobs blob.Store
+	if cfg.S3Endpoint != "" {
+		s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}
+		if err := s3.EnsureBucket(ctx); err != nil {
+			log.Warn("attachments disabled", "err", err)
+		} else {
+			blobs = s3
+		}
+	}
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies, Hub: hub}).Handler(),
+		Handler:           (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies, Hub: hub, Blobs: blobs}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)

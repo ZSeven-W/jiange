@@ -105,7 +105,7 @@ func (s *Server) getDoc(w http.ResponseWriter, r *http.Request) {
 // patchDoc updates directory metadata. The title shown in the editor is a
 // collaborative block; clients mirror it here so the doc tree stays current.
 func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.docFromPath(w, r)
+	d, ok := s.need(w, r, store.RoleEdit)
 	if !ok {
 		return
 	}
@@ -125,6 +125,10 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.Move {
+		if d.Role != store.RoleManage {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
+			return
+		}
 		if in.ParentID != nil {
 			u, _ := UserFrom(r.Context())
 			if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID {
@@ -145,7 +149,7 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.docFromPath(w, r)
+	d, ok := s.need(w, r, store.RoleManage)
 	if !ok {
 		return
 	}

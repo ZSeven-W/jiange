@@ -4,8 +4,27 @@ import type { SyncDoc } from "@/lib/useSyncDoc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import {
-  activeMarks, bodyBlocks, clipText, collapsed, copyRange, deleteRange, joinBackward, joinForward, len, LIST_TYPES,
-  markdownShortcut, normalize, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type ClipBlock, type Pos, type Sel,
+  activeMarks,
+  bodyBlocks,
+  clipText,
+  collapsed,
+  copyRange,
+  deleteRange,
+  joinBackward,
+  joinForward,
+  len,
+  LIST_TYPES,
+  markdownShortcut,
+  normalize,
+  TEXTLESS,
+  parseText,
+  pasteBlocks,
+  setBlockType,
+  splitBlock,
+  toggleMark,
+  type ClipBlock,
+  type Pos,
+  type Sel,
 } from "./model";
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
@@ -15,8 +34,24 @@ import { FormatToolbar } from "./FormatToolbar";
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
+export interface MentionDoc {
+  id: number;
+  title: string;
+}
+export interface Uploaded {
+  id: number;
+  name: string;
+  mime: string;
+  size: number;
+}
+
 interface Props {
   sync: SyncDoc;
+  readOnly?: boolean;
+  /** docs offered by the @ menu */
+  docs?: MentionDoc[];
+  /** stores a file and returns its id; enables image/file blocks */
+  upload?: (f: File) => Promise<Uploaded>;
   me: Presence;
 }
 
@@ -26,7 +61,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], upload }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -35,41 +70,81 @@ export function Editor({ sync, me }: Props) {
   const um = useMemo(() => new UndoManager<Sel>(), []);
   const [, force] = useState(0);
   const [remount, setRemount] = useState<Record<string, number>>({});
-  const [slash, setSlash] = useState<{ at: Pos; index: number } | null>(null);
+  const [slash, setSlash] = useState<{
+    at: Pos;
+    index: number;
+    kind: "/" | "@";
+  } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const pendingUpload = useRef<{ b: OpId; kind: string } | null>(null);
   const [toolbar, setToolbar] = useState<{ x: number; y: number } | null>(null);
-  const [drag, setDrag] = useState<{ b: OpId; over: OpId | null; after: boolean } | null>(null);
-  const [carets, setCarets] = useState<{ id: number; name: string; color: string; x: number; y: number; h: number }[]>([]);
+  const [drag, setDrag] = useState<{
+    b: OpId;
+    over: OpId | null;
+    after: boolean;
+  } | null>(null);
+  const [carets, setCarets] = useState<
+    {
+      id: number;
+      name: string;
+      color: string;
+      x: number;
+      y: number;
+      h: number;
+    }[]
+  >([]);
   const doc = sync.client.doc;
   const blocks = doc ? bodyBlocks(doc) : [];
 
   // keep the caret anchored across remote ops
-  const saved = useRef<{ a: ReturnType<Doc["anchorAt"]>; ab: OpId; f: ReturnType<Doc["anchorAt"]>; fb: OpId } | null>(null);
+  const saved = useRef<{
+    a: ReturnType<Doc["anchorAt"]>;
+    ab: OpId;
+    f: ReturnType<Doc["anchorAt"]>;
+    fb: OpId;
+  } | null>(null);
   useEffect(
     () =>
       sync.onBeforeRemote(() => {
-        const d = sync.client.doc, s = sel.current;
+        const d = sync.client.doc,
+          s = sel.current;
         if (!d || !s || !d.hasBlock(s.a.b) || !d.hasBlock(s.f.b)) return;
-        saved.current = { a: d.anchorAt(s.a.b, s.a.o), ab: s.a.b, f: d.anchorAt(s.f.b, s.f.o), fb: s.f.b };
+        saved.current = {
+          a: d.anchorAt(s.a.b, s.a.o),
+          ab: s.a.b,
+          f: d.anchorAt(s.f.b, s.f.o),
+          fb: s.f.b,
+        };
       }),
     [sync],
   );
   useEffect(() => {
-    const s = saved.current, d = sync.client.doc;
+    const s = saved.current,
+      d = sync.client.doc;
     if (!s || !d) return;
     saved.current = null;
-    if (d.hasBlock(s.ab) && d.hasBlock(s.fb)) sel.current = { a: { b: s.ab, o: d.resolveAnchor(s.ab, s.a) }, f: { b: s.fb, o: d.resolveAnchor(s.fb, s.f) } };
+    if (d.hasBlock(s.ab) && d.hasBlock(s.fb))
+      sel.current = {
+        a: { b: s.ab, o: d.resolveAnchor(s.ab, s.a) },
+        f: { b: s.fb, o: d.resolveAnchor(s.fb, s.f) },
+      };
   }, [sync.version, sync.client]);
 
   const publish = useCallback(() => {
-    const d = sync.client.doc, s = sel.current;
+    const d = sync.client.doc,
+      s = sel.current;
     if (!d || !s || !d.hasBlock(s.f.b)) return;
-    sync.client.setAwareness({ ...me, cursor: { block: s.f.b, anchor: d.anchorAt(s.f.b, s.f.o) } } satisfies Presence);
+    sync.client.setAwareness({
+      ...me,
+      cursor: { block: s.f.b, anchor: d.anchorAt(s.f.b, s.f.o) },
+    } satisfies Presence);
   }, [sync.client, me]);
 
   /** Runs an edit as one undoable transaction. */
   const run = useCallback(
     (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string) => {
-      const d = sync.client.doc, s = sel.current;
+      const d = sync.client.doc,
+        s = sel.current;
       if (!d || !s) return;
       const tx = new Tx(d);
       const r = fn(tx, s);
@@ -125,9 +200,11 @@ export function Editor({ sync, me }: Props) {
 
   // ---- DOM selection <-> model selection
   const readSel = useCallback(() => {
-    const el = root.current, ds = document.getSelection();
+    const el = root.current,
+      ds = document.getSelection();
     if (!el || !ds || ds.rangeCount === 0 || !el.contains(ds.anchorNode)) return;
-    const a = domToPos(el, ds.anchorNode!, ds.anchorOffset), f = domToPos(el, ds.focusNode!, ds.focusOffset);
+    const a = domToPos(el, ds.anchorNode!, ds.anchorOffset),
+      f = domToPos(el, ds.focusNode!, ds.focusOffset);
     if (!a || !f) return;
     const prev = sel.current;
     if (prev && (!eqId(prev.f.b, f.b) || Math.abs(prev.f.o - f.o) > 1)) {
@@ -143,7 +220,7 @@ export function Editor({ sync, me }: Props) {
       const d = sync.client.doc;
       if (!d || !eqId(m.at.b, f.b) || f.o <= m.at.o || !collapsed(sel.current!)) return null;
       const q = [...d.text(f.b)].slice(m.at.o, f.o).join("");
-      return q.startsWith("/") && !/\s/.test(q) && q.length <= 16 ? m : null;
+      return q.startsWith(m.kind) && !/\s/.test(q) && q.length <= 16 ? m : null;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publish, um, sync.client]);
@@ -155,35 +232,67 @@ export function Editor({ sync, me }: Props) {
   }, [readSel]);
 
   const updateOverlays = () => {
-    const el = root.current, w = wrap.current, d = sync.client.doc, s = sel.current;
+    const el = root.current,
+      w = wrap.current,
+      d = sync.client.doc,
+      s = sel.current;
     if (!el || !w || !d) return;
     const base = w.getBoundingClientRect();
     if (s && !collapsed(s) && (document.activeElement === el || w.contains(document.activeElement))) {
       const ds = document.getSelection();
       const r = ds && ds.rangeCount && el.contains(ds.anchorNode) ? ds.getRangeAt(0).getBoundingClientRect() : null;
       if (r && r.width + r.height > 0) {
-        const t = { x: Math.round(r.left - base.left + r.width / 2), y: Math.round(r.top - base.top) };
+        const t = {
+          x: Math.round(r.left - base.left + r.width / 2),
+          y: Math.round(r.top - base.top),
+        };
         setToolbar((o) => (o && o.x === t.x && o.y === t.y ? o : t));
       }
     } else setToolbar((o) => (o ? null : o));
-    const cs: { id: number; name: string; color: string; x: number; y: number; h: number }[] = [];
+    const cs: {
+      id: number;
+      name: string;
+      color: string;
+      x: number;
+      y: number;
+      h: number;
+    }[] = [];
     for (const p of sync.peers) {
       const c = p.state.cursor;
       if (!c || !d.hasBlock(c.block) || !blockEl(el, c.block)) continue;
-      const rect = caretRect(el, { b: c.block, o: d.resolveAnchor(c.block, c.anchor) });
-      if (rect) cs.push({ id: p.clientId, name: p.state.name, color: p.state.color, x: Math.round(rect.left - base.left), y: Math.round(rect.top - base.top), h: Math.round(rect.height || 22) });
+      const rect = caretRect(el, {
+        b: c.block,
+        o: d.resolveAnchor(c.block, c.anchor),
+      });
+      if (rect)
+        cs.push({
+          id: p.clientId,
+          name: p.state.name,
+          color: p.state.color,
+          x: Math.round(rect.left - base.left),
+          y: Math.round(rect.top - base.top),
+          h: Math.round(rect.height || 22),
+        });
     }
     setCarets((o) => (JSON.stringify(o) === JSON.stringify(cs) ? o : cs));
   };
 
   // after every render: put the DOM selection where the model says
   useLayoutEffect(() => {
-    const el = root.current, s = sel.current, d = sync.client.doc;
+    const el = root.current,
+      s = sel.current,
+      d = sync.client.doc;
     if (el && s && d && document.activeElement === el && !composing.current) {
-      const a = posToDom(el, s.a), f = posToDom(el, s.f);
+      const a = posToDom(el, s.a),
+        f = posToDom(el, s.f);
       const ds = document.getSelection();
       if (a && f && ds) {
-        const cur = ds.rangeCount ? { a: domToPos(el, ds.anchorNode!, ds.anchorOffset), f: domToPos(el, ds.focusNode!, ds.focusOffset) } : null;
+        const cur = ds.rangeCount
+          ? {
+              a: domToPos(el, ds.anchorNode!, ds.anchorOffset),
+              f: domToPos(el, ds.focusNode!, ds.focusOffset),
+            }
+          : null;
         const same = cur?.a && cur.f && eqId(cur.a.b, s.a.b) && cur.a.o === s.a.o && eqId(cur.f.b, s.f.b) && cur.f.o === s.f.o;
         if (!same) ds.setBaseAndExtent(a.node, a.offset, f.node, f.offset);
       }
@@ -199,7 +308,8 @@ export function Editor({ sync, me }: Props) {
       if (e.inputType === "insertCompositionText" || composing.current) return;
       e.preventDefault();
       readSel();
-      const s = sel.current, d = sync.client.doc;
+      const s = sel.current,
+        d = sync.client.doc;
       if (!s || !d) return;
       switch (e.inputType) {
         case "insertText":
@@ -208,7 +318,7 @@ export function Editor({ sync, me }: Props) {
           if (!t) return;
           const at = collapsed(s) ? s.a : normalize(d, s).start;
           insertText(t);
-          if (t === "/") setSlash({ at, index: 0 });
+          if (t === "/" || t === "@") setSlash({ at, index: 0, kind: t });
           return;
         }
         case "insertLineBreak":
@@ -239,7 +349,8 @@ export function Editor({ sync, me }: Props) {
       const ranges = e.getTargetRanges();
       if (ranges.length) {
         const r = ranges[0];
-        const a = domToPos(el, r.startContainer, r.startOffset), f = domToPos(el, r.endContainer, r.endOffset);
+        const a = domToPos(el, r.startContainer, r.startOffset),
+          f = domToPos(el, r.endContainer, r.endOffset);
         if (a && f && !(eqId(a.b, f.b) && a.o === f.o)) {
           if (eqId(a.b, f.b)) return run((tx) => deleteRange(tx, { a, f }), "delete");
         }
@@ -249,11 +360,19 @@ export function Editor({ sync, me }: Props) {
       if (back && p.o === 0) return run((tx) => joinBackward(tx, p.b));
       if (!back && p.o === len(d, p.b)) return run((tx) => joinForward(tx, p.b));
       const step = e.inputType.includes("Word") ? wordLen(d.text(p.b), p.o, back) : 1;
-      run((tx) => deleteRange(tx, { a: p, f: { b: p.b, o: back ? p.o - step : p.o + step } }), "delete");
+      run(
+        (tx) =>
+          deleteRange(tx, {
+            a: p,
+            f: { b: p.b, o: back ? p.o - step : p.o + step },
+          }),
+        "delete",
+      );
     };
     const onCompStart = () => {
       readSel();
-      const s = sel.current, d = sync.client.doc;
+      const s = sel.current,
+        d = sync.client.doc;
       if (!s || !d) return;
       if (!collapsed(s)) run((tx, s2) => deleteRange(tx, s2));
       composing.current = { sel: sel.current! };
@@ -264,7 +383,10 @@ export function Editor({ sync, me }: Props) {
       if (!c) return;
       sel.current = c.sel;
       // throw away the browser's DOM mutations for this block and commit the text
-      setRemount((m) => ({ ...m, [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1 }));
+      setRemount((m) => ({
+        ...m,
+        [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1,
+      }));
       if (e.data) insertText(e.data, "ime");
       else force((x) => x + 1);
     };
@@ -281,14 +403,82 @@ export function Editor({ sync, me }: Props) {
   const slashItems = useMemo(() => {
     if (!slash || !doc || !sel.current || !doc.hasBlock(slash.at.b)) return [];
     const q = [...doc.text(slash.at.b)].slice(slash.at.o + 1, sel.current.f.o).join("");
-    return filterItems(q);
+    if (slash.kind === "@") {
+      const ql = q.toLowerCase();
+      return docs
+        .filter((x) => (x.title || "未命名文档").toLowerCase().includes(ql))
+        .slice(0, 8)
+        .map((x): MenuItem => ({
+          id: `doc:${x.id}`,
+          label: x.title || "未命名文档",
+          group: "提及文档",
+          icon: "▤",
+          py: [],
+          en: [],
+        }));
+    }
+    return filterItems(q).filter((it) => upload || (it.id !== "image" && it.id !== "file"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slash, doc, sync.version, sel.current]);
+  }, [slash, doc, sync.version, sel.current, docs]);
+
+  /** Uploads files and inserts image/file blocks after block b. */
+  const insertFiles = async (files: File[], b: OpId, replace = false) => {
+    if (!upload) return;
+    for (const f of files) {
+      const r = await upload(f);
+      const type = r.mime.startsWith("image/") && r.mime !== "image/svg+xml" ? "image" : "file";
+      const d = sync.client.doc;
+      if (!d || !d.hasBlock(b)) return;
+      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+      run((tx) => {
+        const info = tx.doc.blockInfo(b);
+        const props = {
+          fileId: String(r.id),
+          name: r.name,
+          mime: r.mime,
+          size: String(r.size),
+        };
+        let nb: OpId;
+        if (replace && len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
+          tx.setProp(b, "type", type);
+          for (const [k, v] of Object.entries(props)) tx.setProp(b, k, v);
+          nb = b;
+        } else nb = tx.create(type, b, info.parent, props);
+        replace = false;
+        b = nb;
+        const p = tx.create("paragraph", nb, info.parent);
+        return { b: p, o: 0 };
+      });
+      um.seal();
+    }
+  };
 
   const applySlash = (it: MenuItem) => {
     const m = slash;
     setSlash(null);
     if (!m) return;
+    if (it.id.startsWith("doc:")) {
+      run((tx, s) => {
+        tx.delete(m.at.b, m.at.o, s.f.o);
+        const n = tx.insert(m.at.b, m.at.o, it.label);
+        tx.format(m.at.b, m.at.o, m.at.o + n, "link", `#/doc/${it.id.slice(4)}`);
+        tx.insert(m.at.b, m.at.o + n, " ");
+        tx.format(m.at.b, m.at.o + n, m.at.o + n + 1, "link", null);
+        return { b: m.at.b, o: m.at.o + n + 1 };
+      });
+      um.seal();
+      return;
+    }
+    if (it.id === "image" || it.id === "file") {
+      const s0 = sel.current;
+      if (s0) run((tx) => void tx.delete(m.at.b, m.at.o, s0.f.o));
+      pendingUpload.current = { b: m.at.b, kind: it.id };
+      if (fileInput.current) {
+        fileInput.current.accept = it.id === "image" ? "image/*" : "";
+        fileInput.current.click();
+      }
+      return;
+    }
     run((tx, s) => {
       tx.delete(m.at.b, m.at.o, s.f.o);
       const b = m.at.b;
@@ -317,7 +507,10 @@ export function Editor({ sync, me }: Props) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const n = slashItems.length;
-        setSlash({ ...slash, index: (slash.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n });
+        setSlash({
+          ...slash,
+          index: (slash.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n,
+        });
         return;
       }
       if (e.key === "Enter") {
@@ -330,7 +523,8 @@ export function Editor({ sync, me }: Props) {
         return;
       }
     }
-    const s = sel.current, d = sync.client.doc;
+    const s = sel.current,
+      d = sync.client.doc;
     if (!s || !d) return;
     const k = e.key.toLowerCase();
     if (mod && k === "z") {
@@ -341,13 +535,21 @@ export function Editor({ sync, me }: Props) {
       e.preventDefault();
       return undo(true);
     }
-    const markKeys: Record<string, string> = { b: "bold", i: "italic", u: "underline", e: "code" };
+    const markKeys: Record<string, string> = {
+      b: "bold",
+      i: "italic",
+      u: "underline",
+      e: "code",
+    };
     if (mod && !e.shiftKey && markKeys[k]) {
       e.preventDefault();
       if (collapsed(s)) {
         const cur = stored.current ?? {};
         const on = activeMarksAt(d, s.a)[markKeys[k]] !== undefined;
-        stored.current = { ...cur, [markKeys[k]]: (cur[markKeys[k]] !== undefined ? cur[markKeys[k]] === null : on) ? null : "true" };
+        stored.current = {
+          ...cur,
+          [markKeys[k]]: (cur[markKeys[k]] !== undefined ? cur[markKeys[k]] === null : on) ? null : "true",
+        };
         return;
       }
       return run((tx, s2) => toggleMark(tx, s2, markKeys[k]));
@@ -390,7 +592,8 @@ export function Editor({ sync, me }: Props) {
   };
 
   const onCopy = (e: React.ClipboardEvent, cut = false) => {
-    const s = sel.current, d = sync.client.doc;
+    const s = sel.current,
+      d = sync.client.doc;
     if (!s || !d || collapsed(s)) return;
     e.preventDefault();
     const clip = copyRange(d, s);
@@ -400,6 +603,11 @@ export function Editor({ sync, me }: Props) {
   };
   const onPaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
+    const files = [...e.clipboardData.files];
+    if (files.length && upload && sel.current) {
+      void insertFiles(files, sel.current.f.b, true);
+      return;
+    }
     const raw = e.clipboardData.getData(CLIP_MIME);
     let clip: ClipBlock[];
     try {
@@ -461,7 +669,7 @@ export function Editor({ sync, me }: Props) {
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
       <div
         ref={root}
-        contentEditable={!!doc}
+        contentEditable={!!doc && !readOnly}
         suppressContentEditableWarning
         spellCheck={false}
         role="textbox"
@@ -473,7 +681,11 @@ export function Editor({ sync, me }: Props) {
         onCut={(e) => onCopy(e, true)}
         onPaste={onPaste}
         onFocus={() => {
-          if (!sel.current && doc && blocks.length) sel.current = { a: { b: blocks[0], o: 0 }, f: { b: blocks[0], o: 0 } };
+          if (!sel.current && doc && blocks.length)
+            sel.current = {
+              a: { b: blocks[0], o: 0 },
+              f: { b: blocks[0], o: 0 },
+            };
         }}
         onBlur={(e) => !wrap.current?.contains(e.relatedTarget as Node) && setToolbar(null)}
       >
@@ -498,6 +710,19 @@ export function Editor({ sync, me }: Props) {
             );
           })}
       </div>
+      <input
+        ref={fileInput}
+        type="file"
+        hidden
+        data-file-input
+        onChange={(e) => {
+          const p = pendingUpload.current,
+            files = [...(e.target.files ?? [])];
+          e.target.value = "";
+          pendingUpload.current = null;
+          if (p && files.length) void insertFiles(files, p.b, true);
+        }}
+      />
       {carets.map((c) => (
         <div key={c.id} className="pointer-events-none absolute" style={{ left: c.x, top: c.y, height: c.h }} data-remote-caret={c.name}>
           <div className="absolute -left-px top-0 h-full w-[2px] rounded-full" style={{ background: c.color }} />
@@ -538,7 +763,8 @@ function activeMarksAt(doc: Doc, p: Pos): Record<string, string> {
 
 function wordLen(text: string, o: number, back: boolean): number {
   const cps = [...text];
-  let i = o, n = 0;
+  let i = o,
+    n = 0;
   const isWord = (c: string | undefined) => !!c && /[\p{L}\p{N}_]/u.test(c);
   if (back) {
     while (i > 0 && !isWord(cps[i - 1])) (i--, n++);
@@ -607,7 +833,7 @@ function Block({ id, type, props, number, spans, dropLine, onToggle, onDragStart
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-3" : BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph)}
+      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph))}
       style={{ marginLeft: indent * 24 }}
       onDragOver={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
@@ -631,6 +857,18 @@ function Block({ id, type, props, number, spans, dropLine, onToggle, onDragStart
       </span>
       {type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
+      ) : type === "image" ? (
+        <figure contentEditable={false} className="my-2 select-none">
+          <img src={`/api/files/${props.fileId}`} alt={props.name} className="max-h-[480px] max-w-full rounded-lg border" draggable={false} />
+        </figure>
+      ) : type === "file" ? (
+        <a contentEditable={false} href={`/api/files/${props.fileId}`} className="my-1 flex w-[360px] select-none items-center gap-3 rounded-lg border px-3.5 py-2.5 hover:bg-hover" data-file-card>
+          <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
+          <span className="min-w-0">
+            <span className="block truncate text-[14px] font-medium">{props.name}</span>
+            <span className="block text-[12px] text-subtle">{fmtSize(Number(props.size ?? 0))}</span>
+          </span>
+        </a>
       ) : (
         <div className={cn(prefix && "flex gap-2")}>
           {prefix && (
@@ -648,7 +886,8 @@ function Block({ id, type, props, number, spans, dropLine, onToggle, onDragStart
 }
 
 function sameMarks(a: Record<string, string>, b: Record<string, string>) {
-  const ka = Object.keys(a), kb = Object.keys(b);
+  const ka = Object.keys(a),
+    kb = Object.keys(b);
   return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
 }
 
@@ -660,6 +899,20 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]",
     marks.link && "cursor-pointer text-primary underline-offset-2 hover:underline",
   );
+  if (marks.link?.startsWith("#/doc/"))
+    return (
+      <a
+        href={marks.link}
+        data-mention
+        className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF] before:mr-1 before:content-['▤']")}
+        onClick={(e) => {
+          e.preventDefault();
+          location.hash = marks.link;
+        }}
+      >
+        {text}
+      </a>
+    );
   if (marks.link)
     return (
       <a href={marks.link} className={cls} onClick={(e) => (e.metaKey || e.ctrlKey ? window.open(marks.link, "_blank", "noopener") : e.preventDefault())}>
@@ -667,4 +920,8 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
       </a>
     );
   return Object.keys(marks).length ? <span className={cls}>{text}</span> : <>{text}</>;
+}
+
+function fmtSize(n: number) {
+  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
 }

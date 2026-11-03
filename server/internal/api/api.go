@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
+	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
@@ -27,6 +28,7 @@ type Server struct {
 	Iterations    int // PBKDF2 iterations; tests lower this
 	Now           func() time.Time
 	Hub           *syncsrv.Hub // nil disables /api/sync
+	Blobs         blob.Store   // nil disables attachments
 }
 
 func (s *Server) now() time.Time {
@@ -52,6 +54,17 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
 	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
+	for pat, h := range map[string]http.HandlerFunc{
+		"GET /api/docs/{id}/shares": s.getShares,
+		"PUT /api/docs/{id}/shares": s.putShare,
+		"PUT /api/docs/{id}/link":   s.putLink,
+		"POST /api/share/{token}":   s.joinLink,
+		"GET /api/shared":           s.sharedWithMe,
+		"POST /api/docs/{id}/files": s.uploadFile,
+		"GET /api/files/{id}":       s.getFile,
+	} {
+		mux.Handle(pat, s.requireUser(h))
+	}
 	mux.Handle("GET /api/trash", s.requireUser(http.HandlerFunc(s.listTrash)))
 	mux.Handle("POST /api/trash/{id}/restore", s.requireUser(http.HandlerFunc(s.restoreDoc)))
 	if s.Hub != nil {

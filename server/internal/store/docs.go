@@ -16,6 +16,8 @@ type DocMeta struct {
 	CreatorName string    `json:"creatorName"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Role is the caller's access (view/edit/manage), set by GetDoc.
+	Role string `json:"role,omitempty"`
 }
 
 // RawOp is one encoded operation (a single-op batch) and its identity.
@@ -34,6 +36,7 @@ type SeqOp struct {
 
 // DocStore persists documents, their op logs and snapshots.
 type DocStore interface {
+	ShareStore
 	// CreateDoc creates a doc node; initial ops get seqs 1..n.
 	CreateDoc(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string, initial []RawOp) (DocMeta, error)
 	ListDocs(ctx context.Context, userID int64) ([]DocMeta, error)

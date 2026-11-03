@@ -20,6 +20,7 @@ type Memory struct {
 	members    map[int64][]int64 // user -> workspace ids
 	sessions   map[string]session
 	d          memDocs
+	sh         memShare
 }
 
 func NewMemory() *Memory {

@@ -100,7 +100,9 @@ func RequireJSON(next http.Handler) http.Handler {
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if mt != "application/json" && r.ContentLength != 0 {
+			// uploads carry a custom header, which cross-site forms cannot set
+			upload := mt == "multipart/form-data" && r.Header.Get("X-Jiange-Upload") == "1"
+			if mt != "application/json" && r.ContentLength != 0 && !upload {
 				Error(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "expected application/json")
 				return
 			}
