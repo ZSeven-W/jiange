@@ -8,6 +8,7 @@ import { Playground } from "@/pages/Playground";
 import { Sidebar } from "@/components/Sidebar";
 import { Trash } from "@/pages/Trash";
 import { JoinLink } from "@/pages/JoinLink";
+import { BasePage } from "@/pages/BasePage";
 
 export default function App() {
   const route = useRoute();
@@ -28,6 +29,8 @@ export default function App() {
       <Sidebar me={me.data} route={route} onLogout={() => logout.mutate()} />
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me.data} />
+      ) : route.page === "base" ? (
+        <BasePage key={route.id} id={route.id} />
       ) : route.page === "join" ? (
         <JoinLink token={route.token} />
       ) : route.page === "trash" ? (

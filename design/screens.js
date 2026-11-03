@@ -170,3 +170,35 @@ shell("App · Presence", 2720, true);
   const lu = row(link, {width:"fill_container", height:34, cornerRadius:6, fill:C.sb, padding:[0,10,0,10]}); txt(lu, "localhost:5173/#/s/7f3a…", 13, C.t2);
   const cb = I(link, {type:"frame", height:34, cornerRadius:6, stroke:{thickness:1, fill:C.b}, padding:[0,12,0,12], layout:"horizontal", alignItems:"center"}); txt(cb, "复制链接", 13, C.t);
 }
+
+/* ---------- P5: bitable grid view ---------- */
+{
+  const base = I(null, {type:"frame", name:"Bitable", x:8160, y:0, width:1280, height:800, layout:"horizontal", fill:C.w, clipContent:true});
+  const sb = col(base, {width:248, height:"fill_container", fill:C.sb, padding:[12,8,12,8], gap:4, stroke:{thickness:1, fill:C.b}});
+  const ws = row(sb, {width:"fill_container", padding:[6,8,6,8], gap:8}); logo(ws, 24); txt(ws, "Kay 的空间", 14, C.t, 600);
+  txt(sb, "  文档", 12, C.t3, 500);
+  for (const [l, a] of [["▤  P4 权限方案", 0], ["▦  需求池", 1], ["▤  周报", 0]]) { const r = row(sb, {width:"fill_container", height:30, cornerRadius:6, padding:[0,10,0,10], fill: a? C.ps : "#00000000"}); txt(r, l, 14, a? C.p : C.t, a?500:400); }
+  const main = col(base, {width:"fill_container", height:"fill_container", gap:0});
+  const top = row(main, {width:"fill_container", height:52, padding:[0,20,0,20], justifyContent:"space_between", stroke:{thickness:1, fill:C.b}});
+  txt(top, "需求池", 16, C.t, 600);
+  const sh = I(top, {type:"frame", height:32, cornerRadius:6, fill:C.p, padding:[0,16,0,16], layout:"horizontal", alignItems:"center"}); txt(sh, "分享", 14, C.w, 500);
+  const tools = row(main, {width:"fill_container", height:44, padding:[0,20,0,20], gap:16, stroke:{thickness:1, fill:C.b}});
+  const tv = row(tools, {padding:[4,10,4,10], cornerRadius:6, fill:C.ps}); txt(tv, "▦ 表格视图", 13, C.p, 500);
+  for (const t of ["+ 添加记录", "筛选", "排序", "分组"]) txt(tools, t, 13, C.t2);
+  const grid = col(main, {width:"fill_container", gap:0, padding:[0,0,0,0]});
+  const widths = [56, 260, 120, 140, 120, 90];
+  const head = row(grid, {width:"fill_container", height:36, gap:0, fill:C.sb, stroke:{thickness:1, fill:C.b}});
+  for (const [i, h] of ["", "Aa 标题", "◉ 状态", "# 估时(天)", "▣ 截止日期", "☑ 完成"].entries()) { const c = row(head, {width:widths[i], height:36, padding:[0,10,0,10], stroke:{thickness:1, fill:C.b}}); txt(c, h, 13, C.t2, 500); }
+  const ah = row(head, {width:44, height:36, justifyContent:"center"}); txt(ah, "+", 16, C.t3);
+  const rows = [["块编辑器拖拽", ["进行中", "#E1EAFF", C.p], "3", "2026-11-08", "☐"], ["分享链接", ["已完成", "#D9F5D6", C.r2], "1", "2026-11-03", "☑"], ["多维表格视图", ["待办", "#F2F3F5", C.t2], "5", "2026-11-15", "☐"], ["导入导出", ["待办", "#F2F3F5", C.t2], "2", "2026-11-20", "☐"]];
+  rows.forEach((r, n) => {
+    const rr = row(grid, {width:"fill_container", height:36, gap:0, stroke:{thickness:1, fill:C.b}, fill: n===0 ? "#F7F9FF" : C.w});
+    const c0 = row(rr, {width:widths[0], height:36, padding:[0,10,0,10], stroke:{thickness:1, fill:C.b}}); txt(c0, String(n+1), 12, C.t3);
+    const c1 = row(rr, {width:widths[1], height:36, padding:[0,10,0,10], stroke:{thickness: n===0?2:1, fill: n===0?C.p:C.b}}); txt(c1, r[0], 14, C.t);
+    const c2 = row(rr, {width:widths[2], height:36, padding:[0,10,0,10], stroke:{thickness:1, fill:C.b}}); const tag = row(c2, {padding:[2,8,2,8], cornerRadius:4, fill:r[1][1]}); txt(tag, r[1][0], 12, r[1][2], 500);
+    const c3 = row(rr, {width:widths[3], height:36, padding:[0,10,0,10], justifyContent:"end", stroke:{thickness:1, fill:C.b}}); txt(c3, r[2], 14, C.t);
+    const c4 = row(rr, {width:widths[4], height:36, padding:[0,10,0,10], stroke:{thickness:1, fill:C.b}}); txt(c4, r[3], 13, C.t);
+    const c5 = row(rr, {width:widths[5], height:36, padding:[0,10,0,10], stroke:{thickness:1, fill:C.b}}); txt(c5, r[4], 15, r[4]==="☑"?C.p:C.t3);
+  });
+  const add = row(grid, {width:"fill_container", height:36, padding:[0,16,0,16], stroke:{thickness:1, fill:C.b}}); txt(add, "+ 新增一行", 13, C.t3);
+}
