@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @jiange/collab typecheck
+      - run: pnpm test
+      - run: pnpm --filter @jiange/web build
+      - name: Vectors are up to date
+        run: pnpm gen:vectors && git diff --exit-code spec/vectors
+
+  server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jiange
+          POSTGRES_PASSWORD: jiange
+          POSTGRES_DB: jiange_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jiange" --health-interval 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: server
+    env:
+      JIANGE_TEST_DATABASE_URL: postgres://jiange:jiange@localhost:5432/jiange_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - run: go test ./collab -run '^$' -fuzz FuzzDecode -fuzztime 20s
