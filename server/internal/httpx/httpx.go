@@ -1,0 +1,138 @@
+// Package httpx holds small self-written HTTP helpers and middleware on top of net/http.
+package httpx
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"log/slog"
+	"mime"
+	"net/http"
+	"runtime/debug"
+	"time"
+)
+
+type Middleware func(http.Handler) http.Handler
+
+// Chain applies middleware so that the first one is the outermost.
+func Chain(h http.Handler, mw ...Middleware) http.Handler {
+	for i := len(mw) - 1; i >= 0; i-- {
+		h = mw[i](h)
+	}
+	return h
+}
+
+type ctxKey int
+
+const requestIDKey ctxKey = 1
+
+func RequestID(r *http.Request) string {
+	v, _ := r.Context().Value(requestIDKey).(string)
+	return v
+}
+
+// WithRequestID assigns an X-Request-Id to every request.
+func WithRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if id == "" || len(id) > 64 {
+			b := make([]byte, 8)
+			_, _ = rand.Read(b)
+			id = hex.EncodeToString(b)
+		}
+		w.Header().Set("X-Request-Id", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusWriter) WriteHeader(c int)           { s.status = c; s.ResponseWriter.WriteHeader(c) }
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Logger logs one line per request.
+func Logger(log *slog.Logger) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			sw := &statusWriter{ResponseWriter: w, status: 200}
+			next.ServeHTTP(sw, r)
+			log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
+				"dur_ms", time.Since(start).Milliseconds(), "rid", RequestID(r))
+		})
+	}
+}
+
+// Recover turns panics into 500 responses.
+func Recover(log *slog.Logger) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if v := recover(); v != nil {
+					log.Error("panic", "err", v, "rid", RequestID(r), "stack", string(debug.Stack()))
+					Error(w, http.StatusInternalServerError, "internal_error", "internal error")
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// SecurityHeaders sets conservative default headers.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireJSON rejects state-changing requests that are not application/json.
+// Together with SameSite=Lax cookies this blocks classic form-based CSRF.
+func RequireJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if mt != "application/json" && r.ContentLength != 0 {
+				Error(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "expected application/json")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// JSON writes v as JSON with the given status.
+func JSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+type errorBody struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+func Error(w http.ResponseWriter, status int, code, msg string) {
+	JSON(w, status, errorBody{code, msg})
+}
+
+// Decode reads a JSON body (max 1 MiB) into v, rejecting unknown fields.
+func Decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return false
+	}
+	return true
+}
