@@ -21,17 +21,20 @@ export function BasePage({ id }: { id: number }) {
   const q = useQuery({ queryKey: key, queryFn: () => baseApi.get(id) });
   const [edit, setEdit] = useState<{ r: number; f: number } | null>(null);
   const [newField, setNewField] = useState(false);
+  const [sort, setSort] = useState<{ f: number; desc: boolean } | null>(null);
+  const [filter, setFilter] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   if (q.isError) return <div className="grid flex-1 place-items-center text-muted-foreground">多维表格不存在或无权访问</div>;
   if (!q.data) return <div className="flex-1" />;
-  const { base, fields, records } = q.data;
+  const { base, fields } = q.data;
+  const records = view(q.data.records, fields, sort, filter);
   const canEdit = base.role !== "view";
   const setCell = async (rec: BaseRecord, f: Field, v: Cell | null) => {
     setEdit(null);
     const cur = rec.cells[f.id];
     if (cur === v || (cur === undefined && (v === null || v === ""))) return;
     // optimistic
-    qc.setQueryData(key, { ...q.data, records: records.map((r) => (r.id === rec.id ? { ...r, cells: { ...r.cells, [f.id]: v ?? undefined } } : r)) });
+    qc.setQueryData(key, { ...q.data, records: q.data.records.map((r) => (r.id === rec.id ? { ...r, cells: { ...r.cells, [f.id]: v ?? undefined } } : r)) });
     await baseApi.setCells(id, rec.id, { [f.id]: v === "" ? null : v }).catch(refresh);
     refresh();
   };
@@ -45,7 +48,29 @@ export function BasePage({ id }: { id: number }) {
             + 添加记录
           </button>
         )}
-        <span className="text-subtle">{records.length} 条记录</span>
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="筛选：包含关键字" className="h-7 w-44 rounded-md border px-2 outline-none focus:border-primary" data-filter />
+        <select
+          value={sort ? `${sort.f}:${sort.desc ? "d" : "a"}` : ""}
+          onChange={(e) => {
+            const [f, d] = e.target.value.split(":");
+            setSort(f ? { f: Number(f), desc: d === "d" } : null);
+          }}
+          className="h-7 rounded-md border bg-white px-2"
+          data-sort
+        >
+          <option value="">排序：默认</option>
+          {fields.flatMap((f) => [
+            <option key={`${f.id}a`} value={`${f.id}:a`}>
+              {f.name} ↑
+            </option>,
+            <option key={`${f.id}d`} value={`${f.id}:d`}>
+              {f.name} ↓
+            </option>,
+          ])}
+        </select>
+        <span className="text-subtle">
+          {records.length === q.data.records.length ? `${records.length} 条记录` : `${records.length} / ${q.data.records.length} 条记录`}
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="border-collapse text-[14px]" data-grid>
@@ -198,4 +223,24 @@ function NewField({ onCreate, onDone }: { onCreate: (f: Partial<Field>) => void;
       </div>
     </form>
   );
+}
+
+/** Client-side filter (any cell contains the keyword) and stable sort; empty cells sort last. */
+export function view(records: BaseRecord[], fields: Field[], sort: { f: number; desc: boolean } | null, filter: string): BaseRecord[] {
+  const kw = filter.trim().toLowerCase();
+  let out = kw ? records.filter((r) => fields.some((f) => r.cells[f.id] !== undefined && String(r.cells[f.id]).toLowerCase().includes(kw))) : records;
+  if (sort) {
+    const f = fields.find((x) => x.id === sort.f);
+    if (f) {
+      const rank = (v: Cell | undefined) => (f.type === "select" ? (f.options ?? []).indexOf(String(v)) : v);
+      out = [...out].sort((a, b) => {
+        const x = a.cells[f.id], y = b.cells[f.id];
+        if (x === undefined || y === undefined) return x === y ? 0 : x === undefined ? 1 : -1;
+        const rx = rank(x)!, ry = rank(y)!;
+        const c = typeof rx === "number" && typeof ry === "number" ? rx - ry : String(rx).localeCompare(String(ry), "zh-CN");
+        return sort.desc ? -c : c;
+      });
+    }
+  }
+  return out;
 }
