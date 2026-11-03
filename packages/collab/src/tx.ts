@@ -77,6 +77,32 @@ export function applyMarks(doc: Doc, block: OpId, from: number, marks: Record<st
 }
 
 /**
+ * Makes chars [from, from+want.length) carry exactly the marks in `want`
+ * (clearing marks inherited from expanding neighbours).
+ */
+export function reconcileMarks(doc: Doc, block: OpId, from: number, want: Record<string, string>[]): Op[] {
+  const have = doc.richChars(block).slice(from, from + want.length);
+  const keys = new Set([...have.flatMap((h) => Object.keys(h.marks)), ...want.flatMap((w) => Object.keys(w))]);
+  const ops: Op[] = [];
+  for (const key of [...keys].sort()) {
+    let i = 0;
+    while (i < want.length) {
+      const v = want[i][key] ?? null;
+      let j = i + 1;
+      while (j < want.length && (want[j][key] ?? null) === v) j++;
+      let differs = false;
+      for (let q = i; q < j; q++) if ((have[q]?.marks[key] ?? null) !== v) differs = true;
+      if (differs) {
+        const op = doc.format(block, from + i, from + j, key, v);
+        if (op) ops.push(op);
+      }
+      i = j;
+    }
+  }
+  return ops;
+}
+
+/**
  * A local edit transaction. Each method applies ops to the doc immediately,
  * collects them for sending, and records the inverse information for undo.
  */
@@ -98,13 +124,7 @@ export class Tx {
     this.items.push({ k: "ins", block, chars });
     if (marks) {
       const want = Array.isArray(marks) ? marks : chars.map(() => marks);
-      // the inserted run may have inherited expanding marks: clear those not wanted
-      const have = this.doc.richChars(block).slice(index, index + n);
-      const extra = new Set(have.flatMap((h) => Object.keys(h.marks)));
-      for (const k of extra) {
-        if (want.every((w) => w[k] === undefined)) this.push(this.doc.format(block, index, index + n, k, null));
-      }
-      this.push(...applyMarks(this.doc, block, index, want));
+      this.push(...reconcileMarks(this.doc, block, index, want));
     }
     return n;
   }

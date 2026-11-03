@@ -1,7 +1,7 @@
 import { idKey, ROOT, type OpId } from "./id";
 import type { Op } from "./ops";
 import type { Doc } from "./doc";
-import { applyMarks, indexAfter, snapshotBlock, Tx, type UndoItem } from "./tx";
+import { applyMarks, indexAfter, reconcileMarks, snapshotBlock, Tx, type UndoItem } from "./tx";
 
 interface Entry<S> {
   items: UndoItem[];
@@ -130,15 +130,8 @@ export class UndoManager<S = unknown> {
         tx.ops.push(op);
         const fresh = it.chars.map((_, i) => ({ client: op.id.client, clock: op.id.clock + i }));
         it.chars.forEach((c, i) => this.remap.set(idKey(this.map(c)), fresh[i]));
-        // restore exactly the old formatting (clear inherited expanding marks first)
-        const have = doc.richChars(block).slice(index, index + fresh.length);
-        for (const k of new Set(have.flatMap((h) => Object.keys(h.marks)))) {
-          if (it.marks.every((m) => m[k] === undefined)) {
-            const f = doc.format(block, index, index + fresh.length, k, null);
-            if (f) tx.ops.push(f);
-          }
-        }
-        tx.ops.push(...applyMarks(doc, block, index, it.marks));
+        // restore exactly the old formatting (clearing inherited expanding marks)
+        tx.ops.push(...reconcileMarks(doc, block, index, it.marks));
         return { k: "ins", block, chars: fresh };
       }
       case "mark": {

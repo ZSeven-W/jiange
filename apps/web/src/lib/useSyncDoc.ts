@@ -41,6 +41,31 @@ export function useSyncDoc(docId: number): SyncDoc {
     [docId],
   );
 
+  // offline durability: unacknowledged local ops survive reloads
+  useEffect(() => {
+    const key = `jiange:pending:${docId}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) ?? "null");
+      if (saved?.clientId && Array.isArray(saved.ops) && saved.ops.length && !client.doc) client.restore(saved.clientId, saved.ops);
+    } catch {
+      /* ignore corrupt storage */
+    }
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const save = () => {
+      const ops = client.pendingOps();
+      if (ops.length) localStorage.setItem(key, JSON.stringify({ clientId: client.clientId, ops }));
+      else localStorage.removeItem(key);
+    };
+    const id = setInterval(save, 1000);
+    window.addEventListener("beforeunload", save);
+    return () => {
+      clearInterval(id);
+      clearTimeout(t);
+      window.removeEventListener("beforeunload", save);
+      save();
+    };
+  }, [client, docId]);
+
   useEffect(() => {
     let ws: WebSocket | null = null;
     let stopped = false;
