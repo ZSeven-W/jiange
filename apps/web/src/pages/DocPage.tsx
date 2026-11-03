@@ -125,10 +125,44 @@ function TopBar({ meta, title, workspace, status, peers, me }: { meta?: DocMeta;
         <Button size="sm" className="h-8 px-4" onClick={share}>
           {copied ? "已复制链接" : "分享"}
         </Button>
-        <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover" title="更多">
-          ···
-        </button>
+        <DocMenu meta={meta} />
       </div>
     </header>
+  );
+}
+
+function DocMenu({ meta }: { meta?: DocMeta }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const trash = async () => {
+    if (!meta) return;
+    await docsApi.trash(meta.id);
+    qc.invalidateQueries({ queryKey: ["docs"] });
+    location.hash = "#/";
+  };
+  const toRoot = async () => {
+    if (!meta) return;
+    await docsApi.move(meta.id, null);
+    qc.invalidateQueries({ queryKey: ["docs"] });
+    setOpen(false);
+  };
+  return (
+    <div className="relative">
+      <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover" title="更多" onClick={() => setOpen((o) => !o)}>
+        ···
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-30 w-40 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
+          {meta?.parentId && (
+            <button className="block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={toRoot}>
+              移到顶层
+            </button>
+          )}
+          <button className="block w-full rounded px-3 py-1.5 text-left text-[13px] text-destructive hover:bg-hover" onClick={trash}>
+            删除（移到回收站）
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

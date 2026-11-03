@@ -235,3 +235,48 @@ func (p *Postgres) listenOnce(ctx context.Context, fn func(int64, int64)) error 
 		}
 	}
 }
+
+const subtreeCTE = `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id = t.id) `
+
+func (p *Postgres) Trash(ctx context.Context, id int64) error {
+	_, err := p.Pool.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = now() WHERE id IN (SELECT id FROM t) AND deleted_at IS NULL`, id)
+	return err
+}
+
+func (p *Postgres) Restore(ctx context.Context, id int64) error {
+	_, err := p.Pool.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = NULL WHERE id IN (SELECT id FROM t)`, id)
+	return err
+}
+
+func (p *Postgres) ListTrash(ctx context.Context, uid int64) ([]DocMeta, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id) FROM nodes n
+		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
+		WHERE n.kind = 'doc' AND n.deleted_at IS NOT NULL ORDER BY n.deleted_at DESC LIMIT 200`, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DocMeta{}
+	for rows.Next() {
+		d, err := scanDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) Move(ctx context.Context, id int64, parent *int64) error {
+	if parent != nil {
+		var cyc bool
+		if err := p.Pool.QueryRow(ctx, subtreeCTE+`SELECT EXISTS (SELECT 1 FROM t WHERE id = $2)`, id, *parent).Scan(&cyc); err != nil {
+			return err
+		}
+		if cyc {
+			return ErrConflict
+		}
+	}
+	_, err := p.Pool.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent)
+	return err
+}

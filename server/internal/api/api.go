@@ -51,6 +51,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/docs", s.requireUser(http.HandlerFunc(s.createDoc)))
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
+	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
+	mux.Handle("GET /api/trash", s.requireUser(http.HandlerFunc(s.listTrash)))
+	mux.Handle("POST /api/trash/{id}/restore", s.requireUser(http.HandlerFunc(s.restoreDoc)))
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			u, _ := UserFrom(r.Context())

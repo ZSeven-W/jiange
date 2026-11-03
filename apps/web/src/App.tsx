@@ -6,6 +6,7 @@ import { Home } from "@/pages/Home";
 import { DocPage } from "@/pages/DocPage";
 import { Playground } from "@/pages/Playground";
 import { Sidebar } from "@/components/Sidebar";
+import { Trash } from "@/pages/Trash";
 
 export default function App() {
   const route = useRoute();
@@ -23,6 +24,8 @@ export default function App() {
       <Sidebar me={me.data} route={route} onLogout={() => logout.mutate()} />
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me.data} />
+      ) : route.page === "trash" ? (
+        <Trash />
       ) : route.page === "playground" ? (
         <div className="flex-1 overflow-auto p-6">
           <Playground />

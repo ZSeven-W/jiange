@@ -13,10 +13,11 @@ type memClient struct {
 }
 
 type memDoc struct {
-	meta  DocMeta
-	ops   []SeqOp
-	ids   map[[2]int64]bool
-	snaps map[int64][]byte
+	meta    DocMeta
+	deleted bool
+	ops     []SeqOp
+	ids     map[[2]int64]bool
+	snaps   map[int64][]byte
 }
 
 type memDocs struct {
@@ -62,7 +63,7 @@ func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	defer m.mu.Unlock()
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
-		if m.member(uid, d.meta.WorkspaceID) {
+		if m.member(uid, d.meta.WorkspaceID) && !d.deleted {
 			out = append(out, d.meta)
 		}
 	}
@@ -74,7 +75,7 @@ func (m *Memory) GetDoc(_ context.Context, uid, id int64) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(id)
-	if d == nil || !m.member(uid, d.meta.WorkspaceID) {
+	if d == nil || d.deleted || !m.member(uid, d.meta.WorkspaceID) {
 		return DocMeta{}, ErrNotFound
 	}
 	return d.meta, nil
@@ -232,4 +233,61 @@ func (m *Memory) AddMember(ws, uid int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.members[uid] = append(m.members[uid], ws)
+}
+
+func (m *Memory) subtree(id int64) []*memDoc {
+	out := []*memDoc{m.doc(id)}
+	for i := 0; i < len(out); i++ {
+		for _, d := range m.d.docs {
+			if d.meta.ParentID != nil && *d.meta.ParentID == out[i].meta.ID {
+				out = append(out, d)
+			}
+		}
+	}
+	return out
+}
+
+func (m *Memory) setDeleted(id int64, v bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.doc(id) == nil {
+		return ErrNotFound
+	}
+	for _, d := range m.subtree(id) {
+		d.deleted = v
+	}
+	return nil
+}
+
+func (m *Memory) Trash(_ context.Context, id int64) error   { return m.setDeleted(id, true) }
+func (m *Memory) Restore(_ context.Context, id int64) error { return m.setDeleted(id, false) }
+
+func (m *Memory) ListTrash(_ context.Context, uid int64) ([]DocMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []DocMeta{}
+	for _, d := range m.d.docs {
+		if d.deleted && m.member(uid, d.meta.WorkspaceID) {
+			out = append(out, d.meta)
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(id)
+	if d == nil {
+		return ErrNotFound
+	}
+	if parent != nil {
+		for _, x := range m.subtree(id) {
+			if x.meta.ID == *parent {
+				return ErrConflict
+			}
+		}
+	}
+	d.meta.ParentID = parent
+	return nil
 }
