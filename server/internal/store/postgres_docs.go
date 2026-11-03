@@ -13,13 +13,13 @@ import (
 // NotifyChannel carries "docID:head" payloads after each append.
 const NotifyChannel = "jiange_ops"
 
-const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at`
+const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind`
 
 // creatorName is appended to every doc SELECT/RETURNING list.
 const creatorName = `, (SELECT name FROM users WHERE users.id = creator_id)`
 
 func scanDoc(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.CreatorName)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -57,7 +57,7 @@ func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int
 func (p *Postgres) ListDocs(ctx context.Context, uid int64) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id) FROM nodes n
 		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.kind = 'doc' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
+		WHERE n.deleted_at IS NULL ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -84,8 +84,8 @@ func prefixed(p, cols string) string {
 func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	var d DocMeta
 	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+` FROM nodes n`+roleJoins+`
-		WHERE n.id = $2 AND n.kind = 'doc' AND n.deleted_at IS NULL`, uid, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.CreatorName, &d.Role)
+		WHERE n.id = $2 AND n.deleted_at IS NULL`, uid, id).
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
 		return DocMeta{}, ErrNotFound
 	}
@@ -256,7 +256,7 @@ func (p *Postgres) Restore(ctx context.Context, id int64) error {
 func (p *Postgres) ListTrash(ctx context.Context, uid int64) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id) FROM nodes n
 		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.kind = 'doc' AND n.deleted_at IS NOT NULL ORDER BY n.deleted_at DESC LIMIT 200`, uid)
+		WHERE n.deleted_at IS NOT NULL ORDER BY n.deleted_at DESC LIMIT 200`, uid)
 	if err != nil {
 		return nil, err
 	}

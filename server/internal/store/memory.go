@@ -21,6 +21,7 @@ type Memory struct {
 	sessions   map[string]session
 	d          memDocs
 	sh         memShare
+	b          memBase
 }
 
 func NewMemory() *Memory {

@@ -146,6 +146,9 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 	st := c.hub.Store
 	doc := int64(m.DocID)
 	meta, err := st.GetDoc(ctx, c.user.ID, doc)
+	if err == nil && meta.Kind != "doc" {
+		err = store.ErrNotFound
+	}
 	if err != nil {
 		c.fail("not_found", "document not found")
 		return err
