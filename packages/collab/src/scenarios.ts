@@ -76,6 +76,24 @@ export function buildScenarios(): Scenario[] {
     out.push(merge("nested-and-delete", [new Doc(5)], [h, c1, c2, t, h2, del]));
   }
 
+  {
+    // Peritext expand rules: bold grows at its end (also at END of block), link and code do not;
+    // typing in front of a mark never inherits it. Concurrent typing at the boundaries.
+    const a = new Doc(1), b = new Doc(2);
+    const p = a.createBlock("paragraph");
+    const t = a.insertText(p.id, 0, "boldlink end")!;
+    const m1 = a.format(p.id, 0, 4, "bold", "true")!;
+    const m2 = a.format(p.id, 4, 8, "link", "https://jiange.dev")!;
+    const m3 = a.format(p.id, 9, 12, "italic", "true")!;
+    const m4 = a.format(p.id, 9, 12, "code", "true")!;
+    for (const op of [p, t, m1, m2, m3, m4]) b.apply(op);
+    const x1 = a.insertText(p.id, 4, "ER")!; // end of bold, start of link -> bold only
+    const x2 = b.insertText(p.id, 8, "S")!; // end of link -> plain
+    const x3 = b.insertText(p.id, 13, "!")!; // end of block after italic+code -> italic only
+    const x4 = a.insertText(p.id, 0, ">")!; // before bold -> plain
+    out.push(merge("peritext-expand", [a, b], [p, t, m1, m2, m3, m4, x1, x2, x3, x4]));
+  }
+
   for (const seed of [1, 2, 3, 42, 2026]) {
     const { ops } = randomSession(seed, 3, 250);
     const fresh = new Doc(99);
