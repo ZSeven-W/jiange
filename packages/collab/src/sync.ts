@@ -36,6 +36,8 @@ export class SyncClient {
   private awareness: string | null = null;
   status: SyncStatus = "connecting";
   droppedOnResync = 0;
+  /** After a resync, causally-unready ops are only dropped once catch-up reaches this seq. */
+  private catchUpTo = -1;
 
   constructor(readonly docId: number, private h: SyncHandlers = {}) {}
 
@@ -83,6 +85,22 @@ export class SyncClient {
     this.setStatus("syncing");
   }
 
+  /** Local ops not yet acknowledged by the server (persist these for offline durability). */
+  pendingOps(): Op[] {
+    return this.inflight.flat().concat(this.queued);
+  }
+
+  /**
+   * Restores ops saved by a previous session (e.g. from localStorage) before
+   * the first connection. They are replayed onto the fresh replica and resent;
+   * the server deduplicates anything it already has.
+   */
+  restore(clientId: number, ops: Op[]) {
+    if (this.doc) throw new Error("restore before the first connection");
+    this.clientId = clientId;
+    this.queued = ops.concat(this.queued);
+  }
+
   setAwareness(state: unknown) {
     this.awareness = JSON.stringify(state);
     this.send?.(encodeClientMsg({ type: "aware", state: this.awareness }));
@@ -108,8 +126,8 @@ export class SyncClient {
             this.doc.client = m.clientId;
           } else {
             for (const op of pending) fresh.apply(op);
-            this.droppedOnResync += fresh.dropPending();
             this.doc = fresh;
+            this.catchUpTo = m.headSeq;
             rebuilt = true;
           }
           this.lastSeq = m.snapshot ? m.snapshot.seq : this.doc && !rebuilt ? this.lastSeq : 0;
@@ -139,6 +157,10 @@ export class SyncClient {
         this.h.beforeRemote?.();
         for (const op of ops) this.doc.apply(op);
         this.lastSeq += ops.length;
+        if (this.catchUpTo >= 0 && this.lastSeq >= this.catchUpTo) {
+          this.droppedOnResync += this.doc.dropPending();
+          this.catchUpTo = -1;
+        }
         this.send?.(encodeClientMsg({ type: "ack", seq: this.lastSeq }));
         this.h.change?.(true);
         if (!this.inflight.length && !this.queued.length) this.setStatus("synced");

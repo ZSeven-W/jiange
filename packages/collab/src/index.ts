@@ -7,3 +7,5 @@ export * from "./random";
 export * from "./scenarios";
 export * from "./protocol";
 export * from "./sync";
+export * from "./tx";
+export * from "./undo";

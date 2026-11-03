@@ -5,6 +5,15 @@ import { MAGIC, Reader, VERSION, Writer } from "./encoding";
 
 export const STATE_TAG = 0x53;
 
+/**
+ * End-of-text sentinel anchor. A mark ending here keeps growing as text is
+ * appended to the block (Peritext "expand" at the end of a block).
+ */
+export const END_ANCHOR: Anchor = Object.freeze({ char: ROOT, side: 0 as Side });
+
+/** Marks that grow when text is typed at their end (Peritext expand rules). */
+export const EXPANDING_MARKS = new Set(["bold", "italic", "underline", "strike", "color"]);
+
 /** Byte-wise (UTF-8 order) comparison, identical to Go string comparison. */
 function byteCmp(a: string, b: string): number {
   const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
@@ -359,20 +368,43 @@ export class Doc {
     return ops;
   }
 
-  /** Formats visible chars [from, to). value null removes the format. */
-  format(block: OpId, from: number, to: number, key: string, value: string | null): Op | null {
+  /**
+   * Formats visible chars [from, to). value null removes the format.
+   * Peritext anchoring: the span starts *before* its first char (text typed in
+   * front is not formatted); an expanding mark ends *before the next char*
+   * (or at END_ANCHOR), so text typed at its end inherits it, while a
+   * non-expanding mark (link, code) ends *after* its last char.
+   */
+  format(block: OpId, from: number, to: number, key: string, value: string | null, expand = EXPANDING_MARKS.has(key)): Op | null {
     const b = this.block(block);
     const vis = this.visible(b);
     if (from >= to || from < 0 || to > vis.length) return null;
-    return this.commit({
-      t: "mark",
-      id: this.next(),
-      block,
-      key,
-      value,
-      start: { char: vis[from].id, side: 0 },
-      end: { char: vis[to - 1].id, side: 1 },
-    });
+    const end: Anchor = !expand
+      ? { char: vis[to - 1].id, side: 1 }
+      : to < vis.length
+        ? { char: vis[to].id, side: 0 }
+        : END_ANCHOR;
+    return this.commit({ t: "mark", id: this.next(), block, key, value, start: { char: vis[from].id, side: 0 }, end });
+  }
+
+  /** Ids of the visible chars of a block, in order. */
+  visibleIds(block: OpId): OpId[] {
+    return this.visible(this.block(block)).map((c) => c.id);
+  }
+
+  /** Per-character text and marks of a block. */
+  richChars(block: OpId): { ch: string; marks: Record<string, string> }[] {
+    const out: { ch: string; marks: Record<string, string> }[] = [];
+    for (const sp of this.blockView(this.block(block), "").spans) for (const ch of sp.text) out.push({ ch, marks: sp.marks });
+    return out;
+  }
+
+  /** Type, props and parent of a block. */
+  blockInfo(block: OpId): { type: string; props: Record<string, string>; parent: OpId } {
+    const b = this.block(block);
+    const props: Record<string, string> = {};
+    for (const [k, v] of b.props) if (k !== "type") props[k] = v.value;
+    return { type: b.props.get("type")?.value ?? "", props, parent: b.loc.value.parent };
   }
 
   /** Current Lamport clock (highest clock observed or generated). */
@@ -600,7 +632,8 @@ export class Doc {
     const ord = this.order(b);
     const idx = new Map<string, number>();
     ord.forEach((c, i) => idx.set(idKey(c.id), i));
-    const slot = (a: Anchor) => idx.get(idKey(a.char))! * 4 + (a.side === 0 ? 0 : 2);
+    const slot = (a: Anchor) =>
+      a.side === 0 && eqId(a.char, ROOT) ? Number.MAX_SAFE_INTEGER : idx.get(idKey(a.char))! * 4 + (a.side === 0 ? 0 : 2);
     const marks = [...b.marks].sort((x, y) => cmpId(x.id, y.id)).map((m) => ({ m, s: slot(m.start), e: slot(m.end) }));
     const spans: Span[] = [];
     ord.forEach((c, i) => {

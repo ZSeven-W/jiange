@@ -1,6 +1,9 @@
 package collab
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 type charNode struct {
 	id          OpID
@@ -292,6 +295,9 @@ func (b *block) view(parent OpID) BlockView {
 		idx[c.id] = i
 	}
 	slot := func(a Anchor) int {
+		if a.Side == 0 && a.Char == Root {
+			return math.MaxInt // END sentinel: mark extends to the end of the block
+		}
 		s := idx[a.Char] * 4
 		if a.Side == 1 {
 			s += 2
