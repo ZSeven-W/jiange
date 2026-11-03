@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { docsApi, type DocMeta, type Me } from "@/lib/api";
+import { baseApi, docsApi, type DocMeta, type Me } from "@/lib/api";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { Logo } from "./brand";
 
+export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
 
 export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
@@ -41,7 +42,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
     return m;
   }, [docs.data]);
   // expand ancestors of the open doc
-  const activeId = route.page === "doc" ? route.id : null;
+  const activeId = route.page === "doc" || route.page === "base" ? route.id : null;
   const ancestors = useMemo(() => {
     const byId = new Map((docs.data ?? []).map((d) => [d.id, d]));
     const out = new Set<number>();
@@ -61,12 +62,13 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           <TreeRow
             depth={depth}
             label={docTitle(d)}
+            base={d.kind === "base"}
             muted={!d.title.trim()}
             active={activeId === d.id}
             expandable={has}
             open={isOpen}
             onToggle={() => setOpen((o) => ({ ...o, [d.id]: !isOpen }))}
-            onClick={() => go(`#/doc/${d.id}`)}
+            onClick={() => go(hrefOf(d))}
             onAdd={() => create.mutate(d.id)}
           />
           {has && isOpen && renderTree(d.id, depth + 1)}
@@ -119,14 +121,14 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
         {q.trim()
-          ? shown.map((d) => <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />)
+          ? shown.map((d) => <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)
           : renderTree(null, 0)}
         {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{q ? "没有匹配的文档" : "还没有文档"}</p>}
         {!q.trim() && (shared.data?.length ?? 0) > 0 && (
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(`#/doc/${d.id}`)} />
+              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
@@ -134,6 +136,16 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       <div className="border-t px-3 py-2.5">
         <button onClick={() => create.mutate(null)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
           <span className="text-base leading-none">+</span> 新建文档
+        </button>
+        <button
+          onClick={async () => {
+            const b = await baseApi.create();
+            qc.invalidateQueries({ queryKey: ["docs"] });
+            go(`#/base/${b.id}`);
+          }}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
+        >
+          <span className="text-base leading-none">+</span> 新建多维表格
         </button>
       </div>
     </aside>
@@ -150,7 +162,9 @@ function TreeRow({
   onToggle,
   onClick,
   onAdd,
+  base,
 }: {
+  base?: boolean;
   depth: number;
   label: string;
   muted: boolean;
@@ -183,7 +197,7 @@ function TreeRow({
         <span className={cn("transition-transform", open && "rotate-90")}>▶</span>
       </button>
       <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}>
-        <DocIcon />
+        {base ? <BaseIcon /> : <DocIcon />}
       </span>
       <span className="ml-1 truncate">{label}</span>
       <button
@@ -263,5 +277,12 @@ const SearchIcon = () => (
 export const Chevron = ({ className }: { className?: string }) => (
   <svg {...svg} width={12} height={12} className={className}>
     <path d="m4 6 4 4 4-4" />
+  </svg>
+);
+
+const BaseIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+    <path d="M2.5 6.2h11M2.5 9.8h11M6.5 6.2v7.3" />
   </svg>
 );
