@@ -8,7 +8,7 @@ export type CellValue = Cell | undefined;
  * Rendering/editors live in cells.tsx and key off the same definitions.
  */
 export interface FieldTypeDef {
-  icon: string;
+  icon: string | React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
   label: string;
   width: number;
   /** computed from record metadata — never editable */
@@ -32,7 +32,7 @@ function optIndex(options: string[], v: unknown): number {
 
 export const REGISTRY: Record<FieldType, FieldTypeDef> = {
   text: {
-    icon: "Aa",
+    icon: Type,
     label: "文本",
     width: 240,
     parse: (t) => (t === "" ? null : t),
@@ -40,7 +40,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b), zh),
   },
   number: {
-    icon: "#",
+    icon: Hash,
     label: "数字",
     width: 120,
     parse: (t) => {
@@ -52,7 +52,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a) - Number(b),
   },
   select: {
-    icon: "◉",
+    icon: CircleDot,
     label: "单选",
     width: 130,
     hasOptions: true,
@@ -61,7 +61,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b, f) => optIndex(f.options ?? [], a) - optIndex(f.options ?? [], b),
   },
   multi_select: {
-    icon: "◎",
+    icon: CircleEllipsis,
     label: "多选",
     width: 200,
     hasOptions: true,
@@ -77,7 +77,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     },
   },
   checkbox: {
-    icon: "☑",
+    icon: SquareCheck,
     label: "复选框",
     width: 80,
     parse: (t) => {
@@ -91,7 +91,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a === true) - Number(b === true),
   },
   date: {
-    icon: "▣",
+    icon: CalendarDays,
     label: "日期",
     width: 140,
     parse: (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
@@ -99,7 +99,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   person: {
-    icon: "☺",
+    icon: UserIcon,
     label: "人员",
     width: 140,
     parse: () => undefined, // no textual round-trip for member ids
@@ -107,7 +107,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a) - Number(b),
   },
   attachment: {
-    icon: "🗜",
+    icon: Paperclip,
     label: "附件",
     width: 260,
     readonly: false,
@@ -116,7 +116,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => (Array.isArray(a) ? a.length : 0) - (Array.isArray(b) ? b.length : 0),
   },
   created_by: {
-    icon: "☺",
+    icon: UserIcon,
     label: "创建人",
     width: 140,
     readonly: true,
@@ -125,7 +125,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a) - Number(b),
   },
   created_at: {
-    icon: "⏱",
+    icon: Clock3,
     label: "创建时间",
     width: 180,
     readonly: true,
@@ -134,7 +134,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   modified_at: {
-    icon: "✎",
+    icon: PenLine,
     label: "修改时间",
     width: 180,
     readonly: true,
@@ -143,7 +143,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   url: {
-    icon: "🔗",
+    icon: Link2,
     label: "超链接",
     width: 220,
     parse: (t) => (/^https?:\/\/\S+$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
@@ -151,7 +151,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   phone: {
-    icon: "📞",
+    icon: Phone,
     label: "电话",
     width: 160,
     parse: (t) => (/^[\d+\- ]{5,24}$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
@@ -159,7 +159,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   email: {
-    icon: "✉",
+    icon: Mail,
     label: "邮箱",
     width: 200,
     parse: (t) => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
@@ -167,7 +167,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
   rating: {
-    icon: "★",
+    icon: Star,
     label: "评分",
     width: 110,
     parse: (t) => {
@@ -178,7 +178,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a) - Number(b),
   },
   formula: {
-    icon: "ƒ",
+    icon: FunctionSquare,
     label: "公式",
     width: 160,
     readonly: true,
@@ -190,7 +190,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     },
   },
   link: {
-    icon: "⇄",
+    icon: ArrowLeftRight,
     label: "关联",
     width: 200,
     parse: () => undefined, // 由 bt_links 存储，编辑走 link 选择器
@@ -198,7 +198,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => (Array.isArray(a) ? a.length : 0) - (Array.isArray(b) ? b.length : 0),
   },
   lookup: {
-    icon: "🔍",
+    icon: Search,
     label: "查找引用",
     width: 180,
     readonly: true,
@@ -209,6 +209,8 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
 };
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];
+
+
 
 /** Feishu-style preset tag palette: [background, text]. */
 export const PALETTE: [string, string][] = [
@@ -345,3 +347,4 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
 }
 
 import { evalFormula, FormulaError, formulaRefs, type FormulaEnv, type FormulaValue } from "./formula";
+import { ArrowLeftRight, CalendarDays, CircleDot, CircleEllipsis, Clock3, FunctionSquare, Hash, Link2, Mail, Paperclip, PenLine, Phone, Search, SquareCheck, Star, Type, User as UserIcon } from "lucide-react";

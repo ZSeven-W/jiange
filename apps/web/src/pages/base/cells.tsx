@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, REGISTRY } from "./registry";
+import { Paperclip } from "lucide-react";
 
 export const TAG_COLORS = [
   ["#E1EAFF", "#245BDB"],
@@ -99,7 +100,7 @@ export function CellView({
           {isAttachmentArray(v)
             ? v.map((a) => (
                 <a key={a.id} href={`/api/files/${a.id}`} target="_blank" rel="noreferrer" className="max-w-[160px] truncate rounded bg-accent px-1.5 py-0.5 text-[12px] text-primary hover:underline" title={`${a.name} (${a.size}B)`}>
-                  🗜 {a.name}
+                  <Paperclip size={11} strokeWidth={1.7} className="inline align-[-1px]" /> {a.name}
                 </a>
               ))
             : null}
@@ -311,4 +312,12 @@ function AttachmentEditor({
       </button>
     </div>
   );
+}
+
+/** 渲染字段类型 icon（registry 的 icon 可能是字符串或 lucide 组件）。 */
+export function TypeGlyph({ t, size = 13 }: { t: import("@/lib/api").FieldType; size?: number }) {
+  const icon = REGISTRY[t].icon;
+  if (typeof icon === "string") return <>{icon}</>;
+  const C = icon as React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  return <C size={size} strokeWidth={1.7} />;
 }

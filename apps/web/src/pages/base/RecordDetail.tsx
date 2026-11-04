@@ -4,6 +4,7 @@ import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/li
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, REGISTRY, setFormulaCache } from "./registry";
+import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
 
 /** Record detail drawer: every field editable in place, like Feishu's
@@ -57,7 +58,7 @@ export function RecordDetail({
           return (
             <div key={f.id} className="border-b py-2.5 last:border-b-0">
               <div className="mb-1 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                <span className="text-subtle">{def.icon}</span>
+                <span className="text-subtle"><TypeGlyph t={f.type} /></span>
                 {f.name}
                 {def.readonly && <span className="rounded bg-hover px-1 text-[11px] text-subtle">自动</span>}
               </div>

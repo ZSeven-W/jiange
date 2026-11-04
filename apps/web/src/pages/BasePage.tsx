@@ -11,6 +11,7 @@ import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
 import { ask } from "@/components/ui/ask";
+import { BarChart3, Calendar, ClipboardList, Images, KanbanSquare, Table2 } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -98,7 +99,7 @@ export function BasePage({ id }: { id: number }) {
             onClick={() => setViewId(v.id)}
             data-view-tab={v.type}
           >
-            {v.type === "kanban" ? "▤" : v.type === "gallery" ? "🖼" : v.type === "calendar" ? "📅" : v.type === "form" ? "📝" : v.type === "gantt" ? "📊" : "▦"} {v.name}
+            {v.type === "kanban" ? <KanbanSquare size={13} strokeWidth={1.7} /> : v.type === "gallery" ? <Images size={13} strokeWidth={1.7} /> : v.type === "calendar" ? <Calendar size={13} strokeWidth={1.7} /> : v.type === "form" ? <ClipboardList size={13} strokeWidth={1.7} /> : v.type === "gantt" ? <BarChart3 size={13} strokeWidth={1.7} /> : <Table2 size={13} strokeWidth={1.7} />} {v.name}
             {views.length > 1 && canEdit && (
               <span
                 className="hidden rounded p-0.5 text-[11px] text-subtle hover:text-destructive group-hover/view:inline"

@@ -5,7 +5,9 @@ import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
 import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
+import { TypeGlyph } from "./cells";
 import { planPaste, rangeText } from "./tsv";
+import { ChevronRight } from "lucide-react";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -484,7 +486,7 @@ export function Grid({
                     <span className="mr-0.5 cursor-grab text-subtle" title="拖拽排序" data-drag-handle>
                       ⠿
                     </span>
-                    <span className="mr-1.5 text-subtle">{REGISTRY[f.type].icon}</span>
+                    <span className="mr-1.5 text-subtle"><TypeGlyph t={f.type} /></span>
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
@@ -546,7 +548,7 @@ export function Grid({
                           })
                         }
                       >
-                        <span className={cn("text-subtle transition-transform", open && "rotate-90")}>▶</span>
+                        <ChevronRight size={12} strokeWidth={1.7} className={cn("text-subtle transition-transform", open && "rotate-90")} />
                         {g.key ? (
                           <span className="rounded px-1.5 py-0.5 text-[12px]" style={{ background: bg, color: fg }}>
                             {g.key}

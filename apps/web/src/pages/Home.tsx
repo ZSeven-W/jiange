@@ -3,6 +3,7 @@ import { docsApi, extrasApi, type Me } from "@/lib/api";
 import { go } from "@/lib/route";
 import { BaseIcon, DocIcon, docTitle, hrefOf } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
+import { FileText } from "lucide-react";
 
 export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favorites?: boolean }) {
   const qc = useQueryClient();
@@ -48,7 +49,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
               ? (favs.data?.length ?? 0) === 0 && <p className="px-4 py-10 text-center text-[13px] text-subtle">还没有收藏，悬停文档树点击 ☆</p>
               : docs.data?.length === 0 && (
                   <div className="grid place-items-center border-b px-4 py-14 text-center" data-empty-guide>
-                    <div className="grid size-14 place-items-center rounded-2xl bg-accent text-[24px]">📄</div>
+                    <div className="grid size-14 place-items-center rounded-2xl bg-accent text-primary"><FileText size={26} strokeWidth={1.5} /></div>
                     <p className="mt-3 text-[14px] font-medium text-foreground">从这里开始你的第一篇文档</p>
                     <p className="mt-1 max-w-[320px] text-[13px] leading-5 text-subtle">
                       输入 <kbd className="rounded border bg-hover px-1">/</kbd> 唤起菜单快速插入标题、列表、表格；输入

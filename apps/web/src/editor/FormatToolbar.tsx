@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { Link2 } from "lucide-react";
 
 const TYPES: [string, string][] = [["paragraph", "正文"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS: [string, string, string][] = [["bold", "B", "font-bold"], ["italic", "I", "italic font-serif"], ["underline", "U", "underline"], ["strike", "S", "line-through"], ["code", "</>", "font-mono text-[12px]"]];
@@ -47,7 +48,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
             </button>
           ))}
           <button title="链接" onClick={() => (marks.link ? onMark("link", marks.link) : setLink(""))} className={cn("grid h-7 min-w-7 place-items-center rounded px-1.5 text-[13px] hover:bg-hover", marks.link && "bg-accent text-primary")}>
-            🔗
+            <Link2 size={14} strokeWidth={1.7} />
           </button>
         </>
       )}

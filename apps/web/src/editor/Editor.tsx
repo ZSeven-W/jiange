@@ -33,6 +33,7 @@ import { SlashMenu } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { askText } from "@/components/ui/ask";
+import { Copy, MessageCircle, Play } from "lucide-react";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -1075,7 +1076,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           onClick={() => onAnchorClick?.(firstThread!)}
           data-comment-bubble
         >
-          💬 {commentBadge}
+          <MessageCircle size={11} strokeWidth={1.7} className="inline" /> {commentBadge}
         </button>
       )}
       {type === "table" ? (
@@ -1099,7 +1100,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
             <video src={props.url} controls className="aspect-video w-full bg-black" />
           ) : (
             <a href={props.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3.5 py-3 hover:bg-hover">
-              <span className="grid size-8 place-items-center rounded-md bg-[#E1EAFF] text-[13px] text-primary">▶</span>
+              <span className="grid size-8 place-items-center rounded-md bg-[#E1EAFF] text-primary"><Play size={14} strokeWidth={1.7} /></span>
               <span className="min-w-0">
                 <span className="block truncate text-[14px] font-medium">{props.name || props.url}</span>
                 <span className="block truncate text-[12px] text-subtle">{props.url}</span>
