@@ -11,6 +11,8 @@ import { docTitle } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
+import { viewToMarkdown } from "@/lib/markdown";
+import { importMarkdownOps } from "@/lib/mdImport";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -26,6 +28,24 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const body = useRef<HTMLDivElement>(null);
   const [sharing, setSharing] = useState(false);
   const [history, setHistory] = useState(false);
+  const exportMd = () => {
+    const d = sync.client.doc;
+    if (!d) return;
+    const md = viewToMarkdown(d.view());
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = `${(title || meta.data?.title || "未命名").trim() || "未命名"}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const importMd = async (file: File) => {
+    const d = sync.client.doc;
+    if (!d) return;
+    const md = await file.text();
+    if (!confirm(`导入将替换当前文档内容（可用撤销恢复），继续？`)) return;
+    const tx = importMarkdownOps(d, md);
+    if (tx.ops.length) sync.client.push(tx.ops);
+  };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
   const readOnly = meta.data?.role === "view";
@@ -61,6 +81,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         <TopBar
           onShare={() => setSharing((v) => !v)}
           onHistory={() => setHistory((v) => !v)}
+          onExport={exportMd}
+          onImport={importMd}
           readOnly={readOnly}
           meta={meta.data}
           title={title}
@@ -131,10 +153,14 @@ function TopBar({
   me,
   onShare,
   onHistory,
+  onExport,
+  onImport,
   readOnly,
 }: {
   onShare: () => void;
   onHistory: () => void;
+  onExport: () => void;
+  onImport: (f: File) => void;
   readOnly: boolean;
   meta?: DocMeta;
   title: string;
@@ -167,6 +193,22 @@ function TopBar({
         </div>
         <button className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onHistory} data-history>
           历史版本
+        </button>
+        <label className="cursor-pointer text-[13px] text-muted-foreground hover:text-foreground" data-import-md>
+          导入
+          <input
+            type="file"
+            accept=".md,.markdown,text/markdown"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onImport(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <button className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onExport} data-export-md>
+          导出
         </button>
         {readOnly && <span className="rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground">只读</span>}
         <Button size="sm" className="h-8 px-4" onClick={onShare}>
