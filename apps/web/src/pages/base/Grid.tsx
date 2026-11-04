@@ -3,6 +3,7 @@ import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/li
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
+import { RecordDetail } from "./RecordDetail";
 import { REGISTRY } from "./registry";
 import { planPaste, rangeText } from "./tsv";
 
@@ -49,6 +50,7 @@ export function Grid({
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
   const [drag, setDrag] = useState<{ fid: number; at: number | null }>({ fid: 0, at: null });
   const [sel, setSel] = useState<Sel | null>(null);
+  const [detail, setDetail] = useState<BaseRecord | null>(null);
   const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -305,6 +307,17 @@ export function Grid({
         }
       }}
     >
+      {detail && (
+        <RecordDetail
+          baseId={baseId}
+          canEdit={canEdit}
+          fields={fields}
+          record={records.find((r) => r.id === detail.id) ?? detail}
+          members={members}
+          onClose={() => setDetail(null)}
+          onMutate={onMutate}
+        />
+      )}
       <table
         className="border-collapse table-fixed text-[14px]"
         data-grid
@@ -387,15 +400,16 @@ export function Grid({
             <tr key={rec.id} className="group h-9">
               <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
-                {canEdit && (
-                  <button
-                    className="hidden text-subtle hover:text-destructive group-hover:inline"
-                    title="删除记录"
-                    onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}
-                  >
-                    ✕
+                <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
+                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => setDetail(rec)} data-expand={rec.id}>
+                    ⤢
                   </button>
-                )}
+                  {canEdit && (
+                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
+                      ✕
+                    </button>
+                  )}
+                </span>
               </td>
               {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {winFields.map((f, wj) => {
