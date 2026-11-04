@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
+import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,14 @@ interface Props {
   /** stores a file and returns its id; enables image/file blocks */
   upload?: (f: File) => Promise<Uploaded>;
   me: Presence;
+  /** unresolved comments anchor-highlighted in the text */
+  comments?: Comment[];
+  /** thread currently open in the panel (stronger highlight) */
+  activeThread?: number | null;
+  /** called with the current selection's anchor when 评论 is clicked */
+  onComment?: (anchor: { block: string; startChar: string; endChar: string; quote: string }) => void;
+  /** user clicked an anchored range */
+  onActivateThread?: (id: number | null) => void;
 }
 
 /**
@@ -61,7 +70,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], upload }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -701,6 +710,9 @@ export function Editor({ sync, me, readOnly, docs = [], upload }: Props) {
                 props={info.props}
                 number={numbers.get(k)}
                 spans={doc.richChars(b)}
+                anchors={anchorFlags(doc, b, comments)}
+                activeThread={activeThread}
+                onAnchorClick={(cid) => onActivateThread?.(cid)}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={() => toggleTodo(b)}
                 onDragStart={() => setDrag({ b, over: null, after: false })}
@@ -740,6 +752,26 @@ export function Editor({ sync, me, readOnly, docs = [], upload }: Props) {
           onMark={(key, value) => run((tx, s) => toggleMark(tx, s, key, value))}
           onLink={(url) => run((tx, s) => toggleMark(tx, s, "link", url))}
           onType={(t) => run((tx, s) => setBlockType(tx, s, t))}
+          onComment={onComment ? () => {
+            const s = sel.current;
+            if (!doc || !s) return;
+            const a = doc.visibleIds(s.a.b);
+            const endB = doc.visibleIds(s.f.b);
+            const sameBlock = eqId(s.a.b, s.f.b);
+            const startChar = a[Math.min(s.a.o, a.length - 1)];
+            const endChar = endB[sameBlock ? Math.max(0, Math.min(s.f.o, endB.length) - 1) : endB.length - 1];
+            const text = doc
+              .richChars(s.a.b)
+              .slice(sameBlock ? Math.min(s.a.o, s.f.o) : s.a.o, sameBlock ? Math.max(s.a.o, s.f.o) : undefined)
+              .map((c) => c.ch)
+              .join("");
+            onComment({
+              block: idKey(s.a.b),
+              startChar: idKey(startChar),
+              endChar: idKey(endChar),
+              quote: text.slice(0, 200),
+            });
+          } : undefined}
         />
       )}
       {slash && slashPos && base && (
@@ -791,6 +823,9 @@ const BLOCK_CLASS: Record<string, string> = {
 };
 
 interface BlockProps {
+  anchors?: (number | null)[];
+  activeThread?: number | null;
+  onAnchorClick?: (cid: number) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -803,14 +838,16 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
-  const runs: { text: string; marks: Record<string, string> }[] = [];
-  for (const c of spans) {
+  const runs: { text: string; marks: Record<string, string>; anchor: number | null }[] = [];
+  for (let i = 0; i < spans.length; i++) {
+    const c = spans[i];
+    const anchor = anchors?.[i] ?? null;
     const last = runs[runs.length - 1];
-    if (last && sameMarks(last.marks, c.marks)) last.text += c.ch;
-    else runs.push({ text: c.ch, marks: c.marks });
+    if (last && sameMarks(last.marks, c.marks) && last.anchor === anchor) last.text += c.ch;
+    else runs.push({ text: c.ch, marks: c.marks, anchor });
   }
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
@@ -877,7 +914,24 @@ function Block({ id, type, props, number, spans, dropLine, onToggle, onDragStart
             </span>
           )}
           <div data-text className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", type === "todo" && checked && "text-subtle line-through")}>
-            {runs.length === 0 ? <br /> : runs.map((r, i) => <Run key={i} {...r} />)}
+            {runs.length === 0 ? (
+              <br />
+            ) : (
+              runs.map((r, i) =>
+                r.anchor != null ? (
+                  <span
+                    key={i}
+                    className={cn("cursor-pointer border-b-2 border-[#F5B1E5]", activeThread === r.anchor ? "bg-[#FBDC8D]" : "bg-[#FFF3D6]")}
+                    onClick={() => onAnchorClick?.(r.anchor!)}
+                    data-comment-anchor={r.anchor}
+                  >
+                    <Run text={r.text} marks={r.marks} />
+                  </span>
+                ) : (
+                  <Run key={i} text={r.text} marks={r.marks} />
+                ),
+              )
+            )}
           </div>
         </div>
       )}
@@ -889,6 +943,29 @@ function sameMarks(a: Record<string, string>, b: Record<string, string>) {
   const ka = Object.keys(a),
     kb = Object.keys(b);
   return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
+}
+
+/**
+ * Per-char comment coverage for one block: flags[i] is the top-level thread
+ * id covering char i (unresolved only; replies resolve with their parent).
+ */
+export function anchorFlags(doc: Doc, b: OpId, comments: Comment[]): (number | null)[] | undefined {
+  const mine = comments.filter((c) => !c.resolved && !c.parentId && c.block === idKey(b));
+  if (mine.length === 0) return undefined;
+  const ids = doc.visibleIds(b);
+  const flags: (number | null)[] = new Array(ids.length).fill(null);
+  const key = (x: OpId) => idKey(x);
+  for (const c of mine) {
+    let si = -1;
+    let ei = -1;
+    for (let i = 0; i < ids.length; i++) {
+      if (key(ids[i]) === c.startChar) si = i;
+      if (key(ids[i]) === c.endChar) ei = i;
+    }
+    if (si < 0 || ei < 0) continue; // anchor deleted; panel still shows the quote
+    for (let i = Math.min(si, ei); i <= Math.max(si, ei) && i < flags.length; i++) flags[i] = c.id;
+  }
+  return flags;
 }
 
 function Run({ text, marks }: { text: string; marks: Record<string, string> }) {

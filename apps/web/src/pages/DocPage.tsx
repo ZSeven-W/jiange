@@ -11,6 +11,8 @@ import { docTitle } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
+import { CommentsPanel, type CommentAnchor } from "./CommentsPanel";
+import { commentsApi } from "@/lib/api";
 import { viewToMarkdown } from "@/lib/markdown";
 import { importMarkdownOps } from "@/lib/mdImport";
 
@@ -28,6 +30,10 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const body = useRef<HTMLDivElement>(null);
   const [sharing, setSharing] = useState(false);
   const [history, setHistory] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [draft, setDraft] = useState<CommentAnchor | null>(null);
+  const [activeThread, setActiveThread] = useState<number | null>(null);
+  const comments = useQuery({ queryKey: ["comments", id], queryFn: () => commentsApi.list(id) });
   const exportMd = () => {
     const d = sync.client.doc;
     if (!d) return;
@@ -115,13 +121,44 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               )}
             </div>
             <div ref={body} className="mt-8 pl-1">
-              <Editor sync={sync} me={presence} readOnly={readOnly} docs={mentionDocs} upload={readOnly ? undefined : (f) => docsApi.upload(id, f)} />
+              <Editor
+                sync={sync}
+                me={presence}
+                readOnly={readOnly}
+                docs={mentionDocs}
+                upload={readOnly ? undefined : (f) => docsApi.upload(id, f)}
+                comments={comments.data ?? []}
+                activeThread={activeThread}
+                onActivateThread={(cid) => {
+                  setActiveThread(cid);
+                  if (cid !== null) setCommentsOpen(true);
+                }}
+                onComment={(anchor) => {
+                  setDraft(anchor);
+                  setCommentsOpen(true);
+                }}
+              />
             </div>
           </article>
         </div>
       </div>
       {sharing && meta.data && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} />}
       {history && <VersionPanel id={id} canEdit={!readOnly} onClose={() => setHistory(false)} />}
+      {commentsOpen && (
+        <CommentsPanel
+          id={id}
+          meId={me.user.id}
+          canEdit={!readOnly}
+          draft={draft}
+          activeThread={activeThread}
+          onActivate={setActiveThread}
+          onClose={() => {
+            setCommentsOpen(false);
+            setDraft(null);
+            setActiveThread(null);
+          }}
+        />
+      )}
     </div>
   );
 }

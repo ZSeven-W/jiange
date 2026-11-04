@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 const TYPES: [string, string][] = [["paragraph", "正文"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS: [string, string, string][] = [["bold", "B", "font-bold"], ["italic", "I", "italic font-serif"], ["underline", "U", "underline"], ["strike", "S", "line-through"], ["code", "</>", "font-mono text-[12px]"]];
 
-export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType }: {
+export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, onComment }: {
   x: number; y: number; marks: Record<string, string>; blockType: string;
   onMark: (key: string, value?: string) => void; onLink: (url: string) => void; onType: (t: string) => void;
+  onComment?: () => void;
 }) {
   const [menu, setMenu] = useState(false);
   const [link, setLink] = useState<string | null>(null);
@@ -49,6 +50,13 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType }
             🔗
           </button>
         </>
+      )}
+      {onComment && (
+        <button className="mx-0.5 grid h-7 w-7 place-items-center rounded hover:bg-hover" title="评论" onClick={onComment} data-comment-btn>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2.5 3h11v8h-6L4 14v-3H2.5z" />
+          </svg>
+        </button>
       )}
     </div>
   );

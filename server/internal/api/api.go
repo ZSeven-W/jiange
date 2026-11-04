@@ -31,6 +31,7 @@ type Server struct {
 	Hub           *syncsrv.Hub // nil disables /api/sync
 	BtHub         *btsync.Hub  // nil disables base realtime
 	Blobs         blob.Store   // nil disables attachments
+	WebUI         http.Handler // embedded frontend; nil serves nothing at /
 }
 
 func (s *Server) now() time.Time {
@@ -82,6 +83,13 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/query":                 s.queryBase,
 		"POST /api/bases/{id}/import":                s.importCSV,
 		"GET /api/bases/{id}/export":                 s.exportCSV,
+		"GET /api/docs/{id}/comments":                s.listComments,
+		"POST /api/docs/{id}/comments":               s.addComment,
+		"PATCH /api/docs/{id}/comments/{cid}":        s.patchComment,
+		"DELETE /api/docs/{id}/comments/{cid}":       s.deleteComment,
+		"GET /api/docs/{id}/members":                 s.docMembers,
+		"GET /api/notifications":                     s.listNotifications,
+		"POST /api/notifications/read":               s.markNotificationsRead,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
@@ -105,6 +113,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
+	if s.WebUI != nil {
+		mux.Handle("/", s.WebUI)
+	}
 	return httpx.Chain(mux,
 		httpx.WithRequestID,
 		httpx.Logger(s.Log),

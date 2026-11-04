@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, type DocMeta, type Me } from "@/lib/api";
+import { NotificationBell } from "@/pages/NotificationBell";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { Logo } from "./brand";
@@ -102,10 +103,13 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             </button>
           </div>
         )}
-        <label className="mt-2 flex h-8 items-center gap-2 rounded-md border bg-white px-2.5 text-[13px] text-subtle focus-within:border-primary">
-          <SearchIcon />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="w-full bg-transparent text-foreground outline-none placeholder:text-subtle" />
-        </label>
+        <div className="mt-2 flex items-center gap-1.5">
+          <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border bg-white px-2.5 text-[13px] text-subtle focus-within:border-primary">
+            <SearchIcon />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" />
+          </label>
+          <NotificationBell onOpenDoc={(id) => go(`#/doc/${id}`)} />
+        </div>
       </div>
       <nav className="mt-3 space-y-0.5 px-3">
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
