@@ -122,7 +122,7 @@ export interface ViewConfig {
 export interface View {
   id: number;
   baseId: number;
-  type: "grid" | "kanban" | "gallery" | "calendar" | "form";
+  type: "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt";
   name: string;
   config: ViewConfig;
   pos: number;
