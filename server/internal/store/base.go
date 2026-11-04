@@ -72,6 +72,8 @@ type BaseStore interface {
 	AddRecord(ctx context.Context, r Record) (Record, error)
 	// SetCells merges cells into a record (JSON null deletes a cell).
 	SetCells(ctx context.Context, baseID, recordID int64, cells map[string]json.RawMessage) (Record, error)
+	// MoveRecord repositions a record (kanban drag within a column).
+	MoveRecord(ctx context.Context, baseID, recordID int64, position float64) (Record, error)
 	DeleteRecord(ctx context.Context, baseID, recordID int64) error
 	// MapFieldCells rewrites every stored cell of fieldID through fn; fn
 	// returning nil deletes the cell. Used when a field changes type.

@@ -108,6 +108,10 @@ func (p *Postgres) SetCells(ctx context.Context, base, id int64, cells map[strin
 		WHERE id=$1 AND base_id=$2 RETURNING `+recordCols, id, base, cells))
 }
 
+func (p *Postgres) MoveRecord(ctx context.Context, base, id int64, position float64) (Record, error) {
+	return scanRecord(p.Pool.QueryRow(ctx, `UPDATE base_records SET position=$3 WHERE id=$1 AND base_id=$2 RETURNING `+recordCols, id, base, position))
+}
+
 func (p *Postgres) DeleteRecord(ctx context.Context, base, id int64) error {
 	t, err := p.Pool.Exec(ctx, `DELETE FROM base_records WHERE id=$1 AND base_id=$2`, id, base)
 	if err == nil && t.RowsAffected() == 0 {

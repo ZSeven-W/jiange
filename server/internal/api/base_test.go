@@ -232,6 +232,41 @@ func TestFieldTypesRegistry(t *testing.T) {
 	}
 }
 
+func TestMoveRecord(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "mv@x.com", "name": "MV", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+	var ids []int64
+	for range 4 {
+		var rec store.Record
+		json.NewDecoder(post(t, c, u+"/records", nil).Body).Decode(&rec)
+		ids = append(ids, rec.ID)
+	}
+	// move record 4 between 1 and 2
+	res := send(t, c, "PATCH", u+"/records/"+strconv.FormatInt(ids[3], 10), map[string]any{"move": true, "position": 1.5})
+	var moved store.Record
+	json.NewDecoder(res.Body).Decode(&moved)
+	if res.StatusCode != 200 || moved.Position != 1.5 {
+		t.Fatalf("move: %d %+v", res.StatusCode, moved)
+	}
+	var full struct{ Records []store.Record }
+	r, _ := c.Get(u)
+	json.NewDecoder(r.Body).Decode(&full)
+	got := []int64{}
+	for _, rec := range full.Records {
+		got = append(got, rec.ID)
+	}
+	// memory store positions equal ids: seed rows 3..5, ours 6..9, moved 9 → 1.5
+	want := []int64{ids[3], ids[0] - 3, ids[0] - 2, ids[0] - 1, ids[0], ids[1], ids[2]}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order after move: %v (want %v)", got, want)
+		}
+	}
+}
+
 func TestBaseRealtimeEvents(t *testing.T) {
 	st := store.NewMemory()
 	hub := &btsync.Hub{Store: st, PingInterval: time.Hour}
