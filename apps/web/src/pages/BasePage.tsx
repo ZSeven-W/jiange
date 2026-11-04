@@ -6,6 +6,7 @@ import { Kanban } from "./base/Kanban";
 import { Gallery } from "./base/Gallery";
 import { CalendarView } from "./base/CalendarView";
 import { Gantt } from "./base/Gantt";
+import { AutomationsPanel } from "./base/Automations";
 import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
@@ -37,6 +38,7 @@ export function BasePage({ id }: { id: number }) {
   useBaseSync(id);
   const [viewId, setViewId] = useState<number | null>(null);
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
+  const [autoOpen, setAutoOpen] = useState(false);
   const [cfg, setCfg] = useState<ViewConfig>(EMPTY_CONFIG);
   const [filter, setFilter] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["base", id] });
@@ -193,6 +195,11 @@ export function BasePage({ id }: { id: number }) {
             ))}
           </select>
         )}
+        {base.role === "manage" && (
+          <button className="text-muted-foreground hover:text-foreground" onClick={() => setAutoOpen(true)} data-open-automations>
+            自动化
+          </button>
+        )}
         {canEdit && current?.type === "grid" && (
           <label className="cursor-pointer text-muted-foreground hover:text-foreground" data-import-csv>
             导入 CSV
@@ -245,6 +252,9 @@ export function BasePage({ id }: { id: number }) {
       )}
       {current?.type === "gantt" && (
         <Gantt fields={visibleFields} records={source} members={members} startFieldId={cfg.group} onPickRange={() => {}} />
+      )}
+      {autoOpen && (
+        <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />
       )}
       {detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);

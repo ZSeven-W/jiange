@@ -193,6 +193,16 @@ func sortSQL(f FieldSpec, asc bool) string {
 // the field's own options list, quotes are doubled to stay inside the literal.
 func optEscape(o string) string { return strings.ReplaceAll(o, "'", "''") }
 
+// OpsValid reports whether an operator name exists.
+func OpsValid(op string) bool { return ops[op] }
+
+// MatchRules evaluates one rule set against cells with the given conjunction
+// (automation uses this without a full view Config).
+func MatchRules(fields []FieldSpec, rules []Rule, conj string, cells map[string]json.RawMessage) bool {
+	cfg := Config{Filters: &Filters{Conj: conj, Rules: rules}}
+	return Match(fields, cfg, cells)
+}
+
 // Match evaluates the filters against one record's cells in memory (the
 // Memory store twin of the compiled SQL path).
 func Match(fields []FieldSpec, cfg Config, cells map[string]json.RawMessage) bool {
