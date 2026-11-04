@@ -285,3 +285,47 @@ func (p *Postgres) Move(ctx context.Context, id int64, parent *int64) error {
 	_, err := p.Pool.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent)
 	return err
 }
+
+func (p *Postgres) SaveVersion(ctx context.Context, doc, seq int64, label string, userID int64) error {
+	t, err := p.Pool.Exec(ctx, `UPDATE doc_snapshots SET is_version = true, label = $3, created_by = $4 WHERE doc_id = $1 AND seq = $2`, doc, seq, label, userID)
+	if err != nil {
+		return err
+	}
+	if t.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) Versions(ctx context.Context, doc int64) ([]Version, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT s.seq, s.label, s.created_by, COALESCE(u.name, ''), s.created_at
+		FROM doc_snapshots s LEFT JOIN users u ON u.id = s.created_by
+		WHERE s.doc_id = $1 AND s.is_version ORDER BY s.seq DESC`, doc)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (v Version, err error) {
+		err = r.Scan(&v.Seq, &v.Label, &v.CreatedBy, &v.CreatedByName, &v.CreatedAt)
+		return
+	})
+}
+
+func (p *Postgres) VersionState(ctx context.Context, doc, seq int64) ([]byte, error) {
+	var state []byte
+	err := p.Pool.QueryRow(ctx, `SELECT state FROM doc_snapshots WHERE doc_id = $1 AND seq = $2 AND is_version`, doc, seq).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return state, err
+}
+
+func (p *Postgres) RecentDocIDs(ctx context.Context, since time.Time) ([]int64, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT DISTINCT doc_id FROM doc_ops WHERE created_at > $1`, since)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (int64, error) {
+		var id int64
+		return id, r.Scan(&id)
+	})
+}

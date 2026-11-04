@@ -28,9 +28,9 @@ type Server struct {
 	SecureCookies bool
 	Iterations    int // PBKDF2 iterations; tests lower this
 	Now           func() time.Time
-	Hub           *syncsrv.Hub  // nil disables /api/sync
-	BtHub         *btsync.Hub   // nil disables base realtime
-	Blobs         blob.Store    // nil disables attachments
+	Hub           *syncsrv.Hub // nil disables /api/sync
+	BtHub         *btsync.Hub  // nil disables base realtime
+	Blobs         blob.Store   // nil disables attachments
 }
 
 func (s *Server) now() time.Time {
@@ -57,25 +57,29 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
 	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
 	for pat, h := range map[string]http.HandlerFunc{
-		"GET /api/docs/{id}/shares":            s.getShares,
-		"PUT /api/docs/{id}/shares":            s.putShare,
-		"PUT /api/docs/{id}/link":              s.putLink,
-		"POST /api/share/{token}":              s.joinLink,
-		"GET /api/shared":                      s.sharedWithMe,
-		"POST /api/docs/{id}/files":            s.uploadFile,
-		"GET /api/files/{id}":                  s.getFile,
-		"POST /api/bases":                      s.createBase,
-		"GET /api/bases/{id}":                  s.getBase,
-		"POST /api/bases/{id}/fields":          s.addField,
-		"PATCH /api/bases/{id}/fields/{fid}":   s.patchField,
-		"DELETE /api/bases/{id}/fields/{fid}":  s.deleteField,
-		"POST /api/bases/{id}/records":         func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, true) },
-		"PATCH /api/bases/{id}/records/{rid}":  func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, false) },
-		"DELETE /api/bases/{id}/records/{rid}": s.deleteRecord,
-		"POST /api/bases/{id}/views":           s.addView,
-		"PATCH /api/bases/{id}/views/{vid}":    s.patchView,
-		"DELETE /api/bases/{id}/views/{vid}":   s.deleteView,
-		"POST /api/bases/{id}/query":           s.queryBase,
+		"GET /api/docs/{id}/shares":                  s.getShares,
+		"PUT /api/docs/{id}/shares":                  s.putShare,
+		"PUT /api/docs/{id}/link":                    s.putLink,
+		"POST /api/share/{token}":                    s.joinLink,
+		"GET /api/shared":                            s.sharedWithMe,
+		"POST /api/docs/{id}/files":                  s.uploadFile,
+		"GET /api/files/{id}":                        s.getFile,
+		"POST /api/bases":                            s.createBase,
+		"GET /api/docs/{id}/versions":                s.listVersions,
+		"POST /api/docs/{id}/versions":               s.postVersion,
+		"GET /api/docs/{id}/versions/{seq}":          s.getVersion,
+		"POST /api/docs/{id}/versions/{seq}/restore": s.restoreVersion,
+		"GET /api/bases/{id}":                        s.getBase,
+		"POST /api/bases/{id}/fields":                s.addField,
+		"PATCH /api/bases/{id}/fields/{fid}":         s.patchField,
+		"DELETE /api/bases/{id}/fields/{fid}":        s.deleteField,
+		"POST /api/bases/{id}/records":               func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, true) },
+		"PATCH /api/bases/{id}/records/{rid}":        func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, false) },
+		"DELETE /api/bases/{id}/records/{rid}":       s.deleteRecord,
+		"POST /api/bases/{id}/views":                 s.addView,
+		"PATCH /api/bases/{id}/views/{vid}":          s.patchView,
+		"DELETE /api/bases/{id}/views/{vid}":         s.deleteView,
+		"POST /api/bases/{id}/query":                 s.queryBase,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

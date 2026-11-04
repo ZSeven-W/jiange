@@ -10,6 +10,7 @@ import { Avatar } from "@/components/brand";
 import { docTitle } from "@/components/Sidebar";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
+import { VersionPanel } from "./VersionPanel";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -24,6 +25,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const presence = useMemo<Presence>(() => ({ name: me.user.name, color: colorFor(me.user.id - 1) }), [me.user]);
   const body = useRef<HTMLDivElement>(null);
   const [sharing, setSharing] = useState(false);
+  const [history, setHistory] = useState(false);
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
   const readOnly = meta.data?.role === "view";
@@ -58,6 +60,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           onShare={() => setSharing((v) => !v)}
+          onHistory={() => setHistory((v) => !v)}
           readOnly={readOnly}
           meta={meta.data}
           title={title}
@@ -96,6 +99,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         </div>
       </div>
       {sharing && meta.data && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} />}
+      {history && <VersionPanel id={id} canEdit={!readOnly} onClose={() => setHistory(false)} />}
     </div>
   );
 }
@@ -126,9 +130,11 @@ function TopBar({
   peers,
   me,
   onShare,
+  onHistory,
   readOnly,
 }: {
   onShare: () => void;
+  onHistory: () => void;
   readOnly: boolean;
   meta?: DocMeta;
   title: string;
@@ -159,6 +165,9 @@ function TopBar({
           ))}
           {peers.length > 5 && <span className="grid size-[26px] place-items-center rounded-full bg-hover text-[11px] ring-2 ring-white">+{peers.length - 5}</span>}
         </div>
+        <button className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onHistory} data-history>
+          历史版本
+        </button>
         {readOnly && <span className="rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground">只读</span>}
         <Button size="sm" className="h-8 px-4" onClick={onShare}>
           分享

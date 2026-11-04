@@ -16,6 +16,9 @@ type Config struct {
 	AllowedOrigins []string
 	// S3/MinIO attachment storage; empty endpoint disables uploads.
 	S3Endpoint, S3Bucket, S3AccessKey, S3SecretKey string
+	// AutoVersionEvery: docs edited within this window get an automatic
+	// version snapshot each sweep; 0 disables.
+	AutoVersionEvery time.Duration
 }
 
 func getenv(k, def string) string {
@@ -30,6 +33,10 @@ func Load() Config {
 	if err != nil {
 		ttl = 720 * time.Hour
 	}
+	auto, err := time.ParseDuration(getenv("JIANGE_AUTO_VERSION_EVERY", "30m"))
+	if err != nil {
+		auto = 30 * time.Minute
+	}
 	return Config{
 		Addr:          getenv("JIANGE_ADDR", ":8080"),
 		DatabaseURL:   getenv("DATABASE_URL", "postgres://jiange:jiange@localhost:5432/jiange?sslmode=disable"),
@@ -41,5 +48,6 @@ func Load() Config {
 		S3SecretKey:   os.Getenv("JIANGE_S3_SECRET_KEY"),
 		AllowedOrigins: strings.FieldsFunc(getenv("JIANGE_ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173"),
 			func(r rune) bool { return r == ',' || r == ' ' }),
+		AutoVersionEvery: auto,
 	}
 }
