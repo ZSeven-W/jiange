@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, type FilterRule, type ViewConfig } from "@/lib/api";
 import { Grid } from "./base/Grid";
+import { Kanban } from "./base/Kanban";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
 
@@ -112,7 +113,22 @@ export function BasePage({ id }: { id: number }) {
           </span>
         )}
         <div className="ml-3 flex flex-1 items-center gap-3 text-muted-foreground">
-          {canEdit && current && (
+          {canEdit && current && current.type === "kanban" && (
+            <select
+              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+              value={cfg.group ?? ""}
+              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+              data-group-field
+            >
+              <option value="">选择分组字段</option>
+              {fields.filter((f) => f.type === "select").map((f) => (
+                <option key={f.id} value={f.id}>
+                  按「{f.name}」分组
+                </option>
+              ))}
+            </select>
+          )}
+          {canEdit && current && current.type === "grid" && (
             <>
               <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />
               <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
@@ -129,7 +145,20 @@ export function BasePage({ id }: { id: number }) {
           </span>
         </div>
       </div>
-      <Grid baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} onMutate={refresh} />
+      {current?.type === "kanban" ? (
+        <Kanban
+          baseId={id}
+          canEdit={canEdit}
+          fields={visibleFields}
+          records={source}
+          members={members}
+          groupFieldId={cfg.group}
+          onMutate={refresh}
+          onPickGroup={() => {}}
+        />
+      ) : (
+        <Grid baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} onMutate={refresh} />
+      )}
     </div>
   );
 }

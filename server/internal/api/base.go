@@ -404,6 +404,8 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 	var in struct {
 		Cells    map[string]json.RawMessage `json:"cells"`
 		Position float64                    `json:"position"`
+		// Move: when true, Position repositions the record (kanban drag).
+		Move bool `json:"move"`
 	}
 	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
 		return
@@ -426,6 +428,8 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 			}
 		}
 		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position, CreatorID: &u.ID})
+	} else if in.Move {
+		rec, err = s.Store.MoveRecord(r.Context(), b.ID, pathID(r, "rid"), in.Position)
 	} else {
 		rec, err = s.Store.SetCells(r.Context(), b.ID, pathID(r, "rid"), in.Cells)
 	}

@@ -142,6 +142,18 @@ func (m *Memory) SetCells(_ context.Context, base, id int64, cells map[string]js
 	return Record{}, ErrNotFound
 }
 
+func (m *Memory) MoveRecord(_ context.Context, base, id int64, position float64) (Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, r := range m.b.records {
+		if r.ID == id && r.BaseID == base {
+			m.b.records[i].Position = position
+			return m.b.records[i], nil
+		}
+	}
+	return Record{}, ErrNotFound
+}
+
 func (m *Memory) DeleteRecord(_ context.Context, base, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
