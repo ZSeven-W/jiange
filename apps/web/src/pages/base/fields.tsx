@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Field, FieldType } from "@/lib/api";
-import { FIELD_TYPES, REGISTRY } from "./registry";
+import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
+import { cn } from "@/lib/utils";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -15,8 +16,17 @@ export function FieldForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
   const [opts, setOpts] = useState((initial?.options ?? []).join(", "));
+  const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
   const def = REGISTRY[type];
   const typeChanged = initial !== undefined && initial.type !== type;
+  const names = opts.split(/[,，\n]+/).map((x) => x.trim()).filter(Boolean);
+  const setColor = (i: number, c: number) =>
+    setColors((prev) => {
+      const next = [...prev];
+      while (next.length <= i) next.push(-1);
+      next[i] = c;
+      return next;
+    });
   return (
     <form
       className="absolute right-0 top-10 z-20 w-64 space-y-2 rounded-lg border bg-white p-3 text-left text-[13px] font-normal text-foreground shadow-lg"
@@ -26,7 +36,8 @@ export function FieldForm({
         onSubmit({
           name: name.trim() || initial?.name || "新字段",
           type,
-          options: def.hasOptions ? opts.split(/[,，\s]+/).filter(Boolean) : undefined,
+          options: def.hasOptions ? names : undefined,
+          optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined,
         });
         onCancel();
       }}
@@ -40,7 +51,27 @@ export function FieldForm({
         ))}
       </select>
       {def.hasOptions && (
-        <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
+        <div className="space-y-1.5" data-option-editor>
+          {names.map((n, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <span className="w-16 truncate rounded px-1.5 py-0.5 text-[12px] font-medium" style={{ background: PALETTE[(colors[i] ?? -1) >= 0 ? colors[i] : i]?.[0], color: PALETTE[(colors[i] ?? -1) >= 0 ? colors[i] : i]?.[1] }}>
+                {n}
+              </span>
+              <div className="flex flex-wrap gap-0.5">
+                {PALETTE.map(([bg, fg], ci) => (
+                  <button
+                    key={ci}
+                    title={`颜色 ${ci + 1}`}
+                    className={cn("h-4 w-4 rounded-full border", (colors[i] ?? -1) === ci ? "ring-1 ring-primary ring-offset-1" : "")}
+                    style={{ background: bg }}
+                    onClick={() => setColor(i, (colors[i] ?? -1) === ci ? -1 : ci)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+          <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="新增选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
+        </div>
       )}
       {typeChanged && <p className="text-[12px] leading-4 text-amber-600">切换类型会自动转换兼容的值，不兼容的值将被清空。</p>}
       <div className="flex justify-end gap-2">

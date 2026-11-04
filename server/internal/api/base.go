@@ -100,10 +100,11 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 }
 
 type fieldInput struct {
-	Name     *string   `json:"name"`
-	Type     *string   `json:"type"`
-	Options  *[]string `json:"options"`
-	Position *float64  `json:"position"`
+	Name         *string   `json:"name"`
+	Type         *string   `json:"type"`
+	Options      *[]string `json:"options"`
+	OptionColors *[]int    `json:"optionColors"`
+	Position     *float64  `json:"position"`
 }
 
 func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
@@ -124,6 +125,15 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	}
 	if in.Options != nil {
 		f.Options = *in.Options
+	}
+	if in.OptionColors != nil {
+		for _, c := range *in.OptionColors {
+			if c < -1 || c > 9 {
+				httpx.Error(w, http.StatusBadRequest, "invalid_color", "color index must be -1..9")
+				return false
+			}
+		}
+		f.OptionColors = *in.OptionColors
 	}
 	if in.Position != nil {
 		f.Position = *in.Position

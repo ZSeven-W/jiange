@@ -74,6 +74,8 @@ export interface Field {
   name: string;
   type: FieldType;
   options?: string[];
+  /** preset palette index per option (-1/absent = auto) */
+  optionColors?: number[];
   position: number;
 }
 export interface AttachmentRef {
