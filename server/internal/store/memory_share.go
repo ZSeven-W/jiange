@@ -104,6 +104,7 @@ func (m *Memory) SharedWithMe(_ context.Context, uid int64) ([]DocMeta, error) {
 		if _, ok := us[uid]; ok && d != nil && !d.deleted && !m.member(uid, d.meta.WorkspaceID) {
 			meta := d.meta
 			meta.Role = m.roleLocked(uid, d)
+			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
 		}
 	}

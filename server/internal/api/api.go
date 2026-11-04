@@ -90,6 +90,11 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/docs/{id}/members":                 s.docMembers,
 		"GET /api/notifications":                     s.listNotifications,
 		"POST /api/notifications/read":               s.markNotificationsRead,
+		"GET /api/search":                            s.searchDocs,
+		"GET /api/favorites":                         s.listFavorites,
+		"PUT /api/docs/{id}/star":                    s.putFavorite,
+		"DELETE /api/docs/{id}/star":                 s.putFavorite,
+		"GET /api/docs/{id}/ancestors":               s.getAncestors,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

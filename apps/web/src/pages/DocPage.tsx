@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor } from "./CommentsPanel";
-import { commentsApi } from "@/lib/api";
+import { commentsApi, extrasApi } from "@/lib/api";
 import { viewToMarkdown } from "@/lib/markdown";
 import { importMarkdownOps } from "@/lib/mdImport";
 
@@ -34,6 +34,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const comments = useQuery({ queryKey: ["comments", id], queryFn: () => commentsApi.list(id) });
+  const ancestors = useQuery({ queryKey: ["ancestors", id], queryFn: () => extrasApi.ancestors(id) });
   const exportMd = () => {
     const d = sync.client.doc;
     if (!d) return;
@@ -85,6 +86,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     <div className="flex min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
+          ancestors={ancestors.data ?? []}
           onShare={() => setSharing((v) => !v)}
           onHistory={() => setHistory((v) => !v)}
           onExport={exportMd}
@@ -92,7 +94,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           readOnly={readOnly}
           meta={meta.data}
           title={title}
-          workspace={me.workspaces[0]?.name ?? ""}
+          workspace={meta.data?.workspaceName || me.workspaces[0]?.name || "我的空间"}
           status={sync.status}
           peers={sync.peers}
           me={presence}
@@ -182,6 +184,7 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
 };
 
 function TopBar({
+  ancestors,
   meta,
   title,
   workspace,
@@ -194,6 +197,7 @@ function TopBar({
   onImport,
   readOnly,
 }: {
+  ancestors: import("@/lib/api").DocMeta[];
   onShare: () => void;
   onHistory: () => void;
   onExport: () => void;
@@ -213,6 +217,14 @@ function TopBar({
         <a href="#/" className="truncate text-muted-foreground hover:text-foreground">
           {workspace}
         </a>
+        {ancestors.map((a) => (
+          <span key={a.id} className="flex min-w-0 items-center gap-1.5">
+            <span className="text-subtle">/</span>
+            <a href={a.kind === "base" ? `#/base/${a.id}` : `#/doc/${a.id}`} className="truncate text-muted-foreground hover:text-foreground">
+              {docTitle(a)}
+            </a>
+          </span>
+        ))}
         <span className="text-subtle">/</span>
         <span className="truncate font-medium">{meta ? docTitle({ title }) : "…"}</span>
       </nav>

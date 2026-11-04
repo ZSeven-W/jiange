@@ -24,10 +24,11 @@ type Memory struct {
 	b             memBase
 	comments      []Comment
 	notifications []Notification
+	favorites     map[int64][]int64
 }
 
 func NewMemory() *Memory {
-	return &Memory{members: map[int64][]int64{}, sessions: map[string]session{}}
+	return &Memory{members: map[int64][]int64{}, sessions: map[string]session{}, favorites: map[int64][]int64{}}
 }
 
 func (m *Memory) CreateUser(_ context.Context, email, name, hash string) (User, Workspace, error) {

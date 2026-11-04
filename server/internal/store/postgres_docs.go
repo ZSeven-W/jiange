@@ -83,9 +83,9 @@ func prefixed(p, cols string) string {
 
 func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	var d DocMeta
-	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+` FROM nodes n`+roleJoins+`
+	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id) FROM nodes n`+roleJoins+`
 		WHERE n.id = $2 AND n.deleted_at IS NULL`, uid, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role)
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role, &d.WorkspaceName)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
 		return DocMeta{}, ErrNotFound
 	}
