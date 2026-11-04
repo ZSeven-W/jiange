@@ -127,6 +127,8 @@ export const baseApi = {
   deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
   query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }) =>
     request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q),
+  importCSV: (id: number, csv: string, header = true, types?: string[]) =>
+    request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
 };
 export interface Version {
   seq: number;

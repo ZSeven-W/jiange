@@ -187,3 +187,27 @@ func (p *Postgres) BtHead(ctx context.Context, base int64) (int64, error) {
 	err := p.Pool.QueryRow(ctx, `SELECT COALESCE(max(id), 0) FROM bt_events WHERE base_id=$1`, base).Scan(&seq)
 	return seq, err
 }
+
+// AddRecordsBulk inserts many records in one batched round trip.
+func (p *Postgres) AddRecordsBulk(ctx context.Context, base int64, records []Record) error {
+	if len(records) == 0 {
+		return nil
+	}
+	b := &pgx.Batch{}
+	var pos float64
+	if err := p.Pool.QueryRow(ctx, `SELECT COALESCE(max(position), 0) FROM base_records WHERE base_id=$1`, base).Scan(&pos); err != nil {
+		return err
+	}
+	for _, r := range records {
+		pos++
+		if r.Cells == nil {
+			r.Cells = map[string]json.RawMessage{}
+		}
+		var creator any
+		if r.CreatorID != nil {
+			creator = *r.CreatorID
+		}
+		b.Queue(`INSERT INTO base_records (base_id, cells, position, creator_id) VALUES ($1, $2, $3, $4)`, base, r.Cells, pos, creator)
+	}
+	return p.Pool.SendBatch(ctx, b).Close()
+}
