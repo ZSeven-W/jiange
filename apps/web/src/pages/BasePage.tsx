@@ -10,6 +10,7 @@ import { AutomationsPanel } from "./base/Automations";
 import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
+import { ask } from "@/components/ui/ask";
 
 export { view } from "./base/view";
 
@@ -102,9 +103,9 @@ export function BasePage({ id }: { id: number }) {
               <span
                 className="hidden rounded p-0.5 text-[11px] text-subtle hover:text-destructive group-hover/view:inline"
                 title="删除视图"
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  if (confirm(`删除视图「${v.name}」？`)) {
+                  if (await ask(`删除视图「${v.name}」？`, "删除后不可恢复。")) {
                     baseApi.deleteView(id, v.id).then(refresh);
                     setViewId(null);
                   }

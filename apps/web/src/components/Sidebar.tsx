@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
+import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
@@ -80,8 +81,8 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
                 qc.invalidateQueries({ queryKey: ["favorites"] });
               });
             }}
-            onRename={() => {
-              const t = prompt("重命名", docTitle(d));
+            onRename={async () => {
+              const t = await askText("重命名", "文档名称", docTitle(d));
               if (t && t.trim()) docsApi.rename(d.id, t.trim()).then(() => {
                 qc.invalidateQueries({ queryKey: ["docs"] });
                 qc.invalidateQueries({ queryKey: ["search", kw] });
@@ -90,8 +91,8 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             onCopyLink={() => {
               navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hrefOf(d)}`).catch(() => {});
             }}
-            onDelete={() => {
-              if (confirm(`删除「${docTitle(d)}」？可在回收站还原。`)) docsApi.trash(d.id).then(() => qc.invalidateQueries({ queryKey: ["docs"] }));
+            onDelete={async () => {
+              if (await ask(`删除「${docTitle(d)}」？`, "可在回收站还原。")) docsApi.trash(d.id).then(() => qc.invalidateQueries({ queryKey: ["docs"] }));
             }}
           />
           {has && isOpen && renderTree(d.id, depth + 1)}

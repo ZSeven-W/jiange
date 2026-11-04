@@ -44,7 +44,18 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
                 <span className="ml-auto shrink-0 text-xs text-subtle">{new Date(d.updatedAt).toLocaleString("zh-CN", { hour12: false })}</span>
               </button>
             ))}
-            {favorites ? (favs.data?.length ?? 0) === 0 && <p className="px-4 py-10 text-center text-[13px] text-subtle">还没有收藏，悬停文档树点击 ☆</p> : docs.data?.length === 0 && <p className="px-4 py-10 text-center text-[13px] text-subtle">还没有文档，点击「新建文档」开始</p>}
+            {favorites
+              ? (favs.data?.length ?? 0) === 0 && <p className="px-4 py-10 text-center text-[13px] text-subtle">还没有收藏，悬停文档树点击 ☆</p>
+              : docs.data?.length === 0 && (
+                  <div className="grid place-items-center border-b px-4 py-14 text-center" data-empty-guide>
+                    <div className="grid size-14 place-items-center rounded-2xl bg-accent text-[24px]">📄</div>
+                    <p className="mt-3 text-[14px] font-medium text-foreground">从这里开始你的第一篇文档</p>
+                    <p className="mt-1 max-w-[320px] text-[13px] leading-5 text-subtle">
+                      输入 <kbd className="rounded border bg-hover px-1">/</kbd> 唤起菜单快速插入标题、列表、表格；输入
+                      <kbd className="mx-0.5 rounded border bg-hover px-1">@</kbd> 提及文档，选中文字即可评论。
+                    </p>
+                  </div>
+                )}
           </div>
         </div>
       </div>
