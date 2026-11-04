@@ -63,6 +63,8 @@ interface Props {
   onComment?: (anchor: { block: string; startChar: string; endChar: string; quote: string }) => void;
   /** user clicked an anchored range */
   onActivateThread?: (id: number | null) => void;
+  /** 防复制下载：禁用复制/剪切 */
+  onCopyBlock?: boolean;
 }
 
 /**
@@ -71,7 +73,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -720,8 +722,8 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
         data-editor
         className="outline-none"
         onKeyDown={onKeyDown}
-        onCopy={(e) => onCopy(e)}
-        onCut={(e) => onCopy(e, true)}
+        onCopy={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e))}
+        onCut={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e, true))}
         onPaste={onPaste}
         onFocus={() => {
           if (!sel.current && doc && blocks.length)

@@ -18,6 +18,8 @@ type docInput struct {
 	Title       *string `json:"title"`
 	// Move: when true, ParentID (null = root) re-parents the doc.
 	Move bool `json:"move"`
+	// CopyProtected: watermark + copy/download restrictions (manage only).
+	CopyProtected *bool `json:"copyProtected"`
 }
 
 func cleanTitle(w http.ResponseWriter, t string) (string, bool) {
@@ -123,6 +125,17 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
+	}
+	if in.CopyProtected != nil {
+		if d.Role != store.RoleManage {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
+			return
+		}
+		if err := s.Store.SetCopyProtected(r.Context(), d.ID, *in.CopyProtected); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		d.CopyProtected = *in.CopyProtected
 	}
 	if in.Move {
 		if d.Role != store.RoleManage {
