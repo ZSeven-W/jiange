@@ -5,6 +5,7 @@ import { Grid } from "./base/Grid";
 import { Kanban } from "./base/Kanban";
 import { Gallery } from "./base/Gallery";
 import { CalendarView } from "./base/CalendarView";
+import { Gantt } from "./base/Gantt";
 import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
@@ -94,7 +95,7 @@ export function BasePage({ id }: { id: number }) {
             onClick={() => setViewId(v.id)}
             data-view-tab={v.type}
           >
-            {v.type === "kanban" ? "▤" : v.type === "gallery" ? "🖼" : v.type === "calendar" ? "📅" : v.type === "form" ? "📝" : "▦"} {v.name}
+            {v.type === "kanban" ? "▤" : v.type === "gallery" ? "🖼" : v.type === "calendar" ? "📅" : v.type === "form" ? "📝" : v.type === "gantt" ? "📊" : "▦"} {v.name}
             {views.length > 1 && canEdit && (
               <span
                 className="hidden rounded p-0.5 text-[11px] text-subtle hover:text-destructive group-hover/view:inline"
@@ -241,6 +242,9 @@ export function BasePage({ id }: { id: number }) {
           dateFieldId={cfg.group}
           onMutate={refresh}
         />
+      )}
+      {current?.type === "gantt" && (
+        <Gantt fields={visibleFields} records={source} members={members} startFieldId={cfg.group} onPickRange={() => {}} />
       )}
       {detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);

@@ -17,7 +17,7 @@ type viewInput struct {
 	Pos    *float64         `json:"pos"`
 }
 
-var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true}
+var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true, "gantt": true}
 
 func (in viewInput) apply(w http.ResponseWriter, v *store.View) bool {
 	if in.Name != nil {
