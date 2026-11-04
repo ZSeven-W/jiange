@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/comments":               s.addComment,
 		"PATCH /api/docs/{id}/comments/{cid}":        s.patchComment,
 		"DELETE /api/docs/{id}/comments/{cid}":       s.deleteComment,
+		"POST /api/docs/{id}/duplicate":              s.duplicateDoc,
 		"GET /api/docs/{id}/members":                 s.docMembers,
 		"GET /api/notifications":                     s.listNotifications,
 		"POST /api/notifications/read":               s.markNotificationsRead,
