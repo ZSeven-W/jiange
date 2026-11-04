@@ -3,6 +3,7 @@ import { baseApi, type BaseRecord, type Cell, type Field } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView, TYPE_ICON, W } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
+import { planPaste, rangeText } from "./tsv";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -11,6 +12,19 @@ function loadWidths(baseId: number): Record<number, number> {
   } catch {
     return {};
   }
+}
+
+/** Selection: anchor cell + cursor cell (indices into the rendered grid). */
+interface Sel {
+  ar: number;
+  af: number;
+  rr: number;
+  rf: number;
+}
+interface Edit {
+  ri: number;
+  fi: number;
+  seed?: string;
 }
 
 export function Grid({
@@ -26,11 +40,12 @@ export function Grid({
   records: BaseRecord[];
   onMutate: () => void;
 }) {
-  const [edit, setEdit] = useState<{ r: number; f: number } | null>(null);
+  const [edit, setEdit] = useState<Edit | null>(null);
   const [newField, setNewField] = useState(false);
   const [editField, setEditField] = useState<Field | null>(null);
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
   const [drag, setDrag] = useState<{ fid: number; at: number | null }>({ fid: 0, at: null });
+  const [sel, setSel] = useState<Sel | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   const width = (f: Field) => widths[f.id] ?? W[f.type];
@@ -42,12 +57,159 @@ export function Grid({
     });
   };
 
-  const setCell = async (rec: BaseRecord, f: Field, v: Cell | null) => {
+  const rows = records.length;
+  const cols = fields.length;
+  const inRange = (r: number, f: number) =>
+    !!sel && r >= Math.min(sel.ar, sel.rr) && r <= Math.max(sel.ar, sel.rr) && f >= Math.min(sel.af, sel.rf) && f <= Math.max(sel.af, sel.rf);
+  const isCursor = (r: number, f: number) => !!sel && sel.rr === r && sel.rf === f;
+
+  const scrollCellIntoView = (r: number, f: number) => {
+    const rec = records[r];
+    const fld = fields[f];
+    if (!rec || !fld) return;
+    gridRef.current?.querySelector(`[data-cell="${rec.id}:${fld.id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
+  const move = (dr: number, df: number, extend = false) => {
+    setSel((s) => {
+      const base = s ?? { ar: 0, af: 0, rr: 0, rf: 0 };
+      const rr = Math.min(rows - 1, Math.max(0, base.rr + dr));
+      const rf = Math.min(cols - 1, Math.max(0, base.rf + df));
+      return extend ? { ...base, rr, rf } : { ar: rr, af: rf, rr, rf };
+    });
     setEdit(null);
+    scrollCellIntoView(Math.min(rows - 1, Math.max(0, (sel?.rr ?? 0) + dr)), Math.min(cols - 1, Math.max(0, (sel?.rf ?? 0) + df)));
+  };
+
+  const setCell = async (rec: BaseRecord, f: Field, v: Cell | null, dir?: "down" | "right") => {
+    setEdit(null);
+    if (dir === "down") move(1, 0);
+    if (dir === "right") move(0, 1);
     const cur = rec.cells[f.id];
     if (cur === v || (cur === undefined && (v === null || v === ""))) return;
     await baseApi.setCells(baseId, rec.id, { [f.id]: v === "" ? null : v }).catch(() => {});
     onMutate();
+  };
+
+  const startEdit = (ri: number, fi: number, seed?: string) => {
+    if (!canEdit) return;
+    const f = fields[fi];
+    if (!f || f.type === "checkbox") return;
+    setSel({ ar: ri, af: fi, rr: ri, rf: fi });
+    setEdit({ ri, fi, seed });
+  };
+
+  const clearRange = async () => {
+    if (!canEdit || !sel) return;
+    const r0 = Math.min(sel.ar, sel.rr);
+    const r1 = Math.max(sel.ar, sel.rr);
+    const f0 = Math.min(sel.af, sel.rf);
+    const f1 = Math.max(sel.af, sel.rf);
+    await Promise.all(
+      records.slice(r0, r1 + 1).map((rec) => {
+        const cells: Record<string, Cell | null> = {};
+        for (let f = f0; f <= f1; f++) cells[fields[f].id] = null;
+        return baseApi.setCells(baseId, rec.id, cells).catch(() => {});
+      }),
+    );
+    onMutate();
+  };
+
+  const copy = async () => {
+    if (!sel) return;
+    const text = rangeText(records, fields, sel.ar, sel.rr, sel.af, sel.rf);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* headless or denied: selection still works, paste via the event below */
+    }
+  };
+
+  const paste = async (text: string) => {
+    if (!canEdit || !sel) return;
+    const plan = planPaste(records, fields, Math.min(sel.ar, sel.rr), Math.min(sel.af, sel.rf), text);
+    for (const row of plan.addRows) {
+      const cells: Record<string, Cell> = {};
+      for (const [k, v] of Object.entries(row.cells)) if (v !== null) cells[k] = v;
+      await baseApi.addRecord(baseId, cells).catch(() => {});
+    }
+    await Promise.all(plan.patches.map((p) => baseApi.setCells(baseId, p.rid, p.cells).catch(() => {})));
+    onMutate();
+  };
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (edit) return; // the cell editor handles its own keys
+    if (!sel && !["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Tab", "Enter"].includes(e.key)) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "c") {
+      e.preventDefault();
+      void copy();
+      return;
+    }
+    switch (e.key) {
+      case "ArrowUp":
+        e.preventDefault();
+        return move(-1, 0, e.shiftKey);
+      case "ArrowDown":
+        e.preventDefault();
+        return move(1, 0, e.shiftKey);
+      case "ArrowLeft":
+        e.preventDefault();
+        return move(0, -1, e.shiftKey);
+      case "ArrowRight":
+        e.preventDefault();
+        return move(0, 1, e.shiftKey);
+      case "Home":
+        e.preventDefault();
+        return setSel((s) => (s ? { ...s, rf: 0, af: e.shiftKey ? s.af : 0 } : s));
+      case "End":
+        e.preventDefault();
+        return setSel((s) => (s ? { ...s, rf: cols - 1, af: e.shiftKey ? s.af : cols - 1 } : s));
+      case "Tab":
+        e.preventDefault();
+        return e.shiftKey ? tab(-1) : tab(1);
+      case "Enter":
+        e.preventDefault();
+        if (!sel) return setSel({ ar: 0, af: 0, rr: 0, rf: 0 });
+        return fields[sel.rf]?.type === "checkbox" ? toggleAt(sel.rr, sel.rf) : startEdit(sel.rr, sel.rf);
+      case "F2":
+        e.preventDefault();
+        if (sel) startEdit(sel.rr, sel.rf);
+        return;
+      case " ":
+        e.preventDefault();
+        if (sel && fields[sel.rf]?.type === "checkbox") toggleAt(sel.rr, sel.rf);
+        return;
+      case "Delete":
+      case "Backspace":
+        e.preventDefault();
+        return void clearRange();
+      case "Escape":
+        return setSel((s) => (s ? { ar: s.rr, af: s.rf, rr: s.rr, rf: s.rf } : s));
+    }
+    if (!mod && !e.altKey && canEdit && e.key.length === 1 && sel) {
+      e.preventDefault();
+      startEdit(sel.rr, sel.rf, e.key);
+    }
+  };
+
+  const tab = (dir: 1 | -1) => {
+    move(0, dir);
+    setSel((s) => {
+      if (!s) return s;
+      const rr = s.rr;
+      const rf = s.rf;
+      if (rf === cols - 1 && dir === 1 && rr < rows - 1) return { ar: rr + 1, af: 0, rr: rr + 1, rf: 0 };
+      if (rf === 0 && dir === -1 && rr > 0) return { ar: rr - 1, af: cols - 1, rr: rr - 1, rf: cols - 1 };
+      return s;
+    });
+  };
+
+  const toggleAt = (ri: number, fi: number) => {
+    const rec = records[ri];
+    const f = fields[fi];
+    if (!rec || !f || !canEdit) return;
+    void setCell(rec, f, rec.cells[f.id] === true ? null : true);
   };
 
   // Reorder: drop at `index` (position in the fields array without the dragged one).
@@ -65,12 +227,12 @@ export function Grid({
     e.stopPropagation();
     const startX = e.clientX;
     const startW = width(f);
-    const move = (ev: MouseEvent) => saveWidth(f.id, Math.min(600, Math.max(80, Math.round(startW + ev.clientX - startX))));
+    const move2 = (ev: MouseEvent) => saveWidth(f.id, Math.min(600, Math.max(80, Math.round(startW + ev.clientX - startX))));
     const up = () => {
-      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mousemove", move2);
       window.removeEventListener("mouseup", up);
     };
-    window.addEventListener("mousemove", move);
+    window.addEventListener("mousemove", move2);
     window.addEventListener("mouseup", up);
   };
 
@@ -82,7 +244,21 @@ export function Grid({
   };
 
   return (
-    <div ref={gridRef} className="min-h-0 flex-1 overflow-auto" data-grid-scroll>
+    <div
+      ref={gridRef}
+      className="min-h-0 flex-1 overflow-auto outline-none"
+      data-grid-scroll
+      tabIndex={0}
+      onKeyDown={onKey}
+      onPaste={(e) => {
+        if (edit) return;
+        const text = e.clipboardData.getData("text/plain");
+        if (text) {
+          e.preventDefault();
+          void paste(text);
+        }
+      }}
+    >
       <table className="border-collapse table-fixed text-[14px]" data-grid>
         <thead>
           <tr className="h-9 bg-sidebar text-left text-[13px] text-muted-foreground">
@@ -109,11 +285,7 @@ export function Grid({
                 onDragEnd={() => setDrag({ fid: 0, at: null })}
               >
                 {editField?.id === f.id ? (
-                  <FieldForm
-                    initial={f}
-                    onCancel={() => setEditField(null)}
-                    onSubmit={(patch) => baseApi.patchField(baseId, f.id, patch).then(onMutate)}
-                  />
+                  <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => baseApi.patchField(baseId, f.id, patch).then(onMutate)} />
                 ) : (
                   <div className="flex items-center gap-1">
                     <span className="mr-0.5 cursor-grab text-subtle" title="拖拽排序" data-drag-handle>
@@ -150,32 +322,38 @@ export function Grid({
         </thead>
         <tbody>
           {records.map((rec, i) => (
-            <tr key={rec.id} className="group h-9 hover:bg-[#F7F9FF]">
-              <td className="sticky left-0 z-10 w-14 border bg-inherit px-2.5 text-[12px] text-subtle">
+            <tr key={rec.id} className="group h-9">
+              <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
                 {canEdit && (
-                  <button
-                    className="hidden text-subtle hover:text-destructive group-hover:inline"
-                    title="删除记录"
-                    onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}
-                  >
+                  <button className="hidden text-subtle hover:text-destructive group-hover:inline" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
                     ✕
                   </button>
                 )}
               </td>
-              {fields.map((f) => {
-                const editing = edit?.r === rec.id && edit.f === f.id;
+              {fields.map((f, j) => {
+                const editing = edit?.ri === i && edit.fi === j;
                 return (
                   <td
                     key={f.id}
-                    className={cn("border px-2.5", editing && "outline outline-2 -outline-offset-2 outline-primary", f.type === "number" && "text-right tabular-nums")}
-                    onClick={() => canEdit && f.type !== "checkbox" && setEdit({ r: rec.id, f: f.id })}
+                    className={cn(
+                      "border px-2.5",
+                      f.type === "number" && "text-right tabular-nums",
+                      editing && "outline outline-2 -outline-offset-2 outline-primary",
+                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-[#DCE7FF]" : "bg-[#EDF2FF]"),
+                    )}
+                    onClick={(e) => {
+                      setEdit(null);
+                      setSel(e.shiftKey && sel ? { ...sel, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
+                      gridRef.current?.focus();
+                    }}
+                    onDoubleClick={() => startEdit(i, j)}
                     data-cell={`${rec.id}:${f.id}`}
                   >
                     {editing ? (
-                      <CellEditor field={f} value={rec.cells[f.id]} onCommit={(v) => setCell(rec, f, v)} onCancel={() => setEdit(null)} />
+                      <CellEditor field={f} value={rec.cells[f.id]} seed={edit?.seed} onCommit={(v, dir) => setCell(rec, f, v, dir)} onCancel={() => setEdit(null)} />
                     ) : (
-                      <CellView field={f} value={rec.cells[f.id]} onToggle={canEdit ? (v) => setCell(rec, f, v) : undefined} />
+                      <CellView field={f} value={rec.cells[f.id]} onToggle={canEdit ? () => toggleAt(i, j) : undefined} />
                     )}
                   </td>
                 );
