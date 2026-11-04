@@ -189,6 +189,23 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
       return String(a).localeCompare(String(b));
     },
   },
+  link: {
+    icon: "⇄",
+    label: "关联",
+    width: 200,
+    parse: () => undefined, // 由 bt_links 存储，编辑走 link 选择器
+    format: (v) => (Array.isArray(v) ? String(v.length) : ""),
+    compare: (a, b) => (Array.isArray(a) ? a.length : 0) - (Array.isArray(b) ? b.length : 0),
+  },
+  lookup: {
+    icon: "🔍",
+    label: "查找引用",
+    width: 180,
+    readonly: true,
+    parse: () => undefined,
+    format: (v) => (Array.isArray(v) ? v.map((x) => String(x)).join(",") : String(v ?? "")),
+    compare: (a, b) => String(a).localeCompare(String(b)),
+  },
 };
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];

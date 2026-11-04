@@ -25,10 +25,11 @@ type Memory struct {
 	comments      []Comment
 	notifications []Notification
 	favorites     map[int64][]int64
+	links         map[[2]int64][]int64 // (fieldID, fromRecord) -> toRecords
 }
 
 func NewMemory() *Memory {
-	return &Memory{members: map[int64][]int64{}, sessions: map[string]session{}, favorites: map[int64][]int64{}}
+	return &Memory{members: map[int64][]int64{}, sessions: map[string]session{}, favorites: map[int64][]int64{}, links: map[[2]int64][]int64{}}
 }
 
 func (m *Memory) CreateUser(_ context.Context, email, name, hash string) (User, Workspace, error) {

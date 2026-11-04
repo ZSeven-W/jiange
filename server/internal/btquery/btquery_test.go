@@ -14,7 +14,7 @@ var fields = []FieldSpec{
 }
 
 func cell(s string) json.RawMessage { return json.RawMessage(`"` + s + `"`) }
-func num(s string) json.RawMessage { return json.RawMessage(s) }
+func num(s string) json.RawMessage  { return json.RawMessage(s) }
 
 func TestCompileBindsValuesAndRejectsUnknownFields(t *testing.T) {
 	cfg := Config{Filters: &Filters{Conj: "and", Rules: []Rule{

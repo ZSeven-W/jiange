@@ -74,7 +74,9 @@ export type FieldType =
   | "phone"
   | "email"
   | "rating"
-  | "formula";
+  | "formula"
+  | "link"
+  | "lookup";
 export interface Field {
   id: number;
   name: string;
@@ -125,12 +127,15 @@ export interface View {
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
   get: (id: number) =>
-    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[] }>("GET", `/api/bases/${id}`),
+    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown> }>(
+      "GET",
+      `/api/bases/${id}`,
+    ),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),
   addRecord: (id: number, cells: Record<string, Cell> = {}) => request<BaseRecord>("POST", `/api/bases/${id}/records`, { cells }),
-  setCells: (id: number, rid: number, cells: Record<string, Cell | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
+  setCells: (id: number, rid: number, cells: Record<string, Cell | number[] | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
   moveRecord: (id: number, rid: number, position: number) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { move: true, position }),
   deleteRecord: (id: number, rid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`),
   addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
