@@ -31,7 +31,7 @@ export function FieldForm({
     });
   return (
     <form
-      className="absolute right-0 top-10 z-20 w-64 space-y-2 rounded-lg border bg-white p-3 text-left text-[13px] font-normal text-foreground shadow-lg"
+      className="absolute right-0 top-10 z-20 w-64 space-y-2 rounded-lg border bg-surface p-3 text-left text-[13px] font-normal text-foreground shadow-lg"
       data-field-form
       onSubmit={(e) => {
         e.preventDefault();
@@ -47,7 +47,7 @@ export function FieldForm({
       }}
     >
       <input autoFocus={!initial} value={name} onChange={(e) => setName(e.target.value)} placeholder="字段名称" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
-      <select value={type} onChange={(e) => setType(e.target.value as FieldType)} className="h-8 w-full rounded-md border bg-white px-2" data-field-type>
+      <select value={type} onChange={(e) => setType(e.target.value as FieldType)} className="h-8 w-full rounded-md border bg-surface px-2" data-field-type>
         {FIELD_TYPES.map((t) => (
           <option key={t} value={t}>
             {REGISTRY[t].icon} {REGISTRY[t].label}
@@ -124,7 +124,7 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
         ▾
       </button>
       {open && (
-        <div className="absolute left-0 top-6 z-20 w-32 rounded-lg border bg-white py-1 text-[13px] font-normal shadow-lg" data-field-menu-pop>
+        <div className="absolute left-0 top-6 z-20 w-32 rounded-lg border bg-surface py-1 text-[13px] font-normal shadow-lg" data-field-menu-pop>
           <button
             className="block w-full px-3 py-1.5 text-left hover:bg-hover"
             onClick={() => {

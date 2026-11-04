@@ -47,7 +47,7 @@ export function CommentsPanel({
   }, [comments]);
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l bg-white shadow-xl" data-comments-panel>
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l bg-surface shadow-xl" data-comments-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         评论
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
@@ -205,7 +205,7 @@ function Composer({
         data-comment-input
       />
       {matches.length > 0 && (
-        <div className="rounded-md border bg-white py-1 shadow-sm" data-at-menu>
+        <div className="rounded-md border bg-surface py-1 shadow-sm" data-at-menu>
           {matches.map((m) => (
             <button
               key={m.id}

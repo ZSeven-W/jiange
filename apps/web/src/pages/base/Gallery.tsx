@@ -39,7 +39,7 @@ export function Gallery({
           const cover = coverOf(r);
           const t = String(displayValue(r, title, members) ?? "") || "未命名";
           return (
-            <div key={r.id} className="group cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md" onClick={() => onOpen(r)} data-card={r.id}>
+            <div key={r.id} className="group cursor-pointer overflow-hidden rounded-xl border bg-surface shadow-sm transition-shadow hover:shadow-md" onClick={() => onOpen(r)} data-card={r.id}>
               <div className="grid h-32 place-items-center bg-sidebar text-[26px] font-semibold text-subtle" style={cover ? { padding: 0 } : undefined}>
                 {cover ? <img src={cover.url} alt={cover.name} className="size-full object-cover" /> : t.slice(0, 1)}
               </div>

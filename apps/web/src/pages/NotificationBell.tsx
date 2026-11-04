@@ -29,7 +29,7 @@ export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => voi
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] font-medium text-white" data-unread>{unread > 9 ? "9+" : unread}</span>}
       </button>
       {open && (
-        <div className="absolute right-0 top-10 z-50 w-80 rounded-lg border bg-white shadow-lg" data-notification-panel>
+        <div className="absolute right-0 top-10 z-50 w-80 rounded-lg border bg-surface shadow-lg" data-notification-panel>
           <div className="flex items-center border-b px-3 py-2 text-[13px] font-medium">
             通知
             {unread > 0 && (

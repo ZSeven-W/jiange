@@ -236,7 +236,7 @@ function MultiSelectEditor({ field, value, onCommit, onCancel }: { field: Field;
     return () => document.removeEventListener("mousedown", close);
   }, [onCancel]);
   return (
-    <div ref={ref} className="absolute left-0 top-8 z-30 w-48 rounded-lg border bg-white p-2 shadow-lg" data-multi-editor>
+    <div ref={ref} className="absolute left-0 top-8 z-30 w-48 rounded-lg border bg-surface p-2 shadow-lg" data-multi-editor>
       {(field.options ?? []).map((o) => (
         <label key={o} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[13px] hover:bg-hover">
           <input

@@ -315,7 +315,7 @@ function DocMenu({
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
+        <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
           {onHistory && (
             <button className={item} onClick={() => { close(); onHistory(); }}>
               历史版本

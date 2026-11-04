@@ -57,7 +57,7 @@ export function PublicForm({ baseId, viewId }: { baseId: number; viewId: number 
 
   return (
     <div className="grid min-h-full place-items-center bg-sidebar/50 p-6" data-public-form>
-      <div className="w-full max-w-md rounded-2xl border bg-white p-8 shadow-sm">
+      <div className="w-full max-w-md rounded-2xl border bg-surface p-8 shadow-sm">
         {err && !def && <p className="text-center text-[14px] text-destructive">{err}</p>}
         {done ? (
           <div className="py-10 text-center" data-form-done>
@@ -77,7 +77,7 @@ export function PublicForm({ baseId, viewId }: { baseId: number; viewId: number 
                     {f.description && <span className="mb-1 block text-[12px] text-muted-foreground">{f.description}</span>}
                     {f.type === "select" ? (
                       <select
-                        className="h-9 w-full rounded-md border bg-white px-2 text-[14px] outline-none focus:border-primary"
+                        className="h-9 w-full rounded-md border bg-surface px-2 text-[14px] outline-none focus:border-primary"
                         value={values[f.id] ?? ""}
                         onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
                       >

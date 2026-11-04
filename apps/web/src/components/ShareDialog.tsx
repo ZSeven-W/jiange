@@ -41,7 +41,7 @@ export function ShareDialog({ meta, onClose }: { meta: DocMeta; onClose: () => v
   });
   const url = info.data?.link.token ? `${location.origin}/#/s/${info.data.link.token}` : "";
   return (
-    <aside className="flex w-[420px] shrink-0 flex-col gap-4 border-l bg-white p-6" data-share-dialog>
+    <aside className="flex w-[420px] shrink-0 flex-col gap-4 border-l bg-surface p-6" data-share-dialog>
       <div className="flex items-center justify-between">
         <h2 className="text-[16px] font-semibold">分享「{meta.title.trim() || "未命名文档"}」</h2>
         <button onClick={onClose} className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover" aria-label="关闭">
@@ -135,7 +135,7 @@ export function ShareDialog({ meta, onClose }: { meta: DocMeta; onClose: () => v
 
 function RoleSelect({ value, onChange, options }: { value: string; onChange: (r: string) => void; options: string[] }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="h-[34px] rounded-md border bg-white px-2 text-[13px] outline-none focus:border-primary">
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="h-[34px] rounded-md border bg-surface px-2 text-[13px] outline-none focus:border-primary">
       {options.map((o) => (
         <option key={o} value={o}>
           {o === "remove" ? "移除" : ROLE_LABEL[o]}
