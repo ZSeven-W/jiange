@@ -11,7 +11,7 @@ export interface Sel {
 }
 
 export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
-export const TEXTLESS = new Set(["divider", "image", "file"]);
+export const TEXTLESS = new Set(["divider", "image", "file", "table"]);
 export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link"] as const;
 
 /** Body blocks in document order (the title block is edited separately). */
@@ -281,4 +281,24 @@ export function pasteBlocks(tx: Tx, pos: Pos, clip: ClipBlock[]): Pos {
     if (i === clip.length - 2 && tail.length) tx.insert(nb, cb.chars.length, tail.map((c) => c.ch).join(""), tail.map((c) => c.marks));
   });
   return caret;
+}
+
+/** 编辑表格块数据的纯变换（r=-1 加行、-2 加列、-3 删行，否则写单元格）。 */
+export function applyTableEdit(rows: string[][], r: number, c: number, v: string): string[][] {
+  if (!rows.length) rows = [["", "", ""], ["", "", ""]];
+  if (r === -1) return [...rows, Array.from({ length: rows[0].length }, () => "")];
+  if (r === -2) return rows.map((row) => [...row, ""]);
+  if (r === -3) return rows.length > 1 ? rows.filter((_, i) => i !== c) : rows;
+  return rows.map((row, ri) => (ri === r && row[c] !== undefined ? row.map((cell, ci) => (ci === c ? v : cell)) : row));
+}
+
+/** 解析 tableData prop，非法输入回退到默认 2×3。 */
+export function parseTableData(data: string | undefined): string[][] {
+  try {
+    const parsed = JSON.parse(data || "null");
+    if (Array.isArray(parsed) && parsed.length && Array.isArray(parsed[0])) return parsed;
+  } catch {
+    /* fall through */
+  }
+  return [["列 1", "列 2", "列 3"], ["", "", ""]];
 }
