@@ -79,4 +79,10 @@
   * { @apply border-border outline-ring/50; }
   html, body, #root { height: 100%; }
   body { @apply bg-background text-foreground font-sans antialiased; font-size: 14px; }
+  /* 飞书式细滚动条 */
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: #d0d3d6; border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: #b8bcc0; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  * { scrollbar-width: thin; scrollbar-color: #d0d3d6 transparent; }
 }

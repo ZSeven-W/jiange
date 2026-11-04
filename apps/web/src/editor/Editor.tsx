@@ -170,6 +170,22 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
     [sync.client, um, publish],
   );
 
+  /** 在块 b 之后插入空段落并把光标移进去（飞书式 + 按钮）。 */
+  const onInsertAfter = useCallback(
+    (b: OpId) => {
+      const d = sync.client.doc;
+      if (!d || !d.hasBlock(b)) return;
+      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+      run((tx) => {
+        const info = tx.doc.blockInfo(b);
+        const nb = tx.create("paragraph", b, info.parent);
+        return { b: nb, o: 0 };
+      }, "insert-block");
+      um.seal();
+    },
+    [sync.client, run, um],
+  );
+
   const insertText = useCallback(
     (text: string, tag = "type") =>
       run((tx, s) => {
@@ -739,6 +755,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                   force((x) => x + 1);
                   publish();
                 }}
+                onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
                 onTableEdit={(r, c, v) => {
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
@@ -864,6 +881,8 @@ interface BlockProps {
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string) => void;
+  /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
+  onInsertAfter?: () => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -876,7 +895,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const runs: { text: string; marks: Record<string, string>; anchor: number | null }[] = [];
@@ -916,19 +935,30 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span
-        contentEditable={false}
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData("text/plain", "");
-          e.dataTransfer.effectAllowed = "move";
-          onDragStart();
-        }}
-        onDragEnd={onDragEnd}
-        title="拖动以移动"
-        className="absolute -left-7 top-1/2 hidden h-6 w-5 -translate-y-1/2 cursor-grab select-none place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover group-hover:grid"
-      >
-        ⋮⋮
+      <span className="absolute -left-7 top-1/2 hidden -translate-y-1/2 flex-col items-center group-hover:flex" contentEditable={false}>
+        {onInsertAfter && (
+          <button
+            className="grid h-5 w-5 place-items-center rounded text-[14px] leading-none text-subtle hover:bg-hover hover:text-foreground"
+            title="在此处插入内容"
+            onClick={onInsertAfter}
+            data-insert-after
+          >
+            +
+          </button>
+        )}
+        <span
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData("text/plain", "");
+            e.dataTransfer.effectAllowed = "move";
+            onDragStart();
+          }}
+          onDragEnd={onDragEnd}
+          title="拖动以移动"
+          className="grid h-5 w-5 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover"
+        >
+          ⋮⋮
+        </span>
       </span>
       {type === "table" ? (
         <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
