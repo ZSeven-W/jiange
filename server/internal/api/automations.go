@@ -23,6 +23,27 @@ type automationConfig struct {
 	Message     string         `json:"message,omitempty"`
 	// Webhook 推送到 IM 群机器人或自建入口（可选）。
 	Webhook automationWebhook `json:"webhook,omitempty"`
+	// Schedule drives triggerKind=schedule: fire every interval (1h/1d/1w),
+	// optionally only when rules match at least one record.
+	Schedule *automationSchedule `json:"schedule,omitempty"`
+}
+
+type automationSchedule struct {
+	Every string `json:"every,omitempty"` // 1h | 1d | 1w
+}
+
+var scheduleEvery = map[string]bool{"1h": true, "1d": true, "1w": true}
+
+// scheduleGap is the minimum spacing between firings per Every value.
+func scheduleGap(every string) time.Duration {
+	switch every {
+	case "1h":
+		return time.Hour
+	case "1w":
+		return 7 * 24 * time.Hour
+	default:
+		return 24 * time.Hour
+	}
 }
 
 type automationWebhook struct {
@@ -38,7 +59,7 @@ type automationInput struct {
 	Config      *json.RawMessage `json:"config"`
 }
 
-var automationTriggers = map[string]bool{"form_submit": true, "record_matches": true}
+var automationTriggers = map[string]bool{"form_submit": true, "record_matches": true, "schedule": true}
 
 func (in automationInput) apply(w http.ResponseWriter, a *store.Automation) bool {
 	if in.Name != nil {
@@ -54,7 +75,7 @@ func (in automationInput) apply(w http.ResponseWriter, a *store.Automation) bool
 	}
 	if in.TriggerKind != nil {
 		if !automationTriggers[*in.TriggerKind] {
-			httpx.Error(w, http.StatusBadRequest, "invalid_trigger", "触发器必须是 form_submit 或 record_matches")
+			httpx.Error(w, http.StatusBadRequest, "invalid_trigger", "触发器必须是 form_submit、record_matches 或 schedule")
 			return false
 		}
 		a.TriggerKind = *in.TriggerKind
@@ -82,6 +103,12 @@ func (in automationInput) apply(w http.ResponseWriter, a *store.Automation) bool
 		if utf8.RuneCountInString(cfg.Message) > 500 {
 			httpx.Error(w, http.StatusBadRequest, "invalid_config", "消息最长 500 字")
 			return false
+		}
+		if a.TriggerKind == "schedule" {
+			if cfg.Schedule == nil || !scheduleEvery[cfg.Schedule.Every] {
+				httpx.Error(w, http.StatusBadRequest, "invalid_config", "定时触发需要 schedule.every = 1h/1d/1w")
+				return false
+			}
 		}
 		if cfg.Webhook.URL != "" {
 			if !strings.HasPrefix(cfg.Webhook.URL, "http://") && !strings.HasPrefix(cfg.Webhook.URL, "https://") {
@@ -193,6 +220,68 @@ func (s *Server) deleteAutomation(w http.ResponseWriter, r *http.Request) {
 
 var tmplVar = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
+// SweepSchedules fires every due schedule automation across all bases. The
+// sweeper goroutine calls it once per minute; a firing is "due" when
+// last_fired_at is older than the configured interval. Rules (when present)
+// gate on at least one matching record, with the message interpolated from
+// the first match.
+func (s *Server) SweepSchedules(ctx context.Context) {
+	asis, err := s.Store.AllAutomations(ctx)
+	if err != nil {
+		s.Log.Error("sweep automations", "err", err)
+		return
+	}
+	now := time.Now()
+	for _, a := range asis {
+		if !a.Enabled || a.TriggerKind != "schedule" {
+			continue
+		}
+		var cfg automationConfig
+		if json.Unmarshal(a.Config, &cfg) != nil || cfg.Schedule == nil {
+			continue
+		}
+		gap := scheduleGap(cfg.Schedule.Every)
+		if !a.LastFiredAt.IsZero() && now.Sub(a.LastFiredAt) < gap {
+			continue
+		}
+		fields, err := s.Store.Fields(ctx, a.BaseID)
+		if err != nil {
+			continue
+		}
+		recs, err := s.Store.Records(ctx, a.BaseID)
+		if err != nil {
+			continue
+		}
+		specs := store.Specs(fields)
+		var hit *store.Record
+		if len(cfg.Rules) > 0 {
+			conj := cfg.Conj
+			if conj == "" {
+				conj = "and"
+			}
+			for i := range recs {
+				if btquery.MatchRules(specs, cfg.Rules, conj, recs[i].Cells) {
+					hit = &recs[i]
+					break
+				}
+			}
+			if hit == nil {
+				// 不满足条件也算触发周期（避免每分钟重扫），但不发通知
+				_ = s.Store.MarkFired(ctx, a.ID, now)
+				continue
+			}
+		} else {
+			if len(recs) == 0 {
+				_ = s.Store.MarkFired(ctx, a.ID, now)
+				continue
+			}
+			hit = &recs[0]
+		}
+		s.fireAutomation(ctx, a.BaseID, cfg, fields, *hit, 0)
+		_ = s.Store.MarkFired(ctx, a.ID, now)
+	}
+}
+
 // runAutomations evaluates enabled automations of the given trigger for one
 // record: in-app notifications plus optional webhook pushes (企微/钉钉/飞书/
 // generic). Called synchronously after the write; failures log and continue.
@@ -252,6 +341,31 @@ func (s *Server) runAutomations(ctx context.Context, baseID int64, trigger strin
 		if cfg.Webhook.URL != "" {
 			s.pushWebhook(ctx, cfg.Webhook, renderTemplate(cfg.Webhook.Message, fields, rec))
 		}
+	}
+}
+
+// fireAutomation runs one automation's actions (notify + webhook) for one
+// record; skipActor hides the triggering user from recipients.
+func (s *Server) fireAutomation(ctx context.Context, baseID int64, cfg automationConfig, fields []store.Field, rec store.Record, skipActor int64) {
+	items := make([]store.Notification, 0, len(cfg.NotifyUsers))
+	commentID := rec.ID
+	for _, uid := range cfg.NotifyUsers {
+		if uid == skipActor {
+			continue
+		}
+		items = append(items, store.Notification{
+			UserID: uid, DocID: baseID, ActorID: skipActor,
+			CommentID: &commentID, Kind: "mention",
+			Preview: renderTemplate(cfg.Message, fields, rec),
+		})
+	}
+	if len(items) > 0 {
+		if err := s.Store.AddNotifications(ctx, items); err != nil {
+			s.Log.Error("automations notify", "err", err)
+		}
+	}
+	if cfg.Webhook.URL != "" {
+		s.pushWebhook(ctx, cfg.Webhook, renderTemplate(cfg.Webhook.Message, fields, rec))
 	}
 }
 

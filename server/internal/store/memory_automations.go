@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 func (m *Memory) Automations(_ context.Context, base int64) ([]Automation, error) {
@@ -14,6 +15,24 @@ func (m *Memory) Automations(_ context.Context, base int64) ([]Automation, error
 		}
 	}
 	return out, nil
+}
+
+func (m *Memory) AllAutomations(_ context.Context) ([]Automation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Automation{}, m.automations...), nil
+}
+
+func (m *Memory) MarkFired(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.automations {
+		if m.automations[i].ID == id {
+			m.automations[i].LastFiredAt = at
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 func (m *Memory) AddAutomation(_ context.Context, a Automation) (Automation, error) {

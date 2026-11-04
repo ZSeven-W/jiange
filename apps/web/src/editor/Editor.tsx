@@ -567,6 +567,22 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
         const nb = tx.create("paragraph", tb, info.parent);
         return { b: nb, o: 0 };
       }
+      if (it.id === "columns") {
+        const info = tx.doc.blockInfo(b);
+        let cb: OpId;
+        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
+          tx.setProp(b, "type", "columns");
+          cb = b;
+        } else {
+          cb = tx.create("columns", b, info.parent);
+        }
+        const c1 = tx.create("paragraph", null, cb);
+        void c1;
+        const c2 = tx.create("paragraph", null, cb);
+        void c2;
+        const nb = tx.create("paragraph", cb, info.parent);
+        return { b: nb, o: 0 };
+      }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
       return { b, o: m.at.o };
     });
@@ -788,6 +804,27 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                 }}
                 onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
                 onPreviewImage={onPreviewImage}
+                childBlocks={doc.children(b).map((ch) => {
+                  const ci = doc.blockInfo(ch);
+                  return { id: idKey(ch), type: ci.type, props: ci.props, spans: doc.richChars(ch) };
+                })}
+                onAddColumn={() => {
+                  const tx = new Tx(doc);
+                  tx.create("paragraph", null, b);
+                  um.record(tx, sel.current, sel.current, "column");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onDeleteColumn={(col) => {
+                  const tx = new Tx(doc);
+                  const cid = { client: Number(col.split(":")[0]), clock: Number(col.split(":")[1]) };
+                  if (doc.hasBlock(cid)) tx.deleteBlock(cid);
+                  um.record(tx, sel.current, sel.current, "column");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
                 onTableEdit={(r, c, v) => {
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
@@ -911,6 +948,10 @@ const BLOCK_CLASS: Record<string, string> = {
 };
 
 interface BlockProps {
+  /** columns 容器：渲染其子块（每栏一个） */
+  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[] }[];
+  onAddColumn?: () => void;
+  onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
@@ -931,7 +972,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -1000,7 +1041,33 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
           ⋮⋮
         </span>
       </span>
-      {commentBadge > 0 && (
+      {type === "columns" ? (
+        <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>
+          <div className="flex gap-2">
+            {(childBlocks ?? []).map((ch) => (
+              <div key={ch.id} className="group/col min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id}>
+                <div data-text className="whitespace-pre-wrap break-words text-[15px] leading-7">
+                  {ch.spans.map((c, i) => (
+                    <Run key={i} text={c.ch} marks={c.marks} />
+                  ))}
+                  {ch.spans.length === 0 && <span className="text-subtle">空栏</span>}
+                </div>
+                <button
+                  className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border bg-surface text-[11px] text-subtle hover:text-destructive group-hover/col:grid"
+                  title="删除此栏"
+                  onClick={() => onDeleteColumn?.(ch.id)}
+                  data-del-column
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <button className="mt-1 px-1 text-[12px] text-subtle hover:text-primary" onClick={() => onAddColumn?.()} data-add-column>
+            + 添加一栏
+          </button>
+        </div>
+      ) : commentBadge > 0 && (
         <button
           contentEditable={false}
           className="absolute -right-1 top-1/2 z-10 flex -translate-y-1/2 translate-x-full items-center gap-0.5 rounded-full border border-[#f5b1e5] bg-surface px-1.5 py-0.5 text-[11px] font-medium text-[#c950a8] shadow-sm hover:bg-[#FBF3FA] dark:text-[#e88ec7]"

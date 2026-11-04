@@ -2,11 +2,12 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
-const automationCols = `id, base_id, name, enabled, trigger_kind, config`
+const automationCols = `id, base_id, name, enabled, trigger_kind, config, last_fired_at`
 
 func (p *Postgres) Automations(ctx context.Context, base int64) ([]Automation, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+automationCols+` FROM bt_automations WHERE base_id=$1 ORDER BY id`, base)
@@ -14,9 +15,25 @@ func (p *Postgres) Automations(ctx context.Context, base int64) ([]Automation, e
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (a Automation, err error) {
-		err = r.Scan(&a.ID, &a.BaseID, &a.Name, &a.Enabled, &a.TriggerKind, &a.Config)
+		err = r.Scan(&a.ID, &a.BaseID, &a.Name, &a.Enabled, &a.TriggerKind, &a.Config, &a.LastFiredAt)
 		return
 	})
+}
+
+func (p *Postgres) AllAutomations(ctx context.Context) ([]Automation, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT `+automationCols+` FROM bt_automations WHERE enabled ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (a Automation, err error) {
+		err = r.Scan(&a.ID, &a.BaseID, &a.Name, &a.Enabled, &a.TriggerKind, &a.Config, &a.LastFiredAt)
+		return
+	})
+}
+
+func (p *Postgres) MarkFired(ctx context.Context, id int64, at time.Time) error {
+	_, err := p.Pool.Exec(ctx, `UPDATE bt_automations SET last_fired_at=$2 WHERE id=$1`, id, at)
+	return err
 }
 
 func (p *Postgres) AddAutomation(ctx context.Context, a Automation) (Automation, error) {

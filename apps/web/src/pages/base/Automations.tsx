@@ -16,6 +16,7 @@ interface AutomationConfig {
   notifyUsers?: number[];
   message?: string;
   webhook?: { url?: string; kind?: string; message?: string };
+  schedule?: { every?: string };
 }
 
 function opsFor(type: string): string[] {
@@ -78,7 +79,11 @@ export function AutomationsPanel({
                   </span>
                 </div>
                 <div className="mt-1 text-[12px] text-muted-foreground">
-                  {a.triggerKind === "form_submit" ? "表单提交时" : "记录满足条件时"}
+                  {a.triggerKind === "form_submit"
+                    ? "表单提交时"
+                    : a.triggerKind === "schedule"
+                      ? `定时（每${(a.config as { schedule?: { every?: string } })?.schedule?.every === "1h" ? "小时" : (a.config as { schedule?: { every?: string } })?.schedule?.every === "1w" ? "周" : "天"}）`
+                      : "记录满足条件时"}
                 </div>
                 <div className="mt-2 flex gap-2">
                   <button className="rounded border px-2 py-0.5 text-[12px] hover:bg-hover" onClick={() => setEditing(a)}>编辑</button>
@@ -140,6 +145,7 @@ function AutomationForm({
       triggerKind: trigger,
       enabled: initial?.enabled ?? true,
       config: {
+        schedule: trigger === "schedule" ? cfg.schedule ?? { every: "1d" } : undefined,
         rules: trigger === "record_matches" ? rules : undefined,
         conj: rules.length > 1 ? cfg.conj ?? "and" : undefined,
         notifyUsers: [...notify],
@@ -171,7 +177,20 @@ function AutomationForm({
       >
         <option value="record_matches">当记录满足条件时</option>
         <option value="form_submit">当表单被提交时</option>
+        <option value="schedule">定时触发</option>
       </select>
+      {trigger === "schedule" && (
+        <select
+          className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary"
+          value={cfg.schedule?.every ?? "1d"}
+          onChange={(e) => setCfg({ ...cfg, schedule: { every: e.target.value } })}
+          data-auto-every
+        >
+          <option value="1h">每小时</option>
+          <option value="1d">每天</option>
+          <option value="1w">每周</option>
+        </select>
+      )}
       {trigger === "record_matches" && (
         <div className="space-y-1.5 rounded-md border p-2" data-auto-rules>
           <p className="text-[12px] text-subtle">触发条件</p>

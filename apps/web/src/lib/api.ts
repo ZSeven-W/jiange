@@ -230,13 +230,14 @@ export interface Automation {
   baseId: number;
   name: string;
   enabled: boolean;
-  triggerKind: "form_submit" | "record_matches";
+  triggerKind: "form_submit" | "record_matches" | "schedule";
   config: {
     rules?: FilterRule[];
     conj?: "and" | "or";
     notifyUsers?: number[];
     message?: string;
     webhook?: { url?: string; kind?: string; message?: string };
+    schedule?: { every?: string };
   };
 }
 export const extrasApi = {

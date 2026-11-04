@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -88,4 +89,64 @@ func cGet(t *testing.T, c *http.Client, url string) *http.Response {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestAutoCompanionAndSymmetricLinks(t *testing.T) {
+	st := store.NewMemory()
+	ts, c := newTestServer(t, st, nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "tc@x.com", "name": "TC", "password": "password123"})
+	var tasks, projects store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", map[string]string{"title": "任务表"}).Body).Decode(&tasks)
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", map[string]string{"title": "项目表"}).Body).Decode(&projects)
+	tu := ts.URL + "/api/bases/" + strconv.FormatInt(tasks.ID, 10)
+	pu := ts.URL + "/api/bases/" + strconv.FormatInt(projects.ID, 10)
+
+	// 建一个项目记录
+	var proj store.Record
+	json.NewDecoder(post(t, c, pu+"/records", map[string]any{"cells": map[string]any{}}).Body).Decode(&proj)
+
+	// 任务表建 link 字段 → 项目表自动出现「任务表」伴随字段
+	var link store.Field
+	json.NewDecoder(post(t, c, tu+"/fields", map[string]any{
+		"name": "所属项目", "type": "link", "options": []string{strconv.FormatInt(projects.ID, 10)},
+	}).Body).Decode(&link)
+	if len(link.Options) != 2 {
+		t.Fatalf("companion not linked: %+v", link.Options)
+	}
+	companionFieldID, _ := strconv.ParseInt(link.Options[1], 10, 64)
+	var pv struct{ Fields []store.Field }
+	r := cGet(t, c, pu)
+	json.NewDecoder(r.Body).Decode(&pv)
+	var companion *store.Field
+	for i := range pv.Fields {
+		if pv.Fields[i].ID == companionFieldID {
+			companion = &pv.Fields[i]
+		}
+	}
+	if companion == nil || companion.Type != "link" || companion.Name != "任务表" {
+		t.Fatalf("companion field: %+v", companion)
+	}
+
+	// 任务关联项目 → 对称链：项目侧伴随字段能查到任务
+	var task store.Record
+	json.NewDecoder(post(t, c, tu+"/records", map[string]any{"cells": map[string]any{}}).Body).Decode(&task)
+	if res := send(t, c, "PATCH", tu+"/records/"+strconv.FormatInt(task.ID, 10),
+		map[string]any{"cells": map[string]any{strconv.FormatInt(link.ID, 10): []int64{proj.ID}}}); res.StatusCode != 200 {
+		t.Fatalf("link write: %d", res.StatusCode)
+	}
+	links, err := st.LinksForRecords(context.Background(), companionFieldID, []int64{proj.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := links[proj.ID]; len(got) != 1 || got[0] != task.ID {
+		t.Fatalf("symmetric link missing: %v", links)
+	}
+
+	// 取消关联 → 对称链同步移除
+	send(t, c, "PATCH", tu+"/records/"+strconv.FormatInt(task.ID, 10),
+		map[string]any{"cells": map[string]any{strconv.FormatInt(link.ID, 10): []int64{}}})
+	links, _ = st.LinksForRecords(context.Background(), companionFieldID, []int64{proj.ID})
+	if got := links[proj.ID]; len(got) != 0 {
+		t.Fatalf("symmetric unlink failed: %v", got)
+	}
 }

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Automation is one bitable automation: when trigger fires and (for
 // record_matches) the record matches config rules, notify config users with
@@ -10,8 +13,10 @@ type Automation struct {
 	BaseID      int64      `json:"baseId"`
 	Name        string     `json:"name"`
 	Enabled     bool       `json:"enabled"`
-	TriggerKind string     `json:"triggerKind"` // form_submit | record_matches
+	TriggerKind string     `json:"triggerKind"` // form_submit | record_matches | schedule
 	Config      jsonConfig `json:"config"`
+	// LastFiredAt persists the previous schedule firing (zero = never).
+	LastFiredAt time.Time `json:"-"`
 }
 
 // jsonConfig keeps the automation config opaque at the store layer (the API
@@ -20,7 +25,11 @@ type jsonConfig = []byte
 
 type AutomationStore interface {
 	Automations(ctx context.Context, baseID int64) ([]Automation, error)
+	// AllAutomations powers the schedule sweeper (every enabled schedule
+	// automation across bases).
+	AllAutomations(ctx context.Context) ([]Automation, error)
 	AddAutomation(ctx context.Context, a Automation) (Automation, error)
 	UpdateAutomation(ctx context.Context, a Automation) (Automation, error)
 	DeleteAutomation(ctx context.Context, baseID, id int64) error
+	MarkFired(ctx context.Context, id int64, at time.Time) error
 }
