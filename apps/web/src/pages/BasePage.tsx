@@ -251,7 +251,7 @@ export function BasePage({ id }: { id: number }) {
         />
       )}
       {current?.type === "gantt" && (
-        <Gantt fields={visibleFields} records={source} members={members} startFieldId={cfg.group} onPickRange={() => {}} />
+        <Gantt baseId={id} canEdit={canEdit} fields={visibleFields} records={source} members={members} startFieldId={cfg.group} onMutate={refresh} />
       )}
       {autoOpen && (
         <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />
