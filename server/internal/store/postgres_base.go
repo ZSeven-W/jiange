@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -106,4 +107,49 @@ func (p *Postgres) DeleteRecord(ctx context.Context, base, id int64) error {
 		err = ErrNotFound
 	}
 	return err
+}
+
+// MapFieldCells rewrites every stored cell of the field through fn (nil deletes).
+func (p *Postgres) MapFieldCells(ctx context.Context, base, field int64, fn func(json.RawMessage) json.RawMessage) error {
+	key := jsonKey(field)
+	rows, err := p.Pool.Query(ctx, `SELECT id, cells->$2 FROM base_records WHERE base_id=$1 AND cells ? $2`, base, key)
+	if err != nil {
+		return err
+	}
+	type change struct {
+		id  int64
+		val json.RawMessage
+	}
+	var changes []change
+	for rows.Next() {
+		var id int64
+		var v json.RawMessage
+		if err := rows.Scan(&id, &v); err != nil {
+			rows.Close()
+			return err
+		}
+		if nv := fn(v); !bytes.Equal(nv, v) {
+			changes = append(changes, change{id, nv})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, ch := range changes {
+		if ch.val == nil {
+			_, err = tx.Exec(ctx, `UPDATE base_records SET cells = cells - $3 WHERE id=$1 AND base_id=$2`, ch.id, base, key)
+		} else {
+			_, err = tx.Exec(ctx, `UPDATE base_records SET cells = cells || jsonb_build_object($3::text, $4::jsonb) WHERE id=$1 AND base_id=$2`, ch.id, base, key, ch.val)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
