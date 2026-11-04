@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { docsApi } from "@/lib/api";
-import { DocIcon, docTitle } from "@/components/Sidebar";
+import { BaseIcon, DocIcon, docTitle } from "@/components/Sidebar";
 
 export function Trash() {
   const qc = useQueryClient();
@@ -20,8 +20,9 @@ export function Trash() {
         <div className="overflow-hidden rounded-lg border">
           {(trash.data ?? []).map((d) => (
             <div key={d.id} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
-              <span className="text-primary"><DocIcon /></span>
+              <span className="text-primary">{d.kind === "base" ? <BaseIcon /> : <DocIcon />}</span>
               <span className="truncate">{docTitle(d)}</span>
+              {d.kind === "base" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle" data-base-tag>多维表格</span>}
               <span className="ml-auto text-xs text-subtle">修改于 {new Date(d.updatedAt).toLocaleString("zh-CN", { hour12: false })}</span>
               <button className="h-7 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={() => restore.mutate(d.id)}>
                 还原
