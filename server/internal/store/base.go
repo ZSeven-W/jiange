@@ -57,6 +57,12 @@ func FieldReadOnly(t string) bool {
 	return t == "created_by" || t == "created_at" || t == "modified_at"
 }
 
+// LinkFieldRef is a link field whose options point at a target base.
+type LinkFieldRef struct {
+	FieldID int64
+	BaseID  int64
+}
+
 // BtEvent is one bitable mutation in the per-base realtime event log. Body
 // carries the change ({"kind":"cells",...}); Seq orders it globally per base.
 type BtEvent struct {
@@ -105,6 +111,8 @@ type BaseStore interface {
 	// Record links behind link fields (from_record → to_record).
 	SetLinks(ctx context.Context, baseID, fieldID, fromRecord int64, toRecords []int64) error
 	LinksForRecords(ctx context.Context, fieldID int64, fromRecords []int64) (map[int64][]int64, error)
+	// 双向关联：指向 targetBase 的 link 字段（跨 base 扫描）。
+	LinkFieldsTargeting(ctx context.Context, targetBase int64) ([]LinkFieldRef, error)
 
 	Views(ctx context.Context, baseID int64) ([]View, error)
 	AddView(ctx context.Context, v View) (View, error)

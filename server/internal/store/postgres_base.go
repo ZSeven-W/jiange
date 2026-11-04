@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -254,6 +255,23 @@ func (p *Postgres) LinksForRecords(ctx context.Context, fieldID int64, fromRecor
 			return nil, err
 		}
 		out[from] = append(out[from], to)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) LinkFieldsTargeting(ctx context.Context, targetBase int64) ([]LinkFieldRef, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT id, base_id FROM base_fields WHERE type='link' AND options->>0 = $1`, strconv.FormatInt(targetBase, 10))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LinkFieldRef{}
+	for rows.Next() {
+		var r LinkFieldRef
+		if err := rows.Scan(&r.FieldID, &r.BaseID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
