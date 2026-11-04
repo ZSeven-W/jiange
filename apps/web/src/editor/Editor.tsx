@@ -32,6 +32,7 @@ import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
+import { askText } from "@/components/ui/ask";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -483,7 +484,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
     }
   };
 
-  const applySlash = (it: MenuItem) => {
+  const applySlash = async (it: MenuItem) => {
     const m = slash;
     setSlash(null);
     if (!m) return;
@@ -507,6 +508,32 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
         fileInput.current.accept = it.id === "image" ? "image/*" : "";
         fileInput.current.click();
       }
+      return;
+    }
+    if (it.id === "video" || it.id === "bookmark") {
+      const url = await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
+      if (!url) return;
+      run((tx) => {
+        // 清掉 "/shipin" 之类的命令文本再插块
+        const vis = tx.doc.visibleIds(m.at.b);
+        if (vis.length) tx.delete(m.at.b, 0, vis.length);
+        const info = tx.doc.blockInfo(m.at.b);
+        const props: Record<string, string> = { url };
+        if (it.id === "bookmark") {
+          let host = url;
+          try {
+            host = new URL(url).hostname;
+          } catch {
+            /* keep raw */
+          }
+          props.name = host;
+        }
+        tx.setProp(m.at.b, "type", it.id);
+        for (const [k, v] of Object.entries(props)) tx.setProp(m.at.b, k, v);
+        const nb = tx.create("paragraph", m.at.b, info.parent);
+        return { b: nb, o: 0 };
+      });
+      um.seal();
       return;
     }
     run((tx, s) => {
@@ -562,7 +589,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        applySlash(slashItems[Math.min(slash.index, slashItems.length - 1)]);
+        void applySlash(slashItems[Math.min(slash.index, slashItems.length - 1)]);
         return;
       }
       if (e.key === "Escape") {
@@ -999,6 +1026,38 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
             data-preview-image
           />
         </figure>
+      ) : type === "video" ? (
+        <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
+          {/^https?:\/\/.+/.test(props.url ?? "") && (props.url ?? "").match(/\.(mp4|webm|mov)(\?|$)/i) ? (
+            <video src={props.url} controls className="aspect-video w-full bg-black" />
+          ) : (
+            <a href={props.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3.5 py-3 hover:bg-hover">
+              <span className="grid size-8 place-items-center rounded-md bg-[#E1EAFF] text-[13px] text-primary">▶</span>
+              <span className="min-w-0">
+                <span className="block truncate text-[14px] font-medium">{props.name || props.url}</span>
+                <span className="block truncate text-[12px] text-subtle">{props.url}</span>
+              </span>
+            </a>
+          )}
+        </div>
+      ) : type === "bookmark" ? (
+        <a
+          contentEditable={false}
+          href={props.url}
+          target="_blank"
+          rel="noreferrer"
+          className="my-2 flex w-full max-w-[520px] select-none items-center gap-3 rounded-lg border px-3.5 py-3 no-underline hover:bg-hover"
+          data-bookmark
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">
+            {(props.name ?? "W").slice(0, 1).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[14px] font-medium text-foreground">{props.name || props.url}</span>
+            <span className="block truncate text-[12px] text-subtle">{props.url}</span>
+          </span>
+          <span className="shrink-0 text-subtle">↗</span>
+        </a>
       ) : type === "file" ? (
         <a contentEditable={false} href={`/api/files/${props.fileId}`} className="my-1 flex w-[360px] select-none items-center gap-3 rounded-lg border px-3.5 py-2.5 hover:bg-hover" data-file-card>
           <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>

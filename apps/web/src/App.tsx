@@ -11,6 +11,7 @@ import { JoinLink } from "@/pages/JoinLink";
 import { BasePage } from "@/pages/BasePage";
 import { PublicForm } from "@/pages/PublicForm";
 import { PublicDoc } from "@/pages/PublicDoc";
+import { AskHost } from "@/components/ui/ask";
 
 export default function App() {
   const route = useRoute();
@@ -32,6 +33,7 @@ export default function App() {
 
   return (
     <div className="flex h-full">
+      <AskHost />
       <Sidebar me={me.data} route={route} onLogout={() => logout.mutate()} />
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me.data} />

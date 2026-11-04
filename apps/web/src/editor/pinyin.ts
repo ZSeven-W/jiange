@@ -53,6 +53,8 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "image", label: "图片", group: "媒体", icon: "🖼", py: ["tu", "pian"], en: ["image", "picture", "img"] },
   { id: "file", label: "附件", group: "媒体", icon: "📎", py: ["fu", "jian"], en: ["file", "attachment"] },
   { id: "callout", label: "高亮块", group: "其他", icon: "💡", py: ["gao", "liang", "kuai"], en: ["callout", "highlight"] },
+  { id: "video", label: "视频", group: "媒体", icon: "▶", py: ["shi", "pin"], en: ["video"] },
+  { id: "bookmark", label: "网页卡片", group: "媒体", icon: "🔗", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
   { id: "table", label: "表格", group: "其他", icon: "▦", py: ["biao", "ge"], en: ["table", "grid"] },
   { id: "divider", label: "分割线", group: "其他", icon: "—", py: ["fen", "ge", "xian"], en: ["divider", "hr", "line"] },
 ];

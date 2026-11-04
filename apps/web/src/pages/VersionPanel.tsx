@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { docsApi, type DocView } from "@/lib/api";
+import { ask, askText } from "@/components/ui/ask";
 
 /** Right drawer: version list, read-only preview and restore (P6). */
 export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: boolean; onClose: () => void }) {
@@ -35,8 +36,8 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
         {canEdit && (
           <button
             className="mb-3 h-8 w-full rounded-md bg-primary text-[13px] font-medium text-white hover:opacity-90"
-            onClick={() => {
-              const label = prompt("版本名称", "手动版本");
+            onClick={async () => {
+              const label = await askText("创建版本", "版本名称", "手动版本");
               if (label !== null) create.mutate(label.trim() || "手动版本");
             }}
             data-create-version
@@ -70,8 +71,8 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
               <button
                 className="ml-auto h-7 rounded-md bg-primary px-3 text-[12px] font-normal text-white hover:opacity-90"
                 disabled={restore.isPending}
-                onClick={() => {
-                  if (confirm("还原到该版本？当前内容会被新操作覆盖（历史保留）。")) restore.mutate(previewing);
+                onClick={async () => {
+                  if (await ask("还原到该版本？", "当前内容会被新操作覆盖（历史保留）。", false)) restore.mutate(previewing);
                 }}
                 data-restore-version
               >

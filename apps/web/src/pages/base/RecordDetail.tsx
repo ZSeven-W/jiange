@@ -4,6 +4,7 @@ import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/li
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, REGISTRY, setFormulaCache } from "./registry";
+import { ask } from "@/components/ui/ask";
 
 /** Record detail drawer: every field editable in place, like Feishu's
  * row-expansion panel. */
@@ -98,8 +99,8 @@ export function RecordDetail({
         {canEdit && (
           <button
             className="ml-auto text-destructive hover:underline"
-            onClick={() => {
-              if (confirm("删除这条记录？")) {
+            onClick={async () => {
+              if (await ask("删除这条记录？")) {
                 baseApi.deleteRecord(baseId, row.id).then(() => {
                   onMutate();
                   onClose();

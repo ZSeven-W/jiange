@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Field, FieldType } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { cn } from "@/lib/utils";
+import { ask } from "@/components/ui/ask";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -136,9 +137,9 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
           </button>
           <button
             className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover"
-            onClick={() => {
+            onClick={async () => {
               setOpen(false);
-              if (confirm(`删除字段「${field.name}」及其所有值？`)) onDelete();
+              if (await ask(`删除字段「${field.name}」？`, "字段及其所有值将被删除。")) onDelete();
             }}
           >
             删除字段

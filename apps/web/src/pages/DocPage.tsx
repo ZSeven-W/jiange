@@ -18,6 +18,7 @@ import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./Outli
 import { commentsApi, extrasApi } from "@/lib/api";
 import { viewToMarkdown } from "@/lib/markdown";
 import { importMarkdownOps } from "@/lib/mdImport";
+import { ask } from "@/components/ui/ask";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -71,7 +72,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     const d = sync.client.doc;
     if (!d) return;
     const md = await file.text();
-    if (!confirm(`导入将替换当前文档内容（可用撤销恢复），继续？`)) return;
+    if (!(await ask("导入 Markdown？", "导入将替换当前文档内容（可用撤销恢复）。", false))) return;
     const tx = importMarkdownOps(d, md);
     if (tx.ops.length) sync.client.push(tx.ops);
   };

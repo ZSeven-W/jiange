@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, type Automation, type Field, type FilterRule, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { ask } from "@/components/ui/ask";
 
 const OP_LABEL: Record<string, string> = {
   contains: "包含", not_contains: "不包含", is: "等于", is_not: "不等于",
@@ -89,7 +90,7 @@ export function AutomationsPanel({
                   </button>
                   <button
                     className="ml-auto text-[12px] text-destructive hover:underline"
-                    onClick={() => confirm("删除该自动化？") && baseApi.deleteAutomation(baseId, a.id).then(invalidate)}
+                    onClick={() => void ask("删除该自动化？").then((ok: boolean) => { if (ok) void baseApi.deleteAutomation(baseId, a.id).then(invalidate); })}
                   >
                     删除
                   </button>
