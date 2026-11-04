@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/btformula"
+	"github.com/ZSeven-W/jiange/server/internal/btquery"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -207,6 +208,51 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		}
 		expansions[strconv.FormatInt(lf.ID, 10)] = values
 	}
+	// locked 视图 = 行级/列级权限：非 manage 角色只能看到过滤后的行与
+	// 未隐藏的字段（查询时注入谓词，btquery 编译成 SQL WHERE）。
+	if b.Role != store.RoleManage {
+		for _, v := range views {
+			if v.Type != "grid" && v.Type != "kanban" && v.Type != "gallery" && v.Type != "calendar" {
+				continue
+			}
+			var cfg btquery.Config
+			if json.Unmarshal(v.Config, &cfg) != nil || !cfg.Locked {
+				continue
+			}
+			specs := store.Specs(fields)
+			if _, _, _, err := btquery.Compile(specs, cfg); err != nil {
+				break // 视图配置非法时按未锁定处理
+			}
+			recs, err = s.Store.QueryRecords(r.Context(), b.ID, fields, cfg, 10000)
+			if err != nil {
+				break
+			}
+			hidden := map[int64]bool{}
+			for _, id := range cfg.Hidden {
+				hidden[id] = true
+			}
+			visible := make([]store.Field, 0, len(fields))
+			for _, f := range fields {
+				if !hidden[f.ID] {
+					visible = append(visible, f)
+				}
+			}
+			fields = visible
+			stripped := make([]store.Record, 0, len(recs))
+			for _, rec := range recs {
+				cells := map[string]json.RawMessage{}
+				for k, v := range rec.Cells {
+					if !hidden[fieldIDOf(k, fields)] && !containsID(cfg.Hidden, k) {
+						cells[k] = v
+					}
+				}
+				rec.Cells = cells
+				stripped = append(stripped, rec)
+			}
+			recs = stripped
+			break
+		}
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views, "expansions": expansions})
 }
 
@@ -262,6 +308,21 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 		f.Position = *in.Position
 	}
 	return true
+}
+
+func fieldIDOf(key string, _ []store.Field) int64 {
+	id, _ := strconv.ParseInt(key, 10, 64)
+	return id
+}
+
+func containsID(ids []int64, key string) bool {
+	id, _ := strconv.ParseInt(key, 10, 64)
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }
 
 // validateFormula checks a formula expression's syntax and field references.
@@ -616,6 +677,35 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 	if msg := checkCells(fields, in.Cells); msg != "" {
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", msg)
 		return
+	}
+	// locked 视图的隐藏字段对非 manage 角色写保护
+	if b.Role != store.RoleManage {
+		for _, v := range func() []store.View {
+			vs, _ := s.Store.Views(r.Context(), b.ID)
+			return vs
+		}() {
+			if v.Type != "grid" && v.Type != "kanban" {
+				continue
+			}
+			var cfg btquery.Config
+			if json.Unmarshal(v.Config, &cfg) != nil || !cfg.Locked {
+				continue
+			}
+			for k := range in.Cells {
+				if containsID(cfg.Hidden, k) {
+					id, _ := strconv.ParseInt(k, 10, 64)
+					name := ""
+					for _, f := range fields {
+						if f.ID == id {
+							name = f.Name
+						}
+					}
+					httpx.Error(w, http.StatusForbidden, "forbidden", "字段 "+name+" 受权限保护")
+					return
+				}
+			}
+			break
+		}
 	}
 	u, _ := UserFrom(r.Context())
 	var rec store.Record

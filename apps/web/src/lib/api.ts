@@ -115,6 +115,8 @@ export interface ViewConfig {
   sorts?: { f: number; asc: boolean }[];
   group?: number;
   hidden?: number[];
+  /** 管理视图：filters 强制生效、hidden 字段对非 manage 角色剔除/写保护 */
+  locked?: boolean;
 }
 export interface View {
   id: number;

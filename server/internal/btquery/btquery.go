@@ -44,6 +44,9 @@ type Config struct {
 	Sorts   []Sort   `json:"sorts,omitempty"`
 	Group   *int64   `json:"group,omitempty"`
 	Hidden  []int64  `json:"hidden,omitempty"`
+	// Locked marks an admin view: its filters act as a mandatory row
+	// predicate and its hidden fields are stripped for non-manage roles.
+	Locked bool `json:"locked,omitempty"`
 }
 
 var ops = map[string]bool{
