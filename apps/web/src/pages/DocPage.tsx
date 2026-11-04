@@ -19,6 +19,7 @@ import { commentsApi, extrasApi } from "@/lib/api";
 import { viewToMarkdown } from "@/lib/markdown";
 import { importMarkdownOps } from "@/lib/mdImport";
 import { ask } from "@/components/ui/ask";
+import { MoreHorizontal, Star } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -328,9 +329,7 @@ function StarButton({ docId }: { docId: number }) {
       }}
       data-star-doc
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill={starred ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
-        <path d="m8 2 1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 10.6l-3.4 1.8.6-3.8L2.5 6l3.8-.6z" />
-      </svg>
+      <Star size={16} strokeWidth={1.7} fill={starred ? "currentColor" : "none"} />
     </button>
   );
 }
@@ -378,11 +377,7 @@ function DocMenu({
   return (
     <div className="relative">
       <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" title="更多" onClick={() => setOpen((o) => !o)} data-more-menu>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="3" cy="8" r="1.4" />
-          <circle cx="8" cy="8" r="1.4" />
-          <circle cx="13" cy="8" r="1.4" />
-        </svg>
+        <MoreHorizontal size={16} strokeWidth={1.7} />
       </button>
       {open && (
         <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>

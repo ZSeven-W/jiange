@@ -14,7 +14,9 @@ export function SlashMenu({ x, y, items, index, onPick, onHover }: { x: number; 
                 .filter((i) => i.group === g)
                 .map((it) => (
                   <CommandItem key={it.id} value={it.id} onSelect={() => onPick(it)} onMouseEnter={() => onHover(items.indexOf(it))}>
-                    <span className="grid size-6 place-items-center rounded border text-[11px] font-semibold text-muted-foreground">{it.icon}</span>
+                    <span className="grid size-6 place-items-center rounded border text-[11px] font-semibold text-muted-foreground">
+                      <Glyph icon={it.icon} />
+                    </span>
                     <span className="flex-1">{it.label}</span>
                     <span className="text-[11px] text-subtle">{it.py.map((p) => p[0]).join("")}</span>
                   </CommandItem>
@@ -25,4 +27,15 @@ export function SlashMenu({ x, y, items, index, onPick, onHover }: { x: number; 
       </Command>
     </div>
   );
+}
+
+import { REGISTRY } from "@/pages/base/registry";
+
+function Glyph({ icon }: { icon: string }) {
+  const entry = Object.values(REGISTRY).find((d) => d.icon === icon);
+  if (entry && typeof entry.icon !== "string") {
+    const C = entry.icon as React.ComponentType<{ size?: number; strokeWidth?: number }>;
+    return <C size={13} strokeWidth={1.7} />;
+  }
+  return <>{icon}</>;
 }

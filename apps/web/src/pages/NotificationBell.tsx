@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { notificationsApi } from "@/lib/api";
+import { Bell } from "lucide-react";
 
 const KIND_LABEL: Record<string, string> = { mention: "提到了你", reply: "回复了你", resolve: "解决了你的评论" };
 
@@ -22,10 +23,7 @@ export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => voi
   return (
     <div ref={ref} className="relative">
       <button className="relative grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => setOpen((v) => !v)} aria-label="通知" data-bell>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M8 2a4 4 0 0 0-4 4v2.5L3 11h10l-1-2.5V6a4 4 0 0 0-4-4z" />
-          <path d="M6.5 13a1.5 1.5 0 0 0 3 0" />
-        </svg>
+        <Bell size={16} strokeWidth={1.7} />
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] font-medium text-white" data-unread>{unread > 9 ? "9+" : unread}</span>}
       </button>
       {open && (

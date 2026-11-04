@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Field, FieldType } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
+import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
 
@@ -51,7 +52,7 @@ export function FieldForm({
       <select value={type} onChange={(e) => setType(e.target.value as FieldType)} className="h-8 w-full rounded-md border bg-surface px-2" data-field-type>
         {FIELD_TYPES.map((t) => (
           <option key={t} value={t}>
-            {REGISTRY[t].icon} {REGISTRY[t].label}
+            <TypeGlyph t={t} size={14} /> {REGISTRY[t].label}
           </option>
         ))}
       </select>

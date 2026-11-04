@@ -140,11 +140,11 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       <div className="group mt-5 flex items-center justify-between px-5 text-xs text-subtle">
         <span>文档</span>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button title="新建多维表格" onClick={async () => { const b = await baseApi.create(); qc.invalidateQueries({ queryKey: ["docs"] }); go(`#/base/${b.id}`); }} className="grid size-5 place-items-center rounded text-[13px] hover:bg-hover hover:text-foreground" data-new-base>
-            ▦
+          <button title="新建多维表格" onClick={async () => { const b = await baseApi.create(); qc.invalidateQueries({ queryKey: ["docs"] }); go(`#/base/${b.id}`); }} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground" data-new-base>
+            <Table2 size={14} strokeWidth={1.7} />
           </button>
-          <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded text-[14px] hover:bg-hover hover:text-foreground" data-new-doc>
-            +
+          <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground" data-new-doc>
+            <FilePlus size={14} strokeWidth={1.7} />
           </button>
         </span>
       </div>
@@ -170,9 +170,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{me.user.name}</span>
           <DarkToggle />
           <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 2.5H3.5v11H6M9.5 5l3 3-3 3M12.5 8H6" />
-            </svg>
+            <LogOut size={14} strokeWidth={1.7} />
           </button>
         </div>
       </div>
@@ -244,7 +242,7 @@ function TreeRow({
         className={cn("grid size-5 shrink-0 place-items-center rounded text-[10px] text-subtle hover:bg-black/5", !expandable && "invisible")}
         aria-label={open ? "收起" : "展开"}
       >
-        <span className={cn("transition-transform", open && "rotate-90")}>▶</span>
+        <ChevronRight size={12} strokeWidth={1.7} className={cn("transition-transform", open && "rotate-90")} />
       </button>
       <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}>
         {base ? <BaseIcon /> : <DocIcon />}
@@ -307,52 +305,15 @@ const svg = {
   strokeLinecap: "round",
   strokeLinejoin: "round",
 } as const;
-export const DocIcon = () => (
-  <svg {...svg}>
-    <path d="M4 1.75h5.5L12.5 4.8v9.45H4z" />
-    <path d="M6 7.5h4.5M6 10h4.5" />
-  </svg>
-);
-const HomeIcon = () => (
-  <svg {...svg}>
-    <path d="M2.5 7 8 2.5 13.5 7v6.5h-11z" />
-    <path d="M6.5 13.5v-4h3v4" />
-  </svg>
-);
-const ClockIcon = () => (
-  <svg {...svg}>
-    <circle cx="8" cy="8" r="5.75" />
-    <path d="M8 5v3.2l2 1.3" />
-  </svg>
-);
-const StarIcon = () => (
-  <svg {...svg}>
-    <path d="m8 2.3 1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11l-3.4 1.8.7-3.8L2.5 6.3l3.8-.5z" />
-  </svg>
-);
-const TrashIcon = () => (
-  <svg {...svg}>
-    <path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9" />
-  </svg>
-);
-const SearchIcon = () => (
-  <svg {...svg} width={14} height={14}>
-    <circle cx="7" cy="7" r="4.5" />
-    <path d="m10.5 10.5 3 3" />
-  </svg>
-);
-export const Chevron = ({ className }: { className?: string }) => (
-  <svg {...svg} width={12} height={12} className={className}>
-    <path d="m4 6 4 4 4-4" />
-  </svg>
-);
+export const DocIcon = (props: React.ComponentProps<typeof FileText>) => <FileText size={16} strokeWidth={1.7} {...props} />;
+const HomeIcon = (props: React.ComponentProps<typeof House>) => <House size={16} strokeWidth={1.7} {...props} />;
+const ClockIcon = (props: React.ComponentProps<typeof Clock3>) => <Clock3 size={16} strokeWidth={1.7} {...props} />;
+const StarIcon = (props: React.ComponentProps<typeof Star>) => <Star size={16} strokeWidth={1.7} {...props} />;
+const TrashIcon = (props: React.ComponentProps<typeof Trash2>) => <Trash2 size={16} strokeWidth={1.7} {...props} />;
+const SearchIcon = (props: React.ComponentProps<typeof Search>) => <Search size={14} strokeWidth={1.7} {...props} />;
+export const Chevron = ({ className }: { className?: string }) => <ChevronDown size={12} strokeWidth={1.7} className={className} />;
 
-export const BaseIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-    <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-    <path d="M2.5 6.2h11M2.5 9.8h11M6.5 6.2v7.3" />
-  </svg>
-);
+export const BaseIcon = (props: React.ComponentProps<typeof Table2>) => <Table2 size={16} strokeWidth={1.7} {...props} />;
 
 /** ⋯ hover menu for tree rows: add child / rename / copy link / delete. */
 function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void; onRename?: () => void; onCopyLink?: () => void; onDelete?: () => void }) {
@@ -405,7 +366,9 @@ export function DarkToggle() {
       onClick={() => setDark((v) => !v)}
       data-dark-toggle
     >
-      {dark ? "🌙" : "☀️"}
+      {dark ? <Moon size={13} strokeWidth={1.7} /> : <Sun size={13} strokeWidth={1.7} />}
     </button>
   );
 }
+
+import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, House, LogOut, Moon, Search, Star, Sun, Table2, Trash2 } from "lucide-react";
