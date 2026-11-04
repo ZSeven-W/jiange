@@ -5,6 +5,8 @@ import { NotificationBell } from "@/pages/NotificationBell";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { Logo } from "./brand";
+import { Avatar } from "./brand";
+import { colorFor } from "@/lib/presence";
 
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
@@ -160,20 +162,32 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           </>
         )}
       </div>
-      <div className="border-t px-3 py-2.5">
-        <button onClick={() => create.mutate(null)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground">
-          <span className="text-base leading-none">+</span> 新建文档
-        </button>
-        <button
-          onClick={async () => {
-            const b = await baseApi.create();
-            qc.invalidateQueries({ queryKey: ["docs"] });
-            go(`#/base/${b.id}`);
-          }}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
-        >
-          <span className="text-base leading-none">+</span> 新建多维表格
-        </button>
+      <div className="border-t px-3 py-2">
+        <div className="flex gap-1">
+          <button onClick={() => create.mutate(null)} className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-hover text-[13px] font-medium text-foreground hover:bg-accent" data-new-doc>
+            <span className="text-[15px] leading-none">+</span> 文档
+          </button>
+          <button
+            onClick={async () => {
+              const b = await baseApi.create();
+              qc.invalidateQueries({ queryKey: ["docs"] });
+              go(`#/base/${b.id}`);
+            }}
+            className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-hover text-[13px] font-medium text-foreground hover:bg-accent"
+            data-new-base
+          >
+            <span className="text-[15px] leading-none">+</span> 多维表格
+          </button>
+        </div>
+        <div className="mt-2 flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
+          <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{me.user.name}</span>
+          <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 2.5H3.5v11H6M9.5 5l3 3-3 3M12.5 8H6" />
+            </svg>
+          </button>
+        </div>
       </div>
     </aside>
   );
@@ -217,11 +231,23 @@ function TreeRow({
       onClick={onClick}
       data-tree-depth={depth}
       className={cn(
-        "group flex h-8 w-full cursor-pointer items-center gap-1 rounded-md pr-1 text-[14px] transition-colors",
+        "group relative flex h-8 w-full cursor-pointer items-center gap-1 rounded-md pr-1 text-[14px] transition-colors",
         active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
         muted && !active && "text-muted-foreground",
       )}
       style={{ paddingLeft: 4 + depth * 16 }}
+      data-guides={depth}
+    >
+      {Array.from({ length: depth }, (_, i) => (
+        <span
+          key={i}
+          aria-hidden
+          className="pointer-events-none absolute bottom-0 top-0 w-px bg-[#e8eaed]"
+          style={{ left: 12 + i * 16 }}
+        />
+      ))}
+      <div
+        className="relative flex min-w-0 flex-1 items-center"
     >
       <button
         onClick={(e) => {
@@ -263,6 +289,7 @@ function TreeRow({
         )}
         <RowMenu onRename={onRename} onCopyLink={onCopyLink} onDelete={onDelete} onAdd={onAdd} />
       </span>
+      </div>
     </div>
   );
 }

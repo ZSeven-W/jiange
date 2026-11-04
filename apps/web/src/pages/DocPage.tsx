@@ -7,7 +7,8 @@ import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
 import { Editor } from "@/editor/Editor";
 import { Avatar } from "@/components/brand";
-import { docTitle } from "@/components/Sidebar";
+import { BaseIcon, docTitle, DocIcon } from "@/components/Sidebar";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
@@ -217,6 +218,9 @@ function TopBar({
         <a href="#/" className="truncate text-muted-foreground hover:text-foreground">
           {workspace}
         </a>
+        <span className="shrink-0 text-primary">
+          {meta?.kind === "base" ? <BaseIcon /> : <DocIcon />}
+        </span>
         {ancestors.map((a) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
             <span className="text-subtle">/</span>
@@ -232,46 +236,60 @@ function TopBar({
         <span className="size-1.5 rounded-full" style={{ background: s.color }} />
         {s.label}
       </span>
-      <div className="ml-auto flex items-center gap-3">
-        <div className="flex items-center -space-x-1.5" aria-label="协作者">
+      <div className="ml-auto flex items-center gap-2">
+        <div className="mr-1 flex items-center -space-x-1.5" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
           {peers.slice(0, 5).map((p) => (
             <Avatar key={p.clientId} name={p.state.name} color={p.state.color} size={26} ring />
           ))}
           {peers.length > 5 && <span className="grid size-[26px] place-items-center rounded-full bg-hover text-[11px] ring-2 ring-white">+{peers.length - 5}</span>}
         </div>
-        <button className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onHistory} data-history>
-          历史版本
-        </button>
-        <label className="cursor-pointer text-[13px] text-muted-foreground hover:text-foreground" data-import-md>
-          导入
-          <input
-            type="file"
-            accept=".md,.markdown,text/markdown"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onImport(f);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <button className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onExport} data-export-md>
-          导出
-        </button>
+        {meta && <StarButton docId={meta.id} />}
         {readOnly && <span className="rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground">只读</span>}
         <Button size="sm" className="h-8 px-4" onClick={onShare}>
           分享
         </Button>
-        {meta?.role === "manage" && <DocMenu meta={meta} />}
+        <DocMenu meta={meta} onHistory={onHistory} onExport={onExport} onImport={onImport} />
       </div>
     </header>
   );
 }
 
-function DocMenu({ meta }: { meta?: DocMeta }) {
+/** 收藏星标：同步 favorites 查询缓存。 */
+function StarButton({ docId }: { docId: number }) {
+  const qc = useQueryClient();
+  const favs = useQuery({ queryKey: ["favorites"], queryFn: () => extrasApi.favorites() });
+  const starred = favs.data?.some((d) => d.id === docId) ?? false;
+  return (
+    <button
+      className={cn("grid size-8 place-items-center rounded-md hover:bg-hover", starred ? "text-amber-400" : "text-muted-foreground hover:text-foreground")}
+      title={starred ? "取消收藏" : "收藏"}
+      onClick={() => {
+        (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] }));
+      }}
+      data-star-doc
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill={starred ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+        <path d="m8 2 1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 10.6l-3.4 1.8.6-3.8L2.5 6l3.8-.6z" />
+      </svg>
+    </button>
+  );
+}
+
+function DocMenu({
+  meta,
+  onHistory,
+  onExport,
+  onImport,
+}: {
+  meta?: DocMeta;
+  onHistory: () => void;
+  onExport: () => void;
+  onImport: (f: File) => void;
+}) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
+  const close = () => setOpen(false);
   const trash = async () => {
     if (!meta) return;
     await docsApi.trash(meta.id);
@@ -284,15 +302,47 @@ function DocMenu({ meta }: { meta?: DocMeta }) {
     qc.invalidateQueries({ queryKey: ["docs"] });
     setOpen(false);
   };
+  const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
   return (
     <div className="relative">
-      <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover" title="更多" onClick={() => setOpen((o) => !o)}>
-        ···
+      <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" title="更多" onClick={() => setOpen((o) => !o)} data-more-menu>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="3" cy="8" r="1.4" />
+          <circle cx="8" cy="8" r="1.4" />
+          <circle cx="13" cy="8" r="1.4" />
+        </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-40 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
+        <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
+          {onHistory && (
+            <button className={item} onClick={() => { close(); onHistory(); }}>
+              历史版本
+            </button>
+          )}
+          {onExport && (
+            <button className={item} onClick={() => { close(); onExport(); }}>
+              导出 Markdown
+            </button>
+          )}
+          {onImport && (
+            <label className={cn(item, "block cursor-pointer")} data-import-md>
+              导入 Markdown
+              <input
+                type="file"
+                accept=".md,.markdown,text/markdown"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onImport(f);
+                  e.target.value = "";
+                  close();
+                }}
+              />
+            </label>
+          )}
+          {meta?.parentId && <div className="my-1 border-t" />}
           {meta?.parentId && (
-            <button className="block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={toRoot}>
+            <button className={item} onClick={toRoot}>
               移到顶层
             </button>
           )}
