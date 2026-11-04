@@ -56,6 +56,7 @@ export interface DocMeta {
   updatedAt: string;
   role?: Role;
   kind?: "doc" | "base";
+  workspaceName?: string;
 }
 export type FieldType =
   | "text"
@@ -201,6 +202,13 @@ export interface FileMeta {
   size: number;
 }
 
+export const extrasApi = {
+  search: (q: string) => request<{ docs: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`).then((r) => r.docs),
+  favorites: () => request<{ docs: DocMeta[] }>("GET", "/api/favorites").then((r) => r.docs),
+  star: (id: number) => request<void>("PUT", `/api/docs/${id}/star`),
+  unstar: (id: number) => request<void>("DELETE", `/api/docs/${id}/star`),
+  ancestors: (id: number) => request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
+};
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),

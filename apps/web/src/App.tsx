@@ -35,6 +35,8 @@ export default function App() {
         <JoinLink token={route.token} />
       ) : route.page === "trash" ? (
         <Trash />
+      ) : route.page === "favorites" ? (
+        <Home me={me.data} favorites />
       ) : route.page === "playground" ? (
         <div className="flex-1 overflow-auto p-6">
           <Playground />

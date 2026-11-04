@@ -73,7 +73,9 @@ func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
 		if m.member(uid, d.meta.WorkspaceID) && !d.deleted {
-			out = append(out, d.meta)
+			meta := d.meta
+			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
+			out = append(out, meta)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
@@ -306,6 +308,16 @@ func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
 	}
 	d.meta.ParentID = parent
 	return nil
+}
+
+// wsName looks up a workspace's name (best effort).
+func (m *Memory) wsName(id int64) string {
+	for i := range m.workspaces {
+		if m.workspaces[i].ID == id {
+			return m.workspaces[i].Name
+		}
+	}
+	return ""
 }
 
 func (m *Memory) userByID(id int64) *User {

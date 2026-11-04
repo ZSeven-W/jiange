@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { baseApi, docsApi, type DocMeta, type Me } from "@/lib/api";
+import { baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { NotificationBell } from "@/pages/NotificationBell";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
@@ -68,19 +68,40 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             active={activeId === d.id}
             expandable={has}
             open={isOpen}
+            starred={favorites.data?.some((f) => f.id === d.id)}
             onToggle={() => setOpen((o) => ({ ...o, [d.id]: !isOpen }))}
             onClick={() => go(hrefOf(d))}
             onAdd={() => create.mutate(d.id)}
+            onStar={() => {
+              const starred = favorites.data?.some((f) => f.id === d.id);
+              (starred ? extrasApi.unstar(d.id) : extrasApi.star(d.id)).then(() => {
+                favorites.refetch();
+                qc.invalidateQueries({ queryKey: ["favorites"] });
+              });
+            }}
+            onRename={() => {
+              const t = prompt("重命名", docTitle(d));
+              if (t && t.trim()) docsApi.rename(d.id, t.trim()).then(() => {
+                qc.invalidateQueries({ queryKey: ["docs"] });
+                qc.invalidateQueries({ queryKey: ["search", kw] });
+              });
+            }}
+            onCopyLink={() => {
+              navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hrefOf(d)}`).catch(() => {});
+            }}
+            onDelete={() => {
+              if (confirm(`删除「${docTitle(d)}」？可在回收站还原。`)) docsApi.trash(d.id).then(() => qc.invalidateQueries({ queryKey: ["docs"] }));
+            }}
           />
           {has && isOpen && renderTree(d.id, depth + 1)}
         </div>
       );
     });
-  const shown = useMemo(() => {
-    const all = docs.data ?? [];
-    const k = q.trim().toLowerCase();
-    return k ? all.filter((d) => docTitle(d).toLowerCase().includes(k)) : [...all].sort((a, b) => a.id - b.id);
-  }, [docs.data, q]);
+  // server-side search (title + collaborative text) while typing
+  const kw = q.trim();
+  const searchQ = useQuery({ queryKey: ["search", kw], queryFn: () => extrasApi.search(kw), enabled: kw.length > 0 });
+  const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites });
+  const shown = kw ? (searchQ.data ?? []) : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
     <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-sidebar">
@@ -106,7 +127,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <div className="mt-2 flex items-center gap-1.5">
           <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border bg-white px-2.5 text-[13px] text-subtle focus-within:border-primary">
             <SearchIcon />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" data-search />
           </label>
           <NotificationBell onOpenDoc={(id) => go(`#/doc/${id}`)} />
         </div>
@@ -114,7 +135,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       <nav className="mt-3 space-y-0.5 px-3">
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
-        <NavItem icon={<StarIcon />} label="收藏" />
+        <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-5 flex items-center justify-between px-5 text-xs text-subtle">
@@ -124,10 +145,12 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </button>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
-        {q.trim()
-          ? shown.map((d) => <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)
+        {kw.trim()
+          ? (searchQ.isFetching && <p className="px-2 py-1.5 text-xs text-subtle">搜索中…</p>)
           : renderTree(null, 0)}
-        {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{q ? "没有匹配的文档" : "还没有文档"}</p>}
+        {kw.trim() && shown.map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+        {kw.trim() && !searchQ.isFetching && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">没有匹配的文档</p>}
+        {!kw.trim() && docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">还没有文档</p>}
         {!q.trim() && (shared.data?.length ?? 0) > 0 && (
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
@@ -167,6 +190,11 @@ function TreeRow({
   onClick,
   onAdd,
   base,
+  starred,
+  onStar,
+  onRename,
+  onCopyLink,
+  onDelete,
 }: {
   base?: boolean;
   depth: number;
@@ -178,6 +206,11 @@ function TreeRow({
   onToggle: () => void;
   onClick: () => void;
   onAdd: () => void;
+  starred?: boolean;
+  onStar?: () => void;
+  onRename?: () => void;
+  onCopyLink?: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <div
@@ -204,16 +237,32 @@ function TreeRow({
         {base ? <BaseIcon /> : <DocIcon />}
       </span>
       <span className="ml-1 truncate">{label}</span>
-      <button
-        title="新建子文档"
-        onClick={(e) => {
-          e.stopPropagation();
-          onAdd();
-        }}
-        className="ml-auto hidden size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground group-hover:grid"
-      >
-        +
-      </button>
+      <span className="ml-auto hidden items-center gap-0.5 group-hover:flex">
+        <button
+          title="新建子文档"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd();
+          }}
+          className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
+        >
+          +
+        </button>
+        {onStar && (
+          <button
+            title={starred ? "取消收藏" : "收藏"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStar();
+            }}
+            className={cn("grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground", starred && "text-amber-500")}
+            data-star
+          >
+            {starred ? "★" : "☆"}
+          </button>
+        )}
+        <RowMenu onRename={onRename} onCopyLink={onCopyLink} onDelete={onDelete} onAdd={onAdd} />
+      </span>
     </div>
   );
 }
@@ -290,3 +339,40 @@ export const BaseIcon = () => (
     <path d="M2.5 6.2h11M2.5 9.8h11M6.5 6.2v7.3" />
   </svg>
 );
+
+/** ⋯ hover menu for tree rows: add child / rename / copy link / delete. */
+function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void; onRename?: () => void; onCopyLink?: () => void; onDelete?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <span ref={ref} className="relative">
+      <button
+        title="更多"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
+        data-row-menu
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute left-0 top-6 z-30 w-28 rounded-lg border bg-white py-1 text-[13px] shadow-lg" data-row-menu-pop>
+          {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>新建子文档</button>}
+          {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>重命名</button>}
+          {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>复制链接</button>}
+          {onDelete && <button className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}>删除</button>}
+        </div>
+      )}
+    </span>
+  );
+}

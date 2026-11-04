@@ -68,14 +68,14 @@ func (p *Postgres) DocByToken(ctx context.Context, tok string) (id int64, role s
 }
 
 func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+` FROM nodes n`+roleJoins+`
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id) FROM nodes n`+roleJoins+`
 		WHERE n.deleted_at IS NULL AND m.user_id IS NULL AND EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
 		ORDER BY n.id`, uid)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (d DocMeta, err error) {
-		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role)
+		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role, &d.WorkspaceName)
 		return
 	})
 }

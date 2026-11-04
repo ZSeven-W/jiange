@@ -17,6 +17,8 @@ type DocMeta struct {
 	CreatorName string    `json:"creatorName"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// WorkspaceName is the owning workspace's name (bread crumbs for shared docs).
+	WorkspaceName string `json:"workspaceName,omitempty"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
 }
@@ -42,6 +44,15 @@ type DocStore interface {
 	// CreateDoc creates a doc node; initial ops get seqs 1..n.
 	CreateDoc(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string, initial []RawOp) (DocMeta, error)
 	ListDocs(ctx context.Context, userID int64) ([]DocMeta, error)
+	// Search lists the user's accessible docs whose title or collaborative
+	// text matches q (title match only on Memory; Postgres also greps ops).
+	SearchDocs(ctx context.Context, userID int64, q string) ([]DocMeta, error)
+	// Favorites (stars): user-scoped, survive doc moves.
+	ListFavorites(ctx context.Context, userID int64) ([]DocMeta, error)
+	AddFavorite(ctx context.Context, userID, docID int64) error
+	RemoveFavorite(ctx context.Context, userID, docID int64) error
+	// Ancestors returns parent chain from the doc up to the root (bread crumbs).
+	Ancestors(ctx context.Context, userID, docID int64) ([]DocMeta, error)
 	// GetDoc returns the doc if userID is a member of its workspace, else ErrNotFound.
 	GetDoc(ctx context.Context, userID, docID int64) (DocMeta, error)
 	UpdateTitle(ctx context.Context, docID int64, title string) (DocMeta, error)
