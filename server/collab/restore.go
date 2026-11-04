@@ -42,11 +42,11 @@ func RestoreOps(cur, target *Doc, client uint64) []Op {
 			created := cur.CreateBlock(client, parent, target.blocks[bid].pos, tb.Type)
 			emit(created)
 			if text := textOf(target, tb.ID); text != "" {
-				emit(cur.InsertText(client, created.Block, 0, text))
+				emit(cur.InsertText(client, created.ID, 0, text))
 			}
 			for k, v := range tb.Props {
 				val := v
-				op := Op{T: TBlockSet, ID: cur.next(client, 1), Block: created.Block, Key: k, Value: &val}
+				op := Op{T: TBlockSet, ID: cur.next(client, 1), Block: created.ID, Key: k, Value: &val}
 				cur.Apply(op)
 				emit(op)
 			}
