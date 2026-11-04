@@ -38,4 +38,7 @@ type BaseStore interface {
 	// SetCells merges cells into a record (JSON null deletes a cell).
 	SetCells(ctx context.Context, baseID, recordID int64, cells map[string]json.RawMessage) (Record, error)
 	DeleteRecord(ctx context.Context, baseID, recordID int64) error
+	// MapFieldCells rewrites every stored cell of fieldID through fn; fn
+	// returning nil deletes the cell. Used when a field changes type.
+	MapFieldCells(ctx context.Context, baseID, fieldID int64, fn func(json.RawMessage) json.RawMessage) error
 }

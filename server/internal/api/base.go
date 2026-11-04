@@ -158,7 +158,8 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	f := fields[i]
+	old := fields[i]
+	f := old
 	if !in.apply(w, &f) {
 		return
 	}
@@ -166,7 +167,73 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if old.Type != f.Type || (f.Type == "select" && !slices.Equal(old.Options, f.Options)) {
+		if err := s.Store.MapFieldCells(r.Context(), b.ID, f.ID, func(v json.RawMessage) json.RawMessage {
+			return convertCell(old, f, v)
+		}); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
 	httpx.JSON(w, http.StatusOK, f)
+}
+
+// convertCell rewrites a cell after its field changed type (or a select's
+// options shrank). Values that cannot be represented are cleared (nil).
+func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
+	if from.Type == to.Type && (to.Type != "select" || slices.Contains(to.Options, string(v))) {
+		return v
+	}
+	var x any
+	if json.Unmarshal(v, &x) != nil {
+		return nil
+	}
+	mustJSON := func(a any) json.RawMessage { b, _ := json.Marshal(a); return b }
+	switch val := x.(type) {
+	case string:
+		switch to.Type {
+		case "text", "date", "select":
+			if to.Type == "select" && !slices.Contains(to.Options, val) {
+				return nil
+			}
+			if to.Type == "date" {
+				if _, err := time.Parse("2006-01-02", val); err != nil {
+					return nil
+				}
+			}
+			return mustJSON(val)
+		case "number":
+			if n, err := strconv.ParseFloat(strings.TrimSpace(val), 64); err == nil {
+				return mustJSON(n)
+			}
+		case "checkbox":
+			if b, err := strconv.ParseBool(val); err == nil {
+				return mustJSON(b)
+			}
+		}
+	case float64:
+		switch to.Type {
+		case "number":
+			return mustJSON(val)
+		case "text":
+			return mustJSON(strconv.FormatFloat(val, 'f', -1, 64))
+		case "checkbox":
+			return mustJSON(val != 0)
+		}
+	case bool:
+		switch to.Type {
+		case "checkbox":
+			return mustJSON(val)
+		case "number":
+			if val {
+				return mustJSON(1)
+			}
+			return mustJSON(0)
+		case "text":
+			return mustJSON(strconv.FormatBool(val))
+		}
+	}
+	return nil
 }
 
 func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {

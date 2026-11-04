@@ -144,3 +144,26 @@ func (m *Memory) DeleteRecord(_ context.Context, base, id int64) error {
 	}
 	return nil
 }
+
+func (m *Memory) MapFieldCells(_ context.Context, base, field int64, fn func(json.RawMessage) json.RawMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := strconv.FormatInt(field, 10)
+	for i := range m.b.records {
+		if m.b.records[i].BaseID != base {
+			continue
+		}
+		v, ok := m.b.records[i].Cells[key]
+		if !ok {
+			continue
+		}
+		nc := maps.Clone(m.b.records[i].Cells)
+		if nv := fn(v); nv == nil {
+			delete(nc, key)
+		} else {
+			nc[key] = nv
+		}
+		m.b.records[i].Cells = nc
+	}
+	return nil
+}

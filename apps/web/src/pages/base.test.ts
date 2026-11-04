@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { view } from "./BasePage";
+import { view } from "./base/view";
 import type { BaseRecord, Field } from "@/lib/api";
 
 const fields: Field[] = [

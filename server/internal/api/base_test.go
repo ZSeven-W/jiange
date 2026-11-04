@@ -67,3 +67,76 @@ func TestBaseCRUD(t *testing.T) {
 		t.Fatalf("tree: %+v", list.Docs)
 	}
 }
+
+func TestFieldEditAndConvert(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "kay@x.com", "name": "Kay", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+	var text, num store.Field
+	json.NewDecoder(post(t, c, u+"/fields", map[string]string{"name": "备注", "type": "text"}).Body).Decode(&text)
+	json.NewDecoder(post(t, c, u+"/fields", map[string]string{"name": "数量", "type": "number"}).Body).Decode(&num)
+
+	// rename + reorder survive a fresh GET; a bad type is rejected with 400
+	if res := send(t, c, "PATCH", u+"/fields/"+strconv.FormatInt(text.ID, 10), map[string]any{"name": "说明", "position": 5}); res.StatusCode != 200 {
+		t.Fatalf("patch field: %d", res.StatusCode)
+	}
+	if res := send(t, c, "PATCH", u+"/fields/"+strconv.FormatInt(text.ID, 10), map[string]any{"type": "richtext"}); res.StatusCode != 400 {
+		t.Fatalf("bad type accepted: %d", res.StatusCode)
+	}
+	var full struct {
+		Fields []store.Field
+	}
+	r, _ := c.Get(u)
+	json.NewDecoder(r.Body).Decode(&full)
+	if full.Fields[1].Name != "说明" || full.Fields[1].Position != 5 {
+		t.Fatalf("rename/reorder not persisted: %+v", full.Fields)
+	}
+
+	// type change converts compatible values and clears the rest
+	tk, nk := strconv.FormatInt(text.ID, 10), strconv.FormatInt(num.ID, 10)
+	var r1, r2, r3 store.Record
+	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]any{tk: "3.5"}}).Body).Decode(&r1)
+	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]any{tk: "abc"}}).Body).Decode(&r2)
+	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]any{nk: 7}}).Body).Decode(&r3)
+	if res := send(t, c, "PATCH", u+"/fields/"+tk, map[string]string{"type": "number"}); res.StatusCode != 200 {
+		t.Fatalf("convert to number: %d", res.StatusCode)
+	}
+	if res := send(t, c, "PATCH", u+"/fields/"+nk, map[string]string{"type": "text"}); res.StatusCode != 200 {
+		t.Fatalf("convert to text: %d", res.StatusCode)
+	}
+	records := map[int64]store.Record{}
+	r, _ = c.Get(u)
+	var after struct{ Records []store.Record }
+	json.NewDecoder(r.Body).Decode(&after)
+	for _, rec := range after.Records {
+		records[rec.ID] = rec
+	}
+	if string(records[r1.ID].Cells[tk]) != "3.5" {
+		t.Fatalf("text '3.5' should convert to 3.5, got %v", records[r1.ID].Cells[tk])
+	}
+	if _, ok := records[r2.ID].Cells[tk]; ok {
+		t.Fatalf("text 'abc' should be cleared, got %v", records[r2.ID].Cells[tk])
+	}
+	if string(records[r3.ID].Cells[nk]) != `"7"` {
+		t.Fatalf("number 7 should convert to '7', got %v", records[r3.ID].Cells[nk])
+	}
+
+	// shrinking select options clears removed choices
+	var sel store.Field
+	json.NewDecoder(post(t, c, u+"/fields", map[string]any{"name": "状态", "type": "select", "options": []string{"待办", "完成"}}).Body).Decode(&sel)
+	sk := strconv.FormatInt(sel.ID, 10)
+	var r4 store.Record
+	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]any{sk: "待办"}}).Body).Decode(&r4)
+	send(t, c, "PATCH", u+"/fields/"+sk, map[string]any{"options": []string{"完成"}})
+	r, _ = c.Get(u)
+	json.NewDecoder(r.Body).Decode(&after)
+	for _, rec := range after.Records {
+		if rec.ID == r4.ID {
+			if _, ok := rec.Cells[sk]; ok {
+				t.Fatalf("removed option should clear cell, got %v", rec.Cells[sk])
+			}
+		}
+	}
+}
