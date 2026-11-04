@@ -1,4 +1,6 @@
 import type { BaseRecord, Cell, Field } from "@/lib/api";
+import { displayValue, REGISTRY } from "./registry";
+import type { User } from "@/lib/api";
 
 /** Parse Excel-style TSV: \t between cells, \n between rows; a leading `"`
  * quotes a cell (embedded tabs/newlines allowed, `""` is a literal quote).
@@ -45,47 +47,18 @@ export function parseTSV(text: string): string[][] {
 /** Needs quoting when pasted back into TSV (embedded separator/newline/quote). */
 export function formatTSV(rows: string[][]): string {
   return rows
-    .map((r) =>
-      r
-        .map((c) => (/[\t\n"]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c))
-        .join("\t"),
-    )
+    .map((r) => r.map((c) => (/[\t\n"]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join("\t"))
     .join("\n");
 }
 
-/** Cell value → plain text (for copy). */
+/** Cell value → plain text (for copy), through the type registry. */
 export function toText(field: Field, v: Cell | undefined): string {
-  if (v === undefined || v === null) return "";
-  if (field.type === "checkbox") return v ? "TRUE" : "FALSE";
-  return String(v);
+  return REGISTRY[field.type].format(v, field);
 }
 
 /** Plain text → cell value; undefined means "cannot paste into this field" (skip). */
 export function fromText(field: Field, text: string): Cell | null | undefined {
-  switch (field.type) {
-    case "number": {
-      const t = text.trim();
-      if (t === "") return null;
-      const n = Number(t);
-      return Number.isNaN(n) ? undefined : n;
-    }
-    case "checkbox": {
-      const t = text.trim().toLowerCase();
-      if (t === "") return null;
-      if (["true", "1", "yes", "是", "✓", "x"].includes(t)) return true;
-      if (["false", "0", "no", "否", ""].includes(t)) return null;
-      return undefined;
-    }
-    case "select":
-      if (text === "") return null;
-      return (field.options ?? []).includes(text) ? text : undefined;
-    case "date": {
-      if (text.trim() === "") return null;
-      return /^\d{4}-\d{2}-\d{2}$/.test(text.trim()) ? text.trim() : undefined;
-    }
-    default:
-      return text === "" ? null : text;
-  }
+  return REGISTRY[field.type].parse(text, field);
 }
 
 export interface PastePatch {
@@ -113,7 +86,7 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
     for (let dc = 0; dc < row.length; dc++) {
       const f = fields[fi + dc];
       if (!f) continue;
-      const v = fromText(f, row[dc]);
+      const v = REGISTRY[f.type].parse(row[dc], f);
       if (v === undefined) continue;
       cells[f.id] = v;
     }
@@ -130,11 +103,11 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
 }
 
 /** TSV for a cell rectangle (indices into the visible grid). */
-export function rangeText(records: BaseRecord[], fields: Field[], r0: number, r1: number, f0: number, f1: number): string {
+export function rangeText(records: BaseRecord[], fields: Field[], members: User[], r0: number, r1: number, f0: number, f1: number): string {
   const rows: string[][] = [];
   for (let r = Math.min(r0, r1); r <= Math.max(r0, r1); r++) {
     const out: string[] = [];
-    for (let f = Math.min(f0, f1); f <= Math.max(f0, f1); f++) out.push(toText(fields[f], records[r]?.cells[fields[f].id]));
+    for (let f = Math.min(f0, f1); f <= Math.max(f0, f1); f++) out.push(toText(fields[f], displayValue(records[r], fields[f], members)));
     rows.push(out);
   }
   return formatTSV(rows);

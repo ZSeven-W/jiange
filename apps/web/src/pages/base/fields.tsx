@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Field, FieldType } from "@/lib/api";
-import { TYPE_ICON, TYPE_LABEL } from "./cells";
+import { FIELD_TYPES, REGISTRY } from "./registry";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -15,6 +15,7 @@ export function FieldForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
   const [opts, setOpts] = useState((initial?.options ?? []).join(", "));
+  const def = REGISTRY[type];
   const typeChanged = initial !== undefined && initial.type !== type;
   return (
     <form
@@ -22,19 +23,25 @@ export function FieldForm({
       data-field-form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ name: name.trim() || initial?.name || "新字段", type, options: type === "select" ? opts.split(/[,，\s]+/).filter(Boolean) : undefined });
+        onSubmit({
+          name: name.trim() || initial?.name || "新字段",
+          type,
+          options: def.hasOptions ? opts.split(/[,，\s]+/).filter(Boolean) : undefined,
+        });
         onCancel();
       }}
     >
       <input autoFocus={!initial} value={name} onChange={(e) => setName(e.target.value)} placeholder="字段名称" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
       <select value={type} onChange={(e) => setType(e.target.value as FieldType)} className="h-8 w-full rounded-md border bg-white px-2" data-field-type>
-        {(Object.keys(TYPE_LABEL) as FieldType[]).map((t) => (
+        {FIELD_TYPES.map((t) => (
           <option key={t} value={t}>
-            {TYPE_ICON[t]} {TYPE_LABEL[t]}
+            {REGISTRY[t].icon} {REGISTRY[t].label}
           </option>
         ))}
       </select>
-      {type === "select" && <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />}
+      {def.hasOptions && (
+        <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
+      )}
       {typeChanged && <p className="text-[12px] leading-4 text-amber-600">切换类型会自动转换兼容的值，不兼容的值将被清空。</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="h-7 rounded-md border px-3">
@@ -62,7 +69,12 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
   }, [open]);
   return (
     <div ref={ref} className="relative">
-      <button className="hidden rounded px-0.5 text-subtle hover:bg-hover hover:text-foreground group-hover/th:inline" onClick={() => setOpen((v) => !v)} aria-label={`字段菜单 ${field.name}`} data-field-menu>
+      <button
+        className="hidden rounded px-0.5 text-subtle hover:bg-hover hover:text-foreground group-hover/th:inline"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={`字段菜单 ${field.name}`}
+        data-field-menu
+      >
         ▾
       </button>
       {open && (

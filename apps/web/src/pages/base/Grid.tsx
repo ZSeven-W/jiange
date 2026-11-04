@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
-import { baseApi, type BaseRecord, type Cell, type Field } from "@/lib/api";
+import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { CellEditor, CellView, TYPE_ICON, W } from "./cells";
+import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
+import { REGISTRY } from "./registry";
 import { planPaste, rangeText } from "./tsv";
 
 /** Column widths per field, persisted locally so they survive refresh. */
@@ -32,12 +33,14 @@ export function Grid({
   canEdit,
   fields,
   records,
+  members,
   onMutate,
 }: {
   baseId: number;
   canEdit: boolean;
   fields: Field[];
   records: BaseRecord[];
+  members: User[];
   onMutate: () => void;
 }) {
   const [edit, setEdit] = useState<Edit | null>(null);
@@ -48,7 +51,7 @@ export function Grid({
   const [sel, setSel] = useState<Sel | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
-  const width = (f: Field) => widths[f.id] ?? W[f.type];
+  const width = (f: Field) => widths[f.id] ?? REGISTRY[f.type].width;
   const saveWidth = (fid: number, w: number) => {
     setWidths((prev) => {
       const next = { ...prev, [fid]: w };
@@ -94,7 +97,7 @@ export function Grid({
   const startEdit = (ri: number, fi: number, seed?: string) => {
     if (!canEdit) return;
     const f = fields[fi];
-    if (!f || f.type === "checkbox") return;
+    if (!f || REGISTRY[f.type].readonly || f.type === "checkbox") return;
     setSel({ ar: ri, af: fi, rr: ri, rf: fi });
     setEdit({ ri, fi, seed });
   };
@@ -117,7 +120,7 @@ export function Grid({
 
   const copy = async () => {
     if (!sel) return;
-    const text = rangeText(records, fields, sel.ar, sel.rr, sel.af, sel.rf);
+    const text = rangeText(records, fields, members, sel.ar, sel.rr, sel.af, sel.rf);
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -291,7 +294,7 @@ export function Grid({
                     <span className="mr-0.5 cursor-grab text-subtle" title="拖拽排序" data-drag-handle>
                       ⠿
                     </span>
-                    <span className="mr-1.5 text-subtle">{TYPE_ICON[f.type]}</span>
+                    <span className="mr-1.5 text-subtle">{REGISTRY[f.type].icon}</span>
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
@@ -326,20 +329,25 @@ export function Grid({
               <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
                 {canEdit && (
-                  <button className="hidden text-subtle hover:text-destructive group-hover:inline" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
+                  <button
+                    className="hidden text-subtle hover:text-destructive group-hover:inline"
+                    title="删除记录"
+                    onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}
+                  >
                     ✕
                   </button>
                 )}
               </td>
               {fields.map((f, j) => {
                 const editing = edit?.ri === i && edit.fi === j;
+                const ro = REGISTRY[f.type].readonly;
                 return (
                   <td
                     key={f.id}
                     className={cn(
                       "border px-2.5",
                       f.type === "number" && "text-right tabular-nums",
-                      editing && "outline outline-2 -outline-offset-2 outline-primary",
+                      editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-[#DCE7FF]" : "bg-[#EDF2FF]"),
                     )}
                     onClick={(e) => {
@@ -351,9 +359,23 @@ export function Grid({
                     data-cell={`${rec.id}:${f.id}`}
                   >
                     {editing ? (
-                      <CellEditor field={f} value={rec.cells[f.id]} seed={edit?.seed} onCommit={(v, dir) => setCell(rec, f, v, dir)} onCancel={() => setEdit(null)} />
+                      <CellEditor
+                        field={f}
+                        record={rec}
+                        members={members}
+                        seed={edit?.seed}
+                        onCommit={(v, dir) => setCell(rec, f, v, dir)}
+                        onCancel={() => setEdit(null)}
+                      />
                     ) : (
-                      <CellView field={f} value={rec.cells[f.id]} onToggle={canEdit ? () => toggleAt(i, j) : undefined} />
+                      <CellView
+                        field={f}
+                        record={rec}
+                        members={members}
+                        canEdit={canEdit && !ro}
+                        onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
+                        onEdit={() => startEdit(i, j)}
+                      />
                     )}
                   </td>
                 );

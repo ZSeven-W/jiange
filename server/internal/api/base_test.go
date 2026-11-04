@@ -147,6 +147,91 @@ func TestFieldEditAndConvert(t *testing.T) {
 	}
 }
 
+func TestFieldTypesRegistry(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "ft@x.com", "name": "FT", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+
+	// members ship with the base payload (person fields render names)
+	var full struct {
+		Members []store.User
+	}
+	r, _ := c.Get(u)
+	json.NewDecoder(r.Body).Decode(&full)
+	if len(full.Members) != 1 || full.Members[0].Name != "FT" {
+		t.Fatalf("members: %+v", full.Members)
+	}
+
+	mk := func(name, typ string, opts []string) store.Field {
+		var f store.Field
+		json.NewDecoder(post(t, c, u+"/fields", map[string]any{"name": name, "type": typ, "options": opts}).Body).Decode(&f)
+		return f
+	}
+	multi := mk("标签", "multi_select", []string{"红", "绿"})
+	person := mk("负责", "person", nil)
+	ro := mk("创建时间", "created_at", nil)
+	if multi.Type != "multi_select" || person.Type != "person" || ro.Type != "created_at" {
+		t.Fatalf("create typed fields: %+v %+v %+v", multi, person, ro)
+	}
+
+	// multi_select: valid arrays pass, unknown options are rejected
+	mk2 := strconv.FormatInt(multi.ID, 10)
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{mk2: []string{"红", "绿"}}}); res.StatusCode != 201 {
+		t.Fatalf("multi_select valid: %d", res.StatusCode)
+	}
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{mk2: []string{"蓝"}}}); res.StatusCode != 400 {
+		t.Fatalf("multi_select unknown option: %d", res.StatusCode)
+	}
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{mk2: "红"}}); res.StatusCode != 400 {
+		t.Fatalf("multi_select non-array: %d", res.StatusCode)
+	}
+
+	// person: a member id passes, garbage is rejected
+	pk := strconv.FormatInt(person.ID, 10)
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{pk: full.Members[0].ID}}); res.StatusCode != 201 {
+		t.Fatalf("person member: %d", res.StatusCode)
+	}
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{pk: "kay"}}); res.StatusCode != 400 {
+		t.Fatalf("person string: %d", res.StatusCode)
+	}
+
+	// computed columns reject writes but appear in fields
+	if res := post(t, c, u+"/records", map[string]any{"cells": map[string]any{strconv.FormatInt(ro.ID, 10): "2024-01-01"}}); res.StatusCode != 400 {
+		t.Fatalf("created_at should be read-only: %d", res.StatusCode)
+	}
+
+	// records carry creator/timestamps for the computed columns
+	var got struct {
+		Records []store.Record
+	}
+	r2, _ := c.Get(u)
+	json.NewDecoder(r2.Body).Decode(&got)
+	found := false
+	for _, rec := range got.Records {
+		if rec.CreatorID == full.Members[0].ID && rec.CreatedAt != nil && rec.UpdatedAt != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("record metadata missing: %+v", got.Records)
+	}
+
+	// type conversion: multi_select → text joins with commas
+	if res := send(t, c, "PATCH", u+"/fields/"+mk2, map[string]string{"type": "text"}); res.StatusCode != 200 {
+		t.Fatalf("multi→text: %d", res.StatusCode)
+	}
+	r3, _ := c.Get(u)
+	got.Records = nil
+	json.NewDecoder(r3.Body).Decode(&got)
+	for _, rec := range got.Records {
+		if v, ok := rec.Cells[mk2]; ok && string(v) != `"红,绿"` {
+			t.Fatalf("multi→text conversion: %v", string(v))
+		}
+	}
+}
+
 func TestBaseRealtimeEvents(t *testing.T) {
 	st := store.NewMemory()
 	hub := &btsync.Hub{Store: st, PingInterval: time.Hour}

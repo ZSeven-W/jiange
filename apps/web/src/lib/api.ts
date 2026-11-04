@@ -57,7 +57,18 @@ export interface DocMeta {
   role?: Role;
   kind?: "doc" | "base";
 }
-export type FieldType = "text" | "number" | "select" | "checkbox" | "date";
+export type FieldType =
+  | "text"
+  | "number"
+  | "select"
+  | "checkbox"
+  | "date"
+  | "multi_select"
+  | "person"
+  | "attachment"
+  | "created_by"
+  | "created_at"
+  | "modified_at";
 export interface Field {
   id: number;
   name: string;
@@ -65,15 +76,25 @@ export interface Field {
   options?: string[];
   position: number;
 }
-export type Cell = string | number | boolean;
+export interface AttachmentRef {
+  id: number;
+  name: string;
+  mime: string;
+  size: number;
+}
+export type Cell = string | number | boolean | string[] | AttachmentRef[];
 export interface BaseRecord {
   id: number;
+  baseId: number;
   cells: Record<string, Cell>;
   position: number;
+  creatorId?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
-  get: (id: number) => request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number }>("GET", `/api/bases/${id}`),
+  get: (id: number) => request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[] }>("GET", `/api/bases/${id}`),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),

@@ -31,7 +31,7 @@ func scanField(r pgx.Row) (f Field, err error) {
 }
 
 const fieldCols = `id, base_id, name, type, options, position`
-const recordCols = `id, base_id, cells, position`
+const recordCols = `id, base_id, cells, position, creator_id, created_at, updated_at`
 
 func (p *Postgres) Fields(ctx context.Context, base int64) ([]Field, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+fieldCols+` FROM base_fields WHERE base_id=$1 ORDER BY position, id`, base)
@@ -74,7 +74,7 @@ func (p *Postgres) DeleteField(ctx context.Context, base, id int64) error {
 func jsonKey(id int64) string { b, _ := json.Marshal(id); return string(b) }
 
 func scanRecord(r pgx.Row) (rec Record, err error) {
-	err = r.Scan(&rec.ID, &rec.BaseID, &rec.Cells, &rec.Position)
+	err = r.Scan(&rec.ID, &rec.BaseID, &rec.Cells, &rec.Position, &rec.CreatorID, &rec.CreatedAt, &rec.UpdatedAt)
 	return rec, notFound(err)
 }
 
@@ -90,9 +90,13 @@ func (p *Postgres) AddRecord(ctx context.Context, r Record) (Record, error) {
 	if r.Cells == nil {
 		r.Cells = map[string]json.RawMessage{}
 	}
-	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, cells, position)
-		VALUES ($1,$2, CASE WHEN $3::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $3 END)
-		RETURNING `+recordCols, r.BaseID, r.Cells, r.Position))
+	var creator any
+	if r.CreatorID != 0 {
+		creator = r.CreatorID
+	}
+	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, cells, position, creator_id)
+		VALUES ($1,$2, CASE WHEN $3::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $3 END, $4)
+		RETURNING `+recordCols, r.BaseID, r.Cells, r.Position, creator))
 }
 
 // SetCells merges cells; jsonb_strip_nulls drops cells set to null.

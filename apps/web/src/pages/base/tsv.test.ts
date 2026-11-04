@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatTSV, fromText, parseTSV, planPaste, rangeText, toText } from "./tsv";
-import type { BaseRecord, Field } from "@/lib/api";
+import type { BaseRecord, Field, User } from "@/lib/api";
 
 const fields: Field[] = [
   { id: 1, name: "标题", type: "text", position: 1 },
@@ -9,8 +9,8 @@ const fields: Field[] = [
   { id: 4, name: "完成", type: "checkbox", position: 4 },
 ];
 const recs: BaseRecord[] = [
-  { id: 11, position: 1, cells: { 1: "拖拽", 2: "完成", 3: 10, 4: true } },
-  { id: 12, position: 2, cells: { 1: "分享" } },
+  { id: 11, baseId: 1, position: 1, cells: { 1: "拖拽", 2: "完成", 3: 10, 4: true } },
+  { id: 12, baseId: 1, position: 2, cells: { 1: "分享" } },
 ];
 
 describe("parseTSV", () => {
@@ -78,6 +78,7 @@ describe("planPaste", () => {
 
 describe("rangeText", () => {
   it("serializes a rectangle with headers and empties", () => {
-    expect(rangeText(recs, fields, 0, 1, 0, 1)).toBe("拖拽\t完成\n分享\t");
+    const members: User[] = [{ id: 1, email: "k@x.com", name: "Kay", createdAt: "" }];
+    expect(rangeText(recs, fields, members, 0, 1, 0, 1)).toBe("拖拽\t完成\n分享\t");
   });
 });

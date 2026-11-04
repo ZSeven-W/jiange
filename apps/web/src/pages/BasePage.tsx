@@ -18,8 +18,8 @@ export function BasePage({ id }: { id: number }) {
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   if (q.isError) return <div className="grid flex-1 place-items-center text-muted-foreground">多维表格不存在或无权访问</div>;
   if (!q.data) return <div className="flex-1" />;
-  const { base, fields } = q.data;
-  const records = view(q.data.records, fields, sort, filter);
+  const { base, fields, members } = q.data;
+  const records = view(q.data.records, fields, members, sort, filter);
   const canEdit = base.role !== "view";
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -63,7 +63,7 @@ export function BasePage({ id }: { id: number }) {
           {records.length === q.data.records.length ? `${records.length} 条记录` : `${records.length} / ${q.data.records.length} 条记录`}
         </span>
       </div>
-      <Grid baseId={id} canEdit={canEdit} fields={fields} records={records} onMutate={refresh} />
+      <Grid baseId={id} canEdit={canEdit} fields={fields} records={records} members={members} onMutate={refresh} />
     </div>
   );
 }
