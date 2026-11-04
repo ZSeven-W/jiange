@@ -259,4 +259,5 @@ export const docsApi = {
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
   setCopyProtected: (id: number, on: boolean) => request<DocMeta>("PATCH", `/api/docs/${id}`, { copyProtected: on }),
+  duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
 };

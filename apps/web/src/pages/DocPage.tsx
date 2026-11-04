@@ -327,6 +327,13 @@ function DocMenu({
     setOpen(false);
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
+  const duplicate = async () => {
+    if (!meta) return;
+    const nd = await docsApi.duplicate(meta.id);
+    qc.invalidateQueries({ queryKey: ["docs"] });
+    setOpen(false);
+    location.hash = `#/doc/${nd.id}`;
+  };
   return (
     <div className="relative">
       <button className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" title="更多" onClick={() => setOpen((o) => !o)} data-more-menu>
@@ -346,6 +353,11 @@ function DocMenu({
           {onExport && (
             <button className={item} onClick={() => { close(); onExport(); }}>
               导出 Markdown
+            </button>
+          )}
+          {meta && (
+            <button className={item} onClick={duplicate} data-duplicate>
+              创建副本
             </button>
           )}
           {onImport && (
