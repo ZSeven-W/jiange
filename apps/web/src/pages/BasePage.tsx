@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi } from "@/lib/api";
 import { Grid } from "./base/Grid";
+import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
 
 export { view } from "./base/view";
@@ -11,6 +12,7 @@ export function BasePage({ id }: { id: number }) {
   const qc = useQueryClient();
   const key = ["base", id];
   const q = useQuery({ queryKey: key, queryFn: () => baseApi.get(id) });
+  useBaseSync(id);
   const [sort, setSort] = useState<{ f: number; desc: boolean } | null>(null);
   const [filter, setFilter] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: key });

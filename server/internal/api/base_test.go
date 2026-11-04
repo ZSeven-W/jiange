@@ -1,16 +1,22 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
+	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
@@ -138,5 +144,77 @@ func TestFieldEditAndConvert(t *testing.T) {
 				t.Fatalf("removed option should clear cell, got %v", rec.Cells[sk])
 			}
 		}
+	}
+}
+
+func TestBaseRealtimeEvents(t *testing.T) {
+	st := store.NewMemory()
+	hub := &btsync.Hub{Store: st, PingInterval: time.Hour}
+	s := &Server{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 1000, BtHub: hub}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	j, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: j}
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "rt@x.com", "name": "RT", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+
+	// connect before mutating (the dial must carry the session cookie)
+	syncURL, _ := url.Parse(u + "/sync")
+	var cookies []string
+	for _, ck := range j.Cookies(syncURL) {
+		cookies = append(cookies, ck.Name+"="+ck.Value)
+	}
+	ws, _, err := websocket.Dial(context.Background(), strings.Replace(u, "http://", "ws://", 1)+"/sync", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Cookie": cookies},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	readUntil := func(want string) map[string]any {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		for {
+			_, data, err := ws.Read(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if json.Unmarshal(data, &m) == nil && m["t"] == want {
+				return m
+			}
+		}
+	}
+	readUntil("hello")
+
+	// a field add and a cell write both stream to the socket
+	var f store.Field
+	json.NewDecoder(post(t, c, u+"/fields", map[string]string{"name": "说明", "type": "text"}).Body).Decode(&f)
+	var rec store.Record
+	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]string{strconv.FormatInt(f.ID, 10): "hi"}}).Body).Decode(&rec)
+
+	// events may arrive in several frames; wait until the record add shows up
+	kinds := []string{}
+	for seen := map[string]bool{}; !seen["record:add"]; {
+		m := readUntil("events")
+		for _, e := range m["events"].([]any) {
+			body := e.(map[string]any)["body"].(map[string]any)
+			k := body["kind"].(string) + ":" + body["op"].(string)
+			kinds = append(kinds, k)
+			seen[k] = true
+		}
+	}
+	if kinds[0] != "field:add" {
+		t.Fatalf("unexpected event stream: %v", kinds)
+	}
+
+	// GET reports the event head so a fresh client knows where to resume
+	var full struct{ Head int64 }
+	r, _ := c.Get(u)
+	json.NewDecoder(r.Body).Decode(&full)
+	if full.Head == 0 {
+		t.Fatalf("head should be positive, got %d", full.Head)
 	}
 }

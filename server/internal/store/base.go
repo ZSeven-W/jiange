@@ -25,6 +25,13 @@ type Record struct {
 
 var FieldTypes = map[string]bool{"text": true, "number": true, "select": true, "checkbox": true, "date": true}
 
+// BtEvent is one bitable mutation in the per-base realtime event log. Body
+// carries the change ({"kind":"cells",...}); Seq orders it globally per base.
+type BtEvent struct {
+	Seq  int64           `json:"seq"`
+	Body json.RawMessage `json:"body"`
+}
+
 // BaseStore persists bitable schemas and rows. Access control is done by
 // the caller through GetDoc on the base node (kind 'base').
 type BaseStore interface {
@@ -41,4 +48,11 @@ type BaseStore interface {
 	// MapFieldCells rewrites every stored cell of fieldID through fn; fn
 	// returning nil deletes the cell. Used when a field changes type.
 	MapFieldCells(ctx context.Context, baseID, fieldID int64, fn func(json.RawMessage) json.RawMessage) error
+
+	// AppendBtEvent appends a realtime event and returns its seq.
+	AppendBtEvent(ctx context.Context, baseID int64, body json.RawMessage) (int64, error)
+	// BtEventsAfter returns up to limit events with seq > after, in order.
+	BtEventsAfter(ctx context.Context, baseID, after int64, limit int) ([]BtEvent, error)
+	// BtHead is the newest event seq for the base (0 when none).
+	BtHead(ctx context.Context, baseID int64) (int64, error)
 }

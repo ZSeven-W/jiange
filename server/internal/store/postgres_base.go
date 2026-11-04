@@ -153,3 +153,26 @@ func (p *Postgres) MapFieldCells(ctx context.Context, base, field int64, fn func
 	}
 	return tx.Commit(ctx)
 }
+
+func (p *Postgres) AppendBtEvent(ctx context.Context, base int64, body json.RawMessage) (int64, error) {
+	var seq int64
+	err := p.Pool.QueryRow(ctx, `INSERT INTO bt_events (base_id, body) VALUES ($1, $2) RETURNING id`, base, body).Scan(&seq)
+	return seq, err
+}
+
+func (p *Postgres) BtEventsAfter(ctx context.Context, base, after int64, limit int) ([]BtEvent, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT id, body FROM bt_events WHERE base_id=$1 AND id > $2 ORDER BY id LIMIT $3`, base, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (BtEvent, error) {
+		var e BtEvent
+		return e, r.Scan(&e.Seq, &e.Body)
+	})
+}
+
+func (p *Postgres) BtHead(ctx context.Context, base int64) (int64, error) {
+	var seq int64
+	err := p.Pool.QueryRow(ctx, `SELECT COALESCE(max(id), 0) FROM bt_events WHERE base_id=$1`, base).Scan(&seq)
+	return seq, err
+}
