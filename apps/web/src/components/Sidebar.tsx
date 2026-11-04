@@ -105,7 +105,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const shown = kw ? (searchQ.data ?? []) : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-white">
+    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-surface">
       <div className="relative px-3 pt-3">
         <button onClick={() => setMenu((v) => !v)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover">
           <Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" />
@@ -113,7 +113,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           <Chevron className="ml-0.5 text-subtle" />
         </button>
         {menu && (
-          <div className="absolute left-3 right-3 top-12 z-20 rounded-lg border bg-white p-1 shadow-lg" onMouseLeave={() => setMenu(false)}>
+          <div className="absolute left-3 right-3 top-12 z-20 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setMenu(false)}>
             <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
             {me.workspaces.map((w) => (
               <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">
@@ -125,7 +125,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             </button>
           </div>
         )}
-        <label className="mt-2 flex h-8 items-center gap-2 rounded-md bg-hover px-2.5 text-[13px] text-subtle focus-within:bg-[#eceef0]">
+        <label className="mt-2 flex h-8 items-center gap-2 rounded-md bg-hover px-2.5 text-[13px] text-subtle focus-within:brightness-95 dark:focus-within:brightness-110">
           <SearchIcon />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" data-search />
         </label>
@@ -167,6 +167,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
           <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{me.user.name}</span>
+          <DarkToggle />
           <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 2.5H3.5v11H6M9.5 5l3 3-3 3M12.5 8H6" />
@@ -378,7 +379,7 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void
         ⋯
       </button>
       {open && (
-        <div className="absolute left-0 top-6 z-30 w-28 rounded-lg border bg-white py-1 text-[13px] shadow-lg" data-row-menu-pop>
+        <div className="absolute left-0 top-6 z-30 w-28 rounded-lg border bg-surface py-1 text-[13px] shadow-lg" data-row-menu-pop>
           {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>新建子文档</button>}
           {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>重命名</button>}
           {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>复制链接</button>}
@@ -386,5 +387,24 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void
         </div>
       )}
     </span>
+  );
+}
+
+/** 暗色模式开关（持久化到 localStorage，切 <html>.dark）。 */
+export function DarkToggle() {
+  const [dark, setDark] = useState(() => localStorage.getItem("jiange:dark") === "1");
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("jiange:dark", dark ? "1" : "0");
+  }, [dark]);
+  return (
+    <button
+      className="grid size-5 place-items-center rounded text-subtle hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
+      title={dark ? "切换到浅色" : "切换到深色"}
+      onClick={() => setDark((v) => !v)}
+      data-dark-toggle
+    >
+      {dark ? "🌙" : "☀️"}
+    </button>
   );
 }

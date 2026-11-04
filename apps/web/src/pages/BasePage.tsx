@@ -142,7 +142,7 @@ export function BasePage({ id }: { id: number }) {
       <div className="flex h-11 shrink-0 items-center gap-2 whitespace-nowrap border-b px-4 text-[13px]">
         {current?.type === "grid" && (
           <select
-            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            className="h-7 rounded-md border bg-surface px-2 text-muted-foreground"
             value={cfg.group ?? ""}
             onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
             data-grid-group
@@ -164,7 +164,7 @@ export function BasePage({ id }: { id: number }) {
         )}
         {current?.type === "kanban" && (
           <select
-            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            className="h-7 rounded-md border bg-surface px-2 text-muted-foreground"
             value={cfg.group ?? ""}
             onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
             data-group-field
@@ -179,7 +179,7 @@ export function BasePage({ id }: { id: number }) {
         )}
         {current?.type === "calendar" && (
           <select
-            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            className="h-7 rounded-md border bg-surface px-2 text-muted-foreground"
             value={cfg.group ?? ""}
             onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
             data-calendar-field
@@ -296,7 +296,7 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
         {label}
       </button>
       {open && (
-        <div className="absolute left-0 top-8 z-30 w-80 rounded-lg border bg-white p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
+        <div className="absolute left-0 top-8 z-30 w-80 rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
           {children}
         </div>
       )}
@@ -329,7 +329,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
           <div className="flex items-center gap-2">
             满足
             <select
-              className="h-7 rounded border bg-white px-1"
+              className="h-7 rounded border bg-surface px-1"
               value={filters.conj}
               onChange={(e) => setRules(filters.rules, e.target.value as "and" | "or")}
             >
@@ -343,7 +343,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
           return (
             <div key={i} className="flex items-center gap-1">
               <select
-                className="h-7 w-24 rounded border bg-white px-1"
+                className="h-7 w-24 rounded border bg-surface px-1"
                 value={rule.f}
                 onChange={(e) => {
                   const nf = fields.find((x) => x.id === Number(e.target.value))!;
@@ -359,7 +359,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
                 ))}
               </select>
               <select
-                className="h-7 w-24 rounded border bg-white px-1"
+                className="h-7 w-24 rounded border bg-surface px-1"
                 value={rule.op}
                 onChange={(e) => {
                   const rules = [...filters.rules];
@@ -417,7 +417,7 @@ function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
           <div key={i} className="flex items-center gap-1">
             {i > 0 && <span className="text-subtle">然后</span>}
             <select
-              className="h-7 flex-1 rounded border bg-white px-1"
+              className="h-7 flex-1 rounded border bg-surface px-1"
               value={s.f}
               onChange={(e) => {
                 const next = [...sorts];

@@ -43,6 +43,27 @@
   --sidebar: var(--jg-sidebar);
   --hover: var(--jg-hover);
   --subtle: var(--jg-text-tertiary);
+  --surface: #ffffff;
+  --sel-row: #edf2ff;
+  --sel-cursor: #dce7ff;
+}
+
+.dark {
+  --jg-primary: #3370ff;
+  --jg-primary-hover: #4c7dff;
+  --jg-primary-subtle: #1d3461;
+  --jg-text: #e8eaed;
+  --jg-text-secondary: #a8adb3;
+  --jg-text-tertiary: #6f7479;
+  --jg-border: #3c4043;
+  --jg-sidebar: #1a1c1f;
+  --jg-hover: #2a2e31;
+  --jg-canvas: #141619;
+  --surface: #23262a;
+  --sel-row: #1d2b47;
+  --sel-cursor: #243659;
+  --destructive: #f54a45;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -70,6 +91,9 @@
   --color-sidebar: var(--sidebar);
   --color-hover: var(--hover);
   --color-subtle: var(--subtle);
+  --color-surface: var(--surface);
+  --color-sel-row: var(--sel-row);
+  --color-sel-cursor: var(--sel-cursor);
   --color-peer-1: var(--jg-peer-1);
   --color-peer-2: var(--jg-peer-2);
   --color-peer-3: var(--jg-peer-3);

@@ -142,7 +142,7 @@ export function Kanban({
                   void drop(col.key, over?.index ?? i, Number(e.dataTransfer.getData("text/rid")) || undefined);
                 }}
                 className={cn(
-                  "cursor-grab rounded-lg border bg-white p-2.5 text-[13px] shadow-sm hover:shadow",
+                  "cursor-grab rounded-lg border bg-surface p-2.5 text-[13px] shadow-sm hover:shadow",
                   drag?.rid === rec.id && "opacity-40",
                   over?.col === col.key && over.index === i && "border-t-2 border-t-primary",
                 )}

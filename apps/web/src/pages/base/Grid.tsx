@@ -381,7 +381,7 @@ export function Grid({
                       "border px-2.5",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
-                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-[#DCE7FF]" : "bg-[#EDF2FF]"),
+                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
                     )}
                     onClick={(e) => {
                       setEdit(null);

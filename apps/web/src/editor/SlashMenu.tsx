@@ -5,7 +5,7 @@ export function SlashMenu({ x, y, items, index, onPick, onHover }: { x: number; 
   const groups = [...new Set(items.map((i) => i.group))];
   return (
     <div className="absolute z-30 w-[264px]" style={{ left: x, top: y }} onMouseDown={(e) => e.preventDefault()} data-slash-menu>
-      <Command shouldFilter={false} value={items[index]?.id ?? ""} className="rounded-lg border bg-white p-1.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)]">
+      <Command shouldFilter={false} value={items[index]?.id ?? ""} className="rounded-lg border bg-surface p-1.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)]">
         <CommandList className="max-h-[320px]">
           {items.length === 0 && <div className="px-3 py-2 text-[13px] text-subtle">没有匹配的块</div>}
           {groups.map((g) => (

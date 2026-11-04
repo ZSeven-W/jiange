@@ -15,7 +15,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
   return (
     <div
       data-format-toolbar
-      className="absolute z-30 flex h-9 -translate-x-1/2 -translate-y-full items-center gap-0.5 rounded-lg border bg-white px-1.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)]"
+      className="absolute z-30 flex h-9 -translate-x-1/2 -translate-y-full items-center gap-0.5 rounded-lg border bg-surface px-1.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)]"
       style={{ left: x, top: y - 8 }}
       onMouseDown={(e) => (e.target as HTMLElement).tagName !== "INPUT" && e.preventDefault()}
     >
@@ -31,7 +31,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
               {label} <span className="text-[10px] text-subtle">▾</span>
             </button>
             {menu && (
-              <div className="absolute left-0 top-8 w-32 rounded-lg border bg-white p-1 shadow-lg">
+              <div className="absolute left-0 top-8 w-32 rounded-lg border bg-surface p-1 shadow-lg">
                 {TYPES.map(([t, l]) => (
                   <button key={t} className={cn("block w-full rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", t === blockType && "text-primary")} onClick={() => { onType(t); setMenu(false); }}>
                     {l}

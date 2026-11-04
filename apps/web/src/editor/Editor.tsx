@@ -898,6 +898,10 @@ interface BlockProps {
 function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
+  const threadIds = new Set<number>();
+  for (const a of anchors ?? []) if (a != null) threadIds.add(a);
+  const commentBadge = threadIds.size;
+  const firstThread = anchors?.find((a) => a != null) ?? null;
   const runs: { text: string; marks: Record<string, string>; anchor: number | null }[] = [];
   for (let i = 0; i < spans.length; i++) {
     const c = spans[i];
@@ -917,7 +921,7 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
           e.preventDefault();
           onToggle();
         }}
-        className={cn("mt-[6px] grid size-4 place-items-center rounded-[3px] border text-[11px] leading-none text-white", checked ? "border-primary bg-primary" : "border-[#bbbfc4] bg-white")}
+        className={cn("mt-[6px] grid size-4 place-items-center rounded-[3px] border text-[11px] leading-none text-white", checked ? "border-primary bg-primary" : "border-[#bbbfc4] bg-surface")}
         aria-label="完成"
       >
         {checked ? "✓" : ""}
@@ -960,6 +964,17 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
           ⋮⋮
         </span>
       </span>
+      {commentBadge > 0 && (
+        <button
+          contentEditable={false}
+          className="absolute -right-1 top-1/2 z-10 flex -translate-y-1/2 translate-x-full items-center gap-0.5 rounded-full border border-[#f5b1e5] bg-surface px-1.5 py-0.5 text-[11px] font-medium text-[#c950a8] shadow-sm hover:bg-[#FBF3FA] dark:text-[#e88ec7]"
+          title={`${commentBadge} 条评论`}
+          onClick={() => onAnchorClick?.(firstThread!)}
+          data-comment-bubble
+        >
+          💬 {commentBadge}
+        </button>
+      )}
       {type === "table" ? (
         <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
       ) : type === "divider" ? (
@@ -977,8 +992,8 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
           </span>
         </a>
       ) : type === "code" ? (
-        <div className="overflow-hidden rounded-lg border border-[#e5e7eb]">
-          <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5" data-code-header>
+        <div className="overflow-hidden rounded-lg border border-[#e5e7eb] dark:border-[#3c4043]">
+          <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 dark:border-[#3c4043] dark:bg-[#23262a]" data-code-header>
             <select
               value={props.lang ?? "plain"}
               onChange={(e) => onSetProp?.("lang", e.target.value)}
@@ -1047,7 +1062,7 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
                 r.anchor != null ? (
                   <span
                     key={i}
-                    className={cn("cursor-pointer border-b-2 border-[#F5B1E5]", activeThread === r.anchor ? "bg-[#FBDC8D]" : "bg-[#FFF3D6]")}
+                    className={cn("cursor-pointer border-b-2 border-[#F5B1E5] dark:bg-[#3a3121]", activeThread === r.anchor ? "bg-[#FBDC8D] dark:bg-[#4a3d1f]" : "bg-[#FFF3D6] dark:bg-[#3a3121]")}
                     onClick={() => onAnchorClick?.(r.anchor!)}
                     data-comment-anchor={r.anchor}
                   >
@@ -1078,20 +1093,20 @@ function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit
   const rows = parseTableData(data);
   const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
   return (
-    <div contentEditable={false} className="group/t my-2 w-fit max-w-full select-none overflow-x-auto" data-table-block>
+    <div contentEditable={false} className="group/t my-2 w-fit max-w-full select-none overflow-x-auto rounded-lg border" data-table-block>
       <table className="border-collapse text-[13px]">
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri}>
+            <tr key={ri} className={ri > 0 && ri % 2 === 0 ? "bg-sidebar/40" : ""}>
               {row.map((cell, ci) => (
-                <td key={ci} className="min-w-[90px] border p-0 align-top" style={{ width: Math.max(90, Math.min(260, 18 + size(row) * 9)) }}>
+                <td key={ci} className={cn("min-w-[90px] border p-0 align-top", ri === 0 && "bg-sidebar/70 font-medium")} style={{ width: Math.max(90, Math.min(260, 18 + size(row) * 9)) }}>
                   {readOnly ? (
                     <span className="block px-2.5 py-1.5">{cell}</span>
                   ) : (
                     <input
                       value={cell}
                       onChange={(e) => onEdit(ri, ci, e.target.value)}
-                      className={cn("w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-white", ri === 0 && "bg-sidebar/70 font-medium")}
+                      className="w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-surface"
                       data-table-cell={`${ri}:${ci}`}
                     />
                   )}

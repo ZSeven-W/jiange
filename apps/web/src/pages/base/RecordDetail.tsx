@@ -39,7 +39,7 @@ export function RecordDetail({
   };
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-[420px] flex-col border-l bg-white shadow-xl" data-record-detail>
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-[420px] flex-col border-l bg-surface shadow-xl" data-record-detail>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         <span className="truncate">
           {String(displayValue(row, fields.find((f) => f.type === "text") ?? fields[0], members) || "未命名记录")}
