@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
@@ -49,7 +49,26 @@ export function Grid({
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
   const [drag, setDrag] = useState<{ fid: number; at: number | null }>({ fid: 0, at: null });
   const [sel, setSel] = useState<Sel | null>(null);
+  const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setVp((v) => ({ ...v, h: el.clientHeight, w: el.clientWidth })));
+    ro.observe(el);
+    // drive virtualization from a rAF loop: scroll events alone are unreliable
+    // (some webviews never fire them for programmatic scrolls)
+    let raf = 0;
+    const tick = () => {
+      setVp((v) => (v.top === el.scrollTop && v.left === el.scrollLeft && v.h === el.clientHeight && v.w === el.clientWidth ? v : { top: el.scrollTop, left: el.scrollLeft, h: el.clientHeight, w: el.clientWidth }));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   const width = (f: Field) => widths[f.id] ?? REGISTRY[f.type].width;
   const saveWidth = (fid: number, w: number) => {
@@ -67,10 +86,17 @@ export function Grid({
   const isCursor = (r: number, f: number) => !!sel && sel.rr === r && sel.rf === f;
 
   const scrollCellIntoView = (r: number, f: number) => {
+    const el = gridRef.current;
+    if (!el) return;
+    // with virtualization the cell may not be mounted: first bring the target
+    // into the scroll window, then let scrollIntoView fine-tune
+    const targetTop = r * 36;
+    if (targetTop < el.scrollTop) el.scrollTop = targetTop;
+    else if (targetTop + 36 > el.scrollTop + el.clientHeight) el.scrollTop = targetTop + 36 - el.clientHeight;
     const rec = records[r];
     const fld = fields[f];
     if (!rec || !fld) return;
-    gridRef.current?.querySelector(`[data-cell="${rec.id}:${fld.id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    el.querySelector(`[data-cell="${rec.id}:${fld.id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   const move = (dr: number, df: number, extend = false) => {
@@ -246,6 +272,23 @@ export function Grid({
     setDrag({ fid: 0, at: null });
   };
 
+  // --- virtualization: render only the visible window (plus overscan) ---
+  const ROW_H = 36; // h-9
+  const OVERSCAN = 6;
+  const r0 = Math.max(0, Math.floor(vp.top / ROW_H) - OVERSCAN);
+  const r1 = Math.min(rows, Math.ceil((vp.top + vp.h) / ROW_H) + OVERSCAN);
+  const colOffsets = fields.reduce<number[]>((acc, f, i) => [...acc, (acc[i - 1] ?? 0) + width(f)], []);
+  const totalW = colOffsets[cols - 1] ?? 0;
+  let c0 = 0;
+  while (c0 < cols && colOffsets[c0] < vp.left - 200) c0++;
+  c0 = Math.max(0, c0 - 2);
+  let c1 = c0;
+  while (c1 < cols && colOffsets[c1] < vp.left + vp.w + 200) c1++;
+  c1 = Math.min(cols, c1 + 2);
+  const leadW = c0 > 0 ? colOffsets[c0 - 1] : 0;
+  const tailW = c1 < cols ? totalW - (colOffsets[c1 - 1] ?? 0) : 0;
+  const winFields = fields.slice(c0, c1);
+
   return (
     <div
       ref={gridRef}
@@ -262,14 +305,21 @@ export function Grid({
         }
       }}
     >
-      <table className="border-collapse table-fixed text-[14px]" data-grid>
+      <table
+        className="border-collapse table-fixed text-[14px]"
+        data-grid
+        style={{ width: 56 + totalW + (canEdit ? 44 : 0) }}
+      >
         <thead>
           <tr className="h-9 bg-sidebar text-left text-[13px] text-muted-foreground">
-            <th className="sticky left-0 z-10 w-14 border px-2.5 font-normal" />
-            {fields.map((f, i) => (
+            <th className="sticky left-0 top-0 z-20 w-14 border px-2.5 font-normal" />
+            {leadW > 0 && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
+            {winFields.map((f, wi) => {
+              const i = c0 + wi;
+              return (
               <th
                 key={f.id}
-                className={cn("group/th relative border px-2.5 font-medium", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
+                className={cn("group/th sticky top-0 z-10 border bg-sidebar px-2.5 font-medium", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
                 style={{ width: width(f), minWidth: width(f) }}
                 draggable
                 data-th={f.id}
@@ -305,10 +355,12 @@ export function Grid({
                 )}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
-            ))}
+              );
+            })}
+            {tailW > 0 && <th style={{ width: tailW }} className="border p-0" aria-hidden />}
             {canEdit && (
               <th
-                className="relative w-11 border text-center font-normal"
+                className="sticky top-0 z-10 relative w-11 border bg-sidebar text-center font-normal"
                 onDragOver={(e) => {
                   e.preventDefault();
                   if (drag.at !== fields.length) setDrag((d) => ({ ...d, at: fields.length }));
@@ -324,7 +376,14 @@ export function Grid({
           </tr>
         </thead>
         <tbody>
-          {records.map((rec, i) => (
+          {r0 > 0 && (
+            <tr aria-hidden style={{ height: r0 * ROW_H }}>
+              <td colSpan={winFields.length + 3} className="border-0 p-0" />
+            </tr>
+          )}
+          {records.slice(r0, r1).map((rec, ri) => {
+            const i = r0 + ri;
+            return (
             <tr key={rec.id} className="group h-9">
               <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
@@ -338,7 +397,9 @@ export function Grid({
                   </button>
                 )}
               </td>
-              {fields.map((f, j) => {
+              {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
+              {winFields.map((f, wj) => {
+                const j = c0 + wj;
                 const editing = edit?.ri === i && edit.fi === j;
                 const ro = REGISTRY[f.type].readonly;
                 return (
@@ -380,12 +441,19 @@ export function Grid({
                   </td>
                 );
               })}
+              {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
               {canEdit && <td className="border" />}
             </tr>
-          ))}
+            );
+          })}
+          {r1 < rows && (
+            <tr aria-hidden style={{ height: (rows - r1) * ROW_H }}>
+              <td colSpan={winFields.length + 3} className="border-0 p-0" />
+            </tr>
+          )}
           {canEdit && (
             <tr className="h-9">
-              <td colSpan={fields.length + 2} className="sticky left-0 border px-4">
+              <td colSpan={winFields.length + 3} className="sticky left-0 border px-4">
                 <button className="text-[13px] text-subtle hover:text-foreground" onClick={() => baseApi.addRecord(baseId).then(onMutate)}>
                   + 新增一行
                 </button>
