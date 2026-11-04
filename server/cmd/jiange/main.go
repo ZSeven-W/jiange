@@ -23,6 +23,35 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
 
+// autoVersions periodically snapshots recently edited docs as named versions.
+func autoVersions(ctx context.Context, log *slog.Logger, pg *store.Postgres, every time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+			ids, err := pg.RecentDocIDs(ctx, time.Now().Add(-every))
+			if err != nil {
+				log.Error("auto versions", "err", err)
+				continue
+			}
+			for _, id := range ids {
+				func() {
+					d, head, err := api.StateAtHead(ctx, pg, id)
+					if err != nil || head == 0 {
+						return
+					}
+					if err := pg.SaveSnapshot(ctx, id, head, d.EncodeState()); err != nil {
+						return
+					}
+					_ = pg.SaveVersion(ctx, id, head, "自动保存", 0)
+					log.Info("auto version", "doc", id, "seq", head)
+				}()
+			}
+		}
+	}
+}
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
@@ -57,6 +86,9 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	btHub := &btsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	if cfg.AutoVersionEvery > 0 {
+		go autoVersions(ctx, log, pg, cfg.AutoVersionEvery)
+	}
 	var blobs blob.Store
 	if cfg.S3Endpoint != "" {
 		s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}

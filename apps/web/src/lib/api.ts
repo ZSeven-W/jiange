@@ -128,6 +128,16 @@ export const baseApi = {
   query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }) =>
     request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q),
 };
+export interface Version {
+  seq: number;
+  label: string;
+  createdBy: number;
+  createdByName: string;
+  createdAt: string;
+}
+export interface DocView {
+  blocks: { id: string; parent: string; type: string; props: Record<string, string>; spans: { text: string; marks: Record<string, string> }[] }[];
+}
 export type Role = "view" | "edit" | "manage";
 export interface Share {
   userId: number;
@@ -168,6 +178,10 @@ export const docsApi = {
     if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
     return data as FileMeta;
   },
+  versions: (id: number) => request<{ versions: Version[] }>("GET", `/api/docs/${id}/versions`).then((r) => r.versions),
+  createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
+  versionPreview: (id: number, seq: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`),
+  restoreVersion: (id: number, seq: number) => request<{ restored: number }>("POST", `/api/docs/${id}/versions/${seq}/restore`),
   trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
   listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),

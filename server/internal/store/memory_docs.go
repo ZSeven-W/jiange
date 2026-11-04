@@ -13,11 +13,19 @@ type memClient struct {
 }
 
 type memDoc struct {
-	meta    DocMeta
-	deleted bool
-	ops     []SeqOp
-	ids     map[[2]int64]bool
-	snaps   map[int64][]byte
+	meta     DocMeta
+	deleted  bool
+	ops      []SeqOp
+	ids      map[[2]int64]bool
+	snaps    map[int64][]byte
+	versions map[int64]memVersion
+	opAt     []time.Time // arrival time per op (auto-version sweep)
+}
+
+type memVersion struct {
+	Label  string
+	UserID int64
+	At     time.Time
 }
 
 type memDocs struct {
@@ -47,7 +55,8 @@ func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, 
 	d := &memDoc{
 		meta:  DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now},
 		ids:   map[[2]int64]bool{},
-		snaps: map[int64][]byte{},
+		snaps:    map[int64][]byte{},
+		versions: map[int64]memVersion{},
 	}
 	for i, op := range initial {
 		d.ids[[2]int64{op.ClientID, op.Clock}] = true
@@ -159,6 +168,7 @@ func (m *Memory) AppendOps(_ context.Context, doc int64, ops []RawOp) ([]int64, 
 		d.ids[k] = true
 		seqs[i] = int64(len(d.ops) + 1)
 		d.ops = append(d.ops, SeqOp{seqs[i], op.ClientID, op.Bytes})
+		d.opAt = append(d.opAt, time.Now())
 	}
 	d.meta.UpdatedAt = time.Now()
 	head := int64(len(d.ops))
@@ -296,4 +306,77 @@ func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
 	}
 	d.meta.ParentID = parent
 	return nil
+}
+
+func (m *Memory) userByID(id int64) *User {
+	for i := range m.users {
+		if m.users[i].ID == id {
+			return &m.users[i]
+		}
+	}
+	return nil
+}
+
+func (m *Memory) SaveVersion(_ context.Context, doc, seq int64, label string, userID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(doc)
+	if d == nil {
+		return ErrNotFound
+	}
+	if _, ok := d.snaps[seq]; !ok {
+		return ErrNotFound
+	}
+	d.versions[seq] = memVersion{Label: label, UserID: userID, At: time.Now()}
+	return nil
+}
+
+func (m *Memory) Versions(_ context.Context, doc int64) ([]Version, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Version{}
+	for seq, v := range m.doc(doc).versions {
+		name := ""
+		if u := m.userByID(v.UserID); u != nil {
+			name = u.Name
+		}
+		out = append(out, Version{Seq: seq, Label: v.Label, CreatedBy: v.UserID, CreatedByName: name, CreatedAt: v.At})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
+	return out, nil
+}
+
+func (m *Memory) VersionState(_ context.Context, doc, seq int64) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(doc)
+	if d == nil {
+		return nil, ErrNotFound
+	}
+	if _, isVersion := d.versions[seq]; !isVersion {
+		return nil, ErrNotFound
+	}
+	state, ok := d.snaps[seq]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return state, nil
+}
+
+func (m *Memory) RecentDocIDs(_ context.Context, since time.Time) ([]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []int64{}
+	for i, d := range m.d.docs {
+		if !d.deleted {
+			for _, at := range d.opAt {
+				if at.After(since) {
+					out = append(out, int64(i+1))
+					break
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
