@@ -96,12 +96,15 @@ export function VersionView({ view }: { view: DocView }) {
         .filter((b) => b.type !== "title")
         .map((b, i) => {
           const text = b.spans.map((s) => s.text).join("");
-          if (b.type === "heading1") return <h1 key={i} className="text-[22px] font-semibold">{text}</h1>;
-          if (b.type === "heading2") return <h2 key={i} className="text-[18px] font-semibold">{text}</h2>;
+          if (b.type === "h1") return <h1 key={i} className="text-[24px] font-semibold">{text}</h1>;
+          if (b.type === "h2") return <h2 key={i} className="text-[20px] font-semibold">{text}</h2>;
+          if (b.type === "h3") return <h3 key={i} className="text-[17px] font-semibold">{text}</h3>;
+          if (b.type === "h4" || b.type === "h5" || b.type === "h6") return <h4 key={i} className="text-[15px] font-semibold">{text}</h4>;
           if (b.type === "quote") return <blockquote key={i} className="border-l-2 pl-3 text-muted-foreground">{text}</blockquote>;
           if (b.type === "code") return <pre key={i} className="rounded bg-sidebar p-3 font-mono text-[13px]">{text}</pre>;
           if (b.type === "divider") return <hr key={i} className="my-2" />;
-          if (b.type.startsWith("list")) return <div key={i} className="ml-4">{b.type === "todo" ? `☐ ${text}` : `• ${text}`}</div>;
+          if (b.type === "bullet" || b.type === "ordered") return <div key={i} className="ml-4">{b.type === "ordered" ? `1. ${text}` : `• ${text}`}</div>;
+          if (b.type === "todo") return <div key={i} className="ml-4">{b.props.checked === "true" ? "☑" : "☐"} {text}</div>;
           return <p key={i}>{text}</p>;
         })}
     </div>
