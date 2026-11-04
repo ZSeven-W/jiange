@@ -149,6 +149,17 @@ export function BasePage({ id }: { id: number }) {
               ))}
             </select>
           )}
+          {base.role === "manage" && current && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground" title="锁定后，协作成员只能看到此视图过滤后的行，隐藏字段对其剔除且不可写" data-lock-toggle>
+              <input
+                type="checkbox"
+                className="accent-primary"
+                checked={!!cfg.locked}
+                onChange={(e) => setCfg({ ...cfg, locked: e.target.checked || undefined })}
+              />
+              🔒 权限视图
+            </label>
+          )}
           {current?.type === "grid" && (
             <select
               className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
