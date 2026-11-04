@@ -190,6 +190,9 @@ func (p *Postgres) Head(ctx context.Context, doc int64) (h int64, err error) {
 
 func (p *Postgres) LatestSnapshot(ctx context.Context, doc int64) (seq int64, state []byte, err error) {
 	err = p.Pool.QueryRow(ctx, `SELECT seq, state FROM doc_snapshots WHERE doc_id=$1 AND NOT is_version ORDER BY seq DESC LIMIT 1`, doc).Scan(&seq, &state)
+	if err == nil {
+		state = decompressState(state)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -197,7 +200,7 @@ func (p *Postgres) LatestSnapshot(ctx context.Context, doc int64) (seq int64, st
 }
 
 func (p *Postgres) SaveSnapshot(ctx context.Context, doc, seq int64, state []byte) error {
-	_, err := p.Pool.Exec(ctx, `INSERT INTO doc_snapshots (doc_id, seq, state) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, doc, seq, state)
+	_, err := p.Pool.Exec(ctx, `INSERT INTO doc_snapshots (doc_id, seq, state) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, doc, seq, compressState(state))
 	return err
 }
 
@@ -316,7 +319,7 @@ func (p *Postgres) VersionState(ctx context.Context, doc, seq int64) ([]byte, er
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return state, err
+	return decompressState(state), err
 }
 
 func (p *Postgres) RecentDocIDs(ctx context.Context, since time.Time) ([]int64, error) {
