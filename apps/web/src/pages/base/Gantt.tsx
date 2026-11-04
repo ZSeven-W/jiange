@@ -11,19 +11,23 @@ function parseDay(v: unknown): string | null {
 
 /** 甘特视图（MVP）：按「开始/结束」两个日期字段在月历时间轴上画横条。 */
 export function Gantt({
+  baseId,
+  canEdit,
   fields,
   records,
   members,
   startFieldId,
   endFieldId,
-  onPickRange,
+  onMutate,
 }: {
+  baseId: number;
+  canEdit: boolean;
   fields: Field[];
   records: BaseRecord[];
   members: User[];
   startFieldId?: number | null;
   endFieldId?: number | null;
-  onPickRange?: () => void;
+  onMutate: () => void;
 }) {
   const dateFields = fields.filter((f) => f.type === "date");
   const startField = fields.find((f) => f.id === startFieldId && f.type === "date") ?? dateFields[0];
@@ -88,6 +92,17 @@ export function Gantt({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {bars.length === 0 && <p className="py-12 text-center text-[13px] text-subtle">本月没有排期的记录</p>}
+        {canEdit && dateFields.length > 0 && (
+          <RescheduleDrop
+            baseId={baseId}
+            month={month.getTime()}
+            days={days}
+            startField={startField}
+            endField={endField ?? startField}
+            records={records}
+            onMutate={onMutate}
+          />
+        )}
         {bars.map((b) => {
           const sOff = Math.round((b.start - month.getTime()) / DAY);
           const len = Math.max(1, Math.round((b.end - b.start) / DAY) + 1);
@@ -101,7 +116,13 @@ export function Gantt({
                   <div key={i} className={cn("min-w-[26px] flex-1 self-stretch", (i + 5) % 7 === 0 && "bg-sidebar/40")} />
                 ))}
                 <div
-                  className="absolute top-0.5 h-5 rounded-md bg-primary/80 text-[11px] leading-5 text-white"
+                  draggable={canEdit}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/rid", String(b.rec.id));
+                    e.dataTransfer.setData("text/span", String(Math.round((b.end - b.start) / DAY) + 1));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  className={cn("absolute top-0.5 h-5 rounded-md bg-primary/80 text-[11px] leading-5 text-white", canEdit && "cursor-grab")}
                   style={{ left: `${(sOff / days) * 100}%`, width: `${(len / days) * 100}%` }}
                   title={`${b.label}: ${b.start ? new Date(b.start).toLocaleDateString("zh-CN") : ""} – ${new Date(b.end).toLocaleDateString("zh-CN")}`}
                   data-gantt-bar={b.rec.id}
@@ -113,6 +134,78 @@ export function Gantt({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+
+/** 透明日格覆盖层：拖入横条后把记录的起止日期整体平移到落点。 */
+function RescheduleDrop({
+  baseId,
+  month,
+  days,
+  startField,
+  endField,
+  records,
+  onMutate,
+}: {
+  baseId: number;
+  month: number;
+  days: number;
+  startField: Field;
+  endField: Field;
+  records: BaseRecord[];
+  onMutate: () => void;
+}) {
+  const [over, setOver] = useState<number | null>(null);
+  return (
+    <div
+      className="pointer-events-none absolute inset-0"
+      style={{ left: 192 }}
+      onDragOver={(e) => {
+        if (over !== null) return;
+        e.preventDefault();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(null);
+        const rid = Number(e.dataTransfer.getData("text/rid"));
+        const span = Number(e.dataTransfer.getData("text/span")) || 1;
+        const ridAttr = (e.target as HTMLElement).closest("[data-day-col]")?.getAttribute("data-day-col");
+        const ridAttr2 = (e.currentTarget as HTMLElement);
+        void ridAttr2;
+        const dayIndex = ridAttr ? Number(ridAttr) : Number((e.target as HTMLElement).closest("[data-day-col]")?.getAttribute("data-day-col") ?? -1);
+        if (!rid || dayIndex < 0) return;
+        const rec = records.find((r) => r.id === rid);
+        if (!rec) return;
+        const newStart = new Date(month + dayIndex * DAY);
+        const newEnd = new Date(month + (dayIndex + span - 1) * DAY);
+        const cells: Record<string, unknown> = {
+          [startField.id]: newStart.toISOString().slice(0, 10),
+        };
+        if (endField.id !== startField.id) cells[endField.id] = newEnd.toISOString().slice(0, 10);
+        void fetch(`/api/bases/${baseId}/records/${rid}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ cells }),
+        }).then(onMutate);
+      }}
+    >
+      {Array.from({ length: days }, (_, i) => (
+        <div
+          key={i}
+          data-day-col={i}
+          className={cn("pointer-events-auto absolute top-0 bottom-0", over === i && "bg-primary/10")}
+          style={{ left: `${(i / days) * 100}%`, width: `${(100 / days) + 0.4}%` }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setOver(i);
+          }}
+          onDragLeave={() => setOver((v) => (v === i ? null : v))}
+        />
+      ))}
+      {over !== null && <span className="absolute top-1 text-[11px] text-primary">{over + 1} 日</span>}
     </div>
   );
 }
