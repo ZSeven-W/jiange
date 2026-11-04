@@ -23,7 +23,7 @@ func notFound(err error) error {
 
 func scanField(r pgx.Row) (f Field, err error) {
 	var opts, colors []byte
-	err = r.Scan(&f.ID, &f.BaseID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Position)
+	err = r.Scan(&f.ID, &f.BaseID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Formula, &f.Position)
 	if err == nil {
 		err = json.Unmarshal(opts, &f.Options)
 	}
@@ -33,7 +33,7 @@ func scanField(r pgx.Row) (f Field, err error) {
 	return f, notFound(err)
 }
 
-const fieldCols = `id, base_id, name, type, options, option_colors, description, position`
+const fieldCols = `id, base_id, name, type, options, option_colors, description, formula, position`
 const recordCols = `id, base_id, cells, position, creator_id, created_at, updated_at`
 
 func (p *Postgres) Fields(ctx context.Context, base int64) ([]Field, error) {
@@ -61,14 +61,14 @@ func colors(f Field) []byte {
 }
 
 func (p *Postgres) AddField(ctx context.Context, f Field) (Field, error) {
-	return scanField(p.Pool.QueryRow(ctx, `INSERT INTO base_fields (base_id, name, type, options, option_colors, description, position)
-		VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $7::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1), 0) + 1 ELSE $7 END)
-		RETURNING `+fieldCols, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Position))
+	return scanField(p.Pool.QueryRow(ctx, `INSERT INTO base_fields (base_id, name, type, options, option_colors, description, formula, position)
+		VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1), 0) + 1 ELSE $8 END)
+		RETURNING `+fieldCols, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position))
 }
 
 func (p *Postgres) UpdateField(ctx context.Context, f Field) (Field, error) {
-	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, position=$8 WHERE id=$1 AND base_id=$2 RETURNING `+fieldCols,
-		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Position))
+	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, formula=$8, position=$9 WHERE id=$1 AND base_id=$2 RETURNING `+fieldCols,
+		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position))
 }
 
 func (p *Postgres) DeleteField(ctx context.Context, base, id int64) error {

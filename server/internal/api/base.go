@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ZSeven-W/jiange/server/internal/btformula"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -106,6 +107,7 @@ type fieldInput struct {
 	Options      *[]string `json:"options"`
 	OptionColors *[]int    `json:"optionColors"`
 	Description  *string   `json:"description"`
+	Formula      *string   `json:"formula"`
 	Position     *float64  `json:"position"`
 }
 
@@ -144,8 +146,35 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 		}
 		f.Description = strings.TrimSpace(*in.Description)
 	}
+	if in.Formula != nil {
+		f.Formula = strings.TrimSpace(*in.Formula)
+	}
 	if in.Position != nil {
 		f.Position = *in.Position
+	}
+	return true
+}
+
+// validateFormula checks a formula expression's syntax and field references.
+func (s *Server) validateFormula(w http.ResponseWriter, r *http.Request, baseID, excludeField int64, formula string) bool {
+	if utf8.RuneCountInString(formula) > 2000 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_formula", "公式最长 2000 字")
+		return false
+	}
+	fields, err := s.Store.Fields(r.Context(), baseID)
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	names := make([]string, 0, len(fields))
+	for _, x := range fields {
+		if x.ID != excludeField {
+			names = append(names, x.Name)
+		}
+	}
+	if err := btformula.Validate(formula, names); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_formula", err.Error())
+		return false
 	}
 	return true
 }
@@ -184,6 +213,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &f) {
 		return
 	}
+	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, 0, f.Formula) {
+		return
+	}
 	f, err := s.Store.AddField(r.Context(), f)
 	if err != nil {
 		s.fail(w, r, err)
@@ -215,6 +247,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	old := fields[i]
 	f := old
 	if !in.apply(w, &f) {
+		return
+	}
+	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, f.ID, f.Formula) {
 		return
 	}
 	if f, err = s.Store.UpdateField(r.Context(), f); err != nil {

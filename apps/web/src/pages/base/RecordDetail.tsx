@@ -2,7 +2,7 @@ import { useState } from "react";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
-import { displayValue, REGISTRY } from "./registry";
+import { displayValue, evalFormulas, REGISTRY, setFormulaCache } from "./registry";
 
 /** Record detail drawer: every field editable in place, like Feishu's
  * row-expansion panel. */
@@ -26,6 +26,7 @@ export function RecordDetail({
   const [editing, setEditing] = useState<number | null>(null);
   const [row, setRow] = useState(record);
 
+  setFormulaCache(record, evalFormulas(fields, record, members));
   const setCell = async (f: Field, v: Cell | null) => {
     setEditing(null);
     const cur = row.cells[f.id];

@@ -73,7 +73,8 @@ export type FieldType =
   | "url"
   | "phone"
   | "email"
-  | "rating";
+  | "rating"
+  | "formula";
 export interface Field {
   id: number;
   name: string;
@@ -82,6 +83,8 @@ export interface Field {
   options?: string[];
   /** preset palette index per option (-1/absent = auto) */
   optionColors?: number[];
+  /** expression for type=formula (see base/formula.ts) */
+  formula?: string;
   position: number;
 }
 export interface AttachmentRef {

@@ -177,6 +177,18 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     format: (v) => (typeof v === "number" ? "★".repeat(v) : ""),
     compare: (a, b) => Number(a) - Number(b),
   },
+  formula: {
+    icon: "ƒ",
+    label: "公式",
+    width: 160,
+    readonly: true,
+    parse: () => undefined,
+    format: (v) => String(v ?? ""),
+    compare: (a, b) => {
+      if (typeof a === "number" && typeof b === "number") return a - b;
+      return String(a).localeCompare(String(b));
+    },
+  },
 };
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];
@@ -203,17 +215,27 @@ export function optionColor(f: Field, value: string): [string, string] {
   return PALETTE[Math.max(0, i) % PALETTE.length];
 }
 
-/** Cell value for display: computed types read from record metadata. */
+/** Cell value for display: computed types read from record metadata; formula
+ * types read the memoized dependency-graph evaluation (setFormulaCache). */
+const formulaCache = new WeakMap<BaseRecord, Map<number, FormulaValue>>();
+
+export function setFormulaCache(rec: BaseRecord, values: Map<number, FormulaValue>) {
+  formulaCache.set(rec, values);
+}
+
 export function displayValue(rec: BaseRecord | undefined, f: Field, members: User[]): CellValue {
+  if (!rec) return undefined;
   switch (f.type) {
     case "created_by":
-      return rec?.creatorId;
+      return rec.creatorId;
     case "created_at":
-      return rec?.createdAt;
+      return rec.createdAt;
     case "modified_at":
-      return rec?.updatedAt;
+      return rec.updatedAt;
+    case "formula":
+      return formulaCache.get(rec)?.get(f.id) ?? undefined;
     default:
-      return rec?.cells[f.id];
+      return rec.cells[f.id];
   }
 }
 
@@ -234,3 +256,75 @@ export function isAttachmentArray(v: CellValue): v is AttachmentRef[] {
 export function isStringArray(v: CellValue): v is string[] {
   return Array.isArray(v) && (v.length === 0 || typeof v[0] === "string");
 }
+
+/**
+ * 公式字段的依赖图求值：按拓扑序对每个 formula 字段求值（值来自 record 的
+ * 其它字段或先前求出的公式值）；环引用与求值错误返回 "#…" 标记字符串。
+ */
+export function evalFormulas(fields: Field[], rec: BaseRecord, members: User[]): Map<number, FormulaValue> {
+  const out = new Map<number, FormulaValue>();
+  const byName = new Map<string, Field>();
+  for (const f of fields) byName.set(f.name.toLowerCase(), f);
+  const formulas = fields.filter((f) => f.type === "formula" && f.formula);
+  const deps = new Map<number, string[]>(); // field id -> referenced field ids
+  for (const f of formulas) {
+    const ids: string[] = [];
+    for (const name of formulaRefs(f.formula!)) {
+      const target = byName.get(name.toLowerCase());
+      ids.push(target ? String(target.id) : "?");
+    }
+    deps.set(f.id, ids);
+  }
+  const state = new Map<number, 0 | 1 | 2>(); // 0 visiting, 1 done
+  const env: FormulaEnv = {
+    get: (name) => {
+      const f = byName.get(name.toLowerCase());
+      if (!f) return null;
+      if (f.type === "formula") return out.get(f.id) ?? null;
+      return displayRaw(rec, f, members);
+    },
+  };
+  const visit = (f: Field): FormulaValue => {
+    if (out.has(f.id)) return out.get(f.id)!;
+    if (state.get(f.id) === 0) {
+      out.set(f.id, "#循环引用");
+      return "#循环引用";
+    }
+    state.set(f.id, 0);
+    let v: FormulaValue;
+    try {
+      for (const dep of deps.get(f.id) ?? []) {
+        const depField = fields.find((x) => String(x.id) === dep);
+        if (depField?.type === "formula" && !out.has(depField.id)) visit(depField);
+      }
+      v = evalFormula(f.formula!, env);
+    } catch (e) {
+      v = e instanceof FormulaError ? (e as Error).message : "#错误";
+    }
+    out.set(f.id, v);
+    state.set(f.id, 1);
+    return v;
+  };
+  for (const f of formulas) visit(f);
+  return out;
+}
+
+/** 原始单元格值（computed 类型照旧读 record 元数据）。 */
+function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
+  switch (f.type) {
+    case "created_by":
+      return rec.creatorId ?? null;
+    case "created_at":
+      return rec.createdAt ?? null;
+    case "modified_at":
+      return rec.updatedAt ?? null;
+    default: {
+      const v = rec.cells[f.id];
+      if (v === undefined) return null;
+      if (typeof v === "number" || typeof v === "string" || typeof v === "boolean") return v;
+      return null; // arrays not usable in formulas
+    }
+  }
+}
+
+import { evalFormula, FormulaError, formulaRefs, type FormulaEnv, type FormulaValue } from "./formula";
