@@ -154,6 +154,25 @@ func (m *Memory) MoveRecord(_ context.Context, base, id int64, position float64)
 	return Record{}, ErrNotFound
 }
 
+func (m *Memory) AddRecordsBulk(_ context.Context, base int64, records []Record) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range records {
+		r.ID = m.id()
+		if r.Position == 0 {
+			r.Position = float64(r.ID)
+		}
+		if r.Cells == nil {
+			r.Cells = map[string]json.RawMessage{}
+		}
+		now := time.Now()
+		r.CreatedAt, r.UpdatedAt = &now, &now
+		r.BaseID = base
+		m.b.records = append(m.b.records, r)
+	}
+	return nil
+}
+
 func (m *Memory) DeleteRecord(_ context.Context, base, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

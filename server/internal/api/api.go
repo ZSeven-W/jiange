@@ -80,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/bases/{id}/views/{vid}":          s.patchView,
 		"DELETE /api/bases/{id}/views/{vid}":         s.deleteView,
 		"POST /api/bases/{id}/query":                 s.queryBase,
+		"POST /api/bases/{id}/import":                s.importCSV,
+		"GET /api/bases/{id}/export":                 s.exportCSV,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

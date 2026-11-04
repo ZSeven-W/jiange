@@ -140,6 +140,30 @@ export function BasePage({ id }: { id: number }) {
               )}
             </>
           )}
+          {canEdit && (
+            <label className="cursor-pointer text-muted-foreground hover:text-foreground" data-import-csv>
+              导入 CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!f) return;
+                  const csv = await f.text();
+                  const res = await baseApi.importCSV(id, csv).catch(() => null);
+                  if (res) {
+                    alert(`导入 ${res.imported} 行${res.errors.length ? `，失败 ${res.errors.length} 行：\n` + res.errors.slice(0, 5).map((x) => `第${x.row}行 ${x.err}`).join("\n") : ""}`);
+                  }
+                  refresh();
+                }}
+              />
+            </label>
+          )}
+          <a href={`/api/bases/${id}/export`} className="text-muted-foreground hover:text-foreground" data-export-csv>
+            导出 CSV
+          </a>
           <span className="ml-auto text-subtle">
             {records.length === source.length ? `${records.length} 条记录` : `${records.length} / ${source.length} 条记录`}
           </span>
