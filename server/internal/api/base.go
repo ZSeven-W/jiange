@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,7 +79,12 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs})
+	head, err := s.Store.BtHead(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head})
 }
 
 type fieldInput struct {
@@ -118,6 +124,22 @@ func pathID(r *http.Request, k string) int64 {
 	return id
 }
 
+// btEvent appends a realtime event and pokes the base's sync room. Failures
+// don't fail the mutation: clients converge on the next refetch.
+func (s *Server) btEvent(ctx context.Context, baseID int64, body map[string]any) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	if _, err := s.Store.AppendBtEvent(ctx, baseID, b); err != nil {
+		s.Log.Error("bt event append", "base", baseID, "err", err)
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(baseID)
+	}
+}
+
 func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
@@ -136,6 +158,7 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "add", "field": f})
 	httpx.JSON(w, http.StatusCreated, f)
 }
 
@@ -174,7 +197,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
+		s.btEvent(r.Context(), b.ID, map[string]any{"kind": "reload"})
 	}
+	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "update", "field": f})
 	httpx.JSON(w, http.StatusOK, f)
 }
 
@@ -241,13 +266,15 @@ func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteField(r.Context(), b.ID, pathID(r, "fid")); errors.Is(err, store.ErrNotFound) {
+	fid := pathID(r, "fid")
+	if err := s.Store.DeleteField(r.Context(), b.ID, fid); errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "field not found")
 		return
 	} else if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "del", "fid": fid})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -329,6 +356,11 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 		s.fail(w, r, err)
 		return
 	}
+	op := "update"
+	if create {
+		op = "add"
+	}
+	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "record", "op": op, "record": rec})
 	status := http.StatusOK
 	if create {
 		status = http.StatusCreated
@@ -341,12 +373,14 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteRecord(r.Context(), b.ID, pathID(r, "rid")); errors.Is(err, store.ErrNotFound) {
+	rid := pathID(r, "rid")
+	if err := s.Store.DeleteRecord(r.Context(), b.ID, rid); errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "record not found")
 		return
 	} else if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "record", "op": "del", "rid": rid})
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +15,8 @@ import (
 	"time"
 
 	"github.com/ZSeven-W/jiange/server/internal/api"
+	"github.com/ZSeven-W/jiange/server/internal/blob"
+	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/config"
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
 	"github.com/ZSeven-W/jiange/server/internal/store"
@@ -55,6 +56,7 @@ func run(log *slog.Logger) error {
 			log.Error("listen/notify", "err", err)
 		}
 	}()
+	btHub := &btsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
 	var blobs blob.Store
 	if cfg.S3Endpoint != "" {
 		s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}
@@ -65,8 +67,9 @@ func run(log *slog.Logger) error {
 		}
 	}
 	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies, Hub: hub, Blobs: blobs}).Handler(),
+		Addr: cfg.Addr,
+		Handler: (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies,
+			Hub: hub, BtHub: btHub, Blobs: blobs}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)

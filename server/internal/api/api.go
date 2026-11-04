@@ -13,6 +13,7 @@ import (
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/blob"
+	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
@@ -27,8 +28,9 @@ type Server struct {
 	SecureCookies bool
 	Iterations    int // PBKDF2 iterations; tests lower this
 	Now           func() time.Time
-	Hub           *syncsrv.Hub // nil disables /api/sync
-	Blobs         blob.Store   // nil disables attachments
+	Hub           *syncsrv.Hub  // nil disables /api/sync
+	BtHub         *btsync.Hub   // nil disables base realtime
+	Blobs         blob.Store    // nil disables attachments
 }
 
 func (s *Server) now() time.Time {
@@ -75,6 +77,15 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.Handle("GET /api/trash", s.requireUser(http.HandlerFunc(s.listTrash)))
 	mux.Handle("POST /api/trash/{id}/restore", s.requireUser(http.HandlerFunc(s.restoreDoc)))
+	if s.BtHub != nil {
+		mux.Handle("GET /api/bases/{id}/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, ok := s.needBase(w, r, store.RoleView)
+			if !ok {
+				return
+			}
+			s.BtHub.Serve(w, r, b.ID)
+		})))
+	}
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			u, _ := UserFrom(r.Context())

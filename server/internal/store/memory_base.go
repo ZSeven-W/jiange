@@ -10,9 +10,11 @@ import (
 )
 
 type memBase struct {
-	fields  []Field
-	records []Record
-	nextID  int64
+	fields   []Field
+	records  []Record
+	events   []BtEvent
+	nextID   int64
+	eventSeq int64
 }
 
 func (m *Memory) CreateBase(ctx context.Context, ws, creator int64, parent *int64, title string) (DocMeta, error) {
@@ -166,4 +168,33 @@ func (m *Memory) MapFieldCells(_ context.Context, base, field int64, fn func(jso
 		m.b.records[i].Cells = nc
 	}
 	return nil
+}
+
+func (m *Memory) AppendBtEvent(_ context.Context, base int64, body json.RawMessage) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.b.eventSeq++
+	m.b.events = append(m.b.events, BtEvent{Seq: m.b.eventSeq, Body: body})
+	return m.b.eventSeq, nil
+}
+
+func (m *Memory) BtEventsAfter(_ context.Context, base, after int64, limit int) ([]BtEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []BtEvent
+	for _, e := range m.b.events {
+		if e.Seq > after {
+			out = append(out, e)
+			if len(out) == limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) BtHead(_ context.Context, base int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.b.eventSeq, nil
 }

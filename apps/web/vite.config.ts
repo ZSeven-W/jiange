@@ -10,6 +10,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api/sync": { target: "ws://localhost:8080", ws: true },
+      "/api/bases": { target: "ws://localhost:8080", ws: true },
       "/api": "http://localhost:8080",
       "/healthz": "http://localhost:8080",
     },
