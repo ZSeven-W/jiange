@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"time"
 )
 
 type memBase struct {
@@ -109,6 +110,8 @@ func (m *Memory) AddRecord(_ context.Context, r Record) (Record, error) {
 	if r.Cells == nil {
 		r.Cells = map[string]json.RawMessage{}
 	}
+	now := time.Now()
+	r.CreatedAt, r.UpdatedAt = &now, &now
 	m.b.records = append(m.b.records, r)
 	return r, nil
 }
@@ -130,6 +133,8 @@ func (m *Memory) SetCells(_ context.Context, base, id int64, cells map[string]js
 				}
 			}
 			m.b.records[i].Cells = nc
+			now := time.Now()
+			m.b.records[i].UpdatedAt = &now
 			return m.b.records[i], nil
 		}
 	}

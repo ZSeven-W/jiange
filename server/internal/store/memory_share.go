@@ -111,6 +111,23 @@ func (m *Memory) SharedWithMe(_ context.Context, uid int64) ([]DocMeta, error) {
 	return out, nil
 }
 
+func (m *Memory) WorkspaceMembers(_ context.Context, ws int64) ([]User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []User{}
+	for _, u := range m.users {
+		for _, id := range m.members[u.ID] {
+			if id == ws {
+				u.PasswordHash = ""
+				out = append(out, u)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 func (m *Memory) CreateFile(_ context.Context, f FileMeta) (FileMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

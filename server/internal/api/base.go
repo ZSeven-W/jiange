@@ -59,7 +59,7 @@ func (s *Server) createBase(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	s.Store.AddField(ctx, store.Field{BaseID: b.ID, Name: "标题", Type: "text"})
 	for range 3 {
-		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID})
+		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID, CreatorID: u.ID})
 	}
 	httpx.JSON(w, http.StatusCreated, b)
 }
@@ -84,7 +84,12 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head})
+	members, err := s.Store.WorkspaceMembers(r.Context(), b.WorkspaceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members})
 }
 
 type fieldInput struct {
@@ -105,7 +110,7 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	}
 	if in.Type != nil {
 		if !store.FieldTypes[*in.Type] {
-			httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be text, number, select, checkbox or date")
+			httpx.Error(w, http.StatusBadRequest, "invalid_type", "unknown field type "+*in.Type)
 			return false
 		}
 		f.Type = *in.Type
@@ -190,7 +195,7 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if old.Type != f.Type || (f.Type == "select" && !slices.Equal(old.Options, f.Options)) {
+	if old.Type != f.Type || ((f.Type == "select" || f.Type == "multi_select") && !slices.Equal(old.Options, f.Options)) {
 		if err := s.Store.MapFieldCells(r.Context(), b.ID, f.ID, func(v json.RawMessage) json.RawMessage {
 			return convertCell(old, f, v)
 		}); err != nil {
@@ -206,7 +211,28 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 // convertCell rewrites a cell after its field changed type (or a select's
 // options shrank). Values that cannot be represented are cleared (nil).
 func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
-	if from.Type == to.Type && (to.Type != "select" || slices.Contains(to.Options, string(v))) {
+	if from.Type == to.Type {
+		if to.Type == "select" {
+			var s string
+			if json.Unmarshal(v, &s) == nil && slices.Contains(to.Options, s) {
+				return v
+			}
+			return nil
+		}
+		if to.Type == "multi_select" {
+			var arr []string
+			if json.Unmarshal(v, &arr) != nil {
+				return nil
+			}
+			kept := arr[:0]
+			for _, s := range arr {
+				if slices.Contains(to.Options, s) {
+					kept = append(kept, s)
+				}
+			}
+			b, _ := json.Marshal(kept)
+			return b
+		}
 		return v
 	}
 	var x any
@@ -235,6 +261,10 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 			if b, err := strconv.ParseBool(val); err == nil {
 				return mustJSON(b)
 			}
+		case "multi_select":
+			if slices.Contains(to.Options, val) {
+				return mustJSON([]string{val})
+			}
 		}
 	case float64:
 		switch to.Type {
@@ -244,6 +274,8 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 			return mustJSON(strconv.FormatFloat(val, 'f', -1, 64))
 		case "checkbox":
 			return mustJSON(val != 0)
+		case "person":
+			return mustJSON(int64(val))
 		}
 	case bool:
 		switch to.Type {
@@ -256,6 +288,17 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 			return mustJSON(0)
 		case "text":
 			return mustJSON(strconv.FormatBool(val))
+		}
+	case []any:
+		switch to.Type {
+		case "text":
+			parts := make([]string, 0, len(val))
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			return mustJSON(strings.Join(parts, ","))
 		}
 	}
 	return nil
@@ -289,32 +332,61 @@ func checkCells(fields []store.Field, cells map[string]json.RawMessage) string {
 			continue
 		}
 		f := fields[i]
-		var ok bool
-		switch f.Type {
-		case "text":
-			var s string
-			ok = json.Unmarshal(v, &s) == nil && utf8.RuneCountInString(s) <= 10000
-		case "number":
-			var n float64
-			ok = json.Unmarshal(v, &n) == nil
-		case "checkbox":
-			var b bool
-			ok = json.Unmarshal(v, &b) == nil
-		case "select":
-			var s string
-			ok = json.Unmarshal(v, &s) == nil && slices.Contains(f.Options, s)
-		case "date":
-			var s string
-			if json.Unmarshal(v, &s) == nil {
-				_, err := time.Parse("2006-01-02", s)
-				ok = err == nil
-			}
+		if store.FieldReadOnly(f.Type) {
+			return f.Name + " 是自动填充字段，不能编辑"
 		}
-		if !ok {
+		if !validCell(f, v) {
 			return "invalid value for " + f.Name
 		}
 	}
 	return ""
+}
+
+// validCell is the per-type cell validator (server side of the type registry).
+func validCell(f store.Field, v json.RawMessage) bool {
+	switch f.Type {
+	case "text":
+		var s string
+		return json.Unmarshal(v, &s) == nil && utf8.RuneCountInString(s) <= 10000
+	case "number":
+		var n float64
+		return json.Unmarshal(v, &n) == nil
+	case "checkbox":
+		var b bool
+		return json.Unmarshal(v, &b) == nil
+	case "select":
+		var s string
+		return json.Unmarshal(v, &s) == nil && slices.Contains(f.Options, s)
+	case "multi_select":
+		var arr []string
+		if json.Unmarshal(v, &arr) != nil {
+			return false
+		}
+		for _, s := range arr {
+			if !slices.Contains(f.Options, s) {
+				return false
+			}
+		}
+		return true
+	case "person":
+		var id int64
+		return json.Unmarshal(v, &id) == nil
+	case "attachment":
+		var arr []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+			Mime string `json:"mime"`
+			Size int64  `json:"size"`
+		}
+		return json.Unmarshal(v, &arr) == nil
+	case "date":
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			_, err := time.Parse("2006-01-02", s)
+			return err == nil
+		}
+	}
+	return false
 }
 
 func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool) {
@@ -338,6 +410,7 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", msg)
 		return
 	}
+	u, _ := UserFrom(r.Context())
 	var rec store.Record
 	if create {
 		for k, v := range in.Cells {
@@ -345,7 +418,7 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 				delete(in.Cells, k)
 			}
 		}
-		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position})
+		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position, CreatorID: u.ID})
 	} else {
 		rec, err = s.Store.SetCells(r.Context(), b.ID, pathID(r, "rid"), in.Cells)
 	}

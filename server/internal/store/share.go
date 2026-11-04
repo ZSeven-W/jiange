@@ -64,6 +64,8 @@ type ShareStore interface {
 	DocByToken(ctx context.Context, token string) (docID int64, role string, err error)
 	// SharedWithMe lists docs shared to the user from outside their workspaces.
 	SharedWithMe(ctx context.Context, userID int64) ([]DocMeta, error)
+	// WorkspaceMembers lists a workspace's users (for person fields and share dialogs).
+	WorkspaceMembers(ctx context.Context, workspaceID int64) ([]User, error)
 	CreateFile(ctx context.Context, f FileMeta) (FileMeta, error)
 	GetFile(ctx context.Context, id int64) (FileMeta, error)
 }

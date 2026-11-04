@@ -80,6 +80,18 @@ func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, erro
 	})
 }
 
+func (p *Postgres) WorkspaceMembers(ctx context.Context, ws int64) ([]User, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT u.id, u.email, u.name, u.created_at FROM workspace_members m
+		JOIN users u ON u.id = m.user_id WHERE m.workspace_id=$1 ORDER BY u.id`, ws)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (u User, err error) {
+		err = r.Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt)
+		return
+	})
+}
+
 func (p *Postgres) CreateFile(ctx context.Context, f FileMeta) (FileMeta, error) {
 	err := p.Pool.QueryRow(ctx, `INSERT INTO attachments (doc_id, uploader_id, name, mime, size, object_key) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at`,
 		f.DocID, f.UploaderID, f.Name, f.Mime, f.Size, f.ObjectKey).Scan(&f.ID, &f.CreatedAt)

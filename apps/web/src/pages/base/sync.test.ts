@@ -9,8 +9,8 @@ const data = (): BaseData => ({
     { id: 2, name: "状态", type: "select", options: ["待办", "完成"], position: 2 },
   ],
   records: [
-    { id: 11, position: 1, cells: { 1: "拖拽", 2: "完成" } },
-    { id: 12, position: 2, cells: { 1: "分享" } },
+    { id: 11, baseId: 1, position: 1, cells: { 1: "拖拽", 2: "完成" } },
+    { id: 12, baseId: 1, position: 2, cells: { 1: "分享" } },
   ],
   head: 5,
 });
@@ -32,9 +32,9 @@ describe("applyBtEvent", () => {
   });
 
   it("upserts records in position order and deletes by id", () => {
-    const out = applyBtEvent(data(), ev(6, { kind: "record", op: "add", record: { id: 13, position: 0.5, cells: { 1: "新行" } } }));
+    const out = applyBtEvent(data(), ev(6, { kind: "record", op: "add", record: { id: 13, baseId: 1, position: 0.5, cells: { 1: "新行" } } }));
     expect(out.records.map((r) => r.id)).toEqual([13, 11, 12]);
-    const upd = applyBtEvent(out, ev(7, { kind: "record", op: "update", record: { id: 13, position: 0.5, cells: { 1: "改名" } } }));
+    const upd = applyBtEvent(out, ev(7, { kind: "record", op: "update", record: { id: 13, baseId: 1, position: 0.5, cells: { 1: "改名" } } }));
     expect(upd.records[0].cells[1]).toBe("改名");
     const del = applyBtEvent(upd, ev(8, { kind: "record", op: "del", rid: 11 }));
     expect(del.records.map((r) => r.id)).toEqual([13, 12]);
@@ -42,8 +42,8 @@ describe("applyBtEvent", () => {
 
   it("later events win on the same cell (LWW by seq)", () => {
     let d = data();
-    d = applyBtEvent(d, ev(6, { kind: "record", op: "update", record: { id: 12, position: 2, cells: { 1: "先写" } } }));
-    d = applyBtEvent(d, ev(7, { kind: "record", op: "update", record: { id: 12, position: 2, cells: { 1: "后写" } } }));
+    d = applyBtEvent(d, ev(6, { kind: "record", op: "update", record: { id: 12, baseId: 1, position: 2, cells: { 1: "先写" } } }));
+    d = applyBtEvent(d, ev(7, { kind: "record", op: "update", record: { id: 12, baseId: 1, position: 2, cells: { 1: "后写" } } }));
     expect(d.records.find((r) => r.id === 12)!.cells[1]).toBe("后写");
   });
 
