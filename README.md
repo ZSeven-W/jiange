@@ -81,3 +81,5 @@ UI 先在 OpenPencil 中设计（`design/jiange.op`），预览见 `design/previ
 ### Attachments (MinIO / S3)
 
 Set `JIANGE_S3_ENDPOINT` (e.g. `http://localhost:9000`), `JIANGE_S3_ACCESS_KEY`, `JIANGE_S3_SECRET_KEY` and optionally `JIANGE_S3_BUCKET` (default `jiange`; created on start). Without an endpoint, uploads are disabled. With docker-compose: `JIANGE_S3_ENDPOINT=http://localhost:9000 JIANGE_S3_ACCESS_KEY=jiange JIANGE_S3_SECRET_KEY=jiange-dev-secret`.
+
+> 开发路线与交接说明见 [ROADMAP.md](ROADMAP.md)。
