@@ -34,6 +34,7 @@ import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
+import { TodoCheck } from "./menuIcons";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -999,10 +1000,10 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           e.preventDefault();
           onToggle();
         }}
-        className={cn("mt-[6px] grid size-4 place-items-center rounded-[3px] border text-[11px] leading-none text-white", checked ? "border-primary bg-primary" : "border-[#bbbfc4] bg-surface")}
+        className={cn("mt-[5px]", checked ? "text-primary" : "text-[#bbbfc4]")}
         aria-label="完成"
       >
-        {checked ? "✓" : ""}
+        <TodoCheck checked={checked} />
       </button>
     );
   return (
@@ -1334,7 +1335,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
       <a
         href={marks.link}
         data-mention
-        className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF] before:mr-1 before:content-['▤']")}
+        className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF]")}
         onClick={(e) => {
           e.preventDefault();
           location.hash = marks.link;
