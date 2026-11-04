@@ -74,6 +74,25 @@ export function CellView({
     case "created_at":
     case "modified_at":
       return <span className="block truncate text-[13px] text-muted-foreground">{formatTime(typeof v === "string" ? v : undefined)}</span>;
+    case "link": {
+      const titles = displayValue(record, field, members);
+      if (isStringArray(titles) && titles.length)
+        return (
+          <span className="flex flex-wrap gap-1 overflow-hidden">
+            {titles.map((t) => (
+              <span key={t} className="rounded bg-[#E1EAFF] px-1.5 py-0.5 text-[12px] font-medium text-primary">
+                {t}
+              </span>
+            ))}
+          </span>
+        );
+      return null;
+    }
+    case "lookup": {
+      const vals = displayValue(record, field, members);
+      if (Array.isArray(vals) && vals.length) return <span className="block truncate">{vals.map((x) => String(x)).join("、")}</span>;
+      return null;
+    }
     case "attachment":
       return (
         <span className="flex flex-wrap gap-1 overflow-hidden">

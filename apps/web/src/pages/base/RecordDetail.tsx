@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
@@ -62,10 +63,12 @@ export function RecordDetail({
               {f.description && <div className="mb-1 text-[11px] leading-4 text-subtle">{f.description}</div>}
               <div
                 className={cn("min-h-8 rounded px-1.5 py-1 text-[14px]", !def.readonly && canEdit && "cursor-text hover:bg-hover", editingThis && "outline outline-2 -outline-offset-2 outline-primary")}
-                onClick={() => !def.readonly && canEdit && f.type !== "checkbox" && setEditing(f.id)}
+                onClick={() => !def.readonly && canEdit && f.type !== "checkbox" && f.type !== "link" && setEditing(f.id)}
                 data-detail-field={f.id}
               >
-                {editingThis ? (
+                {f.type === "link" && canEdit ? (
+                  <LinkEditor baseId={baseId} field={f} record={row} onSaved={setRow} />
+                ) : editingThis ? (
                   <CellEditor
                     field={f}
                     record={row}
@@ -108,5 +111,50 @@ export function RecordDetail({
         )}
       </footer>
     </aside>
+  );
+}
+
+/** Link 字段编辑器：勾选目标 base 的记录，保存为 id 数组（真值在 bt_links）。 */
+function LinkEditor({
+  baseId,
+  field,
+  record,
+  onSaved,
+}: {
+  baseId: number;
+  field: Field;
+  record: BaseRecord;
+  onSaved: (r: BaseRecord) => void;
+}) {
+  const members: User[] = [];
+  const targetBase = Number(field.options?.[0] ?? 0);
+  const target = useQuery({
+    queryKey: ["base", targetBase],
+    queryFn: () => baseApi.get(targetBase),
+    enabled: targetBase > 0,
+  });
+  const selected = Array.isArray(record.cells[field.id]) ? (record.cells[field.id] as unknown[]).map(Number) : [];
+  const tTitle = target.data?.fields.find((f) => f.type === "text") ?? target.data?.fields[0];
+  const toggle = async (id: number) => {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    const res = await baseApi.setCells(baseId, record.id, { [String(field.id)]: next }).catch(() => null);
+    if (res) onSaved(res);
+  };
+  if (!targetBase) return <span className="text-[12px] text-subtle">未配置目标表</span>;
+  return (
+    <div className="max-h-40 space-y-0.5 overflow-y-auto" data-link-editor>
+      {(target.data?.records ?? []).map((r) => (
+        <label key={r.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[13px] hover:bg-hover">
+          <input
+            type="checkbox"
+            className="accent-primary"
+            checked={selected.includes(r.id)}
+            onChange={() => void toggle(r.id)}
+          />
+          {String(displayValue(r, tTitle ?? field, members) ?? "") || `#${r.id}`}
+        </label>
+      ))}
+      {(target.data?.records ?? []).length === 0 && <span className="text-[12px] text-subtle">目标表暂无记录</span>}
+    </div>
   );
 }

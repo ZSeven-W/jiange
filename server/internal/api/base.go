@@ -98,7 +98,116 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views})
+	// 展开 link/lookup 字段值：links[fromRecord] = [{id,title}]; lookups 同理派生
+	var linkIDs []int64
+	for _, rec := range recs {
+		linkIDs = append(linkIDs, rec.ID)
+	}
+	linkFields := []store.Field{}
+	lookupFields := []store.Field{}
+	for _, f := range fields {
+		if f.Type == "link" {
+			linkFields = append(linkFields, f)
+		} else if f.Type == "lookup" {
+			lookupFields = append(lookupFields, f)
+		}
+	}
+	expansions := map[string]any{}
+	for _, lf := range linkFields {
+		links, err := s.Store.LinksForRecords(r.Context(), lf.ID, linkIDs)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		// 目标记录标题（目标 base 的第一个 text 字段）
+		var targetBase int64
+		if len(lf.Options) > 0 {
+			targetBase, _ = strconv.ParseInt(lf.Options[0], 10, 64)
+		}
+		targetTitle := map[int64]string{}
+		if targetBase != 0 {
+			tf, err := s.Store.Fields(r.Context(), targetBase)
+			if err == nil {
+				titleField := int64(0)
+				for _, x := range tf {
+					if x.Type == "text" {
+						titleField = x.ID
+						break
+					}
+				}
+				if titleField != 0 {
+					trecs, err := s.Store.QueryRecords(r.Context(), targetBase, tf, store.BtQueryAll(), 0)
+					if err == nil {
+						for _, tr := range trecs {
+							var tv any
+							if raw, ok := tr.Cells[strconv.FormatInt(titleField, 10)]; ok {
+								_ = json.Unmarshal(raw, &tv)
+								if s2, ok := tv.(string); ok {
+									targetTitle[tr.ID] = s2
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		key := strconv.FormatInt(lf.ID, 10)
+		expansions[key] = links
+		expansions[key+":titles"] = targetTitle
+	}
+	// lookup 字段：按 (link 字段, 目标字段) 派生每个记录的值数组
+	for _, lf := range lookupFields {
+		if len(lf.Options) < 2 {
+			continue
+		}
+		linkFieldID, _ := strconv.ParseInt(lf.Options[0], 10, 64)
+		targetFieldID, _ := strconv.ParseInt(lf.Options[1], 10, 64)
+		var linkField *store.Field
+		for _, x := range fields {
+			if x.ID == linkFieldID && x.Type == "link" {
+				linkField = &x
+				break
+			}
+		}
+		if linkField == nil {
+			continue
+		}
+		links, err := s.Store.LinksForRecords(r.Context(), linkFieldID, linkIDs)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		var targetBase int64
+		if len(linkField.Options) > 0 {
+			targetBase, _ = strconv.ParseInt(linkField.Options[0], 10, 64)
+		}
+		values := map[int64][]any{}
+		if targetBase != 0 {
+			tf, err := s.Store.Fields(r.Context(), targetBase)
+			if err == nil {
+				if trecs, err := s.Store.QueryRecords(r.Context(), targetBase, tf, store.BtQueryAll(), 0); err == nil {
+					byID := map[int64]store.Record{}
+					for _, tr := range trecs {
+						byID[tr.ID] = tr
+					}
+					for from, tos := range links {
+						for _, to := range tos {
+							if tr, ok := byID[to]; ok {
+								if raw, ok := tr.Cells[strconv.FormatInt(targetFieldID, 10)]; ok {
+									var v any
+									if json.Unmarshal(raw, &v) == nil {
+										values[from] = append(values[from], v)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		expansions[strconv.FormatInt(lf.ID, 10)] = values
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views, "expansions": expansions})
 }
 
 type fieldInput struct {
@@ -396,6 +505,16 @@ func checkCells(fields []store.Field, cells map[string]json.RawMessage) string {
 		if store.FieldReadOnly(f.Type) {
 			return f.Name + " 是自动填充字段，不能编辑"
 		}
+		if f.Type == "link" {
+			var arr []int64
+			if json.Unmarshal(v, &arr) != nil {
+				return f.Name + " 需要关联记录 id 数组"
+			}
+			continue
+		}
+		if f.Type == "lookup" {
+			return f.Name + " 是查找引用字段，由关联字段派生，不能直接编辑"
+		}
 		if !validCell(f, v) {
 			return "invalid value for " + f.Name
 		}
@@ -518,6 +637,26 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 	} else if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	// link 字段：cells 只作展示缓存，真值写 bt_links
+	linkFields := map[string]store.Field{}
+	for _, x := range fields {
+		if x.Type == "link" {
+			linkFields[strconv.FormatInt(x.ID, 10)] = x
+		}
+	}
+	for k, raw := range in.Cells {
+		f, ok := linkFields[k]
+		if !ok {
+			continue
+		}
+		var arr []int64
+		_ = json.Unmarshal(raw, &arr)
+		rid := rec.ID
+		if ferr := s.Store.SetLinks(r.Context(), b.ID, f.ID, rid, arr); ferr != nil {
+			s.fail(w, r, ferr)
+			return
+		}
 	}
 	op := "update"
 	if create {

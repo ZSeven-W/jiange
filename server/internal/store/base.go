@@ -43,6 +43,13 @@ var FieldTypes = map[string]bool{
 	"multi_select": true, "person": true, "attachment": true,
 	"created_by": true, "created_at": true, "modified_at": true,
 	"url": true, "phone": true, "email": true, "rating": true, "formula": true,
+	"link": true, "lookup": true,
+}
+
+// FieldStored reports whether values live in the cells jsonb (link/lookup
+// are backed by bt_links instead).
+func FieldStored(t string) bool {
+	return !FieldReadOnly(t) && t != "link" && t != "lookup"
 }
 
 // Computed field types are rendered from record metadata, never written.
@@ -94,6 +101,10 @@ type BaseStore interface {
 	BtEventsAfter(ctx context.Context, baseID, after int64, limit int) ([]BtEvent, error)
 	// BtHead is the newest event seq for the base (0 when none).
 	BtHead(ctx context.Context, baseID int64) (int64, error)
+
+	// Record links behind link fields (from_record → to_record).
+	SetLinks(ctx context.Context, baseID, fieldID, fromRecord int64, toRecords []int64) error
+	LinksForRecords(ctx context.Context, fieldID int64, fromRecords []int64) (map[int64][]int64, error)
 
 	Views(ctx context.Context, baseID int64) ([]View, error)
 	AddView(ctx context.Context, v View) (View, error)

@@ -222,3 +222,38 @@ func (p *Postgres) AddRecordsBulk(ctx context.Context, base int64, records []Rec
 	}
 	return p.Pool.SendBatch(ctx, b).Close()
 }
+
+func (p *Postgres) SetLinks(ctx context.Context, baseID, fieldID, fromRecord int64, toRecords []int64) error {
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM bt_links WHERE field_id=$1 AND from_record=$2`, fieldID, fromRecord); err != nil {
+		return err
+	}
+	for _, to := range toRecords {
+		if _, err := tx.Exec(ctx, `INSERT INTO bt_links (base_id, field_id, from_record, to_record) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+			baseID, fieldID, fromRecord, to); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (p *Postgres) LinksForRecords(ctx context.Context, fieldID int64, fromRecords []int64) (map[int64][]int64, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT from_record, to_record FROM bt_links WHERE field_id=$1 AND from_record = ANY($2) ORDER BY id`, fieldID, fromRecords)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var from, to int64
+		if err := rows.Scan(&from, &to); err != nil {
+			return nil, err
+		}
+		out[from] = append(out[from], to)
+	}
+	return out, rows.Err()
+}

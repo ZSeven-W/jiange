@@ -59,10 +59,12 @@ export function BasePage({ id }: { id: number }) {
   if (q.isError) return <div className="grid flex-1 place-items-center text-muted-foreground">多维表格不存在或无权访问</div>;
   if (!q.data) return <div className="flex-1" />;
   const { base, fields, members } = q.data;
+  // link/lookup 展开值写进展示缓存（cells），真值在 bt_links
+  const recordsRaw = foldExpansions(q.data.fields, q.data.records, q.data.expansions ?? {});
   const canEdit = base.role !== "view";
   const hidden = new Set(cfg.hidden ?? []);
   const visibleFields = fields.filter((f) => !hidden.has(f.id));
-  const source = filtersActive || sortsActive ? (serverQuery.data?.records ?? q.data.records) : q.data.records;
+  const source = foldExpansions(q.data.fields, filtersActive || sortsActive ? (serverQuery.data?.records ?? q.data.records) : q.data.records, q.data.expansions ?? {});
   const records = view(source, visibleFields, members, null, filter);
   const dirty = current ? JSON.stringify(cfg) !== JSON.stringify(current.config) : false;
 
@@ -499,4 +501,31 @@ function BaseTitle({ id, title, onRenamed }: { id: number; title: string; onRena
       {title}
     </span>
   );
+}
+
+/** 把服务端的 expansions（关联/查找引用）折进 records 的展示 cells。 */
+export function foldExpansions(
+  fields: import("@/lib/api").Field[],
+  records: import("@/lib/api").BaseRecord[],
+  expansions: Record<string, unknown>,
+): import("@/lib/api").BaseRecord[] {
+  const linkIds = new Set(fields.filter((f) => f.type === "link").map((f) => String(f.id)));
+  const lookupIds = new Set(fields.filter((f) => f.type === "lookup").map((f) => String(f.id)));
+  const titles = expansions as Record<string, Record<string, unknown>>;
+  const has = [...linkIds].some((k) => titles[k]) || [...lookupIds].some((k) => titles[k]);
+  if (!has) return records;
+  return records.map((r) => {
+    const key = String(r.id);
+    const cells = { ...r.cells };
+    for (const fid of linkIds) {
+      const links = titles[fid]?.[key] as number[] | undefined;
+      const tmap = (titles[fid + ":titles"] ?? {}) as Record<string, string>;
+      if (links) cells[fid] = links.map((id) => tmap[String(id)] ?? `#${id}`) as unknown as import("@/lib/api").Cell;
+    }
+    for (const fid of lookupIds) {
+      const vals = titles[fid]?.[key] as unknown[] | undefined;
+      if (vals) cells[fid] = vals as unknown as import("@/lib/api").Cell;
+    }
+    return { ...r, cells };
+  });
 }

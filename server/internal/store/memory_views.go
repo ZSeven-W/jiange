@@ -99,6 +99,9 @@ func (m *Memory) QueryRecords(_ context.Context, base int64, fields []Field, cfg
 	return out, nil
 }
 
+// BtQueryAll is an empty (unfiltered) query config.
+func BtQueryAll() btquery.Config { return btquery.Config{} }
+
 // Specs converts store fields into the compiler's field specs.
 func Specs(fields []Field) []btquery.FieldSpec {
 	out := make([]btquery.FieldSpec, len(fields))

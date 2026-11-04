@@ -139,7 +139,7 @@ export function Grid({
   const startEdit = (ri: number, fi: number, seed?: string) => {
     if (!canEdit) return;
     const f = fields[fi];
-    if (!f || REGISTRY[f.type].readonly || f.type === "checkbox") return;
+    if (!f || REGISTRY[f.type].readonly || f.type === "checkbox" || f.type === "link" || f.type === "lookup") return;
     setSel({ ar: ri, af: fi, rr: ri, rf: fi });
     setEdit({ ri, fi, seed });
   };
