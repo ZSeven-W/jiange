@@ -91,6 +91,7 @@ export function RecordDetail({
           );
         })}
       </div>
+      <ReverseLinks baseId={baseId} recordId={record.id} />
       <footer className="flex items-center gap-3 border-t px-4 py-2.5 text-[12px] text-subtle">
         <span>创建于 {row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
         <span>修改于 {row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
@@ -155,6 +156,34 @@ function LinkEditor({
         </label>
       ))}
       {(target.data?.records ?? []).length === 0 && <span className="text-[12px] text-subtle">目标表暂无记录</span>}
+    </div>
+  );
+}
+
+
+/** 双向关联：列出反向引用本记录的源记录（只读 chips）。 */
+function ReverseLinks({ baseId, recordId }: { baseId: number; recordId: number }) {
+  const rev = useQuery({ queryKey: ["reverse", baseId], queryFn: () => baseApi.reverse(baseId) });
+  const rows = (rev.data ?? [])
+    .map((r) => ({
+      sourceBase: r.sourceBase,
+      refs: r.from[String(recordId)] ?? [],
+      titles: r.titles,
+    }))
+    .filter((x) => x.refs.length > 0);
+  if (rows.length === 0) return null;
+  return (
+    <div className="border-t px-4 py-3" data-reverse-links>
+      <div className="mb-1.5 text-[12px] text-muted-foreground">被以下记录关联</div>
+      {rows.map((r) => (
+        <div key={r.sourceBase} className="mb-1.5 flex flex-wrap gap-1">
+          {r.refs.map((rid) => (
+            <span key={rid} className="rounded bg-[#E1EAFF] px-1.5 py-0.5 text-[12px] font-medium text-primary dark:bg-[#1d3461]">
+              {r.titles[String(rid)] ?? `#${rid}`}
+            </span>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

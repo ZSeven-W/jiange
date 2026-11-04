@@ -253,6 +253,65 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// 双向关联：被指向的本 base 记录 → 源记录（标题 chips 渲染在详情抽屉）
+	reverse, err := s.Store.LinkFieldsTargeting(r.Context(), b.ID)
+	if err == nil && len(reverse) > 0 {
+		var selfIDs []int64
+		for _, rec := range recs {
+			selfIDs = append(selfIDs, rec.ID)
+		}
+		type revEntry struct {
+			SourceBase int64             `json:"sourceBase"`
+			FieldID    int64             `json:"fieldId"`
+			From       map[int64][]int64 `json:"from"`
+			Titles     map[int64]string  `json:"titles"`
+		}
+		var revs []revEntry
+		for _, rf := range reverse {
+			links, err := s.Store.LinksForRecords(r.Context(), rf.FieldID, selfIDs)
+			if err != nil || len(links) == 0 {
+				continue
+			}
+			// 源记录标题
+			srcFields, err := s.Store.Fields(r.Context(), rf.BaseID)
+			if err != nil {
+				continue
+			}
+			titleField := int64(0)
+			for _, x := range srcFields {
+				if x.Type == "text" {
+					titleField = x.ID
+					break
+				}
+			}
+			var srcIDs []int64
+			for _, tos := range links {
+				srcIDs = append(srcIDs, tos...)
+			}
+			if trecs, err := s.Store.QueryRecords(r.Context(), rf.BaseID, srcFields, store.BtQueryAll(), 0); err == nil {
+				titles := map[int64]string{}
+				for _, tr := range trecs {
+					for _, sid := range srcIDs {
+						if tr.ID == sid && titleField != 0 {
+							if raw, ok := tr.Cells[strconv.FormatInt(titleField, 10)]; ok {
+								var tv any
+								if json.Unmarshal(raw, &tv) == nil {
+									if s2, ok := tv.(string); ok {
+										titles[sid] = s2
+									}
+								}
+							}
+						}
+					}
+				}
+				revs = append(revs, revEntry{SourceBase: rf.BaseID, FieldID: rf.FieldID, From: links, Titles: titles})
+			}
+		}
+		if revs == nil {
+			revs = []revEntry{}
+		}
+		expansions["reverse"] = revs
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views, "expansions": expansions})
 }
 
