@@ -13,6 +13,7 @@ import (
 type memBase struct {
 	fields   []Field
 	records  []Record
+	views    []View
 	events   []BtEvent
 	nextID   int64
 	eventSeq int64

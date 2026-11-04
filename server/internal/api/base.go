@@ -55,11 +55,13 @@ func (s *Server) createBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	// a new base starts like Feishu's: a primary text field plus a few empty rows
+	// a new base starts like Feishu's: a primary text field, a default grid
+	// view and a few empty rows
 	ctx := r.Context()
 	s.Store.AddField(ctx, store.Field{BaseID: b.ID, Name: "标题", Type: "text"})
+	s.Store.AddView(ctx, store.View{BaseID: b.ID, Type: "grid", Name: "表格视图"})
 	for range 3 {
-		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID, CreatorID: u.ID})
+		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID, CreatorID: &u.ID})
 	}
 	httpx.JSON(w, http.StatusCreated, b)
 }
@@ -89,7 +91,12 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members})
+	views, err := s.Store.Views(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views})
 }
 
 type fieldInput struct {
@@ -418,7 +425,7 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 				delete(in.Cells, k)
 			}
 		}
-		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position, CreatorID: u.ID})
+		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position, CreatorID: &u.ID})
 	} else {
 		rec, err = s.Store.SetCells(r.Context(), b.ID, pathID(r, "rid"), in.Cells)
 	}

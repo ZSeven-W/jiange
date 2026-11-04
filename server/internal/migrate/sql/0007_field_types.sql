@@ -4,3 +4,7 @@ ALTER TABLE base_fields DROP CONSTRAINT base_fields_type_check;
 ALTER TABLE base_fields ADD CONSTRAINT base_fields_type_check
     CHECK (type IN ('text', 'number', 'select', 'checkbox', 'date', 'multi_select', 'person', 'attachment', 'created_by', 'created_at', 'modified_at'));
 ALTER TABLE base_records ADD COLUMN creator_id bigint REFERENCES users(id) ON DELETE SET NULL;
+
+-- backfill: existing rows credit the base creator
+UPDATE base_records SET creator_id = (SELECT creator_id FROM nodes WHERE nodes.id = base_records.base_id)
+WHERE creator_id IS NULL;

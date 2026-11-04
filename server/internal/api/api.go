@@ -72,6 +72,10 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/records":         func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, true) },
 		"PATCH /api/bases/{id}/records/{rid}":  func(w http.ResponseWriter, r *http.Request) { s.writeRecord(w, r, false) },
 		"DELETE /api/bases/{id}/records/{rid}": s.deleteRecord,
+		"POST /api/bases/{id}/views":           s.addView,
+		"PATCH /api/bases/{id}/views/{vid}":    s.patchView,
+		"DELETE /api/bases/{id}/views/{vid}":   s.deleteView,
+		"POST /api/bases/{id}/query":           s.queryBase,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

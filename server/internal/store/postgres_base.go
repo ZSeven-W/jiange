@@ -78,6 +78,9 @@ func scanRecord(r pgx.Row) (rec Record, err error) {
 	return rec, notFound(err)
 }
 
+// recordColsWithPrefix spells out recordCols for queries that join or alias.
+func recordColsWithPrefix() string { return recordCols }
+
 func (p *Postgres) Records(ctx context.Context, base int64) ([]Record, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+recordCols+` FROM base_records WHERE base_id=$1 ORDER BY position, id LIMIT 10000`, base)
 	if err != nil {
@@ -91,8 +94,8 @@ func (p *Postgres) AddRecord(ctx context.Context, r Record) (Record, error) {
 		r.Cells = map[string]json.RawMessage{}
 	}
 	var creator any
-	if r.CreatorID != 0 {
-		creator = r.CreatorID
+	if r.CreatorID != nil {
+		creator = *r.CreatorID
 	}
 	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, cells, position, creator_id)
 		VALUES ($1,$2, CASE WHEN $3::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $3 END, $4)
