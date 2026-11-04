@@ -130,6 +130,46 @@ export const baseApi = {
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
 };
+export interface Comment {
+  id: number;
+  docId: number;
+  userId: number;
+  userName: string;
+  parentId?: number;
+  block: string;
+  startChar: string;
+  endChar: string;
+  quote: string;
+  body: string;
+  mentions?: number[];
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface AppNotification {
+  id: number;
+  userId: number;
+  docId: number;
+  docTitle?: string;
+  actorId: number;
+  actorName?: string;
+  commentId?: number;
+  kind: "mention" | "reply" | "resolve";
+  read: boolean;
+  createdAt: string;
+  preview?: string;
+}
+export const commentsApi = {
+  list: (id: number) => request<{ comments: Comment[] }>("GET", `/api/docs/${id}/comments`).then((r) => r.comments),
+  create: (id: number, c: Partial<Comment> & { body: string }) => request<Comment>("POST", `/api/docs/${id}/comments`, c),
+  update: (id: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment>("PATCH", `/api/docs/${id}/comments/${cid}`, p),
+  remove: (id: number, cid: number) => request<void>("DELETE", `/api/docs/${id}/comments/${cid}`),
+  members: (id: number) => request<{ members: User[] }>("GET", `/api/docs/${id}/members`).then((r) => r.members),
+};
+export const notificationsApi = {
+  list: () => request<{ notifications: AppNotification[]; unread: number }>("GET", "/api/notifications"),
+  markRead: (ids: number[] = []) => request<void>("POST", "/api/notifications/read", { ids }),
+};
 export interface Version {
   seq: number;
   label: string;
