@@ -24,3 +24,4 @@ describe("kanban grouping", () => {
     expect(cols[3].records.map((r) => r.id)).toEqual([3, 5]);
   });
 });
+
