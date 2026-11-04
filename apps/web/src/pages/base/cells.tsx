@@ -91,6 +91,31 @@ export function CellView({
           )}
         </span>
       );
+    case "url":
+      if (typeof v === "string" && v !== "")
+        return (
+          <a href={v} target="_blank" rel="noreferrer" className="block truncate text-primary hover:underline">
+            {v.replace(/^https?:\/\//, "")}
+          </a>
+        );
+      return null;
+    case "email":
+      if (typeof v === "string" && v !== "")
+        return (
+          <a href={`mailto:${v}`} className="block truncate text-primary hover:underline">
+            {v}
+          </a>
+        );
+      return null;
+    case "phone":
+      return typeof v === "string" && v !== "" ? <span className="block truncate">{v}</span> : null;
+    case "rating":
+      return typeof v === "number" ? (
+        <span className="text-[15px] leading-none tracking-tight text-amber-400" title={`${v} / 5`}>
+          {"★".repeat(v)}
+          <span className="text-[#d8dfe9]">{"★".repeat(5 - v)}</span>
+        </span>
+      ) : null;
     default:
       if (v === undefined || v === "") return null;
       return <span className="block truncate">{def.format(v, field)}</span>;

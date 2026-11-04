@@ -188,6 +188,7 @@ type formField struct {
 	ID           int64    `json:"id"`
 	Name         string   `json:"name"`
 	Type         string   `json:"type"`
+	Description  string   `json:"description,omitempty"`
 	Options      []string `json:"options,omitempty"`
 	OptionColors []int    `json:"optionColors,omitempty"`
 }
@@ -238,7 +239,7 @@ func (s *Server) getForm(w http.ResponseWriter, r *http.Request) {
 	out := []formField{}
 	for _, fid := range cfg.Fields {
 		if f, ok := byID[fid]; ok {
-			out = append(out, formField{ID: f.ID, Name: f.Name, Type: f.Type, Options: f.Options, OptionColors: f.OptionColors})
+			out = append(out, formField{ID: f.ID, Name: f.Name, Type: f.Type, Description: f.Description, Options: f.Options, OptionColors: f.OptionColors})
 		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"title": cfg.Title, "desc": cfg.Desc, "fields": out})

@@ -69,11 +69,16 @@ export type FieldType =
   | "attachment"
   | "created_by"
   | "created_at"
-  | "modified_at";
+  | "modified_at"
+  | "url"
+  | "phone"
+  | "email"
+  | "rating";
 export interface Field {
   id: number;
   name: string;
   type: FieldType;
+  description?: string;
   options?: string[];
   /** preset palette index per option (-1/absent = auto) */
   optionColors?: number[];

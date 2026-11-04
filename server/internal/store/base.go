@@ -16,8 +16,10 @@ type Field struct {
 	Type    string   `json:"type"`              // see FieldTypes
 	Options []string `json:"options,omitempty"` // select / multi_select choices
 	// OptionColors parallels Options: preset palette index per option (-1 = auto).
-	OptionColors []int   `json:"optionColors,omitempty"`
-	Position     float64 `json:"position"`
+	OptionColors []int `json:"optionColors,omitempty"`
+	// Description is helper text shown under the field label in forms/details.
+	Description string  `json:"description,omitempty"`
+	Position    float64 `json:"position"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.
@@ -38,6 +40,7 @@ var FieldTypes = map[string]bool{
 	"text": true, "number": true, "select": true, "checkbox": true, "date": true,
 	"multi_select": true, "person": true, "attachment": true,
 	"created_by": true, "created_at": true, "modified_at": true,
+	"url": true, "phone": true, "email": true, "rating": true,
 }
 
 // Computed field types are rendered from record metadata, never written.

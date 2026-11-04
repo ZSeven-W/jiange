@@ -58,6 +58,7 @@ export function RecordDetail({
                 {f.name}
                 {def.readonly && <span className="rounded bg-hover px-1 text-[11px] text-subtle">自动</span>}
               </div>
+              {f.description && <div className="mb-1 text-[11px] leading-4 text-subtle">{f.description}</div>}
               <div
                 className={cn("min-h-8 rounded px-1.5 py-1 text-[14px]", !def.readonly && canEdit && "cursor-text hover:bg-hover", editingThis && "outline outline-2 -outline-offset-2 outline-primary")}
                 onClick={() => !def.readonly && canEdit && f.type !== "checkbox" && setEditing(f.id)}

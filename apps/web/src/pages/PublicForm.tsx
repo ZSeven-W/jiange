@@ -6,6 +6,7 @@ interface FormFieldDef {
   id: number;
   name: string;
   type: string;
+  description?: string;
   options?: string[];
 }
 
@@ -73,6 +74,7 @@ export function PublicForm({ baseId, viewId }: { baseId: number; viewId: number 
                 {def.fields.map((f) => (
                   <label key={f.id} className="block">
                     <span className="mb-1 block text-[13px] font-medium">{f.name}</span>
+                    {f.description && <span className="mb-1 block text-[12px] text-muted-foreground">{f.description}</span>}
                     {f.type === "select" ? (
                       <select
                         className="h-9 w-full rounded-md border bg-white px-2 text-[14px] outline-none focus:border-primary"
