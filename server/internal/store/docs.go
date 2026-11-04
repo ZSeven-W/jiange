@@ -55,6 +55,9 @@ type DocStore interface {
 	Ancestors(ctx context.Context, userID, docID int64) ([]DocMeta, error)
 	// GetDoc returns the doc if userID is a member of its workspace, else ErrNotFound.
 	GetDoc(ctx context.Context, userID, docID int64) (DocMeta, error)
+	// GetDocSystem fetches meta without any user-scoped access check (public
+	// share snapshots, system sweeps).
+	GetDocSystem(ctx context.Context, docID int64) (DocMeta, error)
 	UpdateTitle(ctx context.Context, docID int64, title string) (DocMeta, error)
 	// Trash soft-deletes a doc and its descendants; Restore undoes it.
 	Trash(ctx context.Context, docID int64) error

@@ -126,3 +126,39 @@ func TestSharingRolesLinkAndFiles(t *testing.T) {
 		t.Fatalf("revoked download: %d", res.StatusCode)
 	}
 }
+
+func TestPublicAnonLink(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "an@x.com", "name": "AN", "password": "password123"})
+	var d store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/docs", map[string]string{"title": "公开文档"}).Body).Decode(&d)
+	u := ts.URL + "/api/docs/" + strconv.FormatInt(d.ID, 10)
+	send(t, c, "PUT", u+"/link", map[string]string{"role": "anon"})
+	var link store.Link
+	json.NewDecoder(send(t, c, "PUT", u+"/link", map[string]string{"role": "anon"}).Body).Decode(&link)
+
+	// 匿名（无 cookie）读快照
+	anon := &http.Client{}
+	res, err := anon.Get(ts.URL + "/api/public/" + link.Token)
+	if err != nil || res.StatusCode != 200 {
+		t.Fatalf("public get: %v %v", err, res)
+	}
+	var snap struct {
+		Title string
+		View  map[string]any
+	}
+	json.NewDecoder(res.Body).Decode(&snap)
+	if snap.Title != "公开文档" {
+		t.Fatalf("snapshot: %+v", snap)
+	}
+
+	// view 链接（非 anon）不给匿名快照
+	send(t, c, "PUT", u+"/link", map[string]string{"role": "view"})
+	res2, err := anon.Get(ts.URL + "/api/public/" + link.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.StatusCode != 401 {
+		t.Fatalf("view link should require login: %d", res2.StatusCode)
+	}
+}

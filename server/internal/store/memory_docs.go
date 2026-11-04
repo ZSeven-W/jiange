@@ -98,6 +98,17 @@ func (m *Memory) GetDoc(_ context.Context, uid, id int64) (DocMeta, error) {
 	return meta, nil
 }
 
+// GetDocSystem fetches node meta without user scoping.
+func (m *Memory) GetDocSystem(_ context.Context, id int64) (DocMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(id)
+	if d == nil || d.deleted {
+		return DocMeta{}, ErrNotFound
+	}
+	return d.meta, nil
+}
+
 func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

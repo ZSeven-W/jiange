@@ -10,6 +10,7 @@ import { Trash } from "@/pages/Trash";
 import { JoinLink } from "@/pages/JoinLink";
 import { BasePage } from "@/pages/BasePage";
 import { PublicForm } from "@/pages/PublicForm";
+import { PublicDoc } from "@/pages/PublicDoc";
 
 export default function App() {
   const route = useRoute();

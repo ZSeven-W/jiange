@@ -9,6 +9,7 @@ export const ROLE_LABEL: Record<string, string> = {
   view: "可阅读",
   edit: "可编辑",
   manage: "可管理",
+  anon: "任何人可读",
   none: "关闭",
 };
 
@@ -36,10 +37,10 @@ export function ShareDialog({ meta, onClose }: { meta: DocMeta; onClose: () => v
     onError: (e) => setErr(e instanceof ApiError ? e.message : "邀请失败"),
   });
   const link = useMutation({
-    mutationFn: (r: "none" | "view" | "edit") => docsApi.setLink(meta.id, r),
+    mutationFn: (r: "none" | "anon" | "view" | "edit") => docsApi.setLink(meta.id, r),
     onSuccess: (l) => info.data && set({ ...info.data, link: l }),
   });
-  const url = info.data?.link.token ? `${location.origin}/#/s/${info.data.link.token}` : "";
+  const url = info.data?.link.token ? `${location.origin}/#/${info.data.link.role === "anon" ? "p" : "s"}/${info.data.link.token}` : "";
   return (
     <aside className="flex w-[420px] shrink-0 flex-col gap-4 border-l bg-surface p-6" data-share-dialog>
       <div className="flex items-center justify-between">
@@ -103,9 +104,9 @@ export function ShareDialog({ meta, onClose }: { meta: DocMeta; onClose: () => v
       <hr />
       <p className="text-[12px] font-medium text-subtle">链接分享</p>
       <div className="flex items-center justify-between text-[14px]">
-        <span>获得链接的登录用户</span>
+        <span>{info.data?.link.role === "anon" ? "互联网上获得链接的任何人（只读）" : "获得链接的登录用户"}</span>
         {manage ? (
-          <RoleSelect value={info.data?.link.role ?? "none"} onChange={(r) => link.mutate(r as "none" | "view" | "edit")} options={["none", "view", "edit"]} />
+          <RoleSelect value={info.data?.link.role ?? "none"} onChange={(r) => link.mutate(r as "none" | "anon" | "view" | "edit")} options={["none", "anon", "view", "edit"]} />
         ) : (
           <span className="text-[13px] text-muted-foreground">{ROLE_LABEL[info.data?.link.role ?? "none"]}</span>
         )}
