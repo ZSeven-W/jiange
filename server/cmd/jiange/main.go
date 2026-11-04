@@ -90,6 +90,20 @@ func run(log *slog.Logger) error {
 	if cfg.AutoVersionEvery > 0 {
 		go autoVersions(ctx, log, pg, cfg.AutoVersionEvery)
 	}
+	// 自动化定时触发：每分钟扫一次到期任务
+	go func() {
+		apiSrv := &api.Server{Store: pg, Log: log}
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				apiSrv.SweepSchedules(ctx)
+			}
+		}
+	}()
 	var blobs blob.Store
 	if cfg.S3Endpoint != "" {
 		s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}

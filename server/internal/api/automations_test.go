@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -124,5 +126,57 @@ func TestFormSubmitAutomationAndWebhook(t *testing.T) {
 	}
 	if !strings.Contains(hookBody, `"text":"收到反馈：很好用"`) {
 		t.Fatalf("webhook payload: %s", hookBody)
+	}
+}
+
+func TestScheduleAutomation(t *testing.T) {
+	st := store.NewMemory()
+	ts, c := newTestServer(t, st, nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "sc@x.com", "name": "SC", "password": "password123"})
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "sc2@x.com", "name": "SC2", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+
+	// 每小时汇总，通知 user 2
+	cfg := map[string]any{
+		"schedule":    map[string]string{"every": "1h"},
+		"notifyUsers": []int64{2},
+		"message":     "整点汇总",
+	}
+	if res := post(t, c, u+"/automations", map[string]any{"name": "整点汇总", "triggerKind": "schedule", "config": cfg}); res.StatusCode != 201 {
+		t.Fatalf("create schedule automation: %d", res.StatusCode)
+	}
+	// 非法 every 被拒
+	bad := post(t, c, u+"/automations", map[string]any{"name": "坏的", "triggerKind": "schedule", "config": map[string]any{"schedule": map[string]string{"every": "2m"}}})
+	if bad.StatusCode != 400 {
+		t.Fatalf("bad every accepted: %d", bad.StatusCode)
+	}
+
+	// 手动执行一次 sweep（正常由 main 的 goroutine 每分钟调）
+	sweepSrv := &Server{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}
+	ctx := context.Background()
+	sweepSrv.SweepSchedules(ctx)
+
+	// user 2 收到通知
+	j, _ := cookiejar.New(nil)
+	guest := &http.Client{Jar: j}
+	post(t, guest, ts.URL+"/api/auth/login", map[string]string{"email": "sc2@x.com", "password": "password123"})
+	var notif struct {
+		Unread        int64
+		Notifications []store.Notification
+	}
+	r := cGet(t, guest, ts.URL+"/api/notifications")
+	json.NewDecoder(r.Body).Decode(&notif)
+	if notif.Unread != 1 || notif.Notifications[0].Preview != "整点汇总" {
+		t.Fatalf("schedule notification: %+v", notif)
+	}
+
+	// 立刻再 sweep 不重复发（间隔未到）
+	sweepSrv.SweepSchedules(ctx)
+	r = cGet(t, guest, ts.URL+"/api/notifications")
+	json.NewDecoder(r.Body).Decode(&notif)
+	if notif.Unread != 1 {
+		t.Fatalf("schedule refired within gap: %+v", notif)
 	}
 }

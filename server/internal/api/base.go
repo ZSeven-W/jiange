@@ -450,6 +450,29 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	// 双向关联：在对侧 base 自动建伴随 link 字段，options 互指（[对侧base, 伴随字段]）
+	if f.Type == "link" && len(f.Options) == 1 {
+		if target, err := strconv.ParseInt(f.Options[0], 10, 64); err == nil && target > 0 && target != b.ID {
+			if tb, err := s.Store.GetDocSystem(r.Context(), target); err == nil {
+				name := strings.TrimSpace(b.Title)
+				if name == "" {
+					name = "未命名多维表格"
+				}
+				companion, err := s.Store.AddField(r.Context(), store.Field{BaseID: target, Name: name, Type: "link"})
+				if err == nil {
+					f.Options = []string{f.Options[0], strconv.FormatInt(companion.ID, 10)}
+					if f, err = s.Store.UpdateField(r.Context(), f); err != nil {
+						s.fail(w, r, err)
+						return
+					}
+					companion.Options = []string{strconv.FormatInt(b.ID, 10), strconv.FormatInt(f.ID, 10)}
+					_, _ = s.Store.UpdateField(r.Context(), companion)
+					s.btEvent(r.Context(), target, map[string]any{"kind": "reload"})
+					_ = tb
+				}
+			}
+		}
+	}
 	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "add", "field": f})
 	httpx.JSON(w, http.StatusCreated, f)
 }
@@ -805,6 +828,55 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 		if ferr := s.Store.SetLinks(r.Context(), b.ID, f.ID, rid, arr); ferr != nil {
 			s.fail(w, r, ferr)
 			return
+		}
+		// 对称写链：伴随字段在对侧 base 镜像记录（to 侧每个记录的 from 集合 = 本 from）
+		if len(f.Options) > 1 {
+			if companionBase, err1 := strconv.ParseInt(f.Options[0], 10, 64); err1 == nil {
+				if companionField, err2 := strconv.ParseInt(f.Options[1], 10, 64); err2 == nil {
+					// 取对侧该字段的现有链，重建为对称集合
+					var all []store.Record
+					all, err3 := s.Store.Records(r.Context(), companionBase)
+					if err3 != nil {
+						continue
+					}
+					var ids []int64
+					for _, r2 := range all {
+						ids = append(ids, r2.ID)
+					}
+					existing, _ := s.Store.LinksForRecords(r.Context(), companionField, ids)
+					for _, to := range arr {
+						set := map[int64]bool{}
+						for _, from := range existing[to] {
+							set[from] = true
+						}
+						if containsInt(arr, rid) {
+							// 本记录在 to 的集合里：确保存在
+						}
+						set[rid] = true
+						out := make([]int64, 0, len(set))
+						for from := range set {
+							out = append(out, from)
+						}
+						if err := s.Store.SetLinks(r.Context(), companionBase, companionField, to, out); err != nil {
+							s.Log.Error("symmetric link", "err", err)
+						}
+					}
+					// 从不再关联的目标中移除本记录
+					for to, froms := range existing {
+						if !containsInt(arr, to) {
+							out := make([]int64, 0, len(froms))
+							for _, from := range froms {
+								if from != rid {
+									out = append(out, from)
+								}
+							}
+							if err := s.Store.SetLinks(r.Context(), companionBase, companionField, to, out); err != nil {
+								s.Log.Error("symmetric unlink", "err", err)
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	op := "update"

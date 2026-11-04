@@ -166,6 +166,15 @@ func csvValue(f store.Field, v string) (json.RawMessage, error) {
 	}
 }
 
+func containsInt(arr []int64, v int64) bool {
+	for _, x := range arr {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 func containsStr(arr []string, s string) bool {
 	for _, x := range arr {
 		if x == s {
