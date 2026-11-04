@@ -135,7 +135,7 @@ export function parseMarkdown(md: string): MdBlock[] {
       i++;
       continue;
     }
-    const heading = line.match(/^(#{1,3}) +(.*)$/);
+    const heading = line.match(/^(#{1,6}) +(.*)$/);
     if (heading) {
       blocks.push({ type: "h" + heading[1].length, text: heading[2], props: {}, spans: parseInline(heading[2]) });
       i++;
@@ -192,6 +192,9 @@ export function toMarkdown(blocks: MdBlock[]): string {
       case "h1":
       case "h2":
       case "h3":
+      case "h4":
+      case "h5":
+      case "h6":
         orderedNo = 0;
         out.push(`${"#".repeat(Number(b.type[1]))} ${inline}`);
         break;

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor } from "./CommentsPanel";
+import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { viewToMarkdown } from "@/lib/markdown";
 import { importMarkdownOps } from "@/lib/mdImport";
@@ -33,10 +34,29 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [sharing, setSharing] = useState(false);
   const [history, setHistory] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const comments = useQuery({ queryKey: ["comments", id], queryFn: () => commentsApi.list(id) });
   const ancestors = useQuery({ queryKey: ["ancestors", id], queryFn: () => extrasApi.ancestors(id) });
+  const outline: OutlineItem[] = useMemo(() => {
+    const d = sync.client.doc;
+    if (!d) return [];
+    const view = d.view();
+    return outlineOf(view.blocks.map((b) => ({ id: b.id, type: b.type, spans: b.spans })));
+  }, [sync.client.doc, sync.version, outlineOpen]);
+
+  const wordCount = useMemo(() => {
+    const d = sync.client.doc;
+    if (!d) return 0;
+    let n = 0;
+    for (const b of d.view().blocks) {
+      if (b.type === "title") continue;
+      for (const span of b.spans) n += [...span.text].length;
+    }
+    return n;
+  }, [sync.client.doc, sync.version]);
   const exportMd = () => {
     const d = sync.client.doc;
     if (!d) return;
@@ -93,6 +113,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onHistory={() => setHistory((v) => !v)}
           onExport={exportMd}
           onImport={importMd}
+          onOutline={() => setOutlineOpen((v) => !v)}
           readOnly={readOnly}
           meta={meta.data}
           title={title}
@@ -142,11 +163,26 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setDraft(anchor);
                   setCommentsOpen(true);
                 }}
+                onPreviewImage={(src, alt) => setPreview({ src, alt })}
               />
             </div>
+          <div className="pb-6 text-center text-[12px] text-subtle" data-word-count>
+            {wordCount} 字
+          </div>
           </article>
         </div>
       </div>
+      {outlineOpen && (
+        <OutlinePanel
+          items={outline}
+          activeId={null}
+          onClose={() => setOutlineOpen(false)}
+          onJump={(bid) => {
+            document.querySelector(`[data-block="${bid}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }}
+        />
+      )}
+      {preview && <ImagePreview src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />}
       {sharing && meta.data && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} />}
       {history && <VersionPanel id={id} canEdit={!readOnly} onClose={() => setHistory(false)} />}
       {meta.data?.copyProtected && (
@@ -215,10 +251,12 @@ function TopBar({
   onHistory,
   onExport,
   onImport,
+  onOutline,
   readOnly,
 }: {
   ancestors: import("@/lib/api").DocMeta[];
   onShare: () => void;
+  onOutline: () => void;
   onHistory: () => void;
   onExport: () => void;
   onImport: (f: File) => void;
@@ -269,7 +307,7 @@ function TopBar({
         <Button size="sm" className="h-8 px-4" onClick={onShare}>
           分享
         </Button>
-        <DocMenu meta={meta} onHistory={onHistory} onExport={onExport} onImport={onImport} />
+        <DocMenu meta={meta} onHistory={onHistory} onExport={onExport} onImport={onImport} onOutline={onOutline} />
       </div>
     </header>
   );
@@ -301,11 +339,13 @@ function DocMenu({
   onHistory,
   onExport,
   onImport,
+  onOutline,
 }: {
   meta?: DocMeta;
   onHistory: () => void;
   onExport: () => void;
   onImport: (f: File) => void;
+  onOutline: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
@@ -360,6 +400,9 @@ function DocMenu({
               创建副本
             </button>
           )}
+          <button className={item} onClick={() => { close(); onOutline(); }} data-outline>
+            目录
+          </button>
           {onImport && (
             <label className={cn(item, "block cursor-pointer")} data-import-md>
               导入 Markdown

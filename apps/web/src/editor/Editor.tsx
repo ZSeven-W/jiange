@@ -65,6 +65,8 @@ interface Props {
   onActivateThread?: (id: number | null) => void;
   /** 防复制下载：禁用复制/剪切 */
   onCopyBlock?: boolean;
+  /** 点击图片 → 大图预览 */
+  onPreviewImage?: (src: string, alt: string) => void;
 }
 
 /**
@@ -73,7 +75,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -758,6 +760,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                   publish();
                 }}
                 onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
+                onPreviewImage={onPreviewImage}
                 onTableEdit={(r, c, v) => {
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
@@ -870,6 +873,9 @@ const BLOCK_CLASS: Record<string, string> = {
   h1: "text-[26px] font-semibold leading-[1.4] mt-5 mb-1",
   h2: "text-[22px] font-semibold leading-[1.4] mt-4 mb-0.5",
   h3: "text-[18px] font-semibold leading-[1.5] mt-3",
+  h4: "text-[16px] font-semibold leading-[1.6] mt-3",
+  h5: "text-[15px] font-semibold leading-[1.6] mt-3",
+  h6: "text-[14px] font-semibold leading-[1.6] mt-3 text-muted-foreground",
   bullet: "text-[16px] leading-[1.75] py-[2px]",
   ordered: "text-[16px] leading-[1.75] py-[2px]",
   todo: "text-[16px] leading-[1.75] py-[2px]",
@@ -885,6 +891,7 @@ interface BlockProps {
   onTableEdit?: (r: number, c: number, value: string) => void;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
+  onPreviewImage?: (src: string, alt: string) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -897,7 +904,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -983,7 +990,14 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
         <figure contentEditable={false} className="my-2 select-none">
-          <img src={`/api/files/${props.fileId}`} alt={props.name} className="max-h-[480px] max-w-full rounded-lg border" draggable={false} />
+          <img
+            src={`/api/files/${props.fileId}`}
+            alt={props.name}
+            className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border"
+            draggable={false}
+            onClick={() => onPreviewImage?.(`/api/files/${props.fileId}`, props.name ?? "图片")}
+            data-preview-image
+          />
         </figure>
       ) : type === "file" ? (
         <a contentEditable={false} href={`/api/files/${props.fileId}`} className="my-1 flex w-[360px] select-none items-center gap-3 rounded-lg border px-3.5 py-2.5 hover:bg-hover" data-file-card>
