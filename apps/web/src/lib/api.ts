@@ -92,15 +92,40 @@ export interface BaseRecord {
   createdAt?: string;
   updatedAt?: string;
 }
+export interface FilterRule {
+  f: number;
+  op: string;
+  v?: string | number | boolean;
+}
+export interface ViewConfig {
+  filters?: { conj: "and" | "or"; rules: FilterRule[] };
+  sorts?: { f: number; asc: boolean }[];
+  group?: number;
+  hidden?: number[];
+}
+export interface View {
+  id: number;
+  baseId: number;
+  type: "grid" | "kanban";
+  name: string;
+  config: ViewConfig;
+  pos: number;
+}
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
-  get: (id: number) => request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[] }>("GET", `/api/bases/${id}`),
+  get: (id: number) =>
+    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[] }>("GET", `/api/bases/${id}`),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),
   addRecord: (id: number, cells: Record<string, Cell> = {}) => request<BaseRecord>("POST", `/api/bases/${id}/records`, { cells }),
   setCells: (id: number, rid: number, cells: Record<string, Cell | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
   deleteRecord: (id: number, rid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`),
+  addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
+  patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
+  deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
+  query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }) =>
+    request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q),
 };
 export type Role = "view" | "edit" | "manage";
 export interface Share {

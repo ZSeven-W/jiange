@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/ZSeven-W/jiange/server/internal/btquery"
 )
 
 // Field is a typed column of a base.
@@ -24,7 +26,7 @@ type Record struct {
 	BaseID    int64                      `json:"baseId"`
 	Cells     map[string]json.RawMessage `json:"cells"`
 	Position  float64                    `json:"position"`
-	CreatorID int64                      `json:"creatorId,omitempty"`
+	CreatorID *int64                     `json:"creatorId,omitempty"`
 	CreatedAt *time.Time                 `json:"createdAt,omitempty"`
 	UpdatedAt *time.Time                 `json:"updatedAt,omitempty"`
 }
@@ -46,6 +48,16 @@ func FieldReadOnly(t string) bool {
 type BtEvent struct {
 	Seq  int64           `json:"seq"`
 	Body json.RawMessage `json:"body"`
+}
+
+// View is a saved grid/kanban configuration (filters, sorts, group, hidden).
+type View struct {
+	ID     int64           `json:"id"`
+	BaseID int64           `json:"baseId"`
+	Type   string          `json:"type"` // grid | kanban
+	Name   string          `json:"name"`
+	Config json.RawMessage `json:"config"`
+	Pos    float64         `json:"pos"`
 }
 
 // BaseStore persists bitable schemas and rows. Access control is done by
@@ -71,4 +83,12 @@ type BaseStore interface {
 	BtEventsAfter(ctx context.Context, baseID, after int64, limit int) ([]BtEvent, error)
 	// BtHead is the newest event seq for the base (0 when none).
 	BtHead(ctx context.Context, baseID int64) (int64, error)
+
+	Views(ctx context.Context, baseID int64) ([]View, error)
+	AddView(ctx context.Context, v View) (View, error)
+	UpdateView(ctx context.Context, v View) (View, error)
+	DeleteView(ctx context.Context, baseID, viewID int64) error
+	// QueryRecords returns the base's records filtered and ordered by a
+	// view config, executed server-side (SQL on Postgres, in memory elsewhere).
+	QueryRecords(ctx context.Context, baseID int64, fields []Field, cfg btquery.Config, limit int) ([]Record, error)
 }

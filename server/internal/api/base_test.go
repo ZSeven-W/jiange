@@ -210,7 +210,7 @@ func TestFieldTypesRegistry(t *testing.T) {
 	json.NewDecoder(r2.Body).Decode(&got)
 	found := false
 	for _, rec := range got.Records {
-		if rec.CreatorID == full.Members[0].ID && rec.CreatedAt != nil && rec.UpdatedAt != nil {
+		if rec.CreatorID != nil && *rec.CreatorID == full.Members[0].ID && rec.CreatedAt != nil && rec.UpdatedAt != nil {
 			found = true
 		}
 	}

@@ -1,12 +1,14 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { BaseRecord, Cell, DocMeta, Field } from "@/lib/api";
+import type { BaseRecord, Cell, DocMeta, Field, User, View } from "@/lib/api";
 
 export interface BaseData {
   base: DocMeta;
   fields: Field[];
   records: BaseRecord[];
   head: number;
+  members?: User[];
+  views?: View[];
 }
 
 /** One realtime change from the server's per-base event log. */
