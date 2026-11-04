@@ -98,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
+	// public form endpoints (anonymous visitors)
+	mux.Handle("GET /api/forms/{id}/{vid}", http.HandlerFunc(s.getForm))
+	mux.Handle("POST /api/forms/{id}/{vid}", http.HandlerFunc(s.submitForm))
 	mux.Handle("GET /api/trash", s.requireUser(http.HandlerFunc(s.listTrash)))
 	mux.Handle("POST /api/trash/{id}/restore", s.requireUser(http.HandlerFunc(s.restoreDoc)))
 	if s.BtHub != nil {
