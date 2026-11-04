@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; base: number; vid: number };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; base: number; vid: number } | { page: "public"; token: string };
 
 export function parseHash(h: string): Route {
   const m = /^#\/doc\/(\d+)/.exec(h);
@@ -13,6 +13,8 @@ export function parseHash(h: string): Route {
   if (h.startsWith("#/favorites")) return { page: "favorites" };
   const fm = h.match(/^#\/form\/(\d+)\/(\d+)/);
   if (fm) return { page: "form", base: Number(fm[1]), vid: Number(fm[2]) };
+  const pb = h.match(/^#\/p\/([A-Za-z0-9_-]+)/);
+  if (pb) return { page: "public", token: pb[1] };
   if (h.startsWith("#/trash")) return { page: "trash" };
   if (h.startsWith("#/playground")) return { page: "playground" };
   return { page: "home" };

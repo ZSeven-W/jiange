@@ -92,6 +92,11 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	return d, err
 }
 
+// GetDocSystem fetches node meta without user scoping.
+func (p *Postgres) GetDocSystem(ctx context.Context, id int64) (DocMeta, error) {
+	return scanDoc(p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+` FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id))
+}
+
 func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (DocMeta, error) {
 	return scanDoc(p.Pool.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName, id, title))
 }

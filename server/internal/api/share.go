@@ -91,10 +91,11 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Role != "none" && in.Role != store.RoleView && in.Role != store.RoleEdit {
-		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, view or edit")
+	if in.Role != "none" && in.Role != "anon" && in.Role != store.RoleView && in.Role != store.RoleEdit {
+		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, anon, view or edit")
 		return
 	}
+
 	l, err := s.Store.GetLink(r.Context(), d.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -112,6 +113,35 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // joinLink grants the caller the link's role (never downgrading) and returns the doc.
+// getPublic serves a read-only document snapshot to anyone holding the link
+// token (link role must be anon). No login required.
+func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
+	id, role, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	} else if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if role != "anon" {
+		// 非 anon 链接仍要求登录协作（走 /#/s/token），不给匿名快照
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "此链接需要登录后加入协作")
+		return
+	}
+	d, err := s.Store.GetDocSystem(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	doc, _, err := StateAtHead(r.Context(), s.Store, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "view": doc.View()})
+}
+
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	id, role, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
@@ -122,8 +152,12 @@ func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if cur, err := s.Store.GetDoc(r.Context(), u.ID, id); err != nil || store.RoleRank(cur.Role) < store.RoleRank(role) {
-		if err := s.Store.SetShare(r.Context(), id, u.ID, role); err != nil {
+	joinRole := role
+	if joinRole == "anon" {
+		joinRole = store.RoleView
+	}
+	if cur, err := s.Store.GetDoc(r.Context(), u.ID, id); err != nil || store.RoleRank(cur.Role) < store.RoleRank(joinRole) {
+		if err := s.Store.SetShare(r.Context(), id, u.ID, joinRole); err != nil {
 			s.fail(w, r, err)
 			return
 		}

@@ -210,7 +210,7 @@ export interface Share {
 }
 export interface ShareInfo {
   members: Share[];
-  link: { role: "none" | "view" | "edit"; token?: string };
+  link: { role: "none" | "anon" | "view" | "edit"; token?: string };
   role: Role;
 }
 export interface FileMeta {
@@ -233,7 +233,7 @@ export const docsApi = {
   create: (title = "", parentId: number | null = null) => request<DocMeta>("POST", "/api/docs", { title, parentId }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   share: (id: number, email: string, role: Role | "") => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role }),
-  setLink: (id: number, role: "none" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),
+  setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
   upload: async (id: number, f: File): Promise<FileMeta> => {

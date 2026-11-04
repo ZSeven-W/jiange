@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
+	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
 	// public form endpoints (anonymous visitors)
 	mux.Handle("GET /api/forms/{id}/{vid}", http.HandlerFunc(s.getForm))
 	mux.Handle("POST /api/forms/{id}/{vid}", http.HandlerFunc(s.submitForm))
