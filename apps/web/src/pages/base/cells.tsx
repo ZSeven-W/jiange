@@ -39,8 +39,21 @@ export function CellView({ field, value, onToggle }: { field: Field; value: Cell
   return <span className="block truncate">{String(value)}</span>;
 }
 
-export function CellEditor({ field, value, onCommit, onCancel }: { field: Field; value: Cell | undefined; onCommit: (v: Cell | null) => void; onCancel: () => void }) {
-  const [v, setV] = useState(value === undefined ? "" : String(value));
+/** dir tells the grid where to move next: "down" (Enter), "right" (Tab), undefined (blur). */
+export function CellEditor({
+  field,
+  value,
+  seed,
+  onCommit,
+  onCancel,
+}: {
+  field: Field;
+  value: Cell | undefined;
+  seed?: string;
+  onCommit: (v: Cell | null, dir?: "down" | "right") => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState(seed ?? (value === undefined ? "" : String(value)));
   if (field.type === "select")
     return (
       <select autoFocus className="w-full bg-transparent outline-none" value={v} onChange={(e) => onCommit(e.target.value || null)} onBlur={onCancel}>
@@ -50,12 +63,12 @@ export function CellEditor({ field, value, onCommit, onCancel }: { field: Field;
         ))}
       </select>
     );
-  const commit = () => {
+  const commit = (dir?: "down" | "right") => {
     if (field.type === "number") {
       const n = Number(v);
-      return onCommit(v.trim() === "" || Number.isNaN(n) ? null : n);
+      return onCommit(v.trim() === "" || Number.isNaN(n) ? null : n, dir);
     }
-    onCommit(v === "" ? null : v);
+    onCommit(v === "" ? null : v, dir);
   };
   return (
     <input
@@ -65,10 +78,20 @@ export function CellEditor({ field, value, onCommit, onCancel }: { field: Field;
       className={cn("w-full bg-transparent outline-none", field.type === "number" && "text-right")}
       value={v}
       onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
+      onBlur={() => commit()}
       onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") onCancel();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit("down");
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          commit("right");
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
       }}
     />
   );
