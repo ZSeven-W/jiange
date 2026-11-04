@@ -26,6 +26,7 @@ type Memory struct {
 	notifications []Notification
 	favorites     map[int64][]int64
 	links         map[[2]int64][]int64 // (fieldID, fromRecord) -> toRecords
+	automations   []Automation
 }
 
 func NewMemory() *Memory {

@@ -812,6 +812,7 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 		op = "add"
 	}
 	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "record", "op": op, "record": rec})
+	s.runAutomations(r.Context(), b.ID, "record_matches", rec)
 	status := http.StatusOK
 	if create {
 		status = http.StatusCreated

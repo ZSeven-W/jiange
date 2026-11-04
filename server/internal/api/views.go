@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -307,5 +308,6 @@ func (s *Server) submitForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.btEvent(r.Context(), baseID, map[string]any{"kind": "record", "op": "add", "record": rec})
+	s.runAutomations(context.Background(), baseID, "form_submit", rec)
 	httpx.JSON(w, http.StatusCreated, map[string]any{"ok": true})
 }

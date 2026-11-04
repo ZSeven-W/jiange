@@ -144,6 +144,10 @@ export const baseApi = {
   setCells: (id: number, rid: number, cells: Record<string, Cell | number[] | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
   moveRecord: (id: number, rid: number, position: number) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { move: true, position }),
   deleteRecord: (id: number, rid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`),
+  automations: (id: number) => request<{ automations: Automation[] }>("GET", `/api/bases/${id}/automations`).then((r) => r.automations),
+  addAutomation: (id: number, a: Partial<Automation>) => request<Automation>("POST", `/api/bases/${id}/automations`, a),
+  updateAutomation: (id: number, aid: number, a: Partial<Automation>) => request<Automation>("PATCH", `/api/bases/${id}/automations/${aid}`, a),
+  deleteAutomation: (id: number, aid: number) => request<void>("DELETE", `/api/bases/${id}/automations/${aid}`),
   addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
   patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
   deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
@@ -221,6 +225,20 @@ export interface FileMeta {
   size: number;
 }
 
+export interface Automation {
+  id: number;
+  baseId: number;
+  name: string;
+  enabled: boolean;
+  triggerKind: "form_submit" | "record_matches";
+  config: {
+    rules?: FilterRule[];
+    conj?: "and" | "or";
+    notifyUsers?: number[];
+    message?: string;
+    webhook?: { url?: string; kind?: string; message?: string };
+  };
+}
 export const extrasApi = {
   search: (q: string) => request<{ docs: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`).then((r) => r.docs),
   favorites: () => request<{ docs: DocMeta[] }>("GET", "/api/favorites").then((r) => r.docs),
