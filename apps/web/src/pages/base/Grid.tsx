@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
 import { RecordDetail } from "./RecordDetail";
-import { displayValue, PALETTE, REGISTRY, optionColor } from "./registry";
+import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { planPaste, rangeText } from "./tsv";
 
 /** Column widths per field, persisted locally so they survive refresh. */
@@ -91,6 +91,9 @@ export function Grid({
       return next;
     });
   };
+
+  // refresh the formula cache for the visible dataset (cheap: memoized per record)
+  for (const rec of records) setFormulaCache(rec, evalFormulas(fields, rec, members));
 
   const rows = records.length;
   const cols = fields.length;
