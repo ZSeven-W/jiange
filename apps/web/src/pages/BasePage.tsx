@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, type FilterRule, type ViewConfig } from "@/lib/api";
 import { Grid } from "./base/Grid";
 import { Kanban } from "./base/Kanban";
+import { Gallery } from "./base/Gallery";
+import { CalendarView } from "./base/CalendarView";
+import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
 
@@ -32,6 +35,7 @@ export function BasePage({ id }: { id: number }) {
   const q = useQuery({ queryKey: key, queryFn: () => baseApi.get(id) });
   useBaseSync(id);
   const [viewId, setViewId] = useState<number | null>(null);
+  const [detailRecord, setDetailRecord] = useState<number | null>(null);
   const [cfg, setCfg] = useState<ViewConfig>(EMPTY_CONFIG);
   const [filter, setFilter] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["base", id] });
@@ -128,6 +132,21 @@ export function BasePage({ id }: { id: number }) {
               ))}
             </select>
           )}
+          {current?.type === "calendar" && (
+            <select
+              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+              value={cfg.group ?? ""}
+              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+              data-calendar-field
+            >
+              <option value="">选择日期字段</option>
+              {fields.filter((f) => f.type === "date").map((f) => (
+                <option key={f.id} value={f.id}>
+                  按「{f.name}」排布
+                </option>
+              ))}
+            </select>
+          )}
           {current?.type === "grid" && (
             <select
               className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
@@ -184,6 +203,42 @@ export function BasePage({ id }: { id: number }) {
           </span>
         </div>
       </div>
+      {current?.type === "gallery" && (
+        <Gallery
+          baseId={id}
+          canEdit={canEdit}
+          fields={visibleFields}
+          records={source}
+          members={members}
+          onMutate={refresh}
+          onOpen={(r) => setDetailRecord(r.id)}
+        />
+      )}
+      {current?.type === "calendar" && (
+        <CalendarView
+          baseId={id}
+          canEdit={canEdit}
+          fields={visibleFields}
+          records={source}
+          members={members}
+          dateFieldId={cfg.group}
+          onMutate={refresh}
+        />
+      )}
+      {detailRecord !== null && (() => {
+        const rec = q.data.records.find((r) => r.id === detailRecord);
+        return rec ? (
+          <RecordDetail
+            baseId={id}
+            canEdit={canEdit}
+            fields={fields}
+            record={rec}
+            members={members}
+            onClose={() => setDetailRecord(null)}
+            onMutate={refresh}
+          />
+        ) : null;
+      })()}
       {current?.type === "kanban" ? (
         <Kanban
           baseId={id}

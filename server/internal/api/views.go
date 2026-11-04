@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/btquery"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -16,7 +17,7 @@ type viewInput struct {
 	Pos    *float64         `json:"pos"`
 }
 
-var viewTypes = map[string]bool{"grid": true, "kanban": true}
+var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true}
 
 func (in viewInput) apply(w http.ResponseWriter, v *store.View) bool {
 	if in.Name != nil {
@@ -179,4 +180,131 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		recs = []store.Record{}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"records": recs})
+}
+
+// ---- public forms (collect responses without login) ----
+
+type formField struct {
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	Options      []string `json:"options,omitempty"`
+	OptionColors []int    `json:"optionColors,omitempty"`
+}
+
+// formConfig is the saved form definition (bt_views.config for type=form).
+type formConfig struct {
+	Title  string  `json:"title,omitempty"`
+	Desc   string  `json:"desc,omitempty"`
+	Fields []int64 `json:"fields"`
+}
+
+// getForm serves the public form definition: only the fields included in the
+// form config, no record data. No auth — forms are shareable links.
+func (s *Server) getForm(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Forms int64 `json:"-"`
+	}
+	_ = in
+	baseID := pathID(r, "id")
+	vid := pathID(r, "vid")
+	views, err := s.Store.Views(r.Context(), baseID)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "base not found")
+		return
+	}
+	var view *store.View
+	for i := range views {
+		if views[i].ID == vid && views[i].Type == "form" {
+			view = &views[i]
+			break
+		}
+	}
+	if view == nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "form not found")
+		return
+	}
+	var cfg formConfig
+	_ = json.Unmarshal(view.Config, &cfg)
+	fields, err := s.Store.Fields(r.Context(), baseID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	byID := map[int64]store.Field{}
+	for _, f := range fields {
+		byID[f.ID] = f
+	}
+	out := []formField{}
+	for _, fid := range cfg.Fields {
+		if f, ok := byID[fid]; ok {
+			out = append(out, formField{ID: f.ID, Name: f.Name, Type: f.Type, Options: f.Options, OptionColors: f.OptionColors})
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": cfg.Title, "desc": cfg.Desc, "fields": out})
+}
+
+// submitForm accepts one response from an anonymous visitor.
+func (s *Server) submitForm(w http.ResponseWriter, r *http.Request) {
+	baseID := pathID(r, "id")
+	vid := pathID(r, "vid")
+	var in struct {
+		Cells map[string]json.RawMessage `json:"cells"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	views, err := s.Store.Views(r.Context(), baseID)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "base not found")
+		return
+	}
+	var view *store.View
+	for i := range views {
+		if views[i].ID == vid && views[i].Type == "form" {
+			view = &views[i]
+			break
+		}
+	}
+	if view == nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "form not found")
+		return
+	}
+	var cfg formConfig
+	_ = json.Unmarshal(view.Config, &cfg)
+	allowed := map[string]bool{}
+	for _, fid := range cfg.Fields {
+		allowed[strconv.FormatInt(fid, 10)] = true
+	}
+	fields, err := s.Store.Fields(r.Context(), baseID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	for k := range in.Cells {
+		if !allowed[k] {
+			httpx.Error(w, http.StatusBadRequest, "invalid_field", "字段不在表单中")
+			return
+		}
+	}
+	if msg := checkCells(fields, in.Cells); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_cell", msg)
+		return
+	}
+	for k, v := range in.Cells {
+		if len(v) == 0 || string(v) == "null" {
+			delete(in.Cells, k)
+		}
+	}
+	if len(in.Cells) == 0 {
+		httpx.Error(w, http.StatusBadRequest, "empty", "内容不能为空")
+		return
+	}
+	rec, err := s.Store.AddRecord(r.Context(), store.Record{BaseID: baseID, Cells: in.Cells})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.btEvent(r.Context(), baseID, map[string]any{"kind": "record", "op": "add", "record": rec})
+	httpx.JSON(w, http.StatusCreated, map[string]any{"ok": true})
 }

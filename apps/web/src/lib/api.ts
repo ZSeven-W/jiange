@@ -109,7 +109,7 @@ export interface ViewConfig {
 export interface View {
   id: number;
   baseId: number;
-  type: "grid" | "kanban";
+  type: "grid" | "kanban" | "gallery" | "calendar" | "form";
   name: string;
   config: ViewConfig;
   pos: number;

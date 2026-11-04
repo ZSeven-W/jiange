@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Trash } from "@/pages/Trash";
 import { JoinLink } from "@/pages/JoinLink";
 import { BasePage } from "@/pages/BasePage";
+import { PublicForm } from "@/pages/PublicForm";
 
 export default function App() {
   const route = useRoute();
@@ -20,6 +21,10 @@ export default function App() {
   });
   const unauth = (me.error instanceof ApiError && me.error.status === 401) || me.data === null;
 
+  // public form pages work without login
+  if (route.page === "form") {
+    return <PublicForm key={`${route.base}:${route.vid}`} baseId={route.base} viewId={route.vid} />;
+  }
   if (me.isPending) return <div className="grid h-full place-items-center text-subtle">加载中…</div>;
   if (unauth) return <LoginPage />;
   if (!me.data) return <div className="grid h-full place-items-center text-destructive">无法连接服务器：{String(me.error)}</div>;
