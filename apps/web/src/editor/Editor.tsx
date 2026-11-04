@@ -352,6 +352,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
           const at = collapsed(s) ? s.a : normalize(d, s).start;
           insertText(t);
           if (t === "/" || t === "@") setSlash({ at, index: 0, kind: t });
+          else setSlash((cur) => (cur ? { ...cur, index: 0 } : cur)); // 过滤词变化 → 高亮回到第一项
           return;
         }
         case "insertLineBreak":
