@@ -304,13 +304,13 @@ export function Grid({
     const empty = rows.length - present.length;
     switch (fn) {
       case "sum":
-        return `求和 ${present.reduce((a: number, v) => a + Number(v ?? 0), 0)}`;
+        return `${present.reduce((a: number, v) => a + Number(v ?? 0), 0)}`;
       case "avg":
-        return `平均 ${present.length ? (present.reduce((a: number, v) => a + Number(v ?? 0), 0) / present.length).toFixed(2) : "—"}`;
+        return `${present.length ? (present.reduce((a: number, v) => a + Number(v ?? 0), 0) / present.length).toFixed(2) : "—"}`;
       case "count":
-        return `计数 ${present.length}`;
+        return `${present.length}`;
       case "empty":
-        return `空值 ${empty}`;
+        return `${empty}`;
       default:
         return "";
     }

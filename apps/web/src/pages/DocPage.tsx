@@ -9,6 +9,7 @@ import { Editor } from "@/editor/Editor";
 import { Avatar } from "@/components/brand";
 import { BaseIcon, docTitle, DocIcon } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
@@ -111,7 +112,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
-              className="text-[34px] font-bold leading-[1.3] tracking-tight [&_textarea]:leading-[1.3]"
+              className="text-[34px] font-semibold leading-[1.3] tracking-tight [&_textarea]:font-semibold [&_textarea]:leading-[1.3]"
             />
             <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
               {meta.data && (
@@ -230,13 +231,10 @@ function TopBar({
           </span>
         ))}
         <span className="text-subtle">/</span>
-        <span className="truncate font-medium">{meta ? docTitle({ title }) : "…"}</span>
+        <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
       </nav>
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-subtle" data-status={status}>
-        <span className="size-1.5 rounded-full" style={{ background: s.color }} />
-        {s.label}
-      </span>
       <div className="ml-auto flex items-center gap-2">
+        <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
         <div className="mr-1 flex items-center -space-x-1.5" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
           {peers.slice(0, 5).map((p) => (
@@ -244,6 +242,10 @@ function TopBar({
           ))}
           {peers.length > 5 && <span className="grid size-[26px] place-items-center rounded-full bg-hover text-[11px] ring-2 ring-white">+{peers.length - 5}</span>}
         </div>
+        <span className="flex shrink-0 items-center gap-1 text-xs text-subtle" data-status={status}>
+          <span className="size-1.5 rounded-full" style={{ background: s.color }} />
+          {s.label}
+        </span>
         {meta && <StarButton docId={meta.id} />}
         {readOnly && <span className="rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground">只读</span>}
         <Button size="sm" className="h-8 px-4" onClick={onShare}>
