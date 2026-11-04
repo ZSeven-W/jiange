@@ -142,6 +142,41 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     format: (v) => String(v ?? ""),
     compare: (a, b) => String(a).localeCompare(String(b)),
   },
+  url: {
+    icon: "🔗",
+    label: "超链接",
+    width: 220,
+    parse: (t) => (/^https?:\/\/\S+$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
+    format: (v) => String(v ?? ""),
+    compare: (a, b) => String(a).localeCompare(String(b)),
+  },
+  phone: {
+    icon: "📞",
+    label: "电话",
+    width: 160,
+    parse: (t) => (/^[\d+\- ]{5,24}$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
+    format: (v) => String(v ?? ""),
+    compare: (a, b) => String(a).localeCompare(String(b)),
+  },
+  email: {
+    icon: "✉",
+    label: "邮箱",
+    width: 200,
+    parse: (t) => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
+    format: (v) => String(v ?? ""),
+    compare: (a, b) => String(a).localeCompare(String(b)),
+  },
+  rating: {
+    icon: "★",
+    label: "评分",
+    width: 110,
+    parse: (t) => {
+      const n = Number(t);
+      return Number.isInteger(n) && n >= 1 && n <= 5 ? n : t === "" ? null : undefined;
+    },
+    format: (v) => (typeof v === "number" ? "★".repeat(v) : ""),
+    compare: (a, b) => Number(a) - Number(b),
+  },
 };
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];

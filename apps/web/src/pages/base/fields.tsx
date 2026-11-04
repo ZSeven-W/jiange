@@ -16,6 +16,7 @@ export function FieldForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
   const [opts, setOpts] = useState((initial?.options ?? []).join(", "));
+  const [desc, setDesc] = useState(initial?.description ?? "");
   const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
   const def = REGISTRY[type];
   const typeChanged = initial !== undefined && initial.type !== type;
@@ -36,6 +37,7 @@ export function FieldForm({
         onSubmit({
           name: name.trim() || initial?.name || "新字段",
           type,
+          description: desc.trim(),
           options: def.hasOptions ? names : undefined,
           optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined,
         });
@@ -73,6 +75,7 @@ export function FieldForm({
           <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="新增选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
         </div>
       )}
+      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="字段描述（可选）" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" data-field-desc />
       {typeChanged && <p className="text-[12px] leading-4 text-amber-600">切换类型会自动转换兼容的值，不兼容的值将被清空。</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="h-7 rounded-md border px-3">

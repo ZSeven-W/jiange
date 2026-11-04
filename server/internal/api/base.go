@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,6 +105,7 @@ type fieldInput struct {
 	Type         *string   `json:"type"`
 	Options      *[]string `json:"options"`
 	OptionColors *[]int    `json:"optionColors"`
+	Description  *string   `json:"description"`
 	Position     *float64  `json:"position"`
 }
 
@@ -134,6 +136,13 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 			}
 		}
 		f.OptionColors = *in.OptionColors
+	}
+	if in.Description != nil {
+		if utf8.RuneCountInString(*in.Description) > 200 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_description", "描述最多 200 字")
+			return false
+		}
+		f.Description = strings.TrimSpace(*in.Description)
 	}
 	if in.Position != nil {
 		f.Position = *in.Position
@@ -402,6 +411,31 @@ func validCell(f store.Field, v json.RawMessage) bool {
 			_, err := time.Parse("2006-01-02", s)
 			return err == nil
 		}
+	case "url":
+		var s string
+		return json.Unmarshal(v, &s) == nil && utf8.RuneCountInString(s) <= 1000 &&
+			(strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://"))
+	case "phone":
+		var s string
+		if json.Unmarshal(v, &s) == nil && utf8.RuneCountInString(s) <= 24 {
+			ok := true
+			for _, r := range s {
+				if (r < '0' || r > '9') && r != '+' && r != '-' && r != ' ' {
+					ok = false
+					break
+				}
+			}
+			return ok && strings.TrimSpace(s) != ""
+		}
+	case "email":
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			a, err := mail.ParseAddress(s)
+			return err == nil && a.Address == s
+		}
+	case "rating":
+		var n float64
+		return json.Unmarshal(v, &n) == nil && n >= 1 && n <= 5 && n == float64(int(n))
 	}
 	return false
 }

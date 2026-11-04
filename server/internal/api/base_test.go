@@ -232,6 +232,46 @@ func TestFieldTypesRegistry(t *testing.T) {
 	}
 }
 
+func TestLightFieldTypes(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "lf@x.com", "name": "LF", "password": "password123"})
+	var b store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
+	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+
+	mk := func(name, typ string) store.Field {
+		var f store.Field
+		json.NewDecoder(post(t, c, u+"/fields", map[string]any{"name": name, "type": typ, "description": "帮助说明"}).Body).Decode(&f)
+		return f
+	}
+	urlF, phoneF, emailF, ratingF := mk("链接", "url"), mk("电话", "phone"), mk("邮箱", "email"), mk("评分", "rating")
+	if urlF.Description != "帮助说明" {
+		t.Fatalf("description: %+v", urlF)
+	}
+	cells := map[string]any{
+		strconv.FormatInt(urlF.ID, 10):    "https://jiange.dev",
+		strconv.FormatInt(phoneF.ID, 10):  "+86 138 0000 0000",
+		strconv.FormatInt(emailF.ID, 10):  "a@b.co",
+		strconv.FormatInt(ratingF.ID, 10): 4,
+	}
+	if res := post(t, c, u+"/records", map[string]any{"cells": cells}); res.StatusCode != 201 {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("valid light cells: %d %s", res.StatusCode, body)
+	}
+	bad := map[string]any{
+		strconv.FormatInt(urlF.ID, 10):    "ftp://x",
+		strconv.FormatInt(phoneF.ID, 10):  "电话",
+		strconv.FormatInt(emailF.ID, 10):  "not-an-email",
+		strconv.FormatInt(ratingF.ID, 10): 6,
+	}
+	for k, v := range bad {
+		one := map[string]any{k: v}
+		if res := post(t, c, u+"/records", map[string]any{"cells": one}); res.StatusCode != 400 {
+			t.Fatalf("bad %v accepted: %d", v, res.StatusCode)
+		}
+	}
+}
+
 func TestMoveRecord(t *testing.T) {
 	ts, c := newTestServer(t, store.NewMemory(), nil)
 	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "mv@x.com", "name": "MV", "password": "password123"})
