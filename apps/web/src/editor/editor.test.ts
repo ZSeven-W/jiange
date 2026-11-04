@@ -98,3 +98,23 @@ describe("code block", () => {
     expect(p2.o).toBe(0);
   });
 });
+
+import { applyTableEdit, parseTableData } from "./model";
+
+describe("table block transforms", () => {
+  it("parses tableData with fallback", () => {
+    expect(parseTableData(JSON.stringify([["a"], ["b"]]))).toEqual([["a"], ["b"]]);
+    expect(parseTableData(undefined)[0].length).toBe(3);
+    expect(parseTableData("not-json")[1].length).toBe(3);
+  });
+  it("adds/removes rows and columns", () => {
+    const t = [["a", "b"], ["c", "d"]];
+    expect(applyTableEdit(t, -1, 0, "")).toEqual([["a", "b"], ["c", "d"], ["", ""]]);
+    expect(applyTableEdit(t, -2, 0, "")).toEqual([["a", "b", ""], ["c", "d", ""]]);
+    expect(applyTableEdit(t, -3, 0, "")).toEqual([["c", "d"]]);
+    expect(applyTableEdit([["x"]], -3, 0, "")).toEqual([["x"]]); // keep last row
+  });
+  it("writes one cell without touching others", () => {
+    expect(applyTableEdit([["a", "b"], ["c", "d"]], 1, 0, "X")).toEqual([["a", "b"], ["X", "d"]]);
+  });
+});

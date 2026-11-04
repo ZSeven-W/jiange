@@ -30,6 +30,7 @@ import {
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu } from "./SlashMenu";
+import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 
 const CLIP_MIME = "application/x-jiange-blocks";
@@ -502,6 +503,23 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
         const nb = tx.create("paragraph", dv, info.parent);
         return { b: nb, o: 0 };
       }
+      if (it.id === "callout") {
+        tx.setProp(b, "type", "callout");
+        if (!tx.doc.blockInfo(b).props.emoji) tx.setProp(b, "emoji", "💡");
+        return { b, o: m.at.o };
+      }
+      if (it.id === "table") {
+        const info = tx.doc.blockInfo(b);
+        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
+          tx.setProp(b, "type", "table");
+          tx.setProp(b, "tableData", JSON.stringify([["列 1", "列 2", "列 3"], ["", "", ""]]));
+          const nb = tx.create("paragraph", b, info.parent);
+          return { b: nb, o: 0 };
+        }
+        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify([["列 1", "列 2", "列 3"], ["", "", ""]]) });
+        const nb = tx.create("paragraph", tb, info.parent);
+        return { b: nb, o: 0 };
+      }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
       return { b, o: m.at.o };
     });
@@ -713,6 +731,24 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                 anchors={anchorFlags(doc, b, comments)}
                 activeThread={activeThread}
                 onAnchorClick={(cid) => onActivateThread?.(cid)}
+                onSetProp={(key, value) => {
+                  const tx = new Tx(doc);
+                  tx.setProp(b, key, value);
+                  um.record(tx, sel.current, sel.current, "prop");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onTableEdit={(r, c, v) => {
+                  const tx = new Tx(doc);
+                  const info = doc.blockInfo(b);
+                  const rows = applyTableEdit(parseTableData(info.props.tableData), r, c, v);
+                  tx.setProp(b, "tableData", JSON.stringify(rows));
+                  um.record(tx, sel.current, sel.current, "table");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={() => toggleTodo(b)}
                 onDragStart={() => setDrag({ b, over: null, after: false })}
@@ -826,6 +862,8 @@ interface BlockProps {
   anchors?: (number | null)[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
+  onSetProp?: (key: string, value: string) => void;
+  onTableEdit?: (r: number, c: number, value: string) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -838,7 +876,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const runs: { text: string; marks: Record<string, string>; anchor: number | null }[] = [];
@@ -892,7 +930,9 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
       >
         ⋮⋮
       </span>
-      {type === "divider" ? (
+      {type === "table" ? (
+        <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
+      ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
         <figure contentEditable={false} className="my-2 select-none">
@@ -906,6 +946,62 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
             <span className="block text-[12px] text-subtle">{fmtSize(Number(props.size ?? 0))}</span>
           </span>
         </a>
+      ) : type === "code" ? (
+        <div className="overflow-hidden rounded-lg border border-[#e5e7eb]">
+          <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5" data-code-header>
+            <select
+              value={props.lang ?? "plain"}
+              onChange={(e) => onSetProp?.("lang", e.target.value)}
+              className="cursor-pointer rounded bg-transparent text-[12px] text-muted-foreground outline-none"
+              title="代码语言"
+              data-code-lang
+            >
+              {CODE_LANGS.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <button
+              className="ml-auto text-[12px] text-subtle hover:text-foreground"
+              onClick={() => navigator.clipboard?.writeText(spans.map((c) => c.ch).join(""))}
+              title="复制代码"
+              data-code-copy
+            >
+              复制
+            </button>
+          </div>
+          <div data-text className="min-w-0 whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">
+            {runs.length === 0 ? <br /> : runs.map((r, i) => <Run key={i} text={r.text} marks={r.marks} />)}
+          </div>
+        </div>
+      ) : type === "callout" ? (
+        <div className={cn("flex gap-2 rounded-lg px-3.5 py-3", prefix && "flex gap-2")} style={{ background: CALLOUT_BG[Number(props.color ?? 0)] ?? CALLOUT_BG[0] }}>
+          <span contentEditable={false} className="select-none pt-0.5 text-[15px] leading-6">
+            <button
+              className="rounded px-0.5 hover:bg-black/5"
+              title="更换图标"
+              onClick={() => onSetProp?.("emoji", CALLOUT_EMOJI[(CALLOUT_EMOJI.indexOf(props.emoji ?? "💡") + 1) % CALLOUT_EMOJI.length])}
+              data-callout-emoji
+            >
+              {props.emoji ?? "💡"}
+            </button>
+          </span>
+          <div data-text className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+            {runs.length === 0 ? <br /> : runs.map((r, i) => <Run key={i} text={r.text} marks={r.marks} />)}
+          </div>
+          <span contentEditable={false} className="ml-auto flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" data-callout-colors>
+            {CALLOUT_BG.map((bg, i) => (
+              <button
+                key={i}
+                className={cn("h-3.5 w-3.5 rounded-full border", Number(props.color ?? 0) === i && "ring-1 ring-primary ring-offset-1")}
+                style={{ background: bg }}
+                title={`颜色 ${i + 1}`}
+                onClick={() => onSetProp?.("color", String(i))}
+              />
+            ))}
+          </span>
+        </div>
       ) : (
         <div className={cn(prefix && "flex gap-2")}>
           {prefix && (
@@ -937,6 +1033,75 @@ function Block({ id, type, props, number, spans, anchors, activeThread, onAnchor
       )}
     </div>
   );
+}
+
+const CODE_LANGS: [string, string][] = [
+  ["plain", "纯文本"], ["typescript", "TypeScript"], ["javascript", "JavaScript"], ["go", "Go"],
+  ["python", "Python"], ["rust", "Rust"], ["java", "Java"], ["sql", "SQL"], ["json", "JSON"],
+  ["bash", "Bash"], ["css", "CSS"], ["html", "HTML"],
+];
+const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8DEF8", "#FDEBE1"];
+const CALLOUT_EMOJI = ["💡", "📌", "⚠️", "✅", "🔥", "📝", "❓", "🎯"];
+
+/** Simple table block: plain-text grid stored as JSON in a block prop. */
+function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit: (r: number, c: number, v: string) => void; onDelete: () => void; readOnly: boolean }) {
+  const rows = parseTableData(data);
+  const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
+  return (
+    <div contentEditable={false} className="group/t my-2 w-fit max-w-full select-none overflow-x-auto" data-table-block>
+      <table className="border-collapse text-[13px]">
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td key={ci} className="min-w-[90px] border p-0 align-top" style={{ width: Math.max(90, Math.min(260, 18 + size(row) * 9)) }}>
+                  {readOnly ? (
+                    <span className="block px-2.5 py-1.5">{cell}</span>
+                  ) : (
+                    <input
+                      value={cell}
+                      onChange={(e) => onEdit(ri, ci, e.target.value)}
+                      className={cn("w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-white", ri === 0 && "bg-sidebar/70 font-medium")}
+                      data-table-cell={`${ri}:${ci}`}
+                    />
+                  )}
+                </td>
+              ))}
+              {!readOnly && (
+                <td className="w-6 border-l-0 p-0 align-middle">
+                  <button className="hidden px-1 text-[11px] text-subtle hover:text-destructive group-hover/t:block" title="删除此行" onClick={() => onDeleteRow(ri)}>
+                    ✕
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))}
+          {!readOnly && (
+            <tr>
+              <td colSpan={rows[0].length + 1} className="border-t-0 p-0">
+                <span className="flex gap-3 px-2 py-1 text-[12px] text-subtle">
+                  <button className="hover:text-primary" onClick={() => onAddRow()} data-table-add-row>+ 行</button>
+                  <button className="hover:text-primary" onClick={() => onAddCol()} data-table-add-col>+ 列</button>
+                  <button className="hover:text-destructive" onClick={onDelete} data-table-del>删除表格</button>
+                </span>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  function onAddRow() {
+    const width = rows[0].length;
+    onEdit(-1, width, "");
+  }
+  function onAddCol() {
+    onEdit(-2, rows[0].length, "");
+  }
+  function onDeleteRow(ri: number) {
+    onEdit(-3, ri, "");
+  }
 }
 
 function sameMarks(a: Record<string, string>, b: Record<string, string>) {
