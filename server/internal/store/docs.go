@@ -19,6 +19,8 @@ type DocMeta struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 	// WorkspaceName is the owning workspace's name (bread crumbs for shared docs).
 	WorkspaceName string `json:"workspaceName,omitempty"`
+	// CopyProtected docs watermark and disable copy/download for non-manage roles.
+	CopyProtected bool `json:"copyProtected,omitempty"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
 }
@@ -58,6 +60,7 @@ type DocStore interface {
 	// GetDocSystem fetches meta without any user-scoped access check (public
 	// share snapshots, system sweeps).
 	GetDocSystem(ctx context.Context, docID int64) (DocMeta, error)
+	SetCopyProtected(ctx context.Context, docID int64, on bool) error
 	UpdateTitle(ctx context.Context, docID int64, title string) (DocMeta, error)
 	// Trash soft-deletes a doc and its descendants; Restore undoes it.
 	Trash(ctx context.Context, docID int64) error

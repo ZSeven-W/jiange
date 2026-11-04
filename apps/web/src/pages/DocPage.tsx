@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OpId, SyncStatus } from "@jiange/collab";
 import { docsApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
@@ -128,7 +128,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               <Editor
                 sync={sync}
                 me={presence}
-                readOnly={readOnly}
+                readOnly={readOnly || (!!meta.data?.copyProtected && meta.data.role !== "manage")}
+                onCopyBlock={!!meta.data?.copyProtected && meta.data.role !== "manage"}
                 docs={mentionDocs}
                 upload={readOnly ? undefined : (f) => docsApi.upload(id, f)}
                 comments={comments.data ?? []}
@@ -148,6 +149,23 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       </div>
       {sharing && meta.data && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} />}
       {history && <VersionPanel id={id} canEdit={!readOnly} onClose={() => setHistory(false)} />}
+      {meta.data?.copyProtected && (
+        <div
+          className="pointer-events-none fixed inset-0 z-50 select-none overflow-hidden"
+          data-watermark
+          aria-hidden
+        >
+          {Array.from({ length: 24 }, (_, i) => (
+            <span
+              key={i}
+              className="absolute whitespace-nowrap text-[13px] text-[#1f2329]/[0.06] dark:text-white/[0.05]"
+              style={{ left: `${(i % 6) * 20 + 4}%`, top: `${Math.floor(i / 6) * 25 + 8}%`, transform: "rotate(-24deg)" }}
+            >
+              {me.user.name} {me.user.email}
+            </span>
+          ))}
+        </div>
+      )}
       {commentsOpen && (
         <CommentsPanel
           id={id}
@@ -291,6 +309,10 @@ function DocMenu({
 }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
+  const prot = useMutation({
+    mutationFn: (on: boolean) => docsApi.setCopyProtected(meta!.id, on),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["doc", meta?.id] }),
+  });
   const close = () => setOpen(false);
   const trash = async () => {
     if (!meta) return;
@@ -342,6 +364,16 @@ function DocMenu({
               />
             </label>
           )}
+          <div className="my-1 border-t" />
+          <label className={cn(item, "flex cursor-pointer items-center justify-between")} data-copy-protect>
+            防复制下载
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={!!meta?.copyProtected}
+              onChange={(e) => prot.mutate(e.target.checked)}
+            />
+          </label>
           {meta?.parentId && <div className="my-1 border-t" />}
           {meta?.parentId && (
             <button className={item} onClick={toRoot}>

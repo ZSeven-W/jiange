@@ -109,6 +109,17 @@ func (m *Memory) GetDocSystem(_ context.Context, id int64) (DocMeta, error) {
 	return d.meta, nil
 }
 
+func (m *Memory) SetCopyProtected(_ context.Context, id int64, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(id)
+	if d == nil {
+		return ErrNotFound
+	}
+	d.meta.CopyProtected = on
+	return nil
+}
+
 func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

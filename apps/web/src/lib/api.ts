@@ -57,6 +57,7 @@ export interface DocMeta {
   role?: Role;
   kind?: "doc" | "base";
   workspaceName?: string;
+  copyProtected?: boolean;
 }
 export type FieldType =
   | "text"
@@ -257,4 +258,5 @@ export const docsApi = {
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
+  setCopyProtected: (id: number, on: boolean) => request<DocMeta>("PATCH", `/api/docs/${id}`, { copyProtected: on }),
 };
