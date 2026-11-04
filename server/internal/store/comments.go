@@ -29,17 +29,17 @@ type Comment struct {
 // comment), resolve (my comment resolved), restore (version restored by me?
 // reserved), plus generic doc mentions reused for @doc links.
 type Notification struct {
-	ID         int64     `json:"id"`
-	UserID     int64     `json:"userId"`
-	DocID      int64     `json:"docId"`
-	DocTitle   string    `json:"docTitle,omitempty"`
-	ActorID    int64     `json:"actorId"`
-	ActorName  string    `json:"actorName,omitempty"`
-	CommentID  *int64    `json:"commentId,omitempty"`
-	Kind       string    `json:"kind"` // mention | reply | resolve
-	Read       bool      `json:"read"`
-	CreatedAt  time.Time `json:"createdAt"`
-	Preview    string    `json:"preview,omitempty"` // comment body snippet
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	DocID     int64     `json:"docId"`
+	DocTitle  string    `json:"docTitle,omitempty"`
+	ActorID   int64     `json:"actorId"`
+	ActorName string    `json:"actorName,omitempty"`
+	CommentID *int64    `json:"commentId,omitempty"`
+	Kind      string    `json:"kind"` // mention | reply | resolve
+	Read      bool      `json:"read"`
+	CreatedAt time.Time `json:"createdAt"`
+	Preview   string    `json:"preview,omitempty"` // comment body snippet
 }
 
 type CommentStore interface {

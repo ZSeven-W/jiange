@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
 import { RecordDetail } from "./RecordDetail";
-import { REGISTRY } from "./registry";
+import { displayValue, PALETTE, REGISTRY, optionColor } from "./registry";
 import { planPaste, rangeText } from "./tsv";
 
 /** Column widths per field, persisted locally so they survive refresh. */
@@ -35,6 +35,7 @@ export function Grid({
   fields,
   records,
   members,
+  groupBy,
   onMutate,
 }: {
   baseId: number;
@@ -42,6 +43,8 @@ export function Grid({
   fields: Field[];
   records: BaseRecord[];
   members: User[];
+  /** grid grouping field id (from the view config), null = ungrouped */
+  groupBy?: number | null;
   onMutate: () => void;
 }) {
   const [edit, setEdit] = useState<Edit | null>(null);
@@ -51,6 +54,14 @@ export function Grid({
   const [drag, setDrag] = useState<{ fid: number; at: number | null }>({ fid: 0, at: null });
   const [sel, setSel] = useState<Sel | null>(null);
   const [detail, setDetail] = useState<BaseRecord | null>(null);
+  const [stats, setStats] = useState<Record<number, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`jiange:stats:${baseId}`) ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -274,6 +285,55 @@ export function Grid({
     setDrag({ fid: 0, at: null });
   };
 
+  // --- column statistics (sum/avg/count/empty), chosen per column ---
+  const saveStat = (fid: number, fn: string) => {
+    setStats((prev) => {
+      const next = { ...prev };
+      if (fn) next[fid] = fn;
+      else delete next[fid];
+      localStorage.setItem(`jiange:stats:${baseId}`, JSON.stringify(next));
+      return next;
+    });
+  };
+  const statValue = (f: Field, fn: string, rows: BaseRecord[]): string => {
+    const vals = rows.map((r) => displayValue(r, f, members));
+    const present = vals.filter((v) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0));
+    const empty = rows.length - present.length;
+    switch (fn) {
+      case "sum":
+        return `求和 ${present.reduce((a: number, v) => a + Number(v ?? 0), 0)}`;
+      case "avg":
+        return `平均 ${present.length ? (present.reduce((a: number, v) => a + Number(v ?? 0), 0) / present.length).toFixed(2) : "—"}`;
+      case "count":
+        return `计数 ${present.length}`;
+      case "empty":
+        return `空值 ${empty}`;
+      default:
+        return "";
+    }
+  };
+  const statFns = (f: Field) => (f.type === "number" ? ["sum", "avg", "count", "empty"] : ["count", "empty"]);
+
+  // --- grid grouping (any field) ---
+  const groupField = fields.find((f) => f.id === groupBy);
+  const groups: { key: string; rows: BaseRecord[] }[] = [];
+  if (groupField) {
+    const index = new Map<string, { key: string; rows: BaseRecord[] }>();
+    for (const r of records) {
+      const raw = displayValue(r, groupField, members);
+      const key = raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0) ? "" : String(raw);
+      let g = index.get(key);
+      if (!g) {
+        g = { key, rows: [] };
+        index.set(key, g);
+        groups.push(g);
+      }
+      g.rows.push(r);
+    }
+  }
+  const groupColor = (key: string) => (groupField && groupField.type === "select" && key ? optionColor(groupField, key) : null);
+  const idxOf = new Map(records.map((r, i) => [r.id, i]));
+
   // --- virtualization: render only the visible window (plus overscan) ---
   const ROW_H = 36; // h-9
   const OVERSCAN = 6;
@@ -290,6 +350,70 @@ export function Grid({
   const leadW = c0 > 0 ? colOffsets[c0 - 1] : 0;
   const tailW = c1 < cols ? totalW - (colOffsets[c1 - 1] ?? 0) : 0;
   const winFields = fields.slice(c0, c1);
+
+  const renderRow = (rec: BaseRecord, i: number) => (
+            <tr key={rec.id} className="group h-9">
+              <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
+                <span className="group-hover:hidden">{i + 1}</span>
+                <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
+                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => setDetail(rec)} data-expand={rec.id}>
+                    ⤢
+                  </button>
+                  {canEdit && (
+                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
+                      ✕
+                    </button>
+                  )}
+                </span>
+              </td>
+              {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
+              {winFields.map((f, wj) => {
+                const j = c0 + wj;
+                const editing = edit?.ri === i && edit.fi === j;
+                const ro = REGISTRY[f.type].readonly;
+                return (
+                  <td
+                    key={f.id}
+                    className={cn(
+                      "border px-2.5",
+                      f.type === "number" && "text-right tabular-nums",
+                      editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
+                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-[#DCE7FF]" : "bg-[#EDF2FF]"),
+                    )}
+                    onClick={(e) => {
+                      setEdit(null);
+                      setSel(e.shiftKey && sel ? { ...sel, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
+                      gridRef.current?.focus();
+                    }}
+                    onDoubleClick={() => startEdit(i, j)}
+                    data-cell={`${rec.id}:${f.id}`}
+                  >
+                    {editing ? (
+                      <CellEditor
+                        field={f}
+                        record={rec}
+                        members={members}
+                        seed={edit?.seed}
+                        onCommit={(v, dir) => setCell(rec, f, v, dir)}
+                        onCancel={() => setEdit(null)}
+                      />
+                    ) : (
+                      <CellView
+                        field={f}
+                        record={rec}
+                        members={members}
+                        canEdit={canEdit && !ro}
+                        onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
+                        onEdit={() => startEdit(i, j)}
+                      />
+                    )}
+                  </td>
+                );
+              })}
+              {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
+              {canEdit && <td className="border" />}
+            </tr>
+              );
 
   return (
     <div
@@ -389,82 +513,52 @@ export function Grid({
           </tr>
         </thead>
         <tbody>
-          {r0 > 0 && (
+          {!groupField && r0 > 0 && (
             <tr aria-hidden style={{ height: r0 * ROW_H }}>
               <td colSpan={winFields.length + 3} className="border-0 p-0" />
             </tr>
           )}
-          {records.slice(r0, r1).map((rec, ri) => {
-            const i = r0 + ri;
-            return (
-            <tr key={rec.id} className="group h-9">
-              <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
-                <span className="group-hover:hidden">{i + 1}</span>
-                <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
-                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => setDetail(rec)} data-expand={rec.id}>
-                    ⤢
-                  </button>
-                  {canEdit && (
-                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
-                      ✕
-                    </button>
-                  )}
-                </span>
-              </td>
-              {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
-              {winFields.map((f, wj) => {
-                const j = c0 + wj;
-                const editing = edit?.ri === i && edit.fi === j;
-                const ro = REGISTRY[f.type].readonly;
-                return (
-                  <td
-                    key={f.id}
-                    className={cn(
-                      "border px-2.5",
-                      f.type === "number" && "text-right tabular-nums",
-                      editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
-                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-[#DCE7FF]" : "bg-[#EDF2FF]"),
-                    )}
-                    onClick={(e) => {
-                      setEdit(null);
-                      setSel(e.shiftKey && sel ? { ...sel, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
-                      gridRef.current?.focus();
-                    }}
-                    onDoubleClick={() => startEdit(i, j)}
-                    data-cell={`${rec.id}:${f.id}`}
-                  >
-                    {editing ? (
-                      <CellEditor
-                        field={f}
-                        record={rec}
-                        members={members}
-                        seed={edit?.seed}
-                        onCommit={(v, dir) => setCell(rec, f, v, dir)}
-                        onCancel={() => setEdit(null)}
-                      />
-                    ) : (
-                      <CellView
-                        field={f}
-                        record={rec}
-                        members={members}
-                        canEdit={canEdit && !ro}
-                        onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
-                        onEdit={() => startEdit(i, j)}
-                      />
-                    )}
-                  </td>
-                );
-              })}
-              {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
-              {canEdit && <td className="border" />}
-            </tr>
-            );
-          })}
-          {r1 < rows && (
+          {!groupField && records.slice(r0, r1).map((rec, ri) => renderRow(rec, r0 + ri))}
+          {!groupField && r1 < rows && (
             <tr aria-hidden style={{ height: (rows - r1) * ROW_H }}>
               <td colSpan={winFields.length + 3} className="border-0 p-0" />
             </tr>
           )}
+          {groupField &&
+            groups.map((g) => {
+              const [bg, fg] = groupColor(g.key) ?? ["#F2F3F5", "#646A73"];
+              const open = !collapsed.has(g.key);
+              return (
+                <Fragment key={g.key || "__ungrouped"}>
+                  <tr className="bg-sidebar/70" data-group={g.key}>
+                    <td colSpan={winFields.length + 3} className="border px-2.5 py-1.5">
+                      <button
+                        className="flex items-center gap-1.5 text-[13px] font-medium"
+                        onClick={() =>
+                          setCollapsed((prev) => {
+                            const next = new Set(prev);
+                            if (open) next.add(g.key);
+                            else next.delete(g.key);
+                            return next;
+                          })
+                        }
+                      >
+                        <span className={cn("text-subtle transition-transform", open && "rotate-90")}>▶</span>
+                        {g.key ? (
+                          <span className="rounded px-1.5 py-0.5 text-[12px]" style={{ background: bg, color: fg }}>
+                            {g.key}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-subtle">未分组</span>
+                        )}
+                        <span className="text-subtle">{g.rows.length}</span>
+                      </button>
+                    </td>
+                  </tr>
+                  {open && g.rows.map((r) => renderRow(r, idxOf.get(r.id) ?? 0))}
+                </Fragment>
+              );
+            })}
           {canEdit && (
             <tr className="h-9">
               <td colSpan={winFields.length + 3} className="sticky left-0 border px-4">
@@ -475,6 +569,41 @@ export function Grid({
             </tr>
           )}
         </tbody>
+        <tfoot>
+          <tr className="sticky bottom-0 z-10 h-8 bg-sidebar text-[12px] text-muted-foreground" data-stats-row>
+            <td className="sticky left-0 z-10 w-14 border bg-sidebar px-2.5" />
+            {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
+            {winFields.map((f) => {
+              const fn = stats[f.id] ?? "";
+              const [bg, fg] = fn && groupField && groupField.type === "select" ? (["", ""] as [string, string]) : (["", ""] as [string, string]);
+              void bg;
+              void fg;
+              return (
+                <td key={f.id} className="border px-2.5" style={{ width: width(f) }}>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={fn}
+                      onChange={(e) => saveStat(f.id, e.target.value)}
+                      className="cursor-pointer bg-transparent text-[12px] outline-none"
+                      title="列统计"
+                      data-stat={f.id}
+                    >
+                      <option value="">—</option>
+                      {statFns(f).map((x) => (
+                        <option key={x} value={x}>
+                          {x === "sum" ? "求和" : x === "avg" ? "平均" : x === "count" ? "计数" : "空值"}
+                        </option>
+                      ))}
+                    </select>
+                    {fn && <span className="tabular-nums">{statValue(f, fn, records)}</span>}
+                  </div>
+                </td>
+              );
+            })}
+            {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
+            {canEdit && <td className="border" />}
+          </tr>
+        </tfoot>
       </table>
     </div>
   );

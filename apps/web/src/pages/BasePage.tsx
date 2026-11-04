@@ -128,6 +128,21 @@ export function BasePage({ id }: { id: number }) {
               ))}
             </select>
           )}
+          {current?.type === "grid" && (
+            <select
+              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+              value={cfg.group ?? ""}
+              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+              data-grid-group
+            >
+              <option value="">分组：无</option>
+              {fields.map((f) => (
+                <option key={f.id} value={f.id}>
+                  按「{f.name}」
+                </option>
+              ))}
+            </select>
+          )}
           {canEdit && current && current.type === "grid" && (
             <>
               <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />
@@ -181,7 +196,7 @@ export function BasePage({ id }: { id: number }) {
           onPickGroup={() => {}}
         />
       ) : (
-        <Grid baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} onMutate={refresh} />
+        <Grid baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} groupBy={cfg.group} onMutate={refresh} />
       )}
     </div>
   );

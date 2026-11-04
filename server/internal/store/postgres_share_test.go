@@ -3,8 +3,8 @@ package store_test
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/server/internal/migrate"

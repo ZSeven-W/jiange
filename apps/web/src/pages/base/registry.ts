@@ -146,6 +146,28 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];
 
+/** Feishu-style preset tag palette: [background, text]. */
+export const PALETTE: [string, string][] = [
+  ["#E1EAFF", "#245BDB"],
+  ["#D9F5D6", "#237B19"],
+  ["#FEEAD2", "#B24D00"],
+  ["#F8DEF8", "#9F2BA6"],
+  ["#F2F3F5", "#646A73"],
+  ["#FFF4C9", "#7A6400"],
+  ["#FBDC8D", "#8C4A00"],
+  ["#FDEBE1", "#A85114"],
+  ["#EFF1F4", "#3B7FBB"],
+  ["#E8F7E8", "#177E17"],
+];
+
+/** (bg, fg) for a select value: explicit palette index, else stable fallback. */
+export function optionColor(f: Field, value: string): [string, string] {
+  const i = (f.options ?? []).indexOf(value);
+  const c = i >= 0 ? f.optionColors?.[i] : undefined;
+  if (c !== undefined && c >= 0 && c < PALETTE.length) return PALETTE[c];
+  return PALETTE[Math.max(0, i) % PALETTE.length];
+}
+
 /** Cell value for display: computed types read from record metadata. */
 export function displayValue(rec: BaseRecord | undefined, f: Field, members: User[]): CellValue {
   switch (f.type) {

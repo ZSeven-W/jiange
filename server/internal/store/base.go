@@ -10,12 +10,14 @@ import (
 
 // Field is a typed column of a base.
 type Field struct {
-	ID       int64    `json:"id"`
-	BaseID   int64    `json:"baseId"`
-	Name     string   `json:"name"`
-	Type     string   `json:"type"`              // see FieldTypes
-	Options  []string `json:"options,omitempty"` // select / multi_select choices
-	Position float64  `json:"position"`
+	ID      int64    `json:"id"`
+	BaseID  int64    `json:"baseId"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`              // see FieldTypes
+	Options []string `json:"options,omitempty"` // select / multi_select choices
+	// OptionColors parallels Options: preset palette index per option (-1 = auto).
+	OptionColors []int   `json:"optionColors,omitempty"`
+	Position     float64 `json:"position"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.

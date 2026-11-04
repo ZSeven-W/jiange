@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, REGISTRY } from "./registry";
+import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, REGISTRY } from "./registry";
 
 export const TAG_COLORS = [
   ["#E1EAFF", "#245BDB"],
@@ -11,10 +11,10 @@ export const TAG_COLORS = [
   ["#F2F3F5", "#646A73"],
 ];
 
-export function Tag({ colorIndex, value }: { colorIndex: number; value: string }) {
-  const [bg, fg] = TAG_COLORS[Math.max(0, colorIndex) % TAG_COLORS.length];
+export function Tag({ colorIndex, bg, fg, value }: { colorIndex: number; bg?: string; fg?: string; value: string }) {
+  const [b, f] = bg && fg ? [bg, fg] : TAG_COLORS[Math.max(0, colorIndex) % TAG_COLORS.length];
   return (
-    <span className="rounded px-2 py-0.5 text-[12px] font-medium" style={{ background: bg, color: fg }}>
+    <span className="rounded px-2 py-0.5 text-[12px] font-medium" style={{ background: b, color: f }}>
       {value}
     </span>
   );
@@ -49,13 +49,22 @@ export function CellView({
           aria-label={field.name}
         />
       );
-    case "select":
-      if (typeof v === "string" && v !== "") return <Tag colorIndex={(field.options ?? []).indexOf(v)} value={v} />;
+    case "select": {
+      if (typeof v === "string" && v !== "") {
+        const [bg, fg] = optionColor(field, v);
+        return <Tag colorIndex={-2} bg={bg} fg={fg} value={v} />;
+      }
       return null;
+    }
     case "multi_select":
       return (
         <span className="flex flex-wrap gap-1 overflow-hidden">
-          {isStringArray(v) ? v.map((s) => <Tag key={s} colorIndex={(field.options ?? []).indexOf(s)} value={s} />) : null}
+          {isStringArray(v)
+            ? v.map((sv) => {
+                const [bg, fg] = optionColor(field, sv);
+                return <Tag key={sv} colorIndex={-2} bg={bg} fg={fg} value={sv} />;
+              })
+            : null}
         </span>
       );
     case "person":
