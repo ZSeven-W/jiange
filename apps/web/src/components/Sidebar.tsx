@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
-import { NotificationBell } from "@/pages/NotificationBell";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { Logo } from "./brand";
@@ -106,7 +105,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const shown = kw ? (searchQ.data ?? []) : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-sidebar">
+    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-white">
       <div className="relative px-3 pt-3">
         <button onClick={() => setMenu((v) => !v)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover">
           <Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" />
@@ -126,13 +125,10 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             </button>
           </div>
         )}
-        <div className="mt-2 flex items-center gap-1.5">
-          <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border bg-white px-2.5 text-[13px] text-subtle focus-within:border-primary">
-            <SearchIcon />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" data-search />
-          </label>
-          <NotificationBell onOpenDoc={(id) => go(`#/doc/${id}`)} />
-        </div>
+        <label className="mt-2 flex h-8 items-center gap-2 rounded-md bg-hover px-2.5 text-[13px] text-subtle focus-within:bg-[#eceef0]">
+          <SearchIcon />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" data-search />
+        </label>
       </div>
       <nav className="mt-3 space-y-0.5 px-3">
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
@@ -140,11 +136,16 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
-      <div className="mt-5 flex items-center justify-between px-5 text-xs text-subtle">
+      <div className="group mt-5 flex items-center justify-between px-5 text-xs text-subtle">
         <span>文档</span>
-        <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground">
-          +
-        </button>
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button title="新建多维表格" onClick={async () => { const b = await baseApi.create(); qc.invalidateQueries({ queryKey: ["docs"] }); go(`#/base/${b.id}`); }} className="grid size-5 place-items-center rounded text-[13px] hover:bg-hover hover:text-foreground" data-new-base>
+            ▦
+          </button>
+          <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded text-[14px] hover:bg-hover hover:text-foreground" data-new-doc>
+            +
+          </button>
+        </span>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
         {kw.trim()
@@ -163,23 +164,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         )}
       </div>
       <div className="border-t px-3 py-2">
-        <div className="flex gap-1">
-          <button onClick={() => create.mutate(null)} className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-hover text-[13px] font-medium text-foreground hover:bg-accent" data-new-doc>
-            <span className="text-[15px] leading-none">+</span> 文档
-          </button>
-          <button
-            onClick={async () => {
-              const b = await baseApi.create();
-              qc.invalidateQueries({ queryKey: ["docs"] });
-              go(`#/base/${b.id}`);
-            }}
-            className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md bg-hover text-[13px] font-medium text-foreground hover:bg-accent"
-            data-new-base
-          >
-            <span className="text-[15px] leading-none">+</span> 多维表格
-          </button>
-        </div>
-        <div className="mt-2 flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
+        <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
           <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{me.user.name}</span>
           <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>

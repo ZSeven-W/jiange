@@ -85,18 +85,19 @@ export function BasePage({ id }: { id: number }) {
       <header className="flex h-[52px] shrink-0 items-center border-b px-5 text-[16px] font-semibold">
         <BaseTitle id={id} title={base.title || "未命名多维表格"} onRenamed={refresh} />
       </header>
-      <div className="flex h-11 shrink-0 items-center gap-1 border-b px-5 text-[13px]">
+      {/* 第一行：视图 tabs */}
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b px-4 text-[13px]">
         {views.map((v) => (
           <button
             key={v.id}
-            className={`group/view flex items-center gap-1 rounded-md px-2.5 py-1 ${v.id === current?.id ? "bg-accent font-medium text-primary" : "text-muted-foreground hover:bg-hover hover:text-foreground"}`}
+            className={`group/view flex items-center gap-1 rounded-t-md border-b-2 px-3 py-1.5 ${v.id === current?.id ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:bg-hover hover:text-foreground"}`}
             onClick={() => setViewId(v.id)}
             data-view-tab={v.type}
           >
-            {v.type === "kanban" ? "▤" : "▦"} {v.name}
+            {v.type === "kanban" ? "▤" : v.type === "gallery" ? "🖼" : v.type === "calendar" ? "📅" : v.type === "form" ? "📝" : "▦"} {v.name}
             {views.length > 1 && canEdit && (
               <span
-                className="hidden rounded p-0.5 text-[11px] text-subtle hover:bg-accent group-hover/view:inline hover:text-destructive"
+                className="hidden rounded p-0.5 text-[11px] text-subtle hover:text-destructive group-hover/view:inline"
                 title="删除视图"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -112,74 +113,22 @@ export function BasePage({ id }: { id: number }) {
           </button>
         ))}
         {canEdit && (
-          <span className="flex">
-            <button className="rounded px-1.5 text-subtle hover:bg-hover hover:text-foreground" title="新建表格视图" onClick={() => newView("grid")}>
-              +
-            </button>
-          </span>
+          <button className="rounded px-1.5 text-subtle hover:bg-hover hover:text-foreground" title="新建视图" onClick={() => newView("grid")}>
+            +
+          </button>
         )}
-        <div className="ml-3 flex flex-1 items-center gap-3 text-muted-foreground">
-          {canEdit && current && current.type === "kanban" && (
-            <select
-              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
-              value={cfg.group ?? ""}
-              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              data-group-field
-            >
-              <option value="">选择分组字段</option>
-              {fields.filter((f) => f.type === "select").map((f) => (
-                <option key={f.id} value={f.id}>
-                  按「{f.name}」分组
-                </option>
-              ))}
-            </select>
-          )}
-          {current?.type === "calendar" && (
-            <select
-              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
-              value={cfg.group ?? ""}
-              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              data-calendar-field
-            >
-              <option value="">选择日期字段</option>
-              {fields.filter((f) => f.type === "date").map((f) => (
-                <option key={f.id} value={f.id}>
-                  按「{f.name}」排布
-                </option>
-              ))}
-            </select>
-          )}
-          {base.role === "manage" && current && (
-            <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground" title="锁定后，协作成员只能看到此视图过滤后的行，隐藏字段对其剔除且不可写" data-lock-toggle>
-              <input
-                type="checkbox"
-                className="accent-primary"
-                checked={!!cfg.locked}
-                onChange={(e) => setCfg({ ...cfg, locked: e.target.checked || undefined })}
-              />
-              🔒 权限视图
-            </label>
-          )}
-          {current?.type === "grid" && (
-            <select
-              className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
-              value={cfg.group ?? ""}
-              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              data-grid-group
-            >
-              <option value="">分组：无</option>
-              {fields.map((f) => (
-                <option key={f.id} value={f.id}>
-                  按「{f.name}」
-                </option>
-              ))}
-            </select>
-          )}
-          {canEdit && current && current.type === "grid" && (
+        <div className="ml-auto flex items-center gap-3 text-muted-foreground">
+          {canEdit && current && (
             <>
-              <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />
-              <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
-              <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />
+              <label className="flex cursor-pointer items-center gap-1.5 hover:text-foreground" title="锁定后，协作成员只能看到此视图过滤后的行，隐藏字段对其剔除且不可写" data-lock-toggle>
+                <input
+                  type="checkbox"
+                  className="accent-primary"
+                  checked={!!cfg.locked}
+                  onChange={(e) => setCfg({ ...cfg, locked: e.target.checked || undefined })}
+                />
+                🔒 权限视图
+              </label>
               {dirty && (
                 <button className="rounded-md bg-primary px-2.5 py-1 font-medium text-white hover:opacity-90" onClick={save} data-save-view>
                   保存视图
@@ -187,34 +136,89 @@ export function BasePage({ id }: { id: number }) {
               )}
             </>
           )}
-          {canEdit && (
-            <label className="cursor-pointer text-muted-foreground hover:text-foreground" data-import-csv>
-              导入 CSV
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!f) return;
-                  const csv = await f.text();
-                  const res = await baseApi.importCSV(id, csv).catch(() => null);
-                  if (res) {
-                    alert(`导入 ${res.imported} 行${res.errors.length ? `，失败 ${res.errors.length} 行：\n` + res.errors.slice(0, 5).map((x) => `第${x.row}行 ${x.err}`).join("\n") : ""}`);
-                  }
-                  refresh();
-                }}
-              />
-            </label>
-          )}
-          <a href={`/api/bases/${id}/export`} className="text-muted-foreground hover:text-foreground" data-export-csv>
-            导出 CSV
-          </a>
-          <span className="ml-auto text-subtle">
-            {records.length === source.length ? `${records.length} 条记录` : `${records.length} / ${source.length} 条记录`}
-          </span>
         </div>
+      </div>
+      {/* 第二行：工具栏 */}
+      <div className="flex h-11 shrink-0 items-center gap-2 whitespace-nowrap border-b px-4 text-[13px]">
+        {current?.type === "grid" && (
+          <select
+            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            value={cfg.group ?? ""}
+            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+            data-grid-group
+          >
+            <option value="">分组：无</option>
+            {fields.map((f) => (
+              <option key={f.id} value={f.id}>
+                按「{f.name}」
+              </option>
+            ))}
+          </select>
+        )}
+        {canEdit && current?.type === "grid" && (
+          <>
+            <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />
+            <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
+            <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />
+          </>
+        )}
+        {current?.type === "kanban" && (
+          <select
+            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            value={cfg.group ?? ""}
+            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+            data-group-field
+          >
+            <option value="">选择分组字段</option>
+            {fields.filter((f) => f.type === "select").map((f) => (
+              <option key={f.id} value={f.id}>
+                按「{f.name}」分组
+              </option>
+            ))}
+          </select>
+        )}
+        {current?.type === "calendar" && (
+          <select
+            className="h-7 rounded-md border bg-white px-2 text-muted-foreground"
+            value={cfg.group ?? ""}
+            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+            data-calendar-field
+          >
+            <option value="">选择日期字段</option>
+            {fields.filter((f) => f.type === "date").map((f) => (
+              <option key={f.id} value={f.id}>
+                按「{f.name}」排布
+              </option>
+            ))}
+          </select>
+        )}
+        {canEdit && current?.type === "grid" && (
+          <label className="cursor-pointer text-muted-foreground hover:text-foreground" data-import-csv>
+            导入 CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                const csv = await f.text();
+                const res = await baseApi.importCSV(id, csv).catch(() => null);
+                if (res) {
+                  alert(`导入 ${res.imported} 行${res.errors.length ? `，失败 ${res.errors.length} 行：\n` + res.errors.slice(0, 5).map((x) => `第${x.row}行 ${x.err}`).join("\n") : ""}`);
+                }
+                refresh();
+              }}
+            />
+          </label>
+        )}
+        <a href={`/api/bases/${id}/export`} className="text-muted-foreground hover:text-foreground" data-export-csv>
+          导出 CSV
+        </a>
+        <span className="ml-auto text-subtle">
+          {records.length === source.length ? `${records.length} 条记录` : `${records.length} / ${source.length} 条记录`}
+        </span>
       </div>
       {current?.type === "gallery" && (
         <Gallery
