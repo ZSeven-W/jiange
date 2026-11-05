@@ -36,6 +36,8 @@ import { askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
 import { MathView } from "./MathView";
+import { DiagramView } from "./DiagramView";
+import { askArea } from "@/components/ui/ask";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -201,6 +203,28 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
       um.seal();
     },
     [sync.client, run, um, onMathSource],
+  );
+
+  /** 流程图块：双击弹多行编辑框改写 Mermaid 源码。 */
+  const editDiagramSource = useCallback(
+    async (blockKey: string) => {
+      const d = sync.client.doc;
+      if (!d) return;
+      const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
+      if (!d.hasBlock(b)) return;
+      const src0 = d.text(b);
+      const src = await askArea("流程图（Mermaid）", undefined, src0);
+      if (src === null) return;
+      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+      run((tx) => {
+        const vis = tx.doc.visibleIds(b);
+        if (vis.length) tx.delete(b, 0, vis.length);
+        if (src.trim()) tx.insert(b, 0, src.trim());
+        return { b, o: src.trim().length };
+      });
+      um.seal();
+    },
+    [sync.client, run, um],
   );
 
   /** 在块 b 之后插入空段落并把光标移进去（飞书式 + 按钮）。 */
@@ -552,6 +576,19 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
       um.seal();
       return;
     }
+    if (it.id === "diagram") {
+      const src = await askArea("流程图（Mermaid）", "graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[处理]\n  B -->|否| D[结束]");
+      if (!src || !src.trim()) return;
+      run((tx) => {
+        const vis = tx.doc.visibleIds(m.at.b);
+        if (vis.length) tx.delete(m.at.b, 0, vis.length);
+        tx.setProp(m.at.b, "type", "diagram");
+        tx.insert(m.at.b, 0, src.trim());
+        return { b: m.at.b, o: src.trim().length };
+      });
+      um.seal();
+      return;
+    }
     if (it.id === "video" || it.id === "bookmark") {
       const url = await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
       if (!url) return;
@@ -847,6 +884,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                 onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
                 onPreviewImage={onPreviewImage}
                 onMathSource={editMathSource}
+                onDiagramSource={editDiagramSource}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   return { id: idKey(ch), type: ci.type, props: ci.props, spans: doc.richChars(ch) };
@@ -1005,6 +1043,7 @@ interface BlockProps {
   onPreviewImage?: (src: string, alt: string) => void;
   /** 公式块：请求编辑源码 */
   onMathSource?: (blockKey: string) => void;
+  onDiagramSource?: (blockKey: string) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -1017,7 +1056,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, onMathSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -1086,7 +1125,17 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           ⋮⋮
         </span>
       </span>
-      {type === "math" ? (
+      {type === "diagram" ? (
+        <div
+          contentEditable={false}
+          className={cn("my-2 select-none overflow-x-auto rounded-lg bg-surface py-3", onDiagramSource && "cursor-pointer hover:bg-hover")}
+          onDoubleClick={() => onDiagramSource?.(id)}
+          data-diagram
+          title="双击编辑流程图"
+        >
+          {spans.length ? <DiagramView src={spans.map((c) => c.ch).join("")} /> : <span className="text-[13px] text-subtle">空流程图——双击输入 Mermaid</span>}
+        </div>
+      ) : type === "math" ? (
         <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
       ) : type === "columns" ? (
         <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>

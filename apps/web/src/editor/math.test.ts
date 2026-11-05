@@ -79,3 +79,23 @@ describe("markdown $$ round-trip", () => {
     expect(out).toContain("$$x^2+y^2=z^2$$");
   });
 });
+
+import { parseMath as _pm } from "./math";
+
+describe("mermaid markdown round-trip", () => {
+  it("```mermaid fence ↔ diagram block", () => {
+    const md = '```mermaid\ngraph TD\n  A --> B\n```\n';
+    const blocks = parseMarkdown(md);
+    expect(blocks[0].type).toBe("diagram");
+    expect(blocks[0].text).toBe("graph TD\n  A --> B");
+    const out = toMarkdown(blocks);
+    expect(out).toContain("```mermaid");
+    expect(toMarkdown(parseMarkdown(out))).toBe(out); // idempotent
+  });
+  it("plain code fence stays code", () => {
+    const blocks = parseMarkdown('```go\nfmt.Println(1)\n```\n');
+    expect(blocks[0].type).toBe("code");
+  });
+});
+
+void _pm;
