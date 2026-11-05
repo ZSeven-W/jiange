@@ -146,7 +146,11 @@ export function parseMarkdown(md: string): MdBlock[] {
         i++;
       }
       i++; // closing fence (tolerate EOF)
-      blocks.push({ type: "code", text: body.join("\n"), props: fence[1] ? { lang: fence[1] } : {}, spans: [] });
+      if (fence[1] === "mermaid") {
+        blocks.push({ type: "diagram", text: body.join("\n"), props: {}, spans: [] });
+      } else {
+        blocks.push({ type: "code", text: body.join("\n"), props: fence[1] ? { lang: fence[1] } : {}, spans: [] });
+      }
       continue;
     }
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
@@ -229,6 +233,10 @@ export function toMarkdown(blocks: MdBlock[]): string {
         orderedNo = 0;
         if (b.text.includes("\n")) out.push("$$", b.text, "$$");
         else out.push(`$$${b.text}$$`);
+        break;
+      case "diagram":
+        orderedNo = 0;
+        out.push("```mermaid", b.text, "```");
         break;
       case "divider":
         orderedNo = 0;

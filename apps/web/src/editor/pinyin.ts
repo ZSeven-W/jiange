@@ -54,6 +54,7 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "file", label: "附件", group: "媒体", icon: "附", py: ["fu", "jian"], en: ["file", "attachment"] },
   { id: "callout", label: "高亮块", group: "其他", icon: "亮", py: ["gao", "liang", "kuai"], en: ["callout", "highlight"] },
   { id: "math", label: "公式", group: "其他", icon: "∑", py: ["gong", "shi"], en: ["math", "latex", "formula"] },
+  { id: "diagram", label: "流程图", group: "其他", icon: "图", py: ["liu", "cheng", "tu"], en: ["diagram", "mermaid", "flowchart"] },
   { id: "video", label: "视频", group: "媒体", icon: "视", py: ["shi", "pin"], en: ["video"] },
   { id: "bookmark", label: "网页卡片", group: "媒体", icon: "链", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
   { id: "table", label: "表格", group: "其他", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
