@@ -58,6 +58,8 @@ interface Props {
   readOnly?: boolean;
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
+  /** workspace members offered by the @ menu（@人提及） */
+  people?: { id: number; name: string }[];
   /** stores a file and returns its id; enables image/file blocks */
   upload?: (f: File) => Promise<Uploaded>;
   me: Presence;
@@ -75,6 +77,8 @@ interface Props {
   onPreviewImage?: (src: string, alt: string) => void;
   /** 公式块编辑器（默认 askText；返回 null 表示取消） */
   onMathSource?: (src: string) => Promise<string | null>;
+  /** @人 提及插入（发通知用） */
+  onMentionPerson?: (userId: number, name: string) => void;
 }
 
 /**
@@ -83,7 +87,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource, onMentionPerson }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -489,7 +493,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
     const q = [...doc.text(slash.at.b)].slice(slash.at.o + 1, sel.current.f.o).join("");
     if (slash.kind === "@") {
       const ql = q.toLowerCase();
-      return docs
+      const docItems = docs
         .filter((x) => (x.title || "未命名文档").toLowerCase().includes(ql))
         .slice(0, 8)
         .map((x): MenuItem => ({
@@ -500,6 +504,18 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
           py: [],
           en: [],
         }));
+      const peopleItems = people
+        .filter((m) => m.name !== me.name && m.name.toLowerCase().includes(ql))
+        .slice(0, 5)
+        .map((m): MenuItem => ({
+          id: `user:${m.id}:${encodeURIComponent(m.name)}`,
+          label: m.name,
+          group: "提及成员",
+          icon: "☺",
+          py: [],
+          en: [],
+        }));
+      return [...peopleItems, ...docItems];
     }
     return filterItems(q).filter((it) => upload || (it.id !== "image" && it.id !== "file"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -551,6 +567,20 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
         return { b: m.at.b, o: m.at.o + n + 1 };
       });
       um.seal();
+      return;
+    }
+    if (it.id.startsWith("user:")) {
+      const rest = it.id.slice(5);
+      const uid = Number(rest.split(":")[0]);
+      const name = decodeURIComponent(rest.split(":").slice(1).join(":"));
+      run((tx, s) => {
+        tx.delete(m.at.b, m.at.o, s.f.o);
+        const n = tx.insert(m.at.b, m.at.o, `@${name} `);
+        tx.format(m.at.b, m.at.o, m.at.o + n - 1, "mention", String(uid));
+        return { b: m.at.b, o: m.at.o + n };
+      });
+      um.seal();
+      onMentionPerson?.(uid, name);
       return;
     }
     if (it.id === "image" || it.id === "file") {
@@ -952,7 +982,19 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
           y={toolbar.y}
           marks={tb}
           blockType={curType}
-          onMark={(key, value) => run((tx, s) => toggleMark(tx, s, key, value))}
+          onMark={(key, value) =>
+            run((tx, s) => {
+              if (value === "") {
+                // 清除型 mark（颜色/高亮）：直接 format null
+                const { start, end, blocks } = normalize(tx.doc, s);
+                for (const b of blocks) {
+                  const from = eqId(b, start.b) ? start.o : 0;
+                  const to = eqId(b, end.b) ? end.o : len(tx.doc, b);
+                  tx.format(b, from, to, key, null);
+                }
+              } else toggleMark(tx, s, key, value);
+            })
+          }
           onLink={(url) => run((tx, s) => toggleMark(tx, s, "link", url))}
           onType={(t) => run((tx, s) => setBlockType(tx, s, t))}
           onComment={onComment ? () => {
@@ -1424,9 +1466,11 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]",
     marks.link && "cursor-pointer text-primary underline-offset-2 hover:underline",
   );
+  const style = marks.color || marks.bg ? { color: marks.color || undefined, background: marks.bg || undefined } : undefined;
   if (marks.link?.startsWith("#/doc/"))
     return (
       <a
+        style={style}
         href={marks.link}
         data-mention
         className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF]")}
@@ -1438,13 +1482,25 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         {text}
       </a>
     );
+  if (marks.mention)
+    return (
+      <span className="rounded bg-accent px-0.5 font-medium not-italic text-primary" title={`@成员 #${marks.mention}`}>
+        {text}
+      </span>
+    );
+  if (marks.math)
+    return (
+      <span className="mx-0.5 not-italic" title={`$${marks.math}$`}>
+        <MathView src={marks.math} />
+      </span>
+    );
   if (marks.link)
     return (
-      <a href={marks.link} className={cls} onClick={(e) => (e.metaKey || e.ctrlKey ? window.open(marks.link, "_blank", "noopener") : e.preventDefault())}>
+      <a style={style} href={marks.link} className={cls} onClick={(e) => (e.metaKey || e.ctrlKey ? window.open(marks.link, "_blank", "noopener") : e.preventDefault())}>
         {text}
       </a>
     );
-  return Object.keys(marks).length ? <span className={cls}>{text}</span> : <>{text}</>;
+  return Object.keys(marks).length ? <span className={cls} style={style}>{text}</span> : <>{text}</>;
 }
 
 function fmtSize(n: number) {

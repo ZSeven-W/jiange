@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Link2 } from "lucide-react";
+import { Baseline, Highlighter, Link2 } from "lucide-react";
 
 const TYPES: [string, string][] = [["paragraph", "正文"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS: [string, string, string][] = [["bold", "B", "font-bold"], ["italic", "I", "italic font-serif"], ["underline", "U", "underline"], ["strike", "S", "line-through"], ["code", "</>", "font-mono text-[12px]"]];
+
+/** 飞书风格文本色板：文字色（上排）与背景高亮（下排同色浅版）。 */
+const PALETTE = ["#212121", "#F54A45", "#FF8800", "#FFC60A", "#00B42A", "#3370FF", "#7B61FF", "#E63995"];
 
 export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, onComment }: {
   x: number; y: number; marks: Record<string, string>; blockType: string;
   onMark: (key: string, value?: string) => void; onLink: (url: string) => void; onType: (t: string) => void;
   onComment?: () => void;
 }) {
+  const [palette, setPalette] = useState<"color" | "bg" | null>(null);
   const [menu, setMenu] = useState(false);
   const [link, setLink] = useState<string | null>(null);
   const label = TYPES.find(([t]) => t === blockType)?.[1] ?? "正文";
@@ -50,6 +54,58 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
           <button title="链接" onClick={() => (marks.link ? onMark("link", marks.link) : setLink(""))} className={cn("grid h-7 min-w-7 place-items-center rounded px-1.5 text-[13px] hover:bg-hover", marks.link && "bg-accent text-primary")}>
             <Link2 size={14} strokeWidth={1.7} />
           </button>
+          <span className="relative flex">
+            <button
+              title="文字颜色"
+              onClick={() => setPalette((p) => (p === "color" ? null : "color"))}
+              className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.color && "bg-accent")}
+              data-color-btn
+            >
+              <Baseline size={14} strokeWidth={1.7} />
+              <span className="h-[3px] w-3.5 rounded-sm" style={{ background: marks.color ?? "#3370FF" }} />
+            </button>
+            <button
+              title="背景高亮"
+              onClick={() => setPalette((p) => (p === "bg" ? null : "bg"))}
+              className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.bg && "bg-accent")}
+              data-bg-btn
+            >
+              <Highlighter size={14} strokeWidth={1.7} />
+            </button>
+            {palette && (
+              <div className="absolute left-0 top-9 z-40 w-[184px] rounded-lg border bg-surface p-2 shadow-lg" data-color-pop>
+                <div className="mb-1 px-1 text-[11px] text-subtle">{palette === "color" ? "文字颜色" : "背景高亮"}</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      className={cn("grid h-7 place-items-center rounded hover:ring-1 hover:ring-primary", marks[palette] === c && "ring-2 ring-primary")}
+                      style={{ background: palette === "bg" ? `${c}33` : undefined }}
+                      onClick={() => {
+                        onMark(palette, marks[palette] === c ? undefined : c);
+                        setPalette(null);
+                      }}
+                      title={c}
+                    >
+                      <span style={{ color: c }} className="text-[13px] font-medium">
+                        A
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="mt-1.5 block w-full rounded px-2 py-1 text-left text-[12px] text-muted-foreground hover:bg-hover"
+                  onClick={() => {
+                    onMark(palette, ""); // 空串 = 清除
+                    setPalette(null);
+                  }}
+                  data-clear-color
+                >
+                  清除{palette === "color" ? "文字颜色" : "背景高亮"}
+                </button>
+              </div>
+            )}
+          </span>
         </>
       )}
       {onComment && (

@@ -12,7 +12,7 @@ export interface Sel {
 
 export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
 export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns"]);
-export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link"] as const;
+export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link", "color", "bg", "math"] as const;
 
 /** Body blocks in document order (the title block is edited separately). */
 export function bodyBlocks(doc: Doc): OpId[] {
@@ -168,11 +168,12 @@ export function markdownShortcut(tx: Tx, pos: Pos, typed: string): Pos | null {
     return { b: nb, o: 0 };
   }
   if (info.type === "code") return null;
-  for (const [re, key, w] of [
+  for (const [re, key, w, useSource] of [
     [/\*\*([^*]+)\*\*$/, "bold", 2],
     [/~~([^~]+)~~$/, "strike", 2],
     [/`([^`]+)`$/, "code", 1],
     [/(?:^|[^*])\*([^*]+)\*$/, "italic", 1],
+    [/\$([^$]+)\$$/, "math", 1, true],
   ] as const) {
     const m = re.exec(before);
     if (!m || !before.endsWith(typed)) continue;
@@ -181,7 +182,7 @@ export function markdownShortcut(tx: Tx, pos: Pos, typed: string): Pos | null {
     const s = end - w - inner - w;
     tx.delete(pos.b, end - w, end);
     tx.delete(pos.b, s, s + w);
-    tx.format(pos.b, s, s + inner, key, "true");
+    tx.format(pos.b, s, s + inner, key, useSource ? m[1] : "true");
     return { b: pos.b, o: s + inner };
   }
   return null;
