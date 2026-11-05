@@ -1232,19 +1232,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           />
         </figure>
       ) : type === "video" ? (
-        <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
-          {/^https?:\/\/.+/.test(props.url ?? "") && (props.url ?? "").match(/\.(mp4|webm|mov)(\?|$)/i) ? (
-            <video src={props.url} controls className="aspect-video w-full bg-black" />
-          ) : (
-            <a href={props.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3.5 py-3 hover:bg-hover">
-              <span className="grid size-8 place-items-center rounded-md bg-[#E1EAFF] text-primary"><Play size={14} strokeWidth={1.7} /></span>
-              <span className="min-w-0">
-                <span className="block truncate text-[14px] font-medium">{props.name || props.url}</span>
-                <span className="block truncate text-[12px] text-subtle">{props.url}</span>
-              </span>
-            </a>
-          )}
-        </div>
+        <VideoBlock url={props.url} name={props.name} />
       ) : type === "bookmark" ? (
         <a
           contentEditable={false}
@@ -1519,6 +1507,30 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
       title="双击编辑公式"
     >
       {src ? <MathView src={src} /> : <span className="not-italic text-subtle">空公式——点击输入 LaTeX</span>}
+    </div>
+  );
+}
+
+
+/** 视频块：mp4/webm 源用原生播放器；源失效（404/格式不支持）自动回退链接卡片。 */
+function VideoBlock({ url, name }: { url?: string; name?: string }) {
+  const [failed, setFailed] = useState(false);
+  const native = !failed && /^https?:\/\/.+/.test(url ?? "") && (url ?? "").match(/\.(mp4|webm|mov)(\?|$)/i);
+  return (
+    <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
+      {native ? (
+        <video src={url} controls className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
+      ) : (
+        <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3.5 py-3 no-underline hover:bg-hover">
+          <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-primary">
+            <Play size={14} strokeWidth={1.7} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[14px] font-medium text-foreground">{name || url || "视频链接"}</span>
+            <span className="block truncate text-[12px] text-subtle">{url}</span>
+          </span>
+        </a>
+      )}
     </div>
   );
 }
