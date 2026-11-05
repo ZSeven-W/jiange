@@ -35,6 +35,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
+import { MathView } from "./MathView";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -70,6 +71,8 @@ interface Props {
   onCopyBlock?: boolean;
   /** 点击图片 → 大图预览 */
   onPreviewImage?: (src: string, alt: string) => void;
+  /** 公式块编辑器（默认 askText；返回 null 表示取消） */
+  onMathSource?: (src: string) => Promise<string | null>;
 }
 
 /**
@@ -78,7 +81,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage }: Props) {
+export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -175,6 +178,29 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
       publish();
     },
     [sync.client, um, publish],
+  );
+
+  /** 公式块：弹编辑框改写源码。 */
+  const editMathSource = useCallback(
+    async (blockKey: string) => {
+      const d = sync.client.doc;
+      if (!d) return;
+      const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
+      if (!d.hasBlock(b)) return;
+      const src0 = d.text(b);
+      const askFn = onMathSource ?? ((s0: string) => askText("公式（LaTeX）", "x^2+y^2=z^2", s0));
+      const src = await askFn(src0);
+      if (src === null) return;
+      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } }; // run() 需要选区
+      run((tx) => {
+        const vis = tx.doc.visibleIds(b);
+        if (vis.length) tx.delete(b, 0, vis.length);
+        if (src) tx.insert(b, 0, src);
+        return { b, o: src.length };
+      });
+      um.seal();
+    },
+    [sync.client, run, um, onMathSource],
   );
 
   /** 在块 b 之后插入空段落并把光标移进去（飞书式 + 按钮）。 */
@@ -513,6 +539,19 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
       }
       return;
     }
+    if (it.id === "math") {
+      const src = await askText("公式（LaTeX）", "例如 \\frac{a}{b} 或 x^2 + y^2 = z^2");
+      if (!src || !src.trim()) return;
+      run((tx) => {
+        const vis = tx.doc.visibleIds(m.at.b);
+        if (vis.length) tx.delete(m.at.b, 0, vis.length);
+        tx.setProp(m.at.b, "type", "math");
+        tx.insert(m.at.b, 0, src.trim());
+        return { b: m.at.b, o: src.trim().length };
+      });
+      um.seal();
+      return;
+    }
     if (it.id === "video" || it.id === "bookmark") {
       const url = await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
       if (!url) return;
@@ -807,6 +846,7 @@ export function Editor({ sync, me, readOnly, docs = [], upload, comments = [], a
                 }}
                 onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
                 onPreviewImage={onPreviewImage}
+                onMathSource={editMathSource}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   return { id: idKey(ch), type: ci.type, props: ci.props, spans: doc.richChars(ch) };
@@ -963,6 +1003,8 @@ interface BlockProps {
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   onPreviewImage?: (src: string, alt: string) => void;
+  /** 公式块：请求编辑源码 */
+  onMathSource?: (blockKey: string) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -975,7 +1017,7 @@ interface BlockProps {
   onDragEnd: () => void;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, onMathSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -1044,7 +1086,9 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           ⋮⋮
         </span>
       </span>
-      {type === "columns" ? (
+      {type === "math" ? (
+        <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
+      ) : type === "columns" ? (
         <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>
           <div className="flex gap-2">
             {(childBlocks ?? []).map((ch) => (
@@ -1356,4 +1400,20 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
 
 function fmtSize(n: number) {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+}
+
+
+/** 公式块：LaTeX 源码渲染视图，点击编辑源码。 */
+function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
+  return (
+    <div
+      contentEditable={false}
+      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed", onSource && "cursor-text hover:bg-hover")}
+      onClick={onSource}
+      data-math
+      title="点击编辑公式"
+    >
+      {src ? <MathView src={src} /> : <span className="not-italic text-subtle">空公式——点击输入 LaTeX</span>}
+    </div>
+  );
 }

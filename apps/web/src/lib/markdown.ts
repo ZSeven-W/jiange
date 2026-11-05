@@ -117,6 +117,25 @@ export function parseMarkdown(md: string): MdBlock[] {
       i++;
       continue;
     }
+    // 块级公式 $$...$$（单行或多行到闭合 $$）
+    if (line.trim() === "$$" || line.trim().startsWith("$$")) {
+      const single = line.match(/^\$\$(.+)\$\$$/);
+      if (single) {
+        blocks.push({ type: "math", text: single[1].trim(), props: {}, spans: [] });
+        i++;
+        continue;
+      }
+      const body: string[] = [];
+      if (line.trim().length > 2) body.push(line.trim().slice(2));
+      i++;
+      while (i < lines.length && lines[i].trim() !== "$$") {
+        body.push(lines[i]);
+        i++;
+      }
+      i++; // closing $$
+      blocks.push({ type: "math", text: body.join("\n").trim(), props: {}, spans: [] });
+      continue;
+    }
     // fenced code
     const fence = line.match(/^```(\w*)/);
     if (fence) {
@@ -205,6 +224,11 @@ export function toMarkdown(blocks: MdBlock[]): string {
       case "code":
         orderedNo = 0;
         out.push("```" + (b.props.lang ?? ""), b.text, "```");
+        break;
+      case "math":
+        orderedNo = 0;
+        if (b.text.includes("\n")) out.push("$$", b.text, "$$");
+        else out.push(`$$${b.text}$$`);
         break;
       case "divider":
         orderedNo = 0;
