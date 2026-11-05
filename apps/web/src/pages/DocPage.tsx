@@ -79,6 +79,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
+  const members = useQuery({ queryKey: ["docmembers", id], queryFn: () => commentsApi.members(id) });
   const readOnly = meta.data?.role === "view";
 
   useEffect(() => {
@@ -166,6 +167,16 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setCommentsOpen(true);
                 }}
                 onPreviewImage={(src, alt) => setPreview({ src, alt })}
+                people={(members.data ?? []).map((m) => ({ id: m.id, name: m.name }))}
+                onMentionPerson={(uid, name) => {
+                  // 文档内 @人 → 通知中心（mention）
+                  fetch("/api/docs/" + id + "/comments", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "same-origin",
+                    body: JSON.stringify({ body: `@${name} 在正文中被提及`, block: "", startChar: "", endChar: "", quote: "", mentions: [uid] }),
+                  }).catch(() => {});
+                }}
               />
             </div>
           <div className="pb-6 text-center text-[12px] text-subtle" data-word-count>
