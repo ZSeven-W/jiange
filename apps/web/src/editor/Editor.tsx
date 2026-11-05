@@ -1408,10 +1408,10 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
   return (
     <div
       contentEditable={false}
-      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed", onSource && "cursor-text hover:bg-hover")}
-      onClick={onSource}
+      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed", onSource && "cursor-pointer hover:bg-hover")}
+      onDoubleClick={onSource}
       data-math
-      title="点击编辑公式"
+      title="双击编辑公式"
     >
       {src ? <MathView src={src} /> : <span className="not-italic text-subtle">空公式——点击输入 LaTeX</span>}
     </div>
