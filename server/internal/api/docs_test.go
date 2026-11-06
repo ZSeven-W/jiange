@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -19,6 +20,18 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
+
+// Memory's GetDoc currently omits workspaceName while Postgres populates it.
+// This wrapper also verifies that PATCH preserves a caller-scoped workspace.
+type workspaceMetadataStore struct{ *store.Memory }
+
+func (s *workspaceMetadataStore) GetDoc(ctx context.Context, uid, id int64) (store.DocMeta, error) {
+	d, err := s.Memory.GetDoc(ctx, uid, id)
+	if err == nil {
+		d.WorkspaceName = "Owner 的空间"
+	}
+	return d, err
+}
 
 func TestDocsAndSyncEndpoint(t *testing.T) {
 	st := store.NewMemory()
@@ -124,5 +137,92 @@ func TestTrashAndMove(t *testing.T) {
 	_ = json.NewDecoder(res.Body).Decode(&list)
 	if len(list.Docs) != 2 {
 		t.Fatalf("restore: %+v", list.Docs)
+	}
+}
+
+func TestPatchDocReturnsEffectiveMetadataAndChecksWholeRequest(t *testing.T) {
+	st := &workspaceMetadataStore{store.NewMemory()}
+	ts, owner := newTestServer(t, st, nil)
+	jar, _ := cookiejar.New(nil)
+	editor := &http.Client{Jar: jar}
+	post(t, owner, ts.URL+"/api/auth/register", map[string]string{"email": "owner@metadata.test", "name": "Owner", "password": "password123"})
+	post(t, editor, ts.URL+"/api/auth/register", map[string]string{"email": "editor@metadata.test", "name": "Editor", "password": "password123"})
+	var parent, child store.DocMeta
+	_ = json.NewDecoder(post(t, owner, ts.URL+"/api/docs", map[string]string{"title": "Parent"}).Body).Decode(&parent)
+	_ = json.NewDecoder(post(t, owner, ts.URL+"/api/docs", map[string]any{"title": "Before", "parentId": parent.ID}).Body).Decode(&child)
+	url := ts.URL + "/api/docs/" + strconv.FormatInt(child.ID, 10)
+	if res := send(t, owner, "PUT", url+"/shares", map[string]string{"email": "editor@metadata.test", "role": "edit"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("share: %d", res.StatusCode)
+	}
+	read := func(c *http.Client) store.DocMeta {
+		t.Helper()
+		res, err := c.Get(url)
+		if err != nil || res.StatusCode != http.StatusOK {
+			t.Fatalf("GET: %v %v", res, err)
+		}
+		defer res.Body.Close()
+		var d store.DocMeta
+		if err := json.NewDecoder(res.Body).Decode(&d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	before := read(editor)
+	res := send(t, editor, "PATCH", url, map[string]any{"title": "Edited"})
+	var edited store.DocMeta
+	if err := json.NewDecoder(res.Body).Decode(&edited); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || edited.Title != "Edited" || edited.Role != store.RoleEdit || edited.WorkspaceName == "" || edited.WorkspaceName != before.WorkspaceName {
+		t.Fatalf("editor response lost metadata: %d %+v (before %+v)", res.StatusCode, edited, before)
+	}
+	for _, input := range []map[string]any{
+		{"title": "must not persist", "copyProtected": true},
+		{"title": "must not persist", "move": true, "parentId": nil},
+	} {
+		res = send(t, editor, "PATCH", url, input)
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("editor mixed patch: %d", res.StatusCode)
+		}
+		if got := read(owner); got.Title != "Edited" || got.CopyProtected || got.ParentID == nil || *got.ParentID != parent.ID {
+			t.Fatalf("rejected request changed document: %+v", got)
+		}
+	}
+	res = send(t, owner, "PATCH", url, map[string]any{"title": "invalid", "copyProtected": true, "move": true, "parentId": 999999})
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid parent: %d", res.StatusCode)
+	}
+	if got := read(owner); got.Title != "Edited" || got.CopyProtected || got.ParentID == nil || *got.ParentID != parent.ID {
+		t.Fatalf("invalid move changed document: %+v", got)
+	}
+	parentURL := ts.URL + "/api/docs/" + strconv.FormatInt(parent.ID, 10)
+	res = send(t, owner, "PATCH", parentURL, map[string]any{"title": "invalid", "copyProtected": true, "move": true, "parentId": child.ID})
+	res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("cycle: %d", res.StatusCode)
+	}
+	res, err := owner.Get(parentURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unchanged store.DocMeta
+	if err := json.NewDecoder(res.Body).Decode(&unchanged); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if unchanged.Title != "Parent" || unchanged.CopyProtected || unchanged.ParentID != nil {
+		t.Fatalf("rejected cycle changed document: %+v", unchanged)
+	}
+	res = send(t, owner, "PATCH", url, map[string]any{"title": "Managed", "copyProtected": true, "move": true, "parentId": nil})
+	var managed store.DocMeta
+	if err := json.NewDecoder(res.Body).Decode(&managed); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || managed.Title != "Managed" || managed.Role != store.RoleManage || managed.WorkspaceName == "" || !managed.CopyProtected || managed.ParentID != nil {
+		t.Fatalf("manager mixed patch: %d %+v", res.StatusCode, managed)
 	}
 }

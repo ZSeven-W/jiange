@@ -3,6 +3,7 @@ package syncsrv
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -17,12 +18,15 @@ const (
 )
 
 type conn struct {
-	hub      *Hub
-	ws       *websocket.Conn
-	user     store.User
-	readOnly bool
-	out      chan []byte
-	cancel   context.CancelFunc
+	hub    *Hub
+	ws     *websocket.Conn
+	user   store.User
+	out    chan []byte
+	cancel context.CancelFunc
+	docID  atomic.Int64 // set before join queues the first document frame
+	// authenticate revalidates the session that originally opened this
+	// connection. Test-only callers may leave it nil when not using sessions.
+	authenticate func(context.Context) error
 
 	// guarded by room.mu once joined
 	room     *room
@@ -60,7 +64,13 @@ func (c *conn) writeLoop(stop, ctx context.Context) {
 			return
 		case b := <-c.out:
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := c.ws.Write(wctx, websocket.MessageBinary, b)
+			// Permission can change while a message is waiting in the queue. Check
+			// immediately before sending, including for cross-instance broadcasts.
+			// A storage failure is treated as a denial, never as cached access.
+			_, err := c.currentRole(wctx)
+			if err == nil {
+				err = c.ws.Write(wctx, websocket.MessageBinary, b)
+			}
 			cancel()
 			if err != nil {
 				c.cancel()
@@ -68,7 +78,10 @@ func (c *conn) writeLoop(stop, ctx context.Context) {
 			}
 		case <-ping.C:
 			pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			err := c.ws.Ping(pctx)
+			_, err := c.currentRole(pctx)
+			if err == nil {
+				err = c.ws.Ping(pctx)
+			}
 			cancel()
 			if err != nil {
 				c.cancel()
@@ -110,16 +123,23 @@ func (c *conn) readLoop(ctx context.Context) error {
 			c.room.sendErr(c, "bad_message", err.Error())
 			continue
 		}
+		checkCtx, stopCheck := context.WithTimeout(ctx, 10*time.Second)
+		role, err := c.currentRole(checkCtx)
+		stopCheck()
+		if err != nil {
+			// Stop processing all traffic (including awareness) after revocation.
+			return err
+		}
 		switch m.Type {
 		case collab.MsgOps:
 			ops, err := collab.DecodeOps(m.Batch)
 			if err != nil {
 				c.room.sendErr(c, "bad_ops", err.Error())
-				continue
+				return errors.New("invalid ops batch")
 			}
-			if c.readOnly {
+			if store.RoleRank(role) < store.RoleRank(store.RoleEdit) {
 				c.room.sendErr(c, "read_only", "you can only view this document")
-				continue
+				return errors.New("read-only ops batch")
 			}
 			if !c.mayAuthor(ctx, ops) {
 				c.room.sendErr(c, "forbidden", "ops authored by a replica you don't own")
@@ -143,6 +163,9 @@ func (c *conn) readLoop(ctx context.Context) error {
 }
 
 func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
+	if _, err := c.currentRole(ctx); err != nil {
+		return err
+	}
 	st := c.hub.Store
 	doc := int64(m.DocID)
 	meta, err := st.GetDoc(ctx, c.user.ID, doc)
@@ -153,7 +176,7 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 		c.fail("not_found", "document not found")
 		return err
 	}
-	c.readOnly = meta.Role == store.RoleView
+	c.docID.Store(doc)
 	id := int64(m.ClientID)
 	if id != 0 {
 		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {
@@ -171,12 +194,34 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 	c.owned[c.clientID] = true
 	if m.ClientID != 0 && m.ClientID != c.clientID {
 		// pending ops from the old id may only be resent if that id is ours too
-		if uid, _, err := st.ClientOwner(ctx, int64(m.ClientID)); err == nil && uid == c.user.ID {
+		if uid, oldDoc, err := st.ClientOwner(ctx, int64(m.ClientID)); err == nil && uid == c.user.ID && oldDoc == doc {
 			c.owned[m.ClientID] = true
 		}
 	}
 	c.room = c.hub.room(doc)
 	return c.room.join(ctx, c, int64(m.LastSeq))
+}
+
+// currentRole is checked on every incoming frame and immediately before each
+// outgoing frame. No document has been joined while the first HELLO is read.
+func (c *conn) currentRole(ctx context.Context) (string, error) {
+	if c.authenticate != nil {
+		if err := c.authenticate(ctx); err != nil {
+			return "", err
+		}
+	}
+	id := c.docID.Load()
+	if id == 0 {
+		return "", nil
+	}
+	meta, err := c.hub.Store.GetDoc(ctx, c.user.ID, id)
+	if err != nil {
+		return "", err
+	}
+	if meta.Kind != "doc" || store.RoleRank(meta.Role) < store.RoleRank(store.RoleView) {
+		return "", store.ErrNotFound
+	}
+	return meta.Role, nil
 }
 
 // mayAuthor checks every op is stamped with a replica id issued to this user for this doc.

@@ -28,9 +28,26 @@ export function importMarkdownOps(doc: Doc, md: string) {
       const text = seed.spans.map((s) => s.text).join("");
       const marks = seed.spans.flatMap((s) => Array.from({ length: [...s.text].length }, () => s.marks));
       tx.insert(id, 0, text, marks);
-    } else if (seed.type === "code" && seed.text) {
+    } else if (seed.text) {
       tx.insert(id, 0, seed.text);
     }
+    after = id;
+  }
+  return tx;
+}
+
+/** Append imported blocks without deleting or mutating existing collaborative content. */
+export function appendMarkdownOps(doc: Doc, md: string) {
+  const tx = new Tx(doc);
+  const children = doc.children(ROOT);
+  let after = children.at(-1) ?? null;
+  for (const seed of parseMarkdown(md)) {
+    const id = tx.create(seed.type, after, ROOT, seed.props);
+    if (seed.spans.length && seed.type !== "code") {
+      const text = seed.spans.map((s) => s.text).join("");
+      const marks = seed.spans.flatMap((s) => Array.from({ length: [...s.text].length }, () => s.marks));
+      tx.insert(id, 0, text, marks);
+    } else if (seed.text) tx.insert(id, 0, seed.text);
     after = id;
   }
   return tx;

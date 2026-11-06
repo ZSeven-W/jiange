@@ -13,6 +13,7 @@ import {
   deleteRange,
   joinBackward,
   joinForward,
+  isSourceBlock,
   len,
   LIST_TYPES,
   markdownShortcut,
@@ -38,6 +39,10 @@ import { TodoCheck } from "./menuIcons";
 import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
 import { askArea } from "@/components/ui/ask";
+import { AddIcon } from "@/components/FeishuIcons";
+import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
+import { commentSelection } from "./commentAnchor";
+import { isSearchableBlockType, type FindMatch } from "./findReplace";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -53,9 +58,22 @@ export interface Uploaded {
   size: number;
 }
 
+export interface ExternalUndoOptions {
+  /** Preserve newly created blocks so late remote edits cannot be tombstoned by undo. */
+  preserveCreatedBlocks?: boolean;
+  /** Leave focus in the invoking control instead of focusing the editor. */
+  preserveFocus?: boolean;
+}
+export type ExternalUndoRecorder = (tx: Tx, options?: ExternalUndoOptions) => void;
+
 interface Props {
   sync: SyncDoc;
   readOnly?: boolean;
+  /** Register a transaction from another document control with this editor's undo stack. */
+  onUndoRegistrar?: (record: ExternalUndoRecorder | null) => void;
+  /** Search results are an ephemeral view; they never alter the document. */
+  findMatches?: readonly FindMatch[];
+  activeFindMatch?: FindMatch | null;
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
   /** workspace members offered by the @ menu（@人提及） */
@@ -87,23 +105,62 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource, onMentionPerson }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource, onMentionPerson }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
   const composing = useRef<{ sel: Sel } | null>(null);
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), []);
+  const readOnlyRef = useRef(!!readOnly);
+  readOnlyRef.current = !!readOnly;
+  const commentAllowedRef = useRef(!!onComment);
+  commentAllowedRef.current = !!onComment;
+  const currentClient = useRef(sync.client);
+  currentClient.current = sync.client;
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
+  const recordExternal = useCallback<ExternalUndoRecorder>((tx, options) => {
+    if (readOnlyRef.current || tx.doc !== sync.client.doc || !tx.ops.length) return;
+    // Template/import operations can race with other replicas editing the new
+    // blocks. Undo only our inserted character IDs and retain the blocks, so a
+    // late remote operation cannot be hidden by a block tombstone.
+    const recorded = options?.preserveCreatedBlocks ? new Tx(tx.doc) : tx;
+    if (recorded !== tx) recorded.items = tx.items.filter((item) => item.k === "ins");
+    um.seal();
+    um.record(recorded, sel.current, sel.current);
+    um.seal();
+    if (options?.preserveFocus) return;
+    const active = document.activeElement;
+    requestAnimationFrame(() => {
+      // A template card disappears after insertion. Keep the next undo and
+      // typing action on the editor without stealing a newly chosen focus.
+      if (!readOnlyRef.current && (document.activeElement === document.body || document.activeElement === active)) root.current?.focus();
+    });
+  }, [sync.client, um]);
+  useLayoutEffect(() => {
+    onUndoRegistrar?.(recordExternal);
+    return () => onUndoRegistrar?.(null);
+  }, [onUndoRegistrar, recordExternal]);
   const [, force] = useState(0);
   const [remount, setRemount] = useState<Record<string, number>>({});
   const [slash, setSlash] = useState<{
     at: Pos;
     index: number;
     kind: "/" | "@";
+    fromButton?: boolean;
+    insertAfter?: OpId;
+    buttonQuery?: string;
   } | null>(null);
+  const slashRef = useRef(slash);
+  slashRef.current = slash;
+  const menuComposition = useRef<OpId | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const pendingUpload = useRef<{ b: OpId; kind: string } | null>(null);
+  const pendingUpload = useRef<{ b: OpId; kind: string; replace?: boolean } | null>(null);
   const [toolbar, setToolbar] = useState<{ x: number; y: number } | null>(null);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [touchActiveBlock, setTouchActiveBlock] = useState<string | null>(null);
   const [drag, setDrag] = useState<{
     b: OpId;
     over: OpId | null;
@@ -121,6 +178,30 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   >([]);
   const doc = sync.client.doc;
   const blocks = doc ? bodyBlocks(doc) : [];
+  const findRanges = useMemo(() => {
+    const ranges = new Map<string, { start: number; end: number; active: boolean }[]>();
+    if (!doc) return ranges;
+    const body = new Set(bodyBlocks(doc).map(idKey));
+    const cached = new Map<string, { ids: OpId[]; positions: Map<string, number>; chars: ReturnType<Doc["richChars"]> }>();
+    for (const match of findMatches) {
+      const key = idKey(match.block);
+      if (match.doc !== doc || !match.ids.length || !body.has(key) || !doc.hasBlock(match.block) || !isSearchableBlockType(doc.blockInfo(match.block).type)) continue;
+      let state = cached.get(key);
+      if (!state) {
+        const ids = doc.visibleIds(match.block);
+        state = { ids, positions: new Map(ids.map((id, i) => [idKey(id), i])), chars: doc.richChars(match.block) };
+        cached.set(key, state);
+      }
+      const start = state.positions.get(idKey(match.ids[0]));
+      if (start === undefined || match.ids.some((id, i) => !state!.ids[start + i] || !eqId(id, state!.ids[start + i]))) continue;
+      const chars = state.chars.slice(start, start + match.ids.length);
+      if (chars.some((char) => !!char.marks.math) || chars.map((char) => char.ch).join("") !== match.text) continue;
+      const list = ranges.get(key) ?? [];
+      list.push({ start, end: start + match.ids.length, active: match === activeFindMatch });
+      ranges.set(key, list);
+    }
+    return ranges;
+  }, [doc, sync.version, findMatches, activeFindMatch]);
 
   // keep the caret anchored across remote ops
   const saved = useRef<{
@@ -168,15 +249,15 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
 
   /** Runs an edit as one undoable transaction. */
   const run = useCallback(
-    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string) => {
+    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false) => {
       const d = sync.client.doc,
         s = sel.current;
-      if (!d || !s) return;
+      if (!d || !s || readOnlyRef.current) return;
       const tx = new Tx(d);
       const r = fn(tx, s);
       const next: Sel | null = r ? ("a" in r ? r : { a: r, f: r }) : s;
       if (tx.ops.length) {
-        um.record(tx, s, next, tag);
+        um.record(preserveCreatedBlocks ? safeSlashUndo(tx) : tx, s, next, tag);
         sync.client.push(tx.ops);
       }
       sel.current = next;
@@ -190,19 +271,22 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   const editMathSource = useCallback(
     async (blockKey: string) => {
       const d = sync.client.doc;
-      if (!d) return;
+      if (!d || readOnlyRef.current) return;
       const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
       if (!d.hasBlock(b)) return;
       const src0 = d.text(b);
+      const chars = d.visibleIds(b);
       const askFn = onMathSource ?? ((s0: string) => askText("公式（LaTeX）", "x^2+y^2=z^2", s0));
       const src = await askFn(src0);
       if (src === null) return;
+      if (!mounted.current) return;
+      if (currentClient.current !== sync.client || readOnlyRef.current || sync.client.doc !== d || !sourceUnchanged(d, b, "math", chars)) { setConflictDraft({ text: src, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
       if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } }; // run() 需要选区
       run((tx) => {
         const vis = tx.doc.visibleIds(b);
         if (vis.length) tx.delete(b, 0, vis.length);
         if (src) tx.insert(b, 0, src);
-        return { b, o: src.length };
+        return { b, o: [...src].length };
       });
       um.seal();
     },
@@ -213,44 +297,48 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   const editDiagramSource = useCallback(
     async (blockKey: string) => {
       const d = sync.client.doc;
-      if (!d) return;
+      if (!d || readOnlyRef.current) return;
       const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
       if (!d.hasBlock(b)) return;
       const src0 = d.text(b);
+      const chars = d.visibleIds(b);
       const src = await askArea("流程图（Mermaid）", undefined, src0);
       if (src === null) return;
+      if (!mounted.current) return;
+      if (currentClient.current !== sync.client || readOnlyRef.current || sync.client.doc !== d || !sourceUnchanged(d, b, "diagram", chars)) { setConflictDraft({ text: src, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
       if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
       run((tx) => {
         const vis = tx.doc.visibleIds(b);
         if (vis.length) tx.delete(b, 0, vis.length);
         if (src.trim()) tx.insert(b, 0, src.trim());
-        return { b, o: src.trim().length };
+        return { b, o: [...src.trim()].length };
       });
       um.seal();
     },
     [sync.client, run, um],
   );
 
-  /** 在块 b 之后插入空段落并把光标移进去（飞书式 + 按钮）。 */
+  /** Opening the menu is read-only; the new block is created only after a choice. */
   const onInsertAfter = useCallback(
     (b: OpId) => {
       const d = sync.client.doc;
-      if (!d || !d.hasBlock(b)) return;
-      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
-      run((tx) => {
-        const info = tx.doc.blockInfo(b);
-        const nb = tx.create("paragraph", b, info.parent);
-        return { b: nb, o: 0 };
-      }, "insert-block");
+      if (!d || !d.hasBlock(b) || readOnlyRef.current) return;
+      root.current?.focus();
+      const emptyParagraph = d.blockInfo(b).type === "paragraph" && len(d, b) === 0;
+      const at = { b, o: emptyParagraph ? 0 : len(d, b) };
+      sel.current = { a: at, f: at };
+      setSlash({ at, index: 0, kind: "/", fromButton: true, insertAfter: emptyParagraph ? undefined : b, buttonQuery: "" });
+      force((x) => x + 1);
       um.seal();
     },
-    [sync.client, run, um],
+    [sync.client, um],
   );
 
   const insertText = useCallback(
     (text: string, tag = "type") =>
       run((tx, s) => {
         let p = collapsed(s) ? s.a : deleteRange(tx, s);
+        if (isSourceBlock(tx.doc, p.b)) p = { b: tx.create("paragraph", p.b, tx.doc.blockInfo(p.b).parent), o: 0 };
         const marks = stored.current;
         const n = tx.insert(p.b, p.o, text);
         if (marks) for (const [k, v] of Object.entries(marks)) tx.format(p.b, p.o, p.o + n, k, v);
@@ -268,7 +356,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   const undo = useCallback(
     (redo: boolean) => {
       const d = sync.client.doc;
-      if (!d) return;
+      if (!d || readOnlyRef.current) return;
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -289,23 +377,31 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   const readSel = useCallback(() => {
     const el = root.current,
       ds = document.getSelection();
-    if (!el || !ds || ds.rangeCount === 0 || !el.contains(ds.anchorNode)) return;
+    if (!el || !ds || ds.rangeCount === 0 || !el.contains(ds.anchorNode) || !el.contains(ds.focusNode)) {
+      if (!wrap.current?.contains(document.activeElement)) { setToolbar(null); setCommentError(null); }
+      return;
+    }
     const a = domToPos(el, ds.anchorNode!, ds.anchorOffset),
       f = domToPos(el, ds.focusNode!, ds.focusOffset);
     if (!a || !f) return;
     const prev = sel.current;
+    if (!prev || !eqId(prev.a.b, a.b) || prev.a.o !== a.o || !eqId(prev.f.b, f.b) || prev.f.o !== f.o) setCommentError(null);
     if (prev && (!eqId(prev.f.b, f.b) || Math.abs(prev.f.o - f.o) > 1)) {
       um.seal();
       stored.current = null;
     }
     sel.current = { a, f };
+    const activeKey = idKey(f.b);
+    setTouchActiveBlock((current) => current === activeKey ? current : activeKey);
     publish();
     updateOverlays();
     // slash menu closes when the caret leaves its query
     setSlash((m) => {
       if (!m) return m;
       const d = sync.client.doc;
-      if (!d || !eqId(m.at.b, f.b) || f.o <= m.at.o || !collapsed(sel.current!)) return null;
+      if (!d || !eqId(m.at.b, f.b) || !collapsed(sel.current!)) return null;
+      if (m.fromButton) return f.o === m.at.o ? m : null;
+      if (f.o <= m.at.o) return null;
       const q = [...d.text(f.b)].slice(m.at.o, f.o).join("");
       return q.startsWith(m.kind) && !/\s/.test(q) && q.length <= 16 ? m : null;
     });
@@ -325,9 +421,9 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
       s = sel.current;
     if (!el || !w || !d) return;
     const base = w.getBoundingClientRect();
-    if (s && !collapsed(s) && (document.activeElement === el || w.contains(document.activeElement))) {
-      const ds = document.getSelection();
-      const r = ds && ds.rangeCount && el.contains(ds.anchorNode) ? ds.getRangeAt(0).getBoundingClientRect() : null;
+    const ds = document.getSelection();
+    if (s && !collapsed(s) && (!readOnlyRef.current || commentAllowedRef.current) && ds && ds.rangeCount && el.contains(ds.anchorNode) && el.contains(ds.focusNode)) {
+      const r = ds.getRangeAt(0).getBoundingClientRect();
       if (r && r.width + r.height > 0) {
         const t = {
           x: Math.round(r.left - base.left + r.width / 2),
@@ -392,7 +488,20 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
     const el = root.current;
     if (!el) return;
     const onBeforeInput = (e: InputEvent) => {
-      if (e.inputType === "insertCompositionText" || composing.current) return;
+      if (readOnlyRef.current || e.inputType === "insertCompositionText" || composing.current) return;
+      if (slashRef.current?.fromButton) {
+        if (e.inputType === "insertText" || e.inputType === "insertReplacementText") {
+          e.preventDefault();
+          const value = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
+          setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + value).slice(0, 32), index: 0 } : m);
+          return;
+        }
+        if (e.inputType.startsWith("delete")) {
+          e.preventDefault();
+          setSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
+          return;
+        }
+      }
       e.preventDefault();
       readSel();
       const s = sel.current,
@@ -403,9 +512,9 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
         case "insertReplacementText": {
           const t = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
           if (!t) return;
-          const at = collapsed(s) ? s.a : normalize(d, s).start;
           insertText(t);
-          if (t === "/" || t === "@") setSlash({ at, index: 0, kind: t });
+          const end = sel.current?.f;
+          if ((t === "/" || t === "@") && end) setSlash({ at: { b: end.b, o: Math.max(0, end.o - 1) }, index: 0, kind: t });
           else setSlash((cur) => (cur ? { ...cur, index: 0 } : cur)); // 过滤词变化 → 高亮回到第一项
           return;
         }
@@ -458,16 +567,33 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
       );
     };
     const onCompStart = () => {
+      if (readOnlyRef.current) return;
       readSel();
       const s = sel.current,
         d = sync.client.doc;
       if (!s || !d) return;
+      if (slashRef.current?.fromButton) {
+        menuComposition.current = slashRef.current.at.b;
+        composing.current = { sel: s };
+        return;
+      }
       if (!collapsed(s)) run((tx, s2) => deleteRange(tx, s2));
       composing.current = { sel: sel.current! };
     };
     const onCompEnd = (e: CompositionEvent) => {
       const c = composing.current;
+      if (readOnlyRef.current) {
+        if (c) setRemount((m) => ({ ...m, [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1 }));
+        composing.current = null; menuComposition.current = null; return;
+      }
       composing.current = null;
+      if (menuComposition.current) {
+        const block = menuComposition.current;
+        menuComposition.current = null;
+        setRemount((m) => ({ ...m, [idKey(block)]: (m[idKey(block)] ?? 0) + 1 }));
+        if (e.data) setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + e.data).slice(0, 32), index: 0 } : m);
+        return;
+      }
       if (!c) return;
       sel.current = c.sel;
       // throw away the browser's DOM mutations for this block and commit the text
@@ -490,7 +616,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
 
   const slashItems = useMemo(() => {
     if (!slash || !doc || !sel.current || !doc.hasBlock(slash.at.b)) return [];
-    const q = [...doc.text(slash.at.b)].slice(slash.at.o + 1, sel.current.f.o).join("");
+    const q = slash.fromButton ? (slash.buttonQuery ?? "") : [...doc.text(slash.at.b)].slice(slash.at.o + 1, sel.current.f.o).join("");
     if (slash.kind === "@") {
       const ql = q.toLowerCase();
       const docItems = docs
@@ -523,9 +649,11 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
 
   /** Uploads files and inserts image/file blocks after block b. */
   const insertFiles = async (files: File[], b: OpId, replace = false) => {
-    if (!upload) return;
+    if (!upload || readOnlyRef.current) return;
     for (const f of files) {
+      if (readOnlyRef.current) return;
       const r = await upload(f);
+      if (readOnlyRef.current) return;
       const type = r.mime.startsWith("image/") && r.mime !== "image/svg+xml" ? "image" : "file";
       const d = sync.client.doc;
       if (!d || !d.hasBlock(b)) return;
@@ -554,9 +682,25 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   };
 
   const applySlash = async (it: MenuItem) => {
+    if (readOnlyRef.current) return;
     const m = slash;
     setSlash(null);
     if (!m) return;
+    const targetBlock = (tx: Tx): OpId | null => {
+      const anchor = m.insertAfter ?? m.at.b;
+      if (!tx.doc.hasBlock(anchor)) return null;
+      const info = tx.doc.blockInfo(anchor);
+      if (m.insertAfter) return tx.create("paragraph", anchor, info.parent);
+      if (m.fromButton) {
+        // Insert a new block before the empty paragraph instead of changing it:
+        // a concurrent writer may already be adding text to that paragraph.
+        const siblings = tx.doc.children(info.parent);
+        const index = siblings.findIndex((id) => eqId(id, anchor));
+        if (index < 0) return null;
+        return tx.create("paragraph", index > 0 ? siblings[index - 1] : null, info.parent);
+      }
+      return anchor;
+    };
     if (it.id.startsWith("doc:")) {
       run((tx, s) => {
         tx.delete(m.at.b, m.at.o, s.f.o);
@@ -585,69 +729,55 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
     }
     if (it.id === "image" || it.id === "file") {
       const s0 = sel.current;
-      if (s0) run((tx) => void tx.delete(m.at.b, m.at.o, s0.f.o));
-      pendingUpload.current = { b: m.at.b, kind: it.id };
+      if (s0 && !m.fromButton) run((tx) => void tx.delete(m.at.b, m.at.o, s0.f.o));
+      pendingUpload.current = { b: m.insertAfter ?? m.at.b, kind: it.id, replace: !m.fromButton && !m.insertAfter };
       if (fileInput.current) {
         fileInput.current.accept = it.id === "image" ? "image/*" : "";
         fileInput.current.click();
       }
       return;
     }
-    if (it.id === "math") {
-      const src = await askText("公式（LaTeX）", "例如 \\frac{a}{b} 或 x^2 + y^2 = z^2");
-      if (!src || !src.trim()) return;
-      run((tx) => {
-        const vis = tx.doc.visibleIds(m.at.b);
-        if (vis.length) tx.delete(m.at.b, 0, vis.length);
-        tx.setProp(m.at.b, "type", "math");
-        tx.insert(m.at.b, 0, src.trim());
-        return { b: m.at.b, o: src.trim().length };
-      });
-      um.seal();
-      return;
-    }
-    if (it.id === "diagram") {
-      const src = await askArea("流程图（Mermaid）", "graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[处理]\n  B -->|否| D[结束]");
-      if (!src || !src.trim()) return;
-      run((tx) => {
-        const vis = tx.doc.visibleIds(m.at.b);
-        if (vis.length) tx.delete(m.at.b, 0, vis.length);
-        tx.setProp(m.at.b, "type", "diagram");
-        tx.insert(m.at.b, 0, src.trim());
-        return { b: m.at.b, o: src.trim().length };
-      });
-      um.seal();
-      return;
-    }
-    if (it.id === "video" || it.id === "bookmark") {
-      const url = await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
-      if (!url) return;
-      run((tx) => {
-        // 清掉 "/shipin" 之类的命令文本再插块
-        const vis = tx.doc.visibleIds(m.at.b);
-        if (vis.length) tx.delete(m.at.b, 0, vis.length);
-        const info = tx.doc.blockInfo(m.at.b);
-        const props: Record<string, string> = { url };
+    if (it.id === "math" || it.id === "diagram" || it.id === "video" || it.id === "bookmark") {
+      const originalDoc = sync.client.doc;
+      const captured = originalDoc && captureSlashInsertion(originalDoc, m.at, sel.current, !!m.fromButton, m.insertAfter);
+      if (!originalDoc || !captured) return;
+      const input = it.id === "math"
+        ? await askText("公式（LaTeX）", "例如 \\frac{a}{b} 或 x^2 + y^2 = z^2")
+        : it.id === "diagram"
+          ? await askArea("流程图（Mermaid）", "graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[处理]\n  B -->|否| D[结束]")
+          : await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
+      if (!input?.trim()) return;
+      if (!mounted.current) return;
+      if (currentClient.current !== sync.client || readOnlyRef.current || sync.client.doc !== originalDoc) { setConflictDraft({ text: input, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
+      const value = input.trim();
+      const props: Record<string, string> = {};
+      if (it.id === "video" || it.id === "bookmark") {
+        props.url = value;
         if (it.id === "bookmark") {
-          let host = url;
-          try {
-            host = new URL(url).hostname;
-          } catch {
-            /* keep raw */
-          }
-          props.name = host;
+          try { props.name = new URL(value).hostname; } catch { props.name = value; }
         }
-        tx.setProp(m.at.b, "type", it.id);
-        for (const [k, v] of Object.entries(props)) tx.setProp(m.at.b, k, v);
-        const nb = tx.create("paragraph", m.at.b, info.parent);
-        return { b: nb, o: 0 };
-      });
+      }
+      if (!sel.current && originalDoc.hasBlock(captured.anchor)) {
+        const p = { b: captured.anchor, o: 0 };
+        sel.current = { a: p, f: p };
+      }
+      let inserted = false;
+      let middle = false;
+      run((tx) => {
+        const p = insertSlashBlock(tx, captured, it.id, props, it.id === "math" || it.id === "diagram" ? value : "");
+        middle = p === "middle";
+        inserted = p !== null && p !== "middle";
+        return p && p !== "middle" ? p : undefined;
+      }, undefined, true);
+      if (!inserted) setConflictDraft({ text: value, message: middle ? "命令前后都有文字，暂不能安全拆分段落。请将命令移至段首或段尾后重试，草稿已保留。" : "文档内容已变化，本次操作没有应用。请复制草稿后重试。" });
       um.seal();
       return;
     }
     run((tx, s) => {
-      tx.delete(m.at.b, m.at.o, s.f.o);
-      const b = m.at.b;
+      const b = targetBlock(tx);
+      if (!b) return;
+      if (!m.fromButton) tx.delete(m.at.b, m.at.o, s.f.o);
+      const offset = m.fromButton ? 0 : m.at.o;
       if (it.id === "divider") {
         const info = tx.doc.blockInfo(b);
         if (len(tx.doc, b) === 0) {
@@ -662,7 +792,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
       if (it.id === "callout") {
         tx.setProp(b, "type", "callout");
         if (!tx.doc.blockInfo(b).props.emoji) tx.setProp(b, "emoji", "💡");
-        return { b, o: m.at.o };
+        return { b, o: offset };
       }
       if (it.id === "table") {
         const info = tx.doc.blockInfo(b);
@@ -693,15 +823,28 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
         return { b: nb, o: 0 };
       }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
-      return { b, o: m.at.o };
+      return { b, o: offset };
     });
     um.seal();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (readOnlyRef.current) return;
     if (e.nativeEvent.isComposing || composing.current) return;
     readSel();
     const mod = e.metaKey || e.ctrlKey;
+    if (slash && e.key === "Escape") { e.preventDefault(); setSlash(null); return; }
+    if (slash?.fromButton && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      if (e.key === "Backspace") setSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
+      return;
+    }
+    if (slash?.fromButton && e.key === "Tab") {
+      e.preventDefault();
+      if (slashItems.length) void applySlash(slashItems[Math.min(slash.index, slashItems.length - 1)]);
+      return;
+    }
+    if (slash && !slashItems.length && e.key === "Enter") { e.preventDefault(); return; }
     if (slash && slashItems.length) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -715,10 +858,6 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
       if (e.key === "Enter") {
         e.preventDefault();
         void applySlash(slashItems[Math.min(slash.index, slashItems.length - 1)]);
-        return;
-      }
-      if (e.key === "Escape") {
-        setSlash(null);
         return;
       }
     }
@@ -801,7 +940,13 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
     if (cut) run((tx, s2) => deleteRange(tx, s2));
   };
   const onPaste = (e: React.ClipboardEvent) => {
+    if (readOnlyRef.current) return;
     e.preventDefault();
+    if (slashRef.current?.fromButton) {
+      const text = e.clipboardData.getData("text/plain");
+      setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + text).slice(0, 32), index: 0 } : m);
+      return;
+    }
     const files = [...e.clipboardData.files];
     if (files.length && upload && sel.current) {
       void insertFiles(files, sel.current.f.b, true);
@@ -814,7 +959,11 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
     } catch {
       clip = parseText(e.clipboardData.getData("text/plain"));
     }
-    run((tx, s) => pasteBlocks(tx, collapsed(s) ? s.a : deleteRange(tx, s), clip));
+    run((tx, s) => {
+      let at = collapsed(s) ? s.a : deleteRange(tx, s);
+      if (isSourceBlock(tx.doc, at.b)) at = { b: tx.create("paragraph", at.b, tx.doc.blockInfo(at.b).parent), o: 0 };
+      return pasteBlocks(tx, at, clip);
+    });
     um.seal();
   };
 
@@ -835,7 +984,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
 
   const toggleTodo = (b: OpId) => {
     const d = sync.client.doc;
-    if (!d) return;
+    if (!d || readOnlyRef.current) return;
     const tx = new Tx(d);
     tx.setProp(b, "checked", d.blockInfo(b).props.checked === "true" ? "" : "true");
     um.record(tx, sel.current, sel.current);
@@ -844,7 +993,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
   };
 
   const onDrop = (e: React.DragEvent) => {
-    if (!drag) return;
+    if (!drag || readOnlyRef.current) return;
     e.preventDefault();
     const d = sync.client.doc!;
     const { b, over, after } = drag;
@@ -861,11 +1010,20 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
 
   const tb = sel.current && doc && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
   const curType = sel.current && doc?.hasBlock(sel.current.f.b) ? doc.blockInfo(sel.current.f.b).type : "paragraph";
-  const slashPos = slash && root.current && wrap.current ? caretRect(root.current, slash.at) : null;
+  const slashPos = slash && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slash.at) : null;
   const base = wrap.current?.getBoundingClientRect();
+  useEffect(() => {
+    if (readOnly) { setSlash(null); setToolbar(null); setDrag(null); pendingUpload.current = null; }
+  }, [readOnly]);
 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
+      {conflictDraft !== null && <div role="alert" contentEditable={false} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-[13px] text-foreground">
+        <p>{conflictDraft.message}</p>
+        <textarea aria-label="未应用的草稿" readOnly value={conflictDraft.text} className="mt-2 w-full resize-y rounded border bg-surface p-2" rows={3} />
+        <button type="button" className="mt-2 rounded border px-2 py-1 hover:bg-hover" onClick={() => setConflictDraft(null)}>关闭</button>
+      </div>}
+      {conflictDraft === null && doc && !readOnly && blocks.length === 1 && doc.blockInfo(blocks[0]).type === "paragraph" && doc.richChars(blocks[0]).length === 0 && <span aria-hidden="true" data-editor-placeholder className="pointer-events-none absolute left-0 top-[2px] text-[16px] leading-7 text-subtle">输入“/”快速插入内容</span>}
       <div
         ref={root}
         contentEditable={!!doc && !readOnly}
@@ -885,8 +1043,11 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
               a: { b: blocks[0], o: 0 },
               f: { b: blocks[0], o: 0 },
             };
+          if (sel.current) setTouchActiveBlock(idKey(sel.current.f.b));
         }}
-        onBlur={(e) => !wrap.current?.contains(e.relatedTarget as Node) && setToolbar(null)}
+        onBlur={(e) => {
+          if (!wrap.current?.contains(e.relatedTarget as Node)) setToolbar(null);
+        }}
       >
         {doc &&
           blocks.map((b) => {
@@ -900,10 +1061,12 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
                 props={info.props}
                 number={numbers.get(k)}
                 spans={doc.richChars(b)}
+                findRanges={findRanges.get(k)}
                 anchors={anchorFlags(doc, b, comments)}
                 activeThread={activeThread}
                 onAnchorClick={(cid) => onActivateThread?.(cid)}
-                onSetProp={(key, value) => {
+                onSetProp={readOnly ? undefined : (key, value) => {
+                  if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
                   tx.setProp(b, key, value);
                   um.record(tx, sel.current, sel.current, "prop");
@@ -911,15 +1074,17 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
                   force((x) => x + 1);
                   publish();
                 }}
-                onInsertAfter={onInsertAfter ? () => onInsertAfter(b) : undefined}
+                onInsertAfter={!readOnly ? () => onInsertAfter(b) : undefined}
+                touchActive={touchActiveBlock === k || (!touchActiveBlock && blocks.length === 1)}
                 onPreviewImage={onPreviewImage}
-                onMathSource={editMathSource}
-                onDiagramSource={editDiagramSource}
+                onMathSource={readOnly ? undefined : editMathSource}
+                onDiagramSource={readOnly ? undefined : editDiagramSource}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   return { id: idKey(ch), type: ci.type, props: ci.props, spans: doc.richChars(ch) };
                 })}
-                onAddColumn={() => {
+                onAddColumn={readOnly ? undefined : () => {
+                  if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
                   tx.create("paragraph", null, b);
                   um.record(tx, sel.current, sel.current, "column");
@@ -927,7 +1092,8 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
                   force((x) => x + 1);
                   publish();
                 }}
-                onDeleteColumn={(col) => {
+                onDeleteColumn={readOnly ? undefined : (col) => {
+                  if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
                   const cid = { client: Number(col.split(":")[0]), clock: Number(col.split(":")[1]) };
                   if (doc.hasBlock(cid)) tx.deleteBlock(cid);
@@ -936,7 +1102,8 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
                   force((x) => x + 1);
                   publish();
                 }}
-                onTableEdit={(r, c, v) => {
+                onTableEdit={readOnly ? undefined : (r, c, v) => {
+                  if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
                   const rows = applyTableEdit(parseTableData(info.props.tableData), r, c, v);
@@ -947,10 +1114,11 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
                   publish();
                 }}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
-                onToggle={() => toggleTodo(b)}
-                onDragStart={() => setDrag({ b, over: null, after: false })}
-                onDragOver={(after) => drag && setDrag({ ...drag, over: b, after })}
-                onDragEnd={() => setDrag(null)}
+                onToggle={readOnly ? undefined : () => toggleTodo(b)}
+                onDragStart={readOnly ? undefined : () => setDrag({ b, over: null, after: false })}
+                onDragOver={readOnly ? undefined : (after) => drag && setDrag({ ...drag, over: b, after })}
+                onDragEnd={readOnly ? undefined : () => setDrag(null)}
+                canCopy={!onCopyBlock}
               />
             );
           })}
@@ -965,7 +1133,7 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
             files = [...(e.target.files ?? [])];
           e.target.value = "";
           pendingUpload.current = null;
-          if (p && files.length) void insertFiles(files, p.b, true);
+          if (p && files.length) void insertFiles(files, p.b, p.replace ?? true);
         }}
       />
       {carets.map((c) => (
@@ -976,12 +1144,14 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
           </div>
         </div>
       ))}
-      {toolbar && sel.current && (
+      {(!readOnly || onComment) && toolbar && sel.current && (
         <FormatToolbar
           x={toolbar.x}
           y={toolbar.y}
           marks={tb}
           blockType={curType}
+          readOnly={readOnly}
+          commentError={commentError}
           onMark={(key, value) =>
             run((tx, s) => {
               if (value === "") {
@@ -1000,29 +1170,21 @@ export function Editor({ sync, me, readOnly, docs = [], people = [], upload, com
           onComment={onComment ? () => {
             const s = sel.current;
             if (!doc || !s) return;
-            const a = doc.visibleIds(s.a.b);
-            const endB = doc.visibleIds(s.f.b);
-            const sameBlock = eqId(s.a.b, s.f.b);
-            const startChar = a[Math.min(s.a.o, a.length - 1)];
-            const endChar = endB[sameBlock ? Math.max(0, Math.min(s.f.o, endB.length) - 1) : endB.length - 1];
-            const text = doc
-              .richChars(s.a.b)
-              .slice(sameBlock ? Math.min(s.a.o, s.f.o) : s.a.o, sameBlock ? Math.max(s.a.o, s.f.o) : undefined)
-              .map((c) => c.ch)
-              .join("");
-            onComment({
-              block: idKey(s.a.b),
-              startChar: idKey(startChar),
-              endChar: idKey(endChar),
-              quote: text.slice(0, 200),
-            });
+            const selection = commentSelection(doc, s);
+            if (!selection.ok) {
+              setCommentError(selection.reason === "cross-block" ? "暂不支持跨段落评论，请选择同一段文字。" : "请选择同一段中的有效文字。");
+              return;
+            }
+            setCommentError(null);
+            onComment(selection.anchor);
           } : undefined}
         />
       )}
-      {slash && slashPos && base && (
+      {!readOnly && slash && slashPos && base && (
         <SlashMenu
           x={slashPos.left - base.left}
           y={slashPos.bottom - base.top + 6}
+          query={slash.fromButton ? slash.buttonQuery : undefined}
           items={slashItems}
           index={Math.min(slash.index, Math.max(0, slashItems.length - 1))}
           onPick={applySlash}
@@ -1076,12 +1238,14 @@ interface BlockProps {
   onAddColumn?: () => void;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
+  findRanges?: { start: number; end: number; active: boolean }[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string) => void;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
+  touchActive?: boolean;
   onPreviewImage?: (src: string, alt: string) => void;
   /** 公式块：请求编辑源码 */
   onMathSource?: (blockKey: string) => void;
@@ -1092,27 +1256,41 @@ interface BlockProps {
   number?: number;
   spans: { ch: string; marks: Record<string, string> }[];
   dropLine: "before" | "after" | null;
-  onToggle: () => void;
-  onDragStart: () => void;
-  onDragOver: (after: boolean) => void;
-  onDragEnd: () => void;
+  onToggle?: () => void;
+  onDragStart?: () => void;
+  onDragOver?: (after: boolean) => void;
+  onDragEnd?: () => void;
+  canCopy?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
   for (const a of anchors ?? []) if (a != null) threadIds.add(a);
   const commentBadge = threadIds.size;
   const firstThread = anchors?.find((a) => a != null) ?? null;
-  const runs: { text: string; marks: Record<string, string>; anchor: number | null }[] = [];
+  const highlighted = new Array<0 | 1 | 2>(spans.length).fill(0);
+  for (const range of findRanges ?? []) {
+    for (let i = Math.max(0, range.start); i < Math.min(spans.length, range.end); i++) highlighted[i] = range.active ? 2 : 1;
+  }
+  const runs: { text: string; marks: Record<string, string>; anchor: number | null; highlight: 0 | 1 | 2 }[] = [];
   for (let i = 0; i < spans.length; i++) {
     const c = spans[i];
     const anchor = anchors?.[i] ?? null;
     const last = runs[runs.length - 1];
-    if (last && sameMarks(last.marks, c.marks) && last.anchor === anchor) last.text += c.ch;
-    else runs.push({ text: c.ch, marks: c.marks, anchor });
+    const highlight = highlighted[i];
+    if (last && sameMarks(last.marks, c.marks) && last.anchor === anchor && last.highlight === highlight) last.text += c.ch;
+    else runs.push({ text: c.ch, marks: c.marks, anchor, highlight });
   }
+  const renderRun = (run: typeof runs[number]) => {
+    if (!run.highlight) return <Run text={run.text} marks={run.marks} />;
+    // Search highlight must remain visible over a user's existing background
+    // mark; suppress it only in this projection, never in the CRDT model.
+    const marks = { ...run.marks };
+    delete marks.bg;
+    return <mark data-find-match data-find-active={run.highlight === 2 ? "true" : undefined} className={cn("rounded-[2px] text-inherit", run.highlight === 2 ? "bg-[#ffb74d]" : "bg-[#ffe69b]")}><Run text={run.text} marks={marks} /></mark>;
+  };
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
   if (type === "ordered") prefix = <span className="select-none tabular-nums text-primary">{number}.</span>;
@@ -1122,9 +1300,10 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
         contentEditable={false}
         onMouseDown={(e) => {
           e.preventDefault();
-          onToggle();
+          onToggle?.();
         }}
         className={cn("mt-[5px]", checked ? "text-primary" : "text-[#bbbfc4]")}
+        disabled={!onToggle}
         aria-label="完成"
       >
         <TodoCheck checked={checked} />
@@ -1138,34 +1317,22 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
       style={{ marginLeft: indent * 24 }}
       onDragOver={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
-        onDragOver(e.clientY > r.top + r.height / 2);
+        onDragOver?.(e.clientY > r.top + r.height / 2);
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className="absolute -left-7 top-1/2 hidden -translate-y-1/2 flex-col items-center group-hover:flex" contentEditable={false}>
+      <span className={cn("absolute -left-7 top-[2px] hidden items-center sm:-left-9 group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
         {onInsertAfter && (
           <button
-            className="grid h-5 w-5 place-items-center rounded text-[14px] leading-none text-subtle hover:bg-hover hover:text-foreground"
-            title="在此处插入内容"
+            className="relative grid size-7 place-items-center rounded-md border bg-surface text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
+            title="插入内容"
+            aria-label="插入内容"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={onInsertAfter}
             data-insert-after
-          >
-            +
-          </button>
+          ><AddIcon className="size-[14px]" /></button>
         )}
-        <span
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData("text/plain", "");
-            e.dataTransfer.effectAllowed = "move";
-            onDragStart();
-          }}
-          onDragEnd={onDragEnd}
-          title="拖动以移动"
-          className="grid h-5 w-5 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover"
-        >
-          ⋮⋮
-        </span>
+        {onDragStart && <span draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onDragStart(); }} onDragEnd={onDragEnd} title="拖动以移动" className="absolute -left-4 grid h-6 w-4 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover">⋮⋮</span>}
       </span>
       {type === "diagram" ? (
         <div
@@ -1173,9 +1340,9 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           className={cn("my-2 select-none overflow-x-auto rounded-lg bg-surface py-3", onDiagramSource && "cursor-pointer hover:bg-hover")}
           onDoubleClick={() => onDiagramSource?.(id)}
           data-diagram
-          title="双击编辑流程图"
+          title={onDiagramSource ? "双击编辑流程图" : undefined}
         >
-          {spans.length ? <DiagramView src={spans.map((c) => c.ch).join("")} /> : <span className="text-[13px] text-subtle">空流程图——双击输入 Mermaid</span>}
+          {spans.length ? <DiagramView src={spans.map((c) => c.ch).join("")} /> : <span className="text-[13px] text-subtle">{onDiagramSource ? "空流程图——双击输入 Mermaid" : "空流程图"}</span>}
         </div>
       ) : type === "math" ? (
         <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
@@ -1190,20 +1357,20 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
                   ))}
                   {ch.spans.length === 0 && <span className="text-subtle">空栏</span>}
                 </div>
-                <button
+                {onDeleteColumn && <button
                   className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border bg-surface text-[11px] text-subtle hover:text-destructive group-hover/col:grid"
                   title="删除此栏"
                   onClick={() => onDeleteColumn?.(ch.id)}
                   data-del-column
                 >
                   ✕
-                </button>
+                </button>}
               </div>
             ))}
           </div>
-          <button className="mt-1 px-1 text-[12px] text-subtle hover:text-primary" onClick={() => onAddColumn?.()} data-add-column>
+          {onAddColumn && <button className="mt-1 px-1 text-[12px] text-subtle hover:text-primary" onClick={onAddColumn} data-add-column>
             + 添加一栏
-          </button>
+          </button>}
         </div>
       ) : commentBadge > 0 && (
         <button
@@ -1216,7 +1383,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           <MessageCircle size={11} strokeWidth={1.7} className="inline" /> {commentBadge}
         </button>
       )}
-      {type === "table" ? (
+      {type === "math" || type === "diagram" ? null : type === "table" ? (
         <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
@@ -1264,6 +1431,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 dark:border-[#3c4043] dark:bg-[#23262a]" data-code-header>
             <select
               value={props.lang ?? "plain"}
+              disabled={!onSetProp}
               onChange={(e) => onSetProp?.("lang", e.target.value)}
               className="cursor-pointer rounded bg-transparent text-[12px] text-muted-foreground outline-none"
               title="代码语言"
@@ -1275,17 +1443,17 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
                 </option>
               ))}
             </select>
-            <button
+            {canCopy && <button
               className="ml-auto text-[12px] text-subtle hover:text-foreground"
               onClick={() => navigator.clipboard?.writeText(spans.map((c) => c.ch).join(""))}
               title="复制代码"
               data-code-copy
             >
               复制
-            </button>
+            </button>}
           </div>
           <div data-text className="min-w-0 whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">
-            {runs.length === 0 ? <br /> : runs.map((r, i) => <Run key={i} text={r.text} marks={r.marks} />)}
+            {runs.length === 0 ? <br /> : runs.map((r, i) => <span key={i}>{renderRun(r)}</span>)}
           </div>
         </div>
       ) : type === "callout" ? (
@@ -1294,6 +1462,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
             <button
               className="rounded px-0.5 hover:bg-black/5"
               title="更换图标"
+              disabled={!onSetProp}
               onClick={() => onSetProp?.("emoji", CALLOUT_EMOJI[(CALLOUT_EMOJI.indexOf(props.emoji ?? "💡") + 1) % CALLOUT_EMOJI.length])}
               data-callout-emoji
             >
@@ -1301,9 +1470,9 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
             </button>
           </span>
           <div data-text className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-            {runs.length === 0 ? <br /> : runs.map((r, i) => <Run key={i} text={r.text} marks={r.marks} />)}
+            {runs.length === 0 ? <br /> : runs.map((r, i) => <span key={i}>{renderRun(r)}</span>)}
           </div>
-          <span contentEditable={false} className="ml-auto flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" data-callout-colors>
+          {onSetProp && <span contentEditable={false} className="ml-auto flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" data-callout-colors>
             {CALLOUT_BG.map((bg, i) => (
               <button
                 key={i}
@@ -1313,7 +1482,7 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
                 onClick={() => onSetProp?.("color", String(i))}
               />
             ))}
-          </span>
+          </span>}
         </div>
       ) : (
         <div className={cn(prefix && "flex gap-2")}>
@@ -1334,10 +1503,10 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
                     onClick={() => onAnchorClick?.(r.anchor!)}
                     data-comment-anchor={r.anchor}
                   >
-                    <Run text={r.text} marks={r.marks} />
+                    {renderRun(r)}
                   </span>
                 ) : (
-                  <Run key={i} text={r.text} marks={r.marks} />
+                  <span key={i}>{renderRun(r)}</span>
                 ),
               )
             )}
@@ -1504,9 +1673,9 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
       className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed", onSource && "cursor-pointer hover:bg-hover")}
       onDoubleClick={onSource}
       data-math
-      title="双击编辑公式"
+      title={onSource ? "双击编辑公式" : undefined}
     >
-      {src ? <MathView src={src} /> : <span className="not-italic text-subtle">空公式——点击输入 LaTeX</span>}
+      {src ? <MathView src={src} /> : <span className="not-italic text-subtle">{onSource ? "空公式——双击输入 LaTeX" : "空公式"}</span>}
     </div>
   );
 }

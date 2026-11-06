@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,10 +29,12 @@ func (s *Server) need(w http.ResponseWriter, r *http.Request, role string) (stor
 	return d, ok
 }
 
-func token() string {
+func token() (string, error) {
 	b := make([]byte, 12)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +52,7 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if d.Role != store.RoleManage {
+	if d.Role != store.RoleManage || link.Role == "none" {
 		link.Token = ""
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"members": shares, "link": link, "role": d.Role})
@@ -96,26 +100,30 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	l, err := s.Store.GetLink(r.Context(), d.ID)
+	// Use a fresh candidate with an atomic update. Reading a token and later
+	// writing it back could otherwise resurrect it after a concurrent close.
+	candidate := ""
+	if in.Role != "none" {
+		var err error
+		candidate, err = token()
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	l, err := s.Store.ChangeLinkRole(r.Context(), d.ID, in.Role, candidate)
 	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	l.Role = in.Role
-	if l.Token == "" {
-		l.Token = token()
-	}
-	if err := s.Store.SetLink(r.Context(), d.ID, l); err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, l)
 }
 
-// joinLink grants the caller the link's role (never downgrading) and returns the doc.
 // getPublic serves a read-only document snapshot to anyone holding the link
 // token (link role must be anon). No login required.
 func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
+	// Cached snapshots must not bypass a subsequent link revocation.
+	w.Header().Set("Cache-Control", "no-store")
 	id, role, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
@@ -139,12 +147,32 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "view": doc.View()})
+	currentID, currentRole, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) || err == nil && (currentID != id || currentRole != "anon") {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Re-read settings after materialization so a change made while building
+	// the snapshot is reflected in the public response.
+	d, err = s.Store.GetDocSystem(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "view": doc.View()})
 }
 
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
-	id, role, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	id, err := s.Store.JoinLink(r.Context(), r.PathValue("token"), u.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
 		return
@@ -152,18 +180,13 @@ func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	joinRole := role
-	if joinRole == "anon" {
-		joinRole = store.RoleView
-	}
-	if cur, err := s.Store.GetDoc(r.Context(), u.ID, id); err != nil || store.RoleRank(cur.Role) < store.RoleRank(joinRole) {
-		if err := s.Store.SetShare(r.Context(), id, u.ID, joinRole); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
 	d, err := s.Store.GetDoc(r.Context(), u.ID, id)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
+		// The link can be closed or the document removed immediately after the
+		// join transaction; report an expired link instead of a server error.
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	} else if err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -206,7 +229,12 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = http.DetectContentType(body)
 	}
-	key := fmt.Sprintf("docs/%d/%s", d.ID, token())
+	keyToken, err := token()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	key := fmt.Sprintf("docs/%d/%s", d.ID, keyToken)
 	if err := s.Blobs.Put(r.Context(), key, mime, body); err != nil {
 		s.fail(w, r, err)
 		return
@@ -220,6 +248,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
+	// The document role can change at any time; a cached response must not
+	// bypass access checks after an invitation or link is revoked.
+	w.Header().Set("Cache-Control", "private, no-store")
 	u, _ := UserFrom(r.Context())
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	f, err := s.Store.GetFile(r.Context(), id)
@@ -230,6 +261,11 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
+	s.serveFile(w, r, f, false)
+}
+
+// serveFile is called only after a document-specific authorization check.
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, f store.FileMeta, requireRaster bool) {
 	rc, err := s.Blobs.Get(r.Context(), f.ObjectKey)
 	if errors.Is(err, blob.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
@@ -239,16 +275,74 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	var body io.Reader = rc
+	if requireRaster {
+		// Upload MIME metadata is supplied by the uploader. Check the bytes too,
+		// otherwise a PDF masquerading as an image could bypass download limits.
+		buffered := bufio.NewReader(rc)
+		header, err := buffered.Peek(512)
+		if err != nil && !errors.Is(err, io.EOF) {
+			s.fail(w, r, err)
+			return
+		}
+		if !isRasterImage(header) {
+			httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
+			return
+		}
+		body = buffered
+	}
 	w.Header().Set("Content-Type", f.Mime)
 	w.Header().Set("Content-Length", strconv.FormatInt(f.Size, 10))
-	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	disp := "attachment"
-	if strings.HasPrefix(f.Mime, "image/") && f.Mime != "image/svg+xml" {
+	if canInlineImage(f.Mime) {
 		disp = "inline"
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename*=UTF-8''%s", disp, urlEscape(f.Name)))
-	io.Copy(w, rc)
+	io.Copy(w, body)
+}
+
+func isRasterImage(header []byte) bool {
+	if canInlineImage(http.DetectContentType(header)) {
+		return true
+	}
+	// Go's detector does not currently recognize AVIF. Its ISO BMFF ftyp box
+	// identifies AVIF through the major brand or a compatible brand.
+	if len(header) < 16 || string(header[4:8]) != "ftyp" {
+		return false
+	}
+	boxSize := uint64(header[0])<<24 | uint64(header[1])<<16 | uint64(header[2])<<8 | uint64(header[3])
+	if boxSize < 16 || boxSize%4 != 0 {
+		return false
+	}
+	end := len(header)
+	if boxSize < uint64(end) {
+		end = int(boxSize)
+	}
+	if brand := string(header[8:12]); brand == "avif" || brand == "avis" {
+		return true
+	}
+	for i := 16; i+4 <= end; i += 4 {
+		if brand := string(header[i : i+4]); brand == "avif" || brand == "avis" {
+			return true
+		}
+	}
+	return false
+}
+
+// Only browser-safe raster formats are served inline. In particular, SVG
+// remains an attachment even if its MIME type has parameters or mixed case.
+func canInlineImage(value string) bool {
+	typ, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(typ) {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp":
+		return true
+	default:
+		return false
+	}
 }
 
 func urlEscape(s string) string {

@@ -119,7 +119,7 @@ func (h *Hub) Rooms() int {
 }
 
 // Serve upgrades an authenticated request to a sync connection and blocks until it ends.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User) {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, authenticate func(context.Context) error) {
 	h.defaults()
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.OriginPatterns})
 	if err != nil {
@@ -128,7 +128,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User) {
 	ws.SetReadLimit(8 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel}
+	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate}
 	wctx, stopWriter := context.WithCancel(context.Background())
 	writerDone := make(chan struct{})
 	go func() { c.writeLoop(wctx, ctx); close(writerDone) }()
@@ -150,7 +150,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User) {
 	for flushing := true; flushing; {
 		select {
 		case b := <-c.out:
-			if ws.Write(fctx, websocket.MessageBinary, b) != nil {
+			// The writer may have stopped because access was revoked. Never
+			// bypass its authorization check while draining queued frames.
+			if _, err := c.currentRole(fctx); err != nil || ws.Write(fctx, websocket.MessageBinary, b) != nil {
 				flushing = false
 			}
 		default:

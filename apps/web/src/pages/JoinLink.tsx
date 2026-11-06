@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { docsApi } from "@/lib/api";
+import { hrefOf } from "@/components/Sidebar";
 
 /** #/s/:token — accepts a share link, then opens the doc. */
 export function JoinLink({ token }: { token: string }) {
@@ -11,7 +12,7 @@ export function JoinLink({ token }: { token: string }) {
       .join(token)
       .then((d) => {
         qc.invalidateQueries({ queryKey: ["shared"] });
-        location.replace(`#/doc/${d.id}`);
+        location.replace(hrefOf(d));
       })
       .catch(() => setErr("链接已失效或已关闭分享"));
   }, [token, qc]);

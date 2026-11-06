@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { docsApi, type DocView } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
+import { ReadOnlyDoc } from "./ReadOnlyDoc";
 
 /** Right drawer: version list, read-only preview and restore (P6). */
 export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: boolean; onClose: () => void }) {
@@ -25,7 +26,7 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
     },
   });
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l bg-surface shadow-xl" data-version-panel>
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl" data-version-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         历史版本
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
@@ -89,25 +90,7 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
   );
 }
 
-/** Minimal read-only renderer for a version snapshot's DocView. */
+/** Read-only snapshot projection shared with publicly shared documents. */
 export function VersionView({ view }: { view: DocView }) {
-  return (
-    <div className="space-y-1">
-      {view.blocks
-        .filter((b) => b.type !== "title")
-        .map((b, i) => {
-          const text = b.spans.map((s) => s.text).join("");
-          if (b.type === "h1") return <h1 key={i} className="text-[24px] font-semibold">{text}</h1>;
-          if (b.type === "h2") return <h2 key={i} className="text-[20px] font-semibold">{text}</h2>;
-          if (b.type === "h3") return <h3 key={i} className="text-[17px] font-semibold">{text}</h3>;
-          if (b.type === "h4" || b.type === "h5" || b.type === "h6") return <h4 key={i} className="text-[15px] font-semibold">{text}</h4>;
-          if (b.type === "quote") return <blockquote key={i} className="border-l-2 pl-3 text-muted-foreground">{text}</blockquote>;
-          if (b.type === "code") return <pre key={i} className="rounded bg-sidebar p-3 font-mono text-[13px]">{text}</pre>;
-          if (b.type === "divider") return <hr key={i} className="my-2" />;
-          if (b.type === "bullet" || b.type === "ordered") return <div key={i} className="ml-4">{b.type === "ordered" ? `1. ${text}` : `• ${text}`}</div>;
-          if (b.type === "todo") return <div key={i} className="ml-4">{b.props.checked === "true" ? "☑" : "☐"} {text}</div>;
-          return <p key={i}>{text}</p>;
-        })}
-    </div>
-  );
+  return <ReadOnlyDoc view={view} />;
 }

@@ -11,7 +11,10 @@ export interface Sel {
 }
 
 export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
-export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns"]);
+/** These blocks carry source text in the CRDT, but expose no editable text in the document. */
+export const SOURCE_BLOCK_TYPES = new Set(["math", "diagram"]);
+export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns", ...SOURCE_BLOCK_TYPES]);
+export const isSourceBlock = (doc: Doc, b: OpId) => doc.hasBlock(b) && SOURCE_BLOCK_TYPES.has(doc.blockInfo(b).type);
 export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link", "color", "bg", "math"] as const;
 
 /** Body blocks in document order (the title block is edited separately). */
@@ -44,6 +47,20 @@ export const collapsed = (s: Sel) => eqId(s.a.b, s.f.b) && s.a.o === s.f.o;
 export function deleteRange(tx: Tx, sel: Sel): Pos {
   const doc = tx.doc;
   const { start, end, blocks } = normalize(doc, sel);
+  if (blocks.some((b) => isSourceBlock(doc, b))) {
+    // Source text is not part of the visible selection. Preserve these blocks
+    // and delete only selected characters in normal text blocks; in particular,
+    // never merge text across an atomic block or tombstone it as a side effect.
+    for (const b of blocks) {
+      if (TEXTLESS.has(doc.blockInfo(b).type)) continue;
+      const from = eqId(b, start.b) ? start.o : 0;
+      const to = eqId(b, end.b) ? end.o : len(doc, b);
+      tx.delete(b, from, to);
+    }
+    if (!TEXTLESS.has(doc.blockInfo(start.b).type)) return start;
+    const next = blocks.find((b) => !TEXTLESS.has(doc.blockInfo(b).type));
+    return next ? { b: next, o: 0 } : { b: start.b, o: 0 };
+  }
   if (eqId(start.b, end.b)) {
     tx.delete(start.b, start.o, end.o);
     return start;
@@ -61,6 +78,7 @@ export function deleteRange(tx: Tx, sel: Sel): Pos {
 export function splitBlock(tx: Tx, pos: Pos): Pos {
   const doc = tx.doc;
   const info = doc.blockInfo(pos.b);
+  if (SOURCE_BLOCK_TYPES.has(info.type)) return { b: tx.create("paragraph", pos.b, info.parent), o: 0 };
   const n = len(doc, pos.b);
   if (LIST_TYPES.has(info.type) && n === 0) {
     if ((info.props.indent ?? "0") !== "0") tx.setProp(pos.b, "indent", String(Number(info.props.indent) - 1));
@@ -91,6 +109,7 @@ export function splitBlock(tx: Tx, pos: Pos): Pos {
 export function joinBackward(tx: Tx, b: OpId): Pos {
   const doc = tx.doc;
   const info = doc.blockInfo(b);
+  if (SOURCE_BLOCK_TYPES.has(info.type)) return { b, o: 0 };
   if ((info.props.indent ?? "0") !== "0") {
     tx.setProp(b, "indent", String(Number(info.props.indent) - 1));
     return { b, o: 0 };
@@ -103,6 +122,7 @@ export function joinBackward(tx: Tx, b: OpId): Pos {
   const i = blocks.findIndex((x) => eqId(x, b));
   if (i <= 0) return { b, o: 0 };
   const prev = blocks[i - 1];
+  if (isSourceBlock(doc, prev)) return { b, o: 0 };
   if (TEXTLESS.has(doc.blockInfo(prev).type)) {
     tx.deleteBlock(prev);
     return { b, o: 0 };
@@ -117,11 +137,13 @@ export function joinBackward(tx: Tx, b: OpId): Pos {
 /** Delete at the end of a block: pull the next block in. */
 export function joinForward(tx: Tx, b: OpId): Pos {
   const doc = tx.doc;
+  if (isSourceBlock(doc, b)) return { b, o: 0 };
   const blocks = bodyBlocks(doc);
   const i = blocks.findIndex((x) => eqId(x, b));
   const at = len(doc, b);
   if (i < 0 || i === blocks.length - 1) return { b, o: at };
   const next = blocks[i + 1];
+  if (isSourceBlock(doc, next)) return { b, o: at };
   if (TEXTLESS.has(doc.blockInfo(next).type)) {
     tx.deleteBlock(next);
     return { b, o: at };
@@ -196,14 +218,14 @@ export function toggleMark(tx: Tx, sel: Sel, key: string, value = "true"): void 
     b,
     from: eqId(b, start.b) ? start.o : 0,
     to: eqId(b, end.b) ? end.o : len(doc, b),
-  }));
+  })).filter((s) => !isSourceBlock(doc, s.b));
   const all = segs.every((s) => doc.richChars(s.b).slice(s.from, s.to).every((c) => c.marks[key] === value));
   for (const s of segs) tx.format(s.b, s.from, s.to, key, all ? null : value);
 }
 
 export function setBlockType(tx: Tx, sel: Sel, type: string) {
   const { blocks } = normalize(tx.doc, sel);
-  for (const b of blocks) tx.setProp(b, "type", type);
+  for (const b of blocks) if (!isSourceBlock(tx.doc, b)) tx.setProp(b, "type", type);
 }
 
 /** Marks active over the whole selection (for toolbar state). */
@@ -211,6 +233,7 @@ export function activeMarks(doc: Doc, sel: Sel): Record<string, string> {
   const { start, end, blocks } = normalize(doc, sel);
   let acc: Record<string, string> | null = null;
   for (const b of blocks) {
+    if (isSourceBlock(doc, b)) continue;
     const from = eqId(b, start.b) ? start.o : 0, to = eqId(b, end.b) ? end.o : len(doc, b);
     for (const c of doc.richChars(b).slice(from, to)) {
       if (!acc) acc = { ...c.marks };
@@ -260,6 +283,7 @@ export function parseText(text: string): ClipBlock[] {
 /** Inserts clipboard blocks at pos: the first merges inline, the rest become blocks. */
 export function pasteBlocks(tx: Tx, pos: Pos, clip: ClipBlock[]): Pos {
   const doc = tx.doc;
+  if (isSourceBlock(doc, pos.b)) return { b: pos.b, o: 0 };
   if (clip.length === 0) return pos;
   const first = clip[0];
   if (clip.length === 1) {
