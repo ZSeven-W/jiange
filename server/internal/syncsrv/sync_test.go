@@ -3,6 +3,7 @@ package syncsrv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -62,7 +63,7 @@ func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 func (e *env) handler(h *Hub) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i, _ := strconv.Atoi(r.Header.Get("X-User"))
-		h.Serve(w, r, e.users[i])
+		h.Serve(w, r, e.users[i], nil)
 	})
 }
 
@@ -529,14 +530,397 @@ func TestAuthorization(t *testing.T) {
 	if b.clientID == a.clientID {
 		t.Fatal("stole client id")
 	}
-	// causally unready ops are rejected but still acked
+	// Causally unready ops are rejected without acknowledging the batch.
 	orphan := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: b.clientID, Clock: 500}, Block: paragraph, Parent: collab.OpID{Client: 77, Clock: 1}, Side: 1, Text: "x"}
 	b.edit(func(*collab.Doc, uint64) []collab.Op { return []collab.Op{orphan} })
-	waitFor(t, "ack", b.idle)
+	waitFor(t, "rejected batch", func() bool { b.mu.Lock(); defer b.mu.Unlock(); return len(b.errors) > 0 })
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if fmt.Sprint(b.errors) != "[not_ready]" {
 		t.Fatalf("errors %v", b.errors)
+	}
+	if len(b.inflight) != 1 || len(b.inflight[0]) != 1 {
+		t.Fatalf("rejected operation was acknowledged: %v", b.inflight)
+	}
+}
+
+func TestConnectedSharePermissionChanges(t *testing.T) {
+	t.Run("downgrade rejects writes and preserves read access on a new connection", func(t *testing.T) {
+		st := store.NewMemory()
+		e := newEnv(t, st, 1000)
+		doc := e.newDoc()
+		ctx := context.Background()
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+			t.Fatal(err)
+		}
+		owner, shared := e.client(0, doc), e.client(2, doc)
+		shared.edit(typeAt("before", func(n int) int { return n }))
+		converge(t, st, doc, owner, shared)
+		head, err := st.Head(ctx, doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleView); err != nil {
+			t.Fatal(err)
+		}
+		shared.edit(typeAt("forbidden", func(n int) int { return n }))
+		waitFor(t, "read-only rejection", func() bool {
+			shared.mu.Lock()
+			defer shared.mu.Unlock()
+			return len(shared.errors) > 0
+		})
+		shared.mu.Lock()
+		gotErr := shared.errors[len(shared.errors)-1]
+		shared.mu.Unlock()
+		if gotErr != "read_only" {
+			t.Fatalf("got %q, want read_only", gotErr)
+		}
+		if h, _ := st.Head(ctx, doc); h != head {
+			t.Fatalf("downgraded write persisted: %d -> %d", head, h)
+		}
+		select {
+		case <-shared.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("connection not closed after rejected batch")
+		}
+		// Reconnect without replaying the rejected local draft: viewer access
+		// continues, while the original connection retains its pending batch.
+		viewer := e.client(2, doc)
+		owner.edit(typeAt("after", func(n int) int { return n }))
+		waitFor(t, "viewer receives later changes", func() bool {
+			viewer.mu.Lock()
+			defer viewer.mu.Unlock()
+			return viewer.lastSeq > uint64(head) || isClosed(viewer.done)
+		})
+		if isClosed(viewer.done) {
+			t.Fatal("viewer connection lost after downgrade")
+		}
+	})
+
+	t.Run("upgrade applies without reconnect", func(t *testing.T) {
+		st := store.NewMemory()
+		e := newEnv(t, st, 1000)
+		doc := e.newDoc()
+		ctx := context.Background()
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleView); err != nil {
+			t.Fatal(err)
+		}
+		owner, shared := e.client(0, doc), e.client(2, doc)
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+			t.Fatal(err)
+		}
+		shared.edit(typeAt("allowed", func(n int) int { return n }))
+		if v := converge(t, st, doc, owner, shared); !strings.Contains(v, "allowed") {
+			t.Fatalf("write missing: %s", v)
+		}
+	})
+
+	t.Run("revoked connection cannot receive new broadcasts", func(t *testing.T) {
+		st := store.NewMemory()
+		e := newEnv(t, st, 1000)
+		doc := e.newDoc()
+		ctx := context.Background()
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+			t.Fatal(err)
+		}
+		owner, shared := e.client(0, doc), e.client(2, doc)
+		shared.mu.Lock()
+		before := shared.lastSeq
+		shared.mu.Unlock()
+		if err := st.SetShare(ctx, doc, e.users[2].ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		owner.edit(typeAt("secret after revoke", func(n int) int { return n }))
+		waitFor(t, "owner write", owner.idle)
+		select {
+		case <-shared.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("revoked connection remained open on broadcast")
+		}
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		if shared.lastSeq != before || strings.Contains(shared.doc.Text(paragraph), "secret after revoke") {
+			t.Fatal("revoked connection received document content")
+		}
+	})
+
+	t.Run("revoked connection cannot write", func(t *testing.T) {
+		st := store.NewMemory()
+		e := newEnv(t, st, 1000)
+		doc := e.newDoc()
+		ctx := context.Background()
+		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+			t.Fatal(err)
+		}
+		shared := e.client(2, doc)
+		head, _ := st.Head(ctx, doc)
+		if err := st.SetShare(ctx, doc, e.users[2].ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		shared.edit(typeAt("forbidden", func(n int) int { return n }))
+		select {
+		case <-shared.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("revoked writer remained connected")
+		}
+		if h, _ := st.Head(ctx, doc); h != head {
+			t.Fatalf("revoked write persisted: %d -> %d", head, h)
+		}
+	})
+}
+
+func TestHelloDoesNotTrustReplicaFromAnotherDocument(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	firstDoc, secondDoc := e.newDoc(), e.newDoc()
+	first := e.client(0, firstDoc)
+	second := &client{t: t, user: 0, docID: secondDoc, clientID: first.clientID, peers: map[uint64]string{}}
+	second.connect(e.srv.URL)
+	defer second.disconnect()
+	if second.clientID == first.clientID {
+		t.Fatal("replica id from a different document was reused")
+	}
+
+	// A stale pending operation for the first document must not become an
+	// authorized replica merely because both documents have the same owner.
+	doc := collab.NewDoc()
+	rows, err := st.OpsAfter(context.Background(), secondDoc, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		ops, err := collab.DecodeOps(row.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, op := range ops {
+			doc.Apply(op)
+		}
+	}
+	forged := doc.InsertText(first.clientID, paragraph, 0, "wrong document")
+	batch, err := collab.EncodeOps([]collab.Op{forged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, _ := st.Head(context.Background(), secondDoc)
+	second.write(collab.EncodeClientOps(batch))
+	select {
+	case <-second.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cross-document replica not rejected")
+	}
+	if after, _ := st.Head(context.Background(), secondDoc); after != head {
+		t.Fatalf("cross-document operation persisted: %d -> %d", head, after)
+	}
+}
+
+// gatedDocStore makes authorization checks wait without holding a room lock.
+// It lets tests change the grant after a frame was queued but before sending.
+type gatedDocStore struct {
+	store.DocStore
+	mu        sync.Mutex
+	user      int64
+	remaining int
+	entered   chan struct{}
+	release   chan struct{}
+	fail      bool
+}
+
+func (g *gatedDocStore) GetDoc(ctx context.Context, user, doc int64) (store.DocMeta, error) {
+	g.mu.Lock()
+	var release <-chan struct{}
+	fail := false
+	if user == g.user {
+		fail = g.fail
+		if g.remaining > 0 {
+			g.remaining--
+			if g.remaining == 0 {
+				close(g.entered)
+				release = g.release
+			}
+		}
+	}
+	g.mu.Unlock()
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return store.DocMeta{}, ctx.Err()
+		}
+	}
+	if fail {
+		return store.DocMeta{}, errors.New("simulated permission lookup failure")
+	}
+	return g.DocStore.GetDoc(ctx, user, doc)
+}
+
+func (g *gatedDocStore) gate(user int64, nth int) (<-chan struct{}, chan struct{}) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.user, g.remaining = user, nth
+	g.entered, g.release = make(chan struct{}), make(chan struct{})
+	return g.entered, g.release
+}
+
+func TestRevokedDuringInitialCatchUp(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	ctx := context.Background()
+	if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+		t.Fatal(err)
+	}
+	gate := &gatedDocStore{DocStore: st}
+	e.hub.Store = gate
+	entered, release := gate.gate(e.users[2].ID, 2) // HELLO check, then queued WELCOME
+	ws, _, err := websocket.Dial(ctx, strings.Replace(e.srv.URL, "http", "ws", 1), &websocket.DialOptions{HTTPHeader: http.Header{"X-User": {"2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	if err := ws.Write(ctx, websocket.MessageBinary, collab.EncodeHello(uint64(doc), 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("welcome did not reach send check")
+	}
+	if err := st.SetShare(ctx, doc, e.users[2].ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, _, err := ws.Read(rctx); err == nil {
+		t.Fatal("revoked user received catch-up frame")
+	}
+}
+
+func TestRevokedWhileBroadcastQueued(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	ctx := context.Background()
+	if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+		t.Fatal(err)
+	}
+	gate := &gatedDocStore{DocStore: st}
+	e.hub.Store = gate
+	owner, shared := e.client(0, doc), e.client(2, doc)
+	shared.mu.Lock()
+	before := shared.lastSeq
+	shared.mu.Unlock()
+	// Wait for the catch-up ACK so the next target permission check is the
+	// writer checking the owner's queued broadcast, not the incoming ACK.
+	waitFor(t, "initial server ACK", func() bool {
+		e.hub.mu.Lock()
+		r := e.hub.rooms[doc]
+		e.hub.mu.Unlock()
+		if r == nil {
+			return false
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for c := range r.conns {
+			if c.user.ID == e.users[2].ID {
+				return c.acked >= int64(before)
+			}
+		}
+		return false
+	})
+	entered, release := gate.gate(e.users[2].ID, 1)
+	owner.edit(typeAt("private queued content", func(n int) int { return n }))
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued broadcast did not reach send check")
+	}
+	if err := st.SetShare(ctx, doc, e.users[2].ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	waitFor(t, "owner write", owner.idle)
+	select {
+	case <-shared.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("revoked recipient remained connected")
+	}
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	if shared.lastSeq != before || strings.Contains(shared.doc.Text(paragraph), "private queued content") {
+		t.Fatal("revoked user received a previously queued frame")
+	}
+}
+
+func TestPermissionLookupFailureFailsClosed(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	ctx := context.Background()
+	if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+		t.Fatal(err)
+	}
+	gate := &gatedDocStore{DocStore: st}
+	e.hub.Store = gate
+	owner, shared := e.client(0, doc), e.client(2, doc)
+	shared.mu.Lock()
+	before := shared.lastSeq
+	shared.mu.Unlock()
+	gate.mu.Lock()
+	gate.user, gate.fail = e.users[2].ID, true
+	gate.mu.Unlock()
+	owner.edit(typeAt("private", func(n int) int { return n }))
+	waitFor(t, "owner write", owner.idle)
+	select {
+	case <-shared.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lookup failure did not disconnect")
+	}
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	if shared.lastSeq != before {
+		t.Fatal("sent document content after failed authorization check")
+	}
+}
+
+func TestPermissionLookupFailureRejectsWrites(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	ctx := context.Background()
+	if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
+		t.Fatal(err)
+	}
+	gate := &gatedDocStore{DocStore: st}
+	e.hub.Store = gate
+	shared := e.client(2, doc)
+	head, _ := st.Head(ctx, doc)
+	gate.mu.Lock()
+	gate.user, gate.fail = e.users[2].ID, true
+	gate.mu.Unlock()
+	shared.edit(typeAt("forbidden", func(n int) int { return n }))
+	select {
+	case <-shared.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lookup failure did not disconnect writer")
+	}
+	if after, _ := st.Head(ctx, doc); after != head {
+		t.Fatalf("write persisted after authorization failure: %d -> %d", head, after)
+	}
+}
+
+func TestAwarenessBurstDoesNotBlockDocumentWrites(t *testing.T) {
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	a, b := e.client(0, doc), e.client(1, doc)
+	for i := 0; i < 100; i++ {
+		a.write(collab.EncodeClientAware(fmt.Sprintf(`{"cursor":%d}`, i)))
+	}
+	b.edit(typeAt("still editable", func(n int) int { return n }))
+	if v := converge(t, st, doc, a, b); !strings.Contains(v, "still editable") {
+		t.Fatalf("write not propagated: %s", v)
 	}
 }
 

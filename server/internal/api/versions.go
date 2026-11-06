@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -27,15 +28,31 @@ func StateAtHead(ctx context.Context, st store.DocStore, doc int64) (*collab.Doc
 	if err != nil {
 		return nil, 0, err
 	}
+	if from < 0 || head < 0 || from > head {
+		return nil, 0, fmt.Errorf("document %d snapshot sequence %d is inconsistent with head %d", doc, from, head)
+	}
 	for from < head {
-		rows, err := st.OpsAfter(ctx, doc, from, 1000)
+		// Limit each page to the captured head. OpsAfter has no upper bound,
+		// so concurrent writes may still be returned by a store; never apply a
+		// row newer than head to a state that will be labelled with head.
+		limit := int(min(head-from, int64(1000)))
+		rows, err := st.OpsAfter(ctx, doc, from, limit)
 		if err != nil {
 			return nil, 0, err
 		}
 		if len(rows) == 0 {
-			break
+			return nil, 0, fmt.Errorf("document %d operation log missing sequence %d before head %d", doc, from+1, head)
 		}
 		for _, row := range rows {
+			if row.Seq > head {
+				if from < head {
+					return nil, 0, fmt.Errorf("document %d operation log missing sequence %d before head %d", doc, from+1, head)
+				}
+				break
+			}
+			if row.Seq != from+1 {
+				return nil, 0, fmt.Errorf("document %d operation log expected sequence %d, got %d", doc, from+1, row.Seq)
+			}
 			ops, err := collab.DecodeOps(row.Bytes)
 			if err != nil {
 				return nil, 0, err
@@ -43,8 +60,13 @@ func StateAtHead(ctx context.Context, st store.DocStore, doc int64) (*collab.Doc
 			for _, op := range ops {
 				d.Apply(op)
 			}
+			from = row.Seq
 		}
-		from = rows[len(rows)-1].Seq
+	}
+	// EncodeState does not persist operations waiting for missing dependencies.
+	// Refuse to label such a partial materialization as a complete snapshot.
+	if pending := d.Pending(); pending != 0 {
+		return nil, 0, fmt.Errorf("document %d state at sequence %d has %d operations with missing dependencies", doc, head, pending)
 	}
 	return d, head, nil
 }

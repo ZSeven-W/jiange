@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { commentsApi, type Comment, type User } from "@/lib/api";
 
 export interface CommentAnchor {
@@ -14,7 +14,9 @@ export function CommentsPanel({
   id,
   meId,
   canEdit,
+  canManage,
   draft,
+  onDraftSent,
   activeThread,
   onActivate,
   onClose,
@@ -22,7 +24,9 @@ export function CommentsPanel({
   id: number;
   meId: number;
   canEdit: boolean;
+  canManage: boolean;
   draft: CommentAnchor | null;
+  onDraftSent: (draft: CommentAnchor) => void;
   activeThread: number | null;
   onActivate: (id: number | null) => void;
   onClose: () => void;
@@ -34,6 +38,24 @@ export function CommentsPanel({
   const invalidate = () => qc.invalidateQueries({ queryKey: key });
 
   const [replyTo, setReplyTo] = useState<number | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [actionPending, setActionPending] = useState(false);
+  const actionPendingRef = useRef(false);
+  const runAction = async (action: () => Promise<unknown>) => {
+    if (actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setActionPending(true);
+    setActionError("");
+    try {
+      await action();
+      void invalidate();
+    } catch {
+      setActionError("操作失败，请检查权限或网络后重试。");
+    } finally {
+      actionPendingRef.current = false;
+      setActionPending(false);
+    }
+  };
   useEffect(() => {
     if (draft) setReplyTo(null);
   }, [draft]);
@@ -47,7 +69,7 @@ export function CommentsPanel({
   }, [comments]);
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l bg-surface shadow-xl" data-comments-panel>
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl" data-comments-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         评论
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
@@ -55,8 +77,10 @@ export function CommentsPanel({
         </button>
       </header>
       <div className="flex-1 overflow-y-auto p-3" data-comment-list>
-        {canEdit && <Composer id={id} meId={meId} members={members.data ?? []} draft={draft} onDone={invalidate} />}
-        {threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">选中文本即可添加评论</p>}
+        {canEdit && <Composer id={id} meId={meId} members={members.data ?? []} draft={draft} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
+        {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
+        {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
+        {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{canEdit ? "还没有评论，可以在上方添加" : "还没有评论"}</p>}
         {threads.map((t) => (
           <div
             key={t.id}
@@ -83,15 +107,16 @@ export function CommentsPanel({
                     </button>
                     <button
                       className="hover:text-primary"
+                      disabled={actionPending}
                       onClick={(e) => {
                         e.stopPropagation();
-                        commentsApi.update(id, t.id, { resolved: !t.resolved }).then(invalidate);
+                        void runAction(() => commentsApi.update(id, t.id, { resolved: !t.resolved }));
                       }}
                     >
                       {t.resolved ? "重新打开" : "解决"}
                     </button>
-                    {(t.userId === meId) && (
-                      <button className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); commentsApi.remove(id, t.id).then(invalidate); }}>
+                    {(t.userId === meId || canManage) && (
+                      <button disabled={actionPending} className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>
                         删除
                       </button>
                     )}
@@ -104,8 +129,8 @@ export function CommentsPanel({
                 <CommentBody c={rp} members={members.data ?? []} />
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
                   {rp.userName}
-                  {(rp.userId === meId) && (
-                    <button className="ml-auto hover:text-destructive" onClick={(e) => { e.stopPropagation(); commentsApi.remove(id, rp.id).then(invalidate); }}>
+                  {canEdit && (rp.userId === meId || canManage) && (
+                    <button disabled={actionPending} className="ml-auto hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>
                       删除
                     </button>
                   )}
@@ -114,7 +139,7 @@ export function CommentsPanel({
             ))}
             {replyTo === t.id && canEdit && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                <Composer id={id} meId={meId} members={members.data ?? []} draft={null} parentId={t.id} onDone={() => { setReplyTo(null); invalidate(); }} onCancel={() => setReplyTo(null)} />
+                <Composer id={id} meId={meId} members={members.data ?? []} draft={null} parentId={t.id} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => setReplyTo(null)} />
               </div>
             )}
           </div>
@@ -160,11 +185,13 @@ function Composer({
   members: User[];
   draft: CommentAnchor | null;
   parentId?: number;
-  onDone: () => void;
+  onDone: (draft: CommentAnchor | null) => void;
   onCancel?: () => void;
 }) {
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
+  const [error, setError] = useState("");
+  const postingRef = useRef(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const atIdx = text.lastIndexOf("@");
   const query = atIdx >= 0 ? text.slice(atIdx + 1) : null;
@@ -172,15 +199,20 @@ function Composer({
 
   const post = async () => {
     const body = text.trim();
-    if (!body || posting) return;
+    if (!body || postingRef.current) return;
+    postingRef.current = true;
     setPosting(true);
+    setError("");
     const mentioned = members.filter((m) => body.includes("@" + m.name)).map((m) => m.id);
     try {
       if (parentId) await commentsApi.create(id, { parentId, body, mentions: mentioned });
       else await commentsApi.create(id, { body, mentions: mentioned, ...(draft ?? {}) });
       setText("");
-      onDone();
+      onDone(draft);
+    } catch {
+      setError("发送失败，请检查权限或网络后重试。");
     } finally {
+      postingRef.current = false;
       setPosting(false);
     }
   };
@@ -189,14 +221,15 @@ function Composer({
       {draft?.quote && !parentId && <div className="mb-1.5 truncate border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground">{draft.quote}</div>}
       <textarea
         ref={ref}
-        autoFocus
+        autoFocus={!!draft || !!parentId}
         rows={2}
         value={text}
+        disabled={posting}
         placeholder={parentId ? "回复…" : "添加评论，@ 提及他人"}
         className="w-full resize-none text-[13px] outline-none"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             void post();
           }
@@ -204,6 +237,7 @@ function Composer({
         }}
         data-comment-input
       />
+      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
       {matches.length > 0 && (
         <div className="rounded-md border bg-surface py-1 shadow-sm" data-at-menu>
           {matches.map((m) => (

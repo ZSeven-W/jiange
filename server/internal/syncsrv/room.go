@@ -48,13 +48,20 @@ func (r *room) load(ctx context.Context) error {
 // catchUp integrates ops persisted (by any instance) after r.head and fans
 // them out to every connection in seq order. Caller holds r.mu.
 func (r *room) catchUp(ctx context.Context) error {
-	for {
-		rows, err := r.hub.Store.OpsAfter(ctx, r.id, r.head, catchUpChunk)
+	target, err := r.hub.Store.Head(ctx, r.id)
+	if err != nil {
+		return err
+	}
+	if target < r.head {
+		return fmt.Errorf("catch up %d: persistent head %d is behind room head %d", r.id, target, r.head)
+	}
+	for r.head < target {
+		rows, err := r.hub.Store.OpsAfter(ctx, r.id, r.head, int(min(target-r.head, catchUpChunk)))
 		if err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			return nil
+		if err := validateLogRows(r.id, r.head, target, rows); err != nil {
+			return err
 		}
 		batch, ops, err := joinRows(rows)
 		if err != nil {
@@ -68,10 +75,26 @@ func (r *room) catchUp(ctx context.Context) error {
 			c.send(msg)
 		}
 		r.head = rows[len(rows)-1].Seq
-		if len(rows) < catchUpChunk {
-			return nil
-		}
 	}
+	if r.doc.Pending() != 0 {
+		return fmt.Errorf("catch up %d: %d operations have unresolved dependencies at seq %d", r.id, r.doc.Pending(), target)
+	}
+	return nil
+}
+
+// Each stored sequence belongs to exactly one operation; bounds are captured
+// before reading so a concurrent append cannot leak into an earlier welcome.
+func validateLogRows(doc, after, target int64, rows []store.SeqOp) error {
+	if len(rows) == 0 {
+		return fmt.Errorf("document %d: missing operation after seq %d (target %d)", doc, after, target)
+	}
+	for _, row := range rows {
+		if row.Seq != after+1 || row.Seq > target {
+			return fmt.Errorf("document %d: expected seq %d through %d, got %d", doc, after+1, target, row.Seq)
+		}
+		after = row.Seq
+	}
+	return nil
 }
 
 func joinRows(rows []store.SeqOp) ([]byte, []collab.Op, error) {
@@ -80,6 +103,9 @@ func joinRows(rows []store.SeqOp) ([]byte, []collab.Op, error) {
 		o, err := collab.DecodeOps(row.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("op seq %d: %w", row.Seq, err)
+		}
+		if len(o) != 1 {
+			return nil, nil, fmt.Errorf("op seq %d: expected one operation, got %d", row.Seq, len(o))
 		}
 		ops = append(ops, o...)
 	}
@@ -127,25 +153,36 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64) error {
 		r.reset()
 		return err
 	}
+	target := r.head
 	from := lastSeq
 	switch {
-	case lastSeq > r.head:
+	case lastSeq > target:
 		// replica is ahead of us (e.g. restored database): resync from current state
-		c.send(collab.EncodeWelcome(c.clientID, uint64(r.head), uint64(r.head), r.doc.EncodeState()))
-		from = r.head
+		c.send(collab.EncodeWelcome(c.clientID, uint64(target), uint64(target), r.doc.EncodeState()))
+		from = target
 	case r.snapSeq > 0 && lastSeq < r.snapSeq:
 		seq, state, err := r.hub.Store.LatestSnapshot(ctx, r.id)
 		if err != nil {
 			return err
 		}
-		c.send(collab.EncodeWelcome(c.clientID, uint64(r.head), uint64(seq), state))
+		if seq > target {
+			// Another instance snapshotted a newer head after our catch-up.
+			// Use our own complete state, never label future state as this head.
+			seq, state = target, r.doc.EncodeState()
+		} else if _, err := collab.DecodeState(state); err != nil {
+			return fmt.Errorf("snapshot %d@%d: %w", r.id, seq, err)
+		}
+		c.send(collab.EncodeWelcome(c.clientID, uint64(target), uint64(seq), state))
 		from = seq
 	default:
-		c.send(collab.EncodeWelcome(c.clientID, uint64(r.head), 0, nil))
+		c.send(collab.EncodeWelcome(c.clientID, uint64(target), 0, nil))
 	}
-	for from < r.head {
-		rows, err := r.hub.Store.OpsAfter(ctx, r.id, from, catchUpChunk)
-		if err != nil || len(rows) == 0 {
+	for from < target {
+		rows, err := r.hub.Store.OpsAfter(ctx, r.id, from, int(min(target-from, catchUpChunk)))
+		if err != nil {
+			return err
+		}
+		if err := validateLogRows(r.id, from, target, rows); err != nil {
 			return err
 		}
 		batch, _, err := joinRows(rows)
@@ -155,7 +192,7 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64) error {
 		c.send(collab.EncodeServerOps(uint64(rows[0].Seq), batch))
 		from = rows[len(rows)-1].Seq
 	}
-	c.acked = min(lastSeq, r.head)
+	c.acked = min(lastSeq, target)
 	c.dbAcked = 0
 	for o := range r.conns {
 		if o.aware != "" {
@@ -185,6 +222,10 @@ func (r *room) leave(c *conn) {
 	}
 }
 
+// No further batch may be processed on a connection after rejecting one:
+// older clients can have several batches inflight and ACKs lack batch IDs.
+var errBatchRejected = errors.New("sync batch rejected")
+
 // handleOps validates, sequences, persists and fans out a client batch.
 func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 	r.mu.Lock()
@@ -212,9 +253,11 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		}
 	}
 	if len(raws) == 0 {
-		c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
 		if rejected > 0 {
 			c.send(collab.EncodeError("not_ready", fmt.Sprintf("%d ops depend on unknown ops", rejected)))
+			return errBatchRejected
+		} else {
+			c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
 		}
 		return nil
 	}
@@ -224,59 +267,93 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		r.reset()
 		return err
 	}
+	if len(seqs) != len(accepted) {
+		r.reset()
+		return fmt.Errorf("append ops %d: expected %d sequence results, got %d", r.id, len(accepted), len(seqs))
+	}
 	var mine []collab.Op
 	var first int64
+	var last int64
 	for i, s := range seqs {
 		if s == 0 {
 			continue // persisted concurrently by another instance; arrives via catch-up
 		}
 		if first == 0 {
 			first = s
+		} else if s != last+1 {
+			r.reset()
+			return fmt.Errorf("append ops %d: noncontiguous sequence %d after %d", r.id, s, last)
 		}
+		last = s
 		mine = append(mine, accepted[i])
 	}
 	if first == 0 {
-		c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
+		// A duplicate may have been sequenced by a different instance after
+		// our initial catch-up. Deliver its history before acknowledging it.
+		if err := r.catchUp(ctx); err != nil {
+			r.reset()
+			return err
+		}
+		if rejected > 0 {
+			c.send(collab.EncodeError("not_ready", fmt.Sprintf("%d ops depend on unknown ops", rejected)))
+			return errBatchRejected
+		} else {
+			c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
+		}
 		return nil
 	}
 	// ops another instance sequenced before ours must reach everyone first
-	if r.head < first-1 {
-		save := r.head
-		rows, err := r.hub.Store.OpsAfter(ctx, r.id, r.head, int(first-1-r.head))
+	if first <= r.head {
+		r.reset()
+		return fmt.Errorf("append ops %d: new sequence %d is not after room head %d", r.id, first, r.head)
+	}
+	for r.head < first-1 {
+		rows, err := r.hub.Store.OpsAfter(ctx, r.id, r.head, int(min(first-1-r.head, catchUpChunk)))
 		if err != nil {
 			r.reset()
 			return err
 		}
-		if len(rows) > 0 {
-			batch, rops, err := joinRows(rows)
-			if err != nil {
-				return err
-			}
-			for _, op := range rops {
-				r.doc.Apply(op)
-			}
-			msg := collab.EncodeServerOps(uint64(save+1), batch)
-			for o := range r.conns {
-				o.send(msg)
-			}
+		if err := validateLogRows(r.id, r.head, first-1, rows); err != nil {
+			r.reset()
+			return err
 		}
+		batch, rops, err := joinRows(rows)
+		if err != nil {
+			r.reset()
+			return err
+		}
+		for _, op := range rops {
+			r.doc.Apply(op)
+		}
+		msg := collab.EncodeServerOps(uint64(rows[0].Seq), batch)
+		for o := range r.conns {
+			o.send(msg)
+		}
+		r.head = rows[len(rows)-1].Seq
 	}
 	batch, _ := collab.EncodeOps(mine)
 	msg := collab.EncodeServerOps(uint64(first), batch)
 	for o := range r.conns {
-		if o != c {
+		if o != c || rejected > 0 {
 			o.send(msg)
 		}
 	}
-	c.send(collab.EncodeServerAck(uint64(first), uint64(len(mine))))
 	r.head = first + int64(len(mine)) - 1
 	if rejected > 0 {
+		// The ACK has no batch ID or rejection list. Sending it here would
+		// make clients discard the rejected ops. Echo accepted ops to the
+		// sender instead, then retain the entire batch for a later retry.
 		c.send(collab.EncodeError("not_ready", fmt.Sprintf("%d ops depend on unknown ops", rejected)))
+	} else {
+		c.send(collab.EncodeServerAck(uint64(first), uint64(len(mine))))
 	}
 	if r.head-r.snapSeq >= r.hub.SnapshotEvery {
 		if err := r.snapshot(ctx); err != nil {
 			r.hub.Log.Error("snapshot", "doc", r.id, "err", err)
 		}
+	}
+	if rejected > 0 {
+		return errBatchRejected
 	}
 	return nil
 }
@@ -319,27 +396,46 @@ func (r *room) snapshot(ctx context.Context) error {
 		}
 	}
 	horizon, err := st.Horizon(ctx, r.id, r.hub.now().Add(-r.hub.GCWindow))
-	if err != nil || horizon <= r.snapSeq {
+	if err != nil {
 		return err
 	}
+	// Another server may have advanced the persistent head before this room
+	// processes its notification. Do not publish a snapshot ahead of the
+	// sequence this room has actually integrated.
+	if horizon > r.head {
+		horizon = r.head
+	}
+	if horizon <= r.snapSeq {
+		return nil
+	}
 	base := collab.NewDoc()
+	var from int64
 	if seq, state, err := st.LatestSnapshot(ctx, r.id); err == nil {
+		// A concurrently created newer snapshot cannot be used to reconstruct
+		// an older horizon. It already supersedes the snapshot we planned.
+		if seq >= horizon {
+			return nil
+		}
 		if base, err = collab.DecodeState(state); err != nil {
 			return err
 		}
-		if seq != r.snapSeq {
-			r.snapSeq = seq
-		}
+		from = seq
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	for from := r.snapSeq; from < horizon; {
+	for from < horizon {
 		rows, err := st.OpsAfter(ctx, r.id, from, int(min(horizon-from, catchUpChunk)))
 		if err != nil {
 			return err
 		}
 		if len(rows) == 0 {
-			break
+			return fmt.Errorf("snapshot %d: missing operation after seq %d (horizon %d)", r.id, from, horizon)
+		}
+		for _, row := range rows {
+			if row.Seq != from+1 || row.Seq > horizon {
+				return fmt.Errorf("snapshot %d: expected seq %d through %d, got %d", r.id, from+1, horizon, row.Seq)
+			}
+			from = row.Seq
 		}
 		_, ops, err := joinRows(rows)
 		if err != nil {
@@ -348,7 +444,11 @@ func (r *room) snapshot(ctx context.Context) error {
 		for _, op := range ops {
 			base.Apply(op)
 		}
-		from = rows[len(rows)-1].Seq
+	}
+	// Pending operations are not encoded by Doc.EncodeState. Saving now would
+	// silently discard unresolved content while advancing the snapshot seq.
+	if base.Pending() != 0 {
+		return fmt.Errorf("snapshot %d: %d operations have unresolved dependencies at seq %d", r.id, base.Pending(), horizon)
 	}
 	removed := base.Compact()
 	if err := st.SaveSnapshot(ctx, r.id, horizon, base.EncodeState()); err != nil {

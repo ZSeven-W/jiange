@@ -60,8 +60,14 @@ type ShareStore interface {
 	SetShare(ctx context.Context, docID, userID int64, role string) error
 	GetLink(ctx context.Context, docID int64) (Link, error)
 	SetLink(ctx context.Context, docID int64, l Link) error
+	// ChangeLinkRole atomically changes a setting and rotates the token when a
+	// disabled link is enabled. candidate is a freshly generated secret.
+	ChangeLinkRole(ctx context.Context, docID int64, role, candidate string) (Link, error)
 	// DocByToken resolves a share link to its doc and role (ErrNotFound if off).
 	DocByToken(ctx context.Context, token string) (docID int64, role string, err error)
+	// JoinLink records that this user presented the currently valid token.
+	// The grant follows the link's current role and is separate from invitations.
+	JoinLink(ctx context.Context, token string, userID int64) (docID int64, err error)
 	// SharedWithMe lists docs shared to the user from outside their workspaces.
 	SharedWithMe(ctx context.Context, userID int64) ([]DocMeta, error)
 	// WorkspaceMembers lists a workspace's users (for person fields and share dialogs).

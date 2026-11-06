@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(pat, s.requireUser(h))
 	}
 	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
+	mux.Handle("GET /api/public/{token}/files/{id}", http.HandlerFunc(s.getPublicFile))
 	// public form endpoints (anonymous visitors)
 	mux.Handle("GET /api/forms/{id}/{vid}", http.HandlerFunc(s.getForm))
 	mux.Handle("POST /api/forms/{id}/{vid}", http.HandlerFunc(s.submitForm))
@@ -121,7 +122,24 @@ func (s *Server) Handler() http.Handler {
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			u, _ := UserFrom(r.Context())
-			s.Hub.Serve(w, r, u)
+			cookie, err := r.Cookie(CookieName)
+			if err != nil || cookie.Value == "" {
+				httpx.Error(w, http.StatusUnauthorized, "unauthorized", "login required")
+				return
+			}
+			// Keep only the token hash in the connection callback, and recheck
+			// that same session as well as document permission on every frame.
+			sessionHash := auth.HashToken(cookie.Value)
+			s.Hub.Serve(w, r, u, func(ctx context.Context) error {
+				current, err := s.Store.SessionUser(ctx, sessionHash, s.now())
+				if err != nil {
+					return err
+				}
+				if current.ID != u.ID {
+					return store.ErrNotFound
+				}
+				return nil
+			})
 		})))
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

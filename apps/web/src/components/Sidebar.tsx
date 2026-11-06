@@ -7,6 +7,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
+import { DocColorIcon } from "./FeishuIcons";
 
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
@@ -25,6 +26,22 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   });
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
+  const accountMenu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: MouseEvent) => {
+      if (!accountMenu.current?.contains(event.target as Node)) setMenu(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [menu]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const create = useMutation({
     mutationFn: (parentId: number | null = null) => docsApi.create("", parentId),
@@ -32,6 +49,13 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       if (d.parentId) setOpen((o) => ({ ...o, [d.parentId!]: true }));
       qc.invalidateQueries({ queryKey: ["docs"] });
       go(`#/doc/${d.id}`);
+    },
+  });
+  const createBase = useMutation({
+    mutationFn: () => baseApi.create(),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ["docs"] });
+      go(hrefOf(d));
     },
   });
   const ws = me.workspaces[0];
@@ -106,68 +130,67 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const shown = kw ? (searchQ.data ?? []) : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r bg-surface">
-      <div className="relative px-3 pt-3">
-        <button onClick={() => setMenu((v) => !v)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover">
-          <Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" />
-          <span className="truncate text-[14px] font-semibold">{ws?.name ?? "我的空间"}</span>
-          <Chevron className="ml-0.5 text-subtle" />
-        </button>
-        {menu && (
-          <div className="absolute left-3 right-3 top-12 z-20 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setMenu(false)}>
-            <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
-            {me.workspaces.map((w) => (
-              <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">
-                {w.name} <span>✓</span>
-              </div>
-            ))}
-            <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>
-              退出登录
-            </button>
-          </div>
-        )}
-        <label className="mt-2 flex h-8 items-center gap-2 rounded-md bg-hover px-2.5 text-[13px] text-subtle focus-within:brightness-95 dark:focus-within:brightness-110">
+    <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
+      <div className="relative px-3 pt-4">
+        <div className="flex h-8 items-center px-2"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" /><span className="ml-2 text-[14px] font-semibold tracking-[-0.01em]">Jiange 云文档</span></div>
+        <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
           <SearchIcon />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-foreground outline-none placeholder:text-subtle" data-search />
+          <input type="search" aria-label="搜索标题和正文" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
         </label>
       </div>
-      <nav className="mt-3 space-y-0.5 px-3">
+      <nav className="mt-4 space-y-1 px-3">
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
-        <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
+        <NavItem icon={<ClockIcon />} label="最近更新" active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
-      <div className="group mt-5 flex items-center justify-between px-5 text-xs text-subtle">
-        <span>文档</span>
-        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button title="新建多维表格" onClick={async () => { const b = await baseApi.create(); qc.invalidateQueries({ queryKey: ["docs"] }); go(`#/base/${b.id}`); }} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground" data-new-base>
+      {!kw && <div className="mt-6 px-3">
+        <div className="px-2 pb-1 text-xs font-medium text-subtle">收藏文档</div>
+        {(favorites.data ?? []).slice(0, 4).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+        {favorites.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">暂无收藏</p>}
+      </div>}
+      <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
+        <span>我的文档库</span>
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          <button aria-label="新建多维表格" title="新建多维表格" onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
             <Table2 size={14} strokeWidth={1.7} />
           </button>
-          <button title="新建文档" onClick={() => create.mutate(null)} className="grid size-5 place-items-center rounded hover:bg-hover hover:text-foreground" data-new-doc>
+          <button aria-label="新建文档" title="新建文档" onClick={() => create.mutate(null)} disabled={create.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-doc>
             <FilePlus size={14} strokeWidth={1.7} />
           </button>
         </span>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
+        {(create.isError || createBase.isError) && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">新建失败，请稍后重试</p>}
         {kw.trim()
           ? (searchQ.isFetching && <p className="px-2 py-1.5 text-xs text-subtle">搜索中…</p>)
           : renderTree(null, 0)}
         {kw.trim() && shown.map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
-        {kw.trim() && !searchQ.isFetching && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">没有匹配的文档</p>}
+        {kw.trim() && searchQ.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">搜索失败，请稍后重试</p>}
+        {kw.trim() && !searchQ.isFetching && !searchQ.isError && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">没有匹配的文档</p>}
+        {!kw.trim() && docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">文档加载失败，请稍后重试</p>}
         {!kw.trim() && docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">还没有文档</p>}
         {!q.trim() && (shared.data?.length ?? 0) > 0 && (
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={<DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
+              <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
       </div>
-      <div className="border-t px-3 py-2">
+      <div ref={accountMenu} className="relative border-t px-3 py-2">
+        {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
+          <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
+          {me.workspaces.map((w) => <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">{w.name} <span>✓</span></div>)}
+          <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>退出登录</button>
+        </div>}
         <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
-          <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{me.user.name}</span>
+          <button onClick={() => setMenu((v) => !v)} aria-label="账号与空间" aria-expanded={menu} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
+            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium">{me.user.name}</span><span className="block truncate text-[11px] text-subtle">{ws?.name ?? "我的空间"}</span></span>
+            <Chevron className="text-subtle" />
+          </button>
           <DarkToggle />
           <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>
             <LogOut size={14} strokeWidth={1.7} />
@@ -213,10 +236,9 @@ function TreeRow({
 }) {
   return (
     <div
-      onClick={onClick}
       data-tree-depth={depth}
       className={cn(
-        "group relative flex h-8 w-full cursor-pointer items-center gap-1 rounded-md pr-1 text-[14px] transition-colors",
+        "group relative flex h-9 w-full items-center rounded-md pr-1 text-[13px] transition-colors",
         active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
         muted && !active && "text-muted-foreground",
       )}
@@ -231,25 +253,29 @@ function TreeRow({
           style={{ left: 12 + i * 16 }}
         />
       ))}
-      <div
-        className="relative flex min-w-0 flex-1 items-center"
-    >
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className={cn("grid size-5 shrink-0 place-items-center rounded text-[10px] text-subtle hover:bg-black/5", !expandable && "invisible")}
-        aria-label={open ? "收起" : "展开"}
-      >
-        <ChevronRight size={12} strokeWidth={1.7} className={cn("transition-transform", open && "rotate-90")} />
-      </button>
-      <span className={cn("shrink-0", active ? "text-primary" : "text-muted-foreground")}>
-        {base ? <BaseIcon /> : <DocIcon />}
-      </span>
-      <span className="ml-1 truncate">{label}</span>
-      <span className="ml-auto hidden items-center gap-0.5 group-hover:flex">
+      <div className="relative flex min-w-0 flex-1 items-center">
+      {expandable ? (
         <button
+          onClick={onToggle}
+          className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 dark:hover:bg-white/10"
+          aria-label={`${open ? "收起" : "展开"} ${label}`}
+          aria-expanded={open}
+        >
+          <ChevronRight size={12} strokeWidth={1.7} className={cn("transition-transform", open && "rotate-90")} />
+        </button>
+      ) : <span aria-hidden className="size-5 shrink-0" />}
+      <button
+        onClick={onClick}
+        aria-current={active ? "page" : undefined}
+        title={label}
+        className="flex h-9 min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        {base ? <span aria-hidden className="grid size-[18px] shrink-0 place-items-center rounded-[4px] bg-[#7159d8] text-white"><BaseIcon size={12} /></span> : <DocColorIcon className="size-[18px] shrink-0" />}
+        <span className="min-w-0 truncate">{label}</span>
+      </button>
+      <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">
+        <button
+          aria-label="新建子文档"
           title="新建子文档"
           onClick={(e) => {
             e.stopPropagation();
@@ -261,6 +287,7 @@ function TreeRow({
         </button>
         {onStar && (
           <button
+            aria-label={starred ? "取消收藏" : "收藏"}
             title={starred ? "取消收藏" : "收藏"}
             onClick={(e) => {
               e.stopPropagation();
@@ -283,8 +310,9 @@ function NavItem({ icon, label, active, muted, onClick }: { icon: React.ReactNod
   return (
     <button
       onClick={onClick}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[14px] transition-colors",
+        "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
         active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
         muted && !active && "text-muted-foreground",
       )}
@@ -306,11 +334,11 @@ const svg = {
   strokeLinejoin: "round",
 } as const;
 export const DocIcon = (props: React.ComponentProps<typeof FileText>) => <FileText size={16} strokeWidth={1.7} {...props} />;
-const HomeIcon = (props: React.ComponentProps<typeof House>) => <House size={16} strokeWidth={1.7} {...props} />;
+const HomeIcon = (props: React.SVGProps<SVGSVGElement>) => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}><path d="m20 10-8-5.939L4 10v10h5v-3.8a2.2 2.2 0 0 1 2.2-2.2h1.6a2.2 2.2 0 0 1 2.2 2.2V20h5zm-9 11a1 1 0 0 1-1 1H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .75-1.562l8-5.938a2 2 0 0 1 2.5 0l8 5.938A2 2 0 0 1 22 10v10a2 2 0 0 1-2 2h-6a1 1 0 0 1-1-1v-4.8a.2.2 0 0 0-.2-.2h-1.6a.2.2 0 0 0-.2.2z" /></svg>;
 const ClockIcon = (props: React.ComponentProps<typeof Clock3>) => <Clock3 size={16} strokeWidth={1.7} {...props} />;
 const StarIcon = (props: React.ComponentProps<typeof Star>) => <Star size={16} strokeWidth={1.7} {...props} />;
 const TrashIcon = (props: React.ComponentProps<typeof Trash2>) => <Trash2 size={16} strokeWidth={1.7} {...props} />;
-const SearchIcon = (props: React.ComponentProps<typeof Search>) => <Search size={14} strokeWidth={1.7} {...props} />;
+const SearchIcon = (props: React.SVGProps<SVGSVGElement>) => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}><path d="M16.473 17.887A9.46 9.46 0 0 1 10.5 20a9.5 9.5 0 1 1 9.5-9.5 9.46 9.46 0 0 1-2.113 5.973l3.773 3.773a.996.996 0 0 1-.007 1.407.996.996 0 0 1-1.407.007l-3.773-3.773ZM18 10.5a7.5 7.5 0 1 0-15 0 7.5 7.5 0 0 0 15 0Z" /></svg>;
 export const Chevron = ({ className }: { className?: string }) => <ChevronDown size={12} strokeWidth={1.7} className={className} />;
 
 export const BaseIcon = (props: React.ComponentProps<typeof Table2>) => <Table2 size={16} strokeWidth={1.7} {...props} />;
@@ -324,12 +352,19 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
   }, [open]);
   return (
     <span ref={ref} className="relative">
       <button
+        aria-label="更多操作"
+        aria-expanded={open}
         title="更多"
         onClick={(e) => {
           e.stopPropagation();
@@ -341,7 +376,7 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void
         ⋯
       </button>
       {open && (
-        <div className="absolute left-0 top-6 z-30 w-28 rounded-lg border bg-surface py-1 text-[13px] shadow-lg" data-row-menu-pop>
+        <div className="absolute right-0 top-6 z-30 w-32 rounded-lg border bg-surface py-1 text-[13px] shadow-lg" data-row-menu-pop>
           {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>新建子文档</button>}
           {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>重命名</button>}
           {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>复制链接</button>}
@@ -363,6 +398,7 @@ export function DarkToggle() {
     <button
       className="grid size-5 place-items-center rounded text-subtle hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
       title={dark ? "切换到浅色" : "切换到深色"}
+      aria-label={dark ? "切换到浅色" : "切换到深色"}
       onClick={() => setDark((v) => !v)}
       data-dark-toggle
     >
@@ -371,4 +407,4 @@ export function DarkToggle() {
   );
 }
 
-import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, House, LogOut, Moon, Search, Star, Sun, Table2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, LogOut, Moon, Star, Sun, Table2, Trash2 } from "lucide-react";

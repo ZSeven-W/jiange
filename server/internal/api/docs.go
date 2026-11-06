@@ -115,40 +115,31 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	// Check the permissions of the whole request before applying any changes.
+	// In particular, an editor must not be able to change the title as a side
+	// effect of a rejected request that also contains a manager-only field.
+	if (in.CopyProtected != nil || in.Move) && d.Role != store.RoleManage {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
+		return
+	}
+	if in.Move && in.ParentID != nil {
+		u, _ := UserFrom(r.Context())
+		if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID {
+			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
+			return
+		}
+	}
+	var title string
 	if in.Title != nil {
 		t, ok := cleanTitle(w, *in.Title)
 		if !ok {
 			return
 		}
-		var err error
-		if d, err = s.Store.UpdateTitle(r.Context(), d.ID, t); err != nil {
-			s.fail(w, r, err)
-			return
-		}
+		title = t
 	}
-	if in.CopyProtected != nil {
-		if d.Role != store.RoleManage {
-			httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
-			return
-		}
-		if err := s.Store.SetCopyProtected(r.Context(), d.ID, *in.CopyProtected); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		d.CopyProtected = *in.CopyProtected
-	}
+	// Move checks for cycles before changing the parent. Do it before changing
+	// other fields so a reported cycle conflict does not change those fields.
 	if in.Move {
-		if d.Role != store.RoleManage {
-			httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
-			return
-		}
-		if in.ParentID != nil {
-			u, _ := UserFrom(r.Context())
-			if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID {
-				httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
-				return
-			}
-		}
 		if err := s.Store.Move(r.Context(), d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
 			httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
 			return
@@ -158,7 +149,24 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		}
 		d.ParentID = in.ParentID
 	}
-	httpx.JSON(w, http.StatusOK, d)
+	if in.Title != nil {
+		if _, err := s.Store.UpdateTitle(r.Context(), d.ID, title); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	if in.CopyProtected != nil {
+		if err := s.Store.SetCopyProtected(r.Context(), d.ID, *in.CopyProtected); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	// UpdateTitle is a system-level store operation: its returned metadata is
+	// not scoped to the caller and lacks Role and WorkspaceName. Reload the
+	// final state through the same access check as GET, including after a move.
+	if current, ok := s.docFromPath(w, r); ok {
+		httpx.JSON(w, http.StatusOK, current)
+	}
 }
 
 func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {

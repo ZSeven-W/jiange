@@ -26,9 +26,18 @@ func TestPostgresStore(t *testing.T) {
 	if _, err := pg.Pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatal(err)
 	}
+	migrations, err := migrate.List()
+	if err != nil || len(migrations) == 0 {
+		t.Fatalf("list migrations: %v", err)
+	}
 	applied, err := migrate.Up(ctx, pg.Pool)
-	if err != nil || len(applied) != 9 {
+	if err != nil || len(applied) != len(migrations) {
 		t.Fatalf("migrate: %v %v", applied, err)
+	}
+	for i, migration := range migrations {
+		if applied[i] != migration.Name {
+			t.Fatalf("migration %d: got %q, want %q", i, applied[i], migration.Name)
+		}
 	}
 	if again, err := migrate.Up(ctx, pg.Pool); err != nil || len(again) != 0 {
 		t.Fatalf("migrate not idempotent: %v %v", again, err)

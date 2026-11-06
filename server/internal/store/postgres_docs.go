@@ -94,7 +94,13 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 
 // GetDocSystem fetches node meta without user scoping.
 func (p *Postgres) GetDocSystem(ctx context.Context, id int64) (DocMeta, error) {
-	return scanDoc(p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+` FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id))
+	var d DocMeta
+	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DocMeta{}, ErrNotFound
+	}
+	return d, err
 }
 
 // SetCopyProtected toggles the copy-protection flag (manage only upstream).
@@ -200,7 +206,10 @@ func (p *Postgres) Head(ctx context.Context, doc int64) (h int64, err error) {
 }
 
 func (p *Postgres) LatestSnapshot(ctx context.Context, doc int64) (seq int64, state []byte, err error) {
-	err = p.Pool.QueryRow(ctx, `SELECT seq, state FROM doc_snapshots WHERE doc_id=$1 AND NOT is_version ORDER BY seq DESC LIMIT 1`, doc).Scan(&seq, &state)
+	// Naming a snapshot does not stop it being a valid synchronization baseline.
+	// SaveVersion marks the existing row, so filtering it out here could make
+	// the only baseline disappear when an older replica reconnects.
+	err = p.Pool.QueryRow(ctx, `SELECT seq, state FROM doc_snapshots WHERE doc_id=$1 ORDER BY seq DESC LIMIT 1`, doc).Scan(&seq, &state)
 	if err == nil {
 		state = decompressState(state)
 	}

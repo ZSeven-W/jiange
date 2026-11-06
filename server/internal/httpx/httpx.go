@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"path"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -61,10 +63,49 @@ func Logger(log *slog.Logger) Middleware {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w, status: 200}
 			next.ServeHTTP(sw, r)
-			log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
+			log.Info("http", "method", r.Method, "path", safeLogPath(r.URL.Path), "status", sw.status,
 				"dur_ms", time.Since(start).Milliseconds(), "rid", RequestID(r))
 		})
 	}
+}
+
+// Share tokens are bearer credentials and must not be written to access logs.
+func safeLogPath(rawPath string) string {
+	redact := func(value string) (string, bool) {
+		parts := strings.Split(value, "/")
+		found := false
+		next := func(i int) int {
+			for i < len(parts) && (parts[i] == "" || parts[i] == ".") {
+				i++
+			}
+			return i
+		}
+		for i := 0; i < len(parts); i++ {
+			if parts[i] != "api" {
+				continue
+			}
+			j := next(i + 1)
+			if j >= len(parts) || parts[j] != "public" && parts[j] != "share" {
+				continue
+			}
+			k := next(j + 1)
+			if k < len(parts) {
+				parts[k] = "[redacted]"
+				found = true
+			}
+		}
+		return strings.Join(parts, "/"), found
+	}
+	// Check both forms: cleaning a path can either reveal the protected route
+	// or erase it after a token, e.g. /api/public/token/../../healthz.
+	if redacted, found := redact(rawPath); found {
+		return redacted
+	}
+	cleaned := path.Clean("/" + strings.TrimPrefix(rawPath, "/"))
+	if redacted, found := redact(cleaned); found {
+		return redacted
+	}
+	return rawPath
 }
 
 // Recover turns panics into 500 responses.

@@ -61,9 +61,6 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	empty := collab.NewDoc()
 	ops := collab.RestoreOps(empty, src, uint64(client))
-	for i, op := range ops {
-		println("DBG op", i, op.T, "block=", op.Block.Key(), "text=", op.Text, "parent=", op.Parent.Key())
-	}
 	raws := make([]store.RawOp, 0, len(ops))
 	for _, op := range ops {
 		b, err := collab.EncodeOps([]collab.Op{op})

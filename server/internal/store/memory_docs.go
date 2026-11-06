@@ -245,7 +245,7 @@ func (m *Memory) LatestSnapshot(_ context.Context, doc int64) (int64, []byte, er
 	if best < 0 {
 		return 0, nil, ErrNotFound
 	}
-	return best, d.snaps[best], nil
+	return best, slices.Clone(d.snaps[best]), nil
 }
 
 func (m *Memory) SaveSnapshot(_ context.Context, doc, seq int64, state []byte) error {
@@ -255,7 +255,11 @@ func (m *Memory) SaveSnapshot(_ context.Context, doc, seq int64, state []byte) e
 	if d == nil {
 		return ErrNotFound
 	}
-	d.snaps[seq] = state
+	// Like Postgres ON CONFLICT DO NOTHING, snapshots are immutable for a
+	// document/sequence pair. This also preserves any named version there.
+	if _, exists := d.snaps[seq]; !exists {
+		d.snaps[seq] = slices.Clone(state)
+	}
 	return nil
 }
 
@@ -394,7 +398,7 @@ func (m *Memory) VersionState(_ context.Context, doc, seq int64) ([]byte, error)
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return state, nil
+	return slices.Clone(state), nil
 }
 
 func (m *Memory) RecentDocIDs(_ context.Context, since time.Time) ([]int64, error) {

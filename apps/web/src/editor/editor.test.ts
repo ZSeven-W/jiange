@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import { filterItems, pinyinMatch } from "./pinyin";
-import { bodyBlocks, copyRange, deleteRange, joinBackward, markdownShortcut, parseText, pasteBlocks, splitBlock, toggleMark, type Sel } from "./model";
+import { bodyBlocks, copyRange, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "./model";
 
 function setup(...lines: string[]) {
   const d = new Doc(1);
@@ -96,6 +96,70 @@ describe("code block", () => {
     const p2 = splitBlock(tx, p1);
     expect(texts(d)).toEqual(["code:x", "paragraph:"]);
     expect(p2.o).toBe(0);
+  });
+});
+
+describe("formula and diagram blocks", () => {
+  it.each(["math", "diagram"])("preserves %s at adjacent Backspace/Delete and inside the block", (type) => {
+    const { d, blocks } = setup("前文", "source", "后文");
+    new Tx(d).setProp(blocks[1], "type", type);
+    expect(isSourceBlock(d, blocks[1])).toBe(true);
+    const tx = new Tx(d);
+    expect(joinForward(tx, blocks[0])).toEqual({ b: blocks[0], o: 2 });
+    expect(joinBackward(tx, blocks[2])).toEqual({ b: blocks[2], o: 0 });
+    expect(joinBackward(tx, blocks[1])).toEqual({ b: blocks[1], o: 0 });
+    expect(joinForward(tx, blocks[1])).toEqual({ b: blocks[1], o: 0 });
+    deleteRange(tx, { a: { b: blocks[1], o: 0 }, f: { b: blocks[1], o: 6 } });
+    expect(tx.ops).toHaveLength(0);
+    expect(texts(d)).toEqual(["paragraph:前文", `${type}:source`, "paragraph:后文"]);
+  });
+
+  it.each(["math", "diagram"])("deletes selected text without merging across %s and supports undo", (type) => {
+    const { d, blocks } = setup("前文内容", "公式源码", "后文内容");
+    new Tx(d).setProp(blocks[1], "type", type);
+    const tx = new Tx(d);
+    const caret = deleteRange(tx, { a: { b: blocks[0], o: 2 }, f: { b: blocks[2], o: 2 } });
+    expect(caret).toEqual({ b: blocks[0], o: 2 });
+    expect(texts(d)).toEqual(["paragraph:前文", `${type}:公式源码`, "paragraph:内容"]);
+    expect(tx.ops.every((op) => op.t !== "bdel")).toBe(true);
+    const undo = new UndoManager();
+    undo.record(tx, null, null);
+    undo.undo(d);
+    expect(texts(d)).toEqual(["paragraph:前文内容", `${type}:公式源码`, "paragraph:后文内容"]);
+  });
+
+  it("retains late remote changes to the formula block across a range deletion", () => {
+    const { d, blocks } = setup("abc", "x", "def");
+    new Tx(d).setProp(blocks[1], "type", "math");
+    const peer = Doc.fromState(2, d.encodeState());
+    const late = peer.insertText(blocks[1], 1, "+y");
+    const tx = new Tx(d);
+    deleteRange(tx, { a: { b: blocks[0], o: 1 }, f: { b: blocks[2], o: 2 } });
+    if (late) d.apply(late);
+    expect(d.hasBlock(blocks[1])).toBe(true);
+    expect(d.text(blocks[1])).toBe("x+y");
+    expect(texts(d)).toEqual(["paragraph:a", "math:x+y", "paragraph:f"]);
+  });
+
+  it("does not apply text formatting or paste to hidden sources", () => {
+    const { d, blocks } = setup("abc", "x^2", "def");
+    new Tx(d).setProp(blocks[1], "type", "math");
+    const tx = new Tx(d);
+    const all = { a: { b: blocks[0], o: 0 }, f: { b: blocks[2], o: 3 } };
+    toggleMark(tx, all, "bold");
+    setBlockType(tx, all, "h1");
+    pasteBlocks(tx, { b: blocks[1], o: 0 }, parseText("不应写入"));
+    expect(d.blockInfo(blocks[1]).type).toBe("math");
+    expect(d.text(blocks[1])).toBe("x^2");
+    expect(d.richChars(blocks[1]).every((c) => !c.marks.bold)).toBe(true);
+  });
+
+  it("inserts a paragraph after an atomic block on Enter", () => {
+    const { d, blocks } = setup("x^2");
+    new Tx(d).setProp(blocks[0], "type", "math");
+    const next = splitBlock(new Tx(d), { b: blocks[0], o: 0 });
+    expect(texts(d)).toEqual(["math:x^2", "paragraph:"]);
+    expect(next.o).toBe(0);
   });
 });
 

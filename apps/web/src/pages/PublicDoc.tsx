@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { VersionView } from "./VersionPanel";
+import { useEffect, useState } from "react";
+import { ReadOnlyDoc } from "./ReadOnlyDoc";
 
 interface PublicSnapshot {
   title: string;
   updatedAt: string;
+  copyProtected?: boolean;
   view: import("@/lib/api").DocView;
 }
 
@@ -11,8 +12,11 @@ interface PublicSnapshot {
 export function PublicDoc({ token }: { token: string }) {
   const [snap, setSnap] = useState<PublicSnapshot | null>(null);
   const [err, setErr] = useState("");
-  if (!snap && !err) {
-    fetch(`/api/public/${token}`)
+  useEffect(() => {
+    const controller = new AbortController();
+    setSnap(null);
+    setErr("");
+    fetch(`/api/public/${encodeURIComponent(token)}`, { signal: controller.signal })
       .then(async (r) => {
         if (!r.ok) {
           const data = await r.json().catch(() => ({}));
@@ -20,10 +24,11 @@ export function PublicDoc({ token }: { token: string }) {
         }
         setSnap(await r.json());
       })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }
+      .catch((e) => { if (!controller.signal.aborted) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => controller.abort();
+  }, [token]);
   return (
-    <div className="min-h-full bg-background" data-public-doc>
+    <div className="min-h-full bg-background" data-public-doc onCopy={(e) => { if (snap?.copyProtected) e.preventDefault(); }} onCut={(e) => { if (snap?.copyProtected) e.preventDefault(); }}>
       <header className="flex h-[52px] items-center border-b px-6">
         <a href="#/" className="text-[15px] font-semibold text-primary">
           Jiange
@@ -44,7 +49,7 @@ export function PublicDoc({ token }: { token: string }) {
             <h1 className="text-[34px] font-semibold leading-[1.3] tracking-tight">{snap.title || "未命名文档"}</h1>
             <div className="mt-3 text-[13px] text-subtle">最近修改于 {new Date(snap.updatedAt).toLocaleString("zh-CN", { hour12: false })}</div>
             <div className="mt-8">
-              <VersionView view={snap.view} />
+              <ReadOnlyDoc view={snap.view} publicToken={token} disableFileDownloads={snap.copyProtected} />
             </div>
           </>
         )}

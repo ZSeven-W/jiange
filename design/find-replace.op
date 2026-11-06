@@ -1,0 +1,730 @@
+{
+  "version": "0.8.5",
+  "name": "OpenPencil CLI Session",
+  "children": [
+    {
+      "type": "frame",
+      "id": "n1",
+      "name": "Find and replace reference",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1280.0,
+      "height": 600.0,
+      "layout": "none",
+      "fill": [
+        {
+          "type": "solid",
+          "color": "#F5F6F7"
+        }
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "n2",
+          "name": "查找",
+          "x": 100.0,
+          "y": 100.0,
+          "width": 405.0,
+          "height": 185.0,
+          "layout": "none",
+          "children": [
+            {
+              "type": "text",
+              "id": "n3",
+              "name": "Find tab",
+              "x": 24.0,
+              "y": 16.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "查找",
+              "fontFamily": "Inter",
+              "fontSize": 16.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1456F0"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n4",
+              "name": "Replace tab",
+              "x": 84.0,
+              "y": 16.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "替换",
+              "fontFamily": "Inter",
+              "fontSize": 16.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1F2329"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n5",
+              "name": "Close",
+              "x": 362.0,
+              "y": 13.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "×",
+              "fontFamily": "Inter",
+              "fontSize": 22.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#646A73"
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "n6",
+              "name": "divider",
+              "x": 24.0,
+              "y": 47.0,
+              "width": 357.0,
+              "height": 1.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#DEE0E3"
+                }
+              ],
+              "children": []
+            },
+            {
+              "type": "rectangle",
+              "id": "n7",
+              "name": "active-tab",
+              "x": 24.0,
+              "y": 46.0,
+              "width": 32.0,
+              "height": 3.0,
+              "cornerRadius": 2.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1456F0"
+                }
+              ],
+              "children": []
+            },
+            {
+              "type": "frame",
+              "id": "n8",
+              "name": "Search input",
+              "role": "search-bar",
+              "x": 24.0,
+              "y": 72.0,
+              "width": 357.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#1456F0"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n9",
+                  "name": "Placeholder",
+                  "x": 10.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "在文档内查找",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n10",
+                  "name": "Match count",
+                  "x": 316.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "0 / 0",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#646A73"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n11",
+              "name": "上一处",
+              "x": 208.0,
+              "y": 128.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n12",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "上一处",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n13",
+              "name": "下一处",
+              "x": 300.0,
+              "y": 128.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n14",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "下一处",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "n15",
+          "name": "替换",
+          "x": 550.0,
+          "y": 100.0,
+          "width": 405.0,
+          "height": 286.0,
+          "layout": "none",
+          "children": [
+            {
+              "type": "text",
+              "id": "n16",
+              "name": "Find tab",
+              "x": 24.0,
+              "y": 16.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "查找",
+              "fontFamily": "Inter",
+              "fontSize": 16.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1F2329"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n17",
+              "name": "Replace tab",
+              "x": 84.0,
+              "y": 16.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "替换",
+              "fontFamily": "Inter",
+              "fontSize": 16.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1456F0"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n18",
+              "name": "Close",
+              "x": 362.0,
+              "y": 13.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "×",
+              "fontFamily": "Inter",
+              "fontSize": 22.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#646A73"
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "n19",
+              "name": "divider",
+              "x": 24.0,
+              "y": 47.0,
+              "width": 357.0,
+              "height": 1.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#DEE0E3"
+                }
+              ],
+              "children": []
+            },
+            {
+              "type": "rectangle",
+              "id": "n20",
+              "name": "active-tab",
+              "x": 84.0,
+              "y": 46.0,
+              "width": 32.0,
+              "height": 3.0,
+              "cornerRadius": 2.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1456F0"
+                }
+              ],
+              "children": []
+            },
+            {
+              "type": "text",
+              "id": "n21",
+              "name": "Find label",
+              "x": 24.0,
+              "y": 66.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "查找",
+              "fontFamily": "Inter",
+              "fontSize": 14.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1F2329"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n22",
+              "name": "Search input",
+              "role": "search-bar",
+              "x": 24.0,
+              "y": 94.0,
+              "width": 357.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#1456F0"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n23",
+                  "name": "Placeholder",
+                  "x": 10.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "在文档内查找",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n24",
+                  "name": "Match count",
+                  "x": 316.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "0 / 0",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#646A73"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n25",
+              "name": "Replace label",
+              "x": 24.0,
+              "y": 144.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "替换为",
+              "fontFamily": "Inter",
+              "fontSize": 14.0,
+              "fontWeight": 400,
+              "lineHeight": 1.5,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#1F2329"
+                }
+              ]
+            },
+            {
+              "type": "text_input",
+              "id": "n26",
+              "name": "Replace input",
+              "x": 24.0,
+              "y": 173.0,
+              "width": 357.0,
+              "height": 32.0,
+              "value": "请输入文字",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "cornerRadius": 5.0
+            },
+            {
+              "type": "frame",
+              "id": "n28",
+              "name": "全部替换",
+              "x": 24.0,
+              "y": 229.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#B6BBC1"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n29",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "全部替换",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n30",
+              "name": "替换",
+              "x": 116.0,
+              "y": 229.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n31",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "替换",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n32",
+              "name": "上一处",
+              "x": 208.0,
+              "y": 229.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n33",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "上一处",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n34",
+              "name": "下一处",
+              "x": 300.0,
+              "y": 229.0,
+              "width": 80.0,
+              "height": 32.0,
+              "layout": "none",
+              "cornerRadius": 5.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#DEE0E3"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n35",
+                  "name": "label",
+                  "x": 12.0,
+                  "y": 7.0,
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "下一处",
+                  "fontFamily": "Inter",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "lineHeight": 1.5,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#17191D"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "editorMeta": {
+    "activePageIndex": 0,
+    "preserveAuthoredGeometry": false
+  }
+}

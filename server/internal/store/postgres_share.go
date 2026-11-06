@@ -17,8 +17,14 @@ const roleSQL = `CASE
 const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
 	LEFT JOIN LATERAL (
 		WITH RECURSIVE a AS (SELECT n.id, n.parent_id UNION ALL SELECT x.id, x.parent_id FROM nodes x JOIN a ON x.id = a.parent_id)
-		SELECT max(CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END) AS r
-		FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
+		SELECT max(grants.rank) AS r FROM (
+			SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
+			FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
+			UNION ALL
+			SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 0 END AS rank
+			FROM doc_link_joins j JOIN a ON j.doc_id = a.id JOIN nodes ln ON ln.id = j.doc_id
+			WHERE j.user_id = $1 AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
+		) grants
 	) sh ON true`
 
 func (p *Postgres) ListShares(ctx context.Context, doc int64) ([]Share, error) {
@@ -55,8 +61,52 @@ func (p *Postgres) GetLink(ctx context.Context, doc int64) (l Link, err error) {
 }
 
 func (p *Postgres) SetLink(ctx context.Context, doc int64, l Link) error {
-	_, err := p.Pool.Exec(ctx, `UPDATE nodes SET link_role=$2, link_token=NULLIF($3,'') WHERE id=$1`, doc, l.Role, l.Token)
-	return err
+	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var oldToken *string
+		if err := tx.QueryRow(ctx, `SELECT link_token FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&oldToken); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if l.Role == "none" || oldToken != nil && *oldToken != l.Token {
+			if _, err := tx.Exec(ctx, `DELETE FROM doc_link_joins WHERE doc_id=$1`, doc); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE nodes SET link_role=$2, link_token=NULLIF($3,'') WHERE id=$1`, doc, l.Role, l.Token)
+		return err
+	})
+}
+
+func (p *Postgres) ChangeLinkRole(ctx context.Context, doc int64, role, candidate string) (next Link, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var oldRole string
+		var oldToken *string
+		if err := tx.QueryRow(ctx, `SELECT link_role, link_token FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&oldRole, &oldToken); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		next.Role = role
+		if oldToken != nil {
+			next.Token = *oldToken
+		}
+		if role == "none" {
+			next.Token = ""
+		} else if oldRole == "none" || next.Token == "" {
+			next.Token = candidate
+		}
+		if role == "none" || oldToken != nil && *oldToken != next.Token {
+			if _, err := tx.Exec(ctx, `DELETE FROM doc_link_joins WHERE doc_id=$1`, doc); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE nodes SET link_role=$2, link_token=NULLIF($3,'') WHERE id=$1`, doc, next.Role, next.Token)
+		return err
+	})
+	return
 }
 
 func (p *Postgres) DocByToken(ctx context.Context, tok string) (id int64, role string, err error) {
@@ -67,9 +117,29 @@ func (p *Postgres) DocByToken(ctx context.Context, tok string) (id int64, role s
 	return
 }
 
+// Serialize link join and updates by locking the node row. This prevents a
+// concurrent join from surviving a close or token change.
+func (p *Postgres) JoinLink(ctx context.Context, tok string, uid int64) (id int64, err error) {
+	if tok == "" {
+		return 0, ErrNotFound
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT id FROM nodes WHERE link_token=$1 AND link_role <> 'none' AND deleted_at IS NULL FOR UPDATE`, tok).Scan(&id); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO doc_link_joins (doc_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, uid)
+		return err
+	})
+	return
+}
+
 func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id) FROM nodes n`+roleJoins+`
-		WHERE n.deleted_at IS NULL AND m.user_id IS NULL AND EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
+		WHERE n.deleted_at IS NULL AND m.user_id IS NULL AND (EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
+		 OR (n.link_role <> 'none' AND EXISTS (SELECT 1 FROM doc_link_joins j WHERE j.doc_id = n.id AND j.user_id = $1)))
 		ORDER BY n.id`, uid)
 	if err != nil {
 		return nil, err
