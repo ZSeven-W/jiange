@@ -39,8 +39,12 @@ func (m *Memory) ListFavorites(_ context.Context, uid int64) ([]DocMeta, error) 
 	out := []DocMeta{}
 	for _, id := range m.favorites[uid] {
 		if d := m.doc(id); d != nil && !d.deleted {
+			role := m.roleLocked(uid, d)
+			if RoleRank(role) < RoleRank(RoleView) {
+				continue
+			}
 			meta := d.meta
-			meta.Role = m.roleLocked(uid, d)
+			meta.Role = role
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
 		}
@@ -78,22 +82,31 @@ func (m *Memory) Ancestors(_ context.Context, uid, doc int64) ([]DocMeta, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(doc)
-	if d == nil {
+	if d == nil || d.deleted || RoleRank(m.roleLocked(uid, d)) < RoleRank(RoleView) {
 		return nil, ErrNotFound
 	}
 	var chain []*memDoc
+	seen := map[int64]bool{d.meta.ID: true}
 	for cur := d; cur.meta.ParentID != nil; {
 		p := m.doc(*cur.meta.ParentID)
-		if p == nil {
+		if p == nil || seen[p.meta.ID] {
 			break
 		}
+		seen[p.meta.ID] = true
 		chain = append(chain, p)
 		cur = p
 	}
 	out := []DocMeta{}
 	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].deleted {
+			continue
+		}
+		role := m.roleLocked(uid, chain[i])
+		if RoleRank(role) < RoleRank(RoleView) {
+			continue
+		}
 		meta := chain[i].meta
-		meta.Role = m.roleLocked(uid, chain[i])
+		meta.Role = role
 		meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 		out = append(out, meta)
 	}

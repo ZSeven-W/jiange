@@ -21,12 +21,10 @@ import {
   markdownShortcut,
   normalize,
   TEXTLESS,
-  parseText,
   pasteBlocks,
   setBlockType,
   splitBlock,
   toggleMark,
-  type ClipBlock,
   type Pos,
   type Sel,
 } from "./model";
@@ -46,6 +44,9 @@ import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
+import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
+import { clipboardBlocks } from "./clipboardPayload";
+import type { SlashInsertion } from "./slashInsert";
 import { commentSelection } from "./commentAnchor";
 import { isSearchableBlockType, type FindMatch } from "./findReplace";
 
@@ -164,7 +165,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   slashRef.current = slash;
   const menuComposition = useRef<OpId | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const pendingUpload = useRef<{ b: OpId; kind: string; replace?: boolean } | null>(null);
+  const pendingUpload = useRef<{ captured: SlashInsertion; client: SyncDoc["client"]; type: string; parent: OpId; cursor: Pos | null; boundaryIds?: OpId[] } | null>(null);
   const [toolbar, setToolbar] = useState<{ x: number; y: number } | null>(null);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [touchActiveBlock, setTouchActiveBlock] = useState<string | null>(null);
@@ -691,38 +692,48 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slash, doc, sync.version, sel.current, docs]);
 
-  /** Uploads files and inserts image/file blocks after block b. */
-  const insertFiles = async (files: File[], b: OpId, replace = false) => {
+  /** Upload first; remove the captured command only after a successful insert. */
+  const insertFiles = async (files: File[], context: { captured: SlashInsertion; client: SyncDoc["client"]; type: string; parent: OpId; cursor: Pos | null; boundaryIds?: OpId[] }) => {
+    const { captured, client } = context;
     if (!upload || readOnlyRef.current) return;
-    for (const f of files) {
-      if (readOnlyRef.current) return;
-      const r = await upload(f);
-      if (readOnlyRef.current) return;
-      const type = r.mime.startsWith("image/") && r.mime !== "image/svg+xml" ? "image" : "file";
-      const d = sync.client.doc;
-      if (!d || !d.hasBlock(b)) return;
-      if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
-      run((tx) => {
-        const info = tx.doc.blockInfo(b);
-        const props = {
-          fileId: String(r.id),
-          name: r.name,
-          mime: r.mime,
-          size: String(r.size),
-        };
-        let nb: OpId;
-        if (replace && len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
-          tx.setProp(b, "type", type);
-          for (const [k, v] of Object.entries(props)) tx.setProp(b, k, v);
-          nb = b;
-        } else nb = tx.create(type, b, info.parent, props);
-        replace = false;
-        b = nb;
-        const p = tx.create("paragraph", nb, info.parent);
-        return { b: p, o: 0 };
-      });
-      um.seal();
+    const preflight = validateUploadCommand(captured);
+    if (preflight !== "ok" || !uploadTargetUnchanged(captured, context.type, context.parent, context.boundaryIds)) {
+      setColumnNotice(preflight === "middle" ? "命令前后都有文字，暂不能安全拆分段落；请移到段首或段尾后重试。" : "文档内容已变化，附件未上传；原文已保留。");
+      return;
     }
+    const assets: Uploaded[] = [];
+    try {
+      for (const f of files) {
+        if (!mounted.current) return;
+        if (readOnlyRef.current || currentClient.current !== client || client.doc !== captured.doc) { setColumnNotice("文档内容或编辑权限已变化，附件未插入；原文已保留。"); return; }
+        assets.push(await upload(f));
+      }
+    } catch {
+      if (mounted.current) setColumnNotice("上传失败，原文未修改。请检查网络后重试。");
+      return;
+    }
+    if (!mounted.current) return;
+    if (readOnlyRef.current || currentClient.current !== client || client.doc !== captured.doc || !uploadTargetUnchanged(captured, context.type, context.parent, context.boundaryIds)) { setColumnNotice("文档内容或编辑权限已变化，附件未插入；原文已保留。"); return; }
+    const at = { b: captured.anchor, o: 0 };
+    const previousSelection = sel.current;
+    const unchangedCursor = !!context.cursor && !!previousSelection && collapsed(previousSelection) && eqId(previousSelection.f.b, context.cursor.b) && previousSelection.f.o === context.cursor.o;
+    const previousAnchors = previousSelection && captured.doc.hasBlock(previousSelection.a.b) && captured.doc.hasBlock(previousSelection.f.b)
+      ? { a: captured.doc.anchorAt(previousSelection.a.b, previousSelection.a.o), f: captured.doc.anchorAt(previousSelection.f.b, previousSelection.f.o) }
+      : null;
+    sel.current = { a: at, f: at };
+    let result: Pos | "middle" | null = null;
+    run((tx) => {
+      result = insertUploadedFiles(tx, captured, assets);
+      return result && result !== "middle" ? result : undefined;
+    }, undefined, true);
+    if (!result || result === "middle") {
+      sel.current = previousSelection;
+      setColumnNotice(result === "middle" ? "命令前后都有文字，暂不能安全拆分段落；请移到段首或段尾后重试。" : "文档内容已变化，附件未插入；原文已保留。");
+    } else if (!unchangedCursor && previousSelection && previousAnchors && captured.doc.hasBlock(previousSelection.a.b) && captured.doc.hasBlock(previousSelection.f.b)) {
+      sel.current = { a: { b: previousSelection.a.b, o: captured.doc.resolveAnchor(previousSelection.a.b, previousAnchors.a) }, f: { b: previousSelection.f.b, o: captured.doc.resolveAnchor(previousSelection.f.b, previousAnchors.f) } };
+      publish();
+    }
+    um.seal();
   };
 
   const applySlash = async (it: MenuItem) => {
@@ -772,10 +783,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       return;
     }
     if (it.id === "image" || it.id === "file") {
-      const s0 = sel.current;
-      if (s0 && !m.fromButton) run((tx) => void tx.delete(m.at.b, m.at.o, s0.f.o));
-      pendingUpload.current = { b: m.insertAfter ?? m.at.b, kind: it.id, replace: !m.fromButton && !m.insertAfter };
-      if (fileInput.current) {
+      const originalDoc = sync.client.doc;
+      const captured = originalDoc && captureSlashInsertion(originalDoc, m.at, sel.current, !!m.fromButton, m.insertAfter);
+      if (captured && fileInput.current) {
+        const info = originalDoc!.blockInfo(captured.anchor);
+        pendingUpload.current = { captured, client: sync.client, type: info.type, parent: info.parent, cursor: sel.current ? { ...sel.current.f } : null };
         fileInput.current.accept = it.id === "image" ? "image/*" : "";
         fileInput.current.click();
       }
@@ -992,30 +1004,35 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     if (readOnlyRef.current) return;
     e.preventDefault();
     readSel();
+    const files = [...e.clipboardData.files];
+    const plain = e.clipboardData.getData("text/plain");
+    const raw = e.clipboardData.getData(CLIP_MIME);
     if (slashRef.current?.fromButton) {
-      const text = e.clipboardData.getData("text/plain");
-      setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + text).slice(0, 32), index: 0 } : m);
+      if (files.length) { setColumnNotice("请先选择图片或附件命令，再选择文件。"); return; }
+      if (plain) setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), index: 0 } : m);
+      else setColumnNotice("插入菜单中只能粘贴文字，请先选择命令或关闭菜单。");
       return;
     }
-    const files = [...e.clipboardData.files];
     const currentDoc = sync.client.doc;
     if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
-      if (files.length) return;
-      insertText(e.clipboardData.getData("text/plain"), "paste");
+      if (files.length) { setColumnNotice("暂不支持在分栏中粘贴图片或附件，请先将文件插入正文。"); return; }
+      if (!plain) { setColumnNotice("剪贴板中没有可粘贴的文字，原内容已保留。"); return; }
+      insertText(plain, "paste");
       um.seal();
       return;
     }
-    if (files.length && upload && sel.current) {
-      void insertFiles(files, sel.current.f.b, true);
+    if (files.length) {
+      if (!upload || !sel.current) { setColumnNotice("当前无法上传附件，原内容已保留。"); return; }
+      const d = sync.client.doc, selection = sel.current;
+      if (!d || !collapsed(selection) || !d.hasBlock(selection.f.b)) { setColumnNotice("请先将光标移至段首或段尾再插入附件。"); return; }
+      const length = len(d, selection.f.b), offset = selection.f.o;
+      if (offset > 0 && offset < length) { setColumnNotice("暂不能安全拆分段落，请将光标移至段首或段尾再插入附件。"); return; }
+      const info = d.blockInfo(selection.f.b);
+      void insertFiles(files, { captured: { doc: d, anchor: selection.f.b, beforeAnchor: offset === 0, commandIds: null }, client: sync.client, type: info.type, parent: info.parent, cursor: { ...selection.f }, boundaryIds: d.visibleIds(selection.f.b) });
       return;
     }
-    const raw = e.clipboardData.getData(CLIP_MIME);
-    let clip: ClipBlock[];
-    try {
-      clip = raw ? JSON.parse(raw) : parseText(e.clipboardData.getData("text/plain"));
-    } catch {
-      clip = parseText(e.clipboardData.getData("text/plain"));
-    }
+    const clip = clipboardBlocks(raw, plain);
+    if (!clip) { setColumnNotice("剪贴板中没有可粘贴的内容，原内容已保留。"); return; }
     run((tx, s) => {
       let at = collapsed(s) ? s.a : deleteRange(tx, s);
       if (isSourceBlock(tx.doc, at.b)) at = { b: tx.create("paragraph", at.b, tx.doc.blockInfo(at.b).parent), o: 0 };
@@ -1196,7 +1213,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
             files = [...(e.target.files ?? [])];
           e.target.value = "";
           pendingUpload.current = null;
-          if (p && files.length) void insertFiles(files, p.b, p.replace ?? true);
+          if (p && files.length) void insertFiles(files, p);
         }}
       />
       {carets.map((c) => (

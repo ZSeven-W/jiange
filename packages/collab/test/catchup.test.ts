@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, encodeOps, encodeServerMsg, SyncClient, type Op } from "../src/index";
+import { decodeClientMsg, Doc, encodeOps, encodeServerMsg, SyncClient, type ClientMsg, type Op } from "../src/index";
 
 const deliver = (client: SyncClient, msg: Parameters<typeof encodeServerMsg>[0]) => client.receive(encodeServerMsg(msg));
 function remoteOps(): Op[] {
@@ -78,7 +78,7 @@ describe("catch-up readiness", () => {
     expect(errors).toEqual(["gap"]);
   });
 
-  it("does not report readiness for causally unresolved local operations after a snapshot", () => {
+  it("retains and identifies causally unresolved local operations after a snapshot", () => {
     const local = new Doc(7);
     const missing = local.createBlock("paragraph");
     const orphan = local.insertText(missing.id, 0, "x")!;
@@ -88,6 +88,8 @@ describe("catch-up readiness", () => {
     client.open(() => {});
     deliver(client, { type: "welcome", clientId: 7, headSeq: 0, snapshot: { seq: 0, state: emptyServerDoc.encodeState() } });
     expect(client.doc?.pendingCount).toBe(1);
+    expect(client.blocked).toBe("missing_dependency");
+    expect(client.pendingOps()).toEqual([orphan]);
     expect(client.caughtUp).toBe(false);
     deliver(client, { type: "ack", firstSeq: 1, count: 0 });
     expect(client.caughtUp).toBe(false);
@@ -98,17 +100,23 @@ describe("catch-up readiness", () => {
     const local = new Doc(7);
     const pending = local.createBlock("paragraph");
     const remote = remoteOps();
+    const sent: ClientMsg[] = [];
     const client = new SyncClient(1);
     client.restore(7, [pending]);
-    client.open(() => {});
+    client.open((bytes) => sent.push(decodeClientMsg(bytes)));
     deliver(client, { type: "welcome", clientId: 7, headSeq: 1, snapshot: null });
+    expect(sent.filter((m) => m.type === "ops")).toHaveLength(0);
     deliver(client, { type: "ack", firstSeq: 2, count: 0 });
     deliver(client, { type: "ack", firstSeq: 2, count: 0 }); // empty OPS fence
-    expect(client.unacked).toBe(0);
+    expect(client.unacked).toBe(1);
     expect(client.caughtUp).toBe(false);
     expect(client.status).toBe("syncing");
     deliver(client, { type: "ops", firstSeq: 1, batch: encodeOps(remote.slice(0, 1)) });
     expect(client.caughtUp).toBe(true);
+    expect(sent.filter((m) => m.type === "ops")).toHaveLength(1);
+    deliver(client, { type: "ack", firstSeq: 2, count: 1 });
+    deliver(client, { type: "ack", firstSeq: 3, count: 0 });
+    expect(client.unacked).toBe(0);
     expect(client.status).toBe("synced");
   });
 

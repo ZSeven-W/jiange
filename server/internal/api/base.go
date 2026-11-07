@@ -66,6 +66,7 @@ func (s *Server) createBase(w http.ResponseWriter, r *http.Request) {
 	for range 3 {
 		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID, CreatorID: &u.ID})
 	}
+	b = s.sanitizeWrittenDocMeta(r.Context(), u.ID, b)
 	httpx.JSON(w, http.StatusCreated, b)
 }
 
@@ -311,6 +312,12 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 			revs = []revEntry{}
 		}
 		expansions["reverse"] = revs
+	}
+	u, _ := UserFrom(r.Context())
+	b, err = s.sanitizeDocMeta(r.Context(), u.ID, b, nil)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views, "expansions": expansions})
 }

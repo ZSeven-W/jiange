@@ -58,7 +58,7 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
         peers: (ps: Peer[]) => setPeers(ps.filter((p) => p.state && typeof p.state === "object") as RemotePeer[]),
         error: (code, msg) => {
           console.warn("sync", code, msg);
-          if (code === "gap" || c.blocked) socket.current?.close();
+          if (code === "gap" || (c.blocked && code !== "missing_dependency" && code !== "invalid_history")) socket.current?.close();
           if (code === "read_only" || code === "forbidden" || code === "not_found") void qc.invalidateQueries({ queryKey: ["doc", docId] });
         },
       });
@@ -78,7 +78,7 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
       if (!pending) return;
       try {
         const ops = client.pendingOps();
-        writePendingOps(localStorage, pending.key, ops.length ? { clientId: client.clientId, ops, blocked: client.blocked } : null);
+        writePendingOps(localStorage, pending.key, ops.length ? { clientId: client.clientId, ops, blocked: client.rejection ?? client.blocked } : null);
       } catch { setStorageError(true); }
     };
     const random = () => typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) => x.toString(16).padStart(2, "0")).join("");

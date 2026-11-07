@@ -37,7 +37,7 @@ func (p *Postgres) ListFavorites(ctx context.Context, uid int64) ([]DocMeta, err
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id)
 		FROM nodes n`+roleJoins+`
 		JOIN favorites f ON f.node_id = n.id AND f.user_id = $1
-		WHERE n.deleted_at IS NULL ORDER BY f.created_at DESC`, uid)
+		WHERE n.deleted_at IS NULL AND (`+roleSQL+`) <> '' ORDER BY f.created_at DESC, n.id DESC`, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +65,25 @@ func (p *Postgres) RemoveFavorite(ctx context.Context, uid, doc int64) error {
 
 // Ancestors returns the parent chain, root first, each with the caller's role.
 func (p *Postgres) Ancestors(ctx context.Context, uid, doc int64) ([]DocMeta, error) {
+	// Keep the store contract aligned with GetDoc. The SQL below repeats this
+	// authorization as part of the same query that reads ancestor metadata, so
+	// a grant revoked between the two checks cannot disclose an ancestor.
+	if _, err := p.GetDoc(ctx, uid, doc); err != nil {
+		return nil, err
+	}
 	rows, err := p.Pool.Query(ctx, `WITH RECURSIVE up AS (
-		SELECT id, parent_id FROM nodes WHERE id = $2
+		SELECT n.id, n.parent_id, 0 AS depth, ARRAY[n.id] AS visited
+		FROM nodes n`+roleJoins+`
+		WHERE n.id = $2 AND n.deleted_at IS NULL AND (`+roleSQL+`) <> ''
 		UNION ALL
-		SELECT n.id, n.parent_id FROM nodes n JOIN up ON n.id = up.parent_id
+		SELECT n.id, n.parent_id, up.depth + 1, up.visited || n.id
+		FROM nodes n JOIN up ON n.id = up.parent_id
+		WHERE NOT n.id = ANY(up.visited)
 	)
 	SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id)
-		FROM up c JOIN nodes n ON n.id = c.parent_id`+roleJoins+`
-		ORDER BY n.id`, uid, doc)
+		FROM up c JOIN nodes n ON n.id = c.id`+roleJoins+`
+		WHERE c.depth > 0 AND n.deleted_at IS NULL AND (`+roleSQL+`) <> ''
+		ORDER BY c.depth DESC`, uid, doc)
 	if err != nil {
 		return nil, err
 	}

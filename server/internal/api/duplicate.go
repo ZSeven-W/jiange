@@ -184,6 +184,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.fail(w, r, err)
 	default:
+		nd = s.sanitizeWrittenDocMeta(r.Context(), u.ID, nd)
 		httpx.JSON(w, http.StatusCreated, nd)
 	}
 }

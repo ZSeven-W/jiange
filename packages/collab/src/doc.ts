@@ -116,10 +116,22 @@ export class Doc {
     return this.pending.length;
   }
 
+  /** IDs of causally buffered operations; callers cannot mutate the queue. */
+  pendingIds(): OpId[] {
+    return this.pending.map((op) => ({ ...op.id }));
+  }
+
   /* ------------------------------------------------------------ apply */
 
   /** Applies a (remote or local) op. Returns true if it was new. */
   apply(op: Op): boolean {
+    // Reserve every observed ID, including buffered ops. A local edit may be
+    // made before those ops become causally ready (e.g. during reconnect).
+    const span = Math.max(1, opSpan(op));
+    if (!Number.isSafeInteger(op.id.clock) || op.id.clock < 0 || span - 1 > Number.MAX_SAFE_INTEGER - op.id.clock) {
+      throw new RangeError("operation clock exceeds safe integer range");
+    }
+    this.clock = Math.max(this.clock, op.id.clock + (span - 1));
     const k = idKey(op.id);
     if (this.seen.has(k) || this.pending.some((p) => eqId(p.id, op.id))) return false;
     if (!this.ready(op)) {
@@ -165,8 +177,6 @@ export class Doc {
 
   private integrate(op: Op): void {
     this.seen.add(idKey(op.id));
-    const top = op.id.clock + opSpan(op) - 1;
-    if (top > this.clock) this.clock = top;
     switch (op.t) {
       case "bcreate": {
         if (this.blocks.has(idKey(op.id))) return; // idempotent (e.g. after loading a snapshot)
@@ -256,6 +266,9 @@ export class Doc {
   }
 
   private next(span = 1): OpId {
+    if (!Number.isSafeInteger(span) || span < 1 || span > Number.MAX_SAFE_INTEGER - this.clock) {
+      throw new RangeError("operation clock exceeds safe integer range");
+    }
     const id = { client: this.client, clock: this.clock + 1 };
     this.clock += span;
     return id;
@@ -520,6 +533,7 @@ export class Doc {
     if (r.u8() !== MAGIC || r.u8() !== STATE_TAG) throw new RangeError("not a state blob");
     if (r.u8() !== VERSION) throw new RangeError("unsupported state version");
     d.clock = r.uvar();
+    if (!Number.isSafeInteger(d.clock)) throw new RangeError("state clock exceeds safe integer range");
     const nb = r.uvar();
     for (let i = 0; i < nb; i++) {
       const id = r.id();

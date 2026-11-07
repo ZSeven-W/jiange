@@ -4,11 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, type DocMeta, type Me } from "@/lib/api";
 import { docMetaKey } from "./docMetaState";
 
-const state = vi.hoisted(() => ({ unacked: 0, storageError: false, otherPending: false }));
+const state = vi.hoisted(() => ({ unacked: 0, storageError: false, otherPending: false, blocked: null as string | null }));
 vi.mock("@/lib/useSyncDoc", () => ({ useSyncDoc: () => ({
-  client: { doc: null, unacked: state.unacked, status: "offline", blocked: null, setAwareness: () => {}, pendingOps: () => [] },
+  client: { doc: null, unacked: state.unacked, status: "offline", blocked: state.blocked, setAwareness: () => {}, pendingOps: () => [] },
   version: 0, peers: [], status: "offline", caughtUp: false, ready: false,
-  blocked: null, storageError: state.storageError, legacyPending: false, otherPending: state.otherPending,
+  blocked: state.blocked, storageError: state.storageError, legacyPending: false, otherPending: state.otherPending,
   onBeforeRemote: () => () => {},
 }) }));
 vi.mock("@/editor/Editor", () => ({ Editor: ({ readOnly }: { readOnly: boolean }) => <div data-testid="body">{readOnly ? "只读正文" : "可编辑正文"}</div> }));
@@ -61,5 +61,26 @@ describe("document access errors", () => {
     expect(html).toContain("正在加载文档");
     expect(html).not.toContain("保密标题");
     expect(html).not.toContain("只读正文");
+  });
+
+  it.each(["missing_dependency", "invalid_history"])("explains %s without an ineffective retry", (code) => {
+    state.blocked = code;
+    state.unacked = code === "missing_dependency" ? 1 : 0;
+    const html = renderWith(null);
+    if (code === "missing_dependency") expect(html).toContain("下载本地备份");
+    else expect(html).not.toContain("下载本地备份");
+    expect(html).not.toContain("检查权限并重试");
+    expect(html).toContain(code === "missing_dependency" ? "无法自动合并" : "服务端文档历史不完整");
+    state.blocked = null;
+    state.unacked = 0;
+  });
+
+  it("offers a backup when invalid server history also has pending local edits", () => {
+    state.blocked = "invalid_history";
+    state.unacked = 1;
+    const html = renderWith(null);
+    expect(html).toContain("下载本地备份");
+    state.blocked = null;
+    state.unacked = 0;
   });
 });

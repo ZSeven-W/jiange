@@ -34,6 +34,7 @@ type Store interface {
 	VersionStore
 	CommentStore
 	AutomationStore
+	RecentStore
 	// CreateUser creates the user and a personal workspace atomically.
 	CreateUser(ctx context.Context, email, name, passwordHash string) (User, Workspace, error)
 	UserByEmail(ctx context.Context, email string) (User, error)

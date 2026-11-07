@@ -284,22 +284,9 @@ export function clipText(blocks: ClipBlock[]): string {
   return blocks.map((b) => b.chars.map((c) => c.ch).join("")).join("\n");
 }
 
-/** Parses pasted plain text: one block per line, with markdown line prefixes. */
+/** Preserve plain clipboard text literally; Markdown import is a separate action. */
 export function parseText(text: string): ClipBlock[] {
-  return text.replace(/\r\n?/g, "\n").split("\n").map((line) => {
-    let type = "paragraph";
-    let t = line;
-    const rules: [RegExp, string][] = [[/^### /, "h3"], [/^## /, "h2"], [/^# /, "h1"], [/^[-*+] \[[ x]\] /i, "todo"], [/^[-*+] /, "bullet"], [/^\d+[.)] /, "ordered"], [/^> /, "quote"]];
-    for (const [re, ty] of rules) {
-      const m = re.exec(t);
-      if (m) {
-        type = ty;
-        t = t.slice(m[0].length);
-        break;
-      }
-    }
-    return { type, props: {}, chars: [...t].map((ch) => ({ ch, marks: {} })) };
-  });
+  return text.replace(/\r\n?/g, "\n").split("\n").map((line) => ({ type: "paragraph", props: {}, chars: [...line].map((ch) => ({ ch, marks: {} })) }));
 }
 
 /** Inserts clipboard blocks at pos: the first merges inline, the rest become blocks. */

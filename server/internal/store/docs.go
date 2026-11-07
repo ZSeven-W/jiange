@@ -78,9 +78,12 @@ type DocStore interface {
 	// collector must retain an object while any attachment references it.
 	CopyDoc(ctx context.Context, copy DocCopy, build DocCopyBuilder) (DocMeta, error)
 	ListDocs(ctx context.Context, userID int64) ([]DocMeta, error)
-	// Search lists the user's accessible docs whose title or collaborative
-	// text matches q (title match only on Memory; Postgres also greps ops).
+	// SearchDocs is legacy and must not be used for current-content search:
+	// implementations may inspect history rather than materialized state.
 	SearchDocs(ctx context.Context, userID int64, q string) ([]DocMeta, error)
+	// SearchCandidates pages all currently accessible, non-deleted nodes in ID
+	// order. Search itself is performed on the materialized collaborative state.
+	SearchCandidates(ctx context.Context, userID, afterID int64, limit int) ([]DocMeta, error)
 	// Favorites (stars): user-scoped, survive doc moves.
 	ListFavorites(ctx context.Context, userID int64) ([]DocMeta, error)
 	AddFavorite(ctx context.Context, userID, docID int64) error

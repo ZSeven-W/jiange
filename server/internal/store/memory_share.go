@@ -23,7 +23,9 @@ func (m *Memory) roleLocked(uid int64, d *memDoc) string {
 		}
 		best = RoleEdit
 	}
-	for cur := d; cur != nil; {
+	visited := make(map[int64]bool)
+	for cur := d; cur != nil && !visited[cur.meta.ID]; {
+		visited[cur.meta.ID] = true
 		if r := m.sh.shares[cur.meta.ID][uid]; RoleRank(r) > RoleRank(best) {
 			best = r
 		}
