@@ -5,3 +5,5 @@ dist
 server/bin
 coverage
 *.tsbuildinfo
+output
+docs
