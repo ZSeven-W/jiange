@@ -1744,11 +1744,18 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
         </button>
       )}
       {type === "math" || type === "diagram" || type === "columns" ? null : type === "table" ? (
-        <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
+        <TableBlock
+          data={props.tableData ?? ""}
+          widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
+          onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
+          onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
+          onDelete={() => onSetProp?.("type", "paragraph")}
+          readOnly={!onTableEdit}
+        />
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} mime={props.mime} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
+        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) : undefined} onWidth={(p) => onSetProp?.("imageWidth", String(p ?? ""))} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
@@ -1855,17 +1862,35 @@ const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8D
 const CALLOUT_EMOJI = ["💡", "📌", "⚠️", "✅", "🔥", "📝", "❓", "🎯"];
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */
-function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
+function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { data: string; widths?: number[]; onWidths?: (w: number[]) => void; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
   const rows = parseTableData(data);
   const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
+  const startResize = (e: React.MouseEvent, ci: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const base = widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9));
+    const move = (ev: MouseEvent) => onWidths?.(Array.from({ length: rows[0].length }, (_, k) => (k === ci ? Math.max(70, Math.round(base + ev.clientX - startX)) : widths?.[k] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9)))));
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
   return (
     <div contentEditable={false} className="group/t my-2 w-fit max-w-full select-none overflow-x-auto rounded-lg border" data-table-block>
       <table className="border-collapse text-[13px]">
+        <colgroup>
+          {rows[0].map((_, ci) => (
+            <col key={ci} style={{ width: widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9)) }} />
+          ))}
+        </colgroup>
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri} className={ri > 0 && ri % 2 === 0 ? "bg-sidebar/40" : ""}>
               {row.map((cell, ci) => (
-                <td key={ci} className={cn("min-w-[90px] border p-0 align-top", ri === 0 && "bg-sidebar/70 font-medium")} style={{ width: Math.max(90, Math.min(260, 18 + size(row) * 9)) }}>
+                <td key={ci} className={cn("relative min-w-[90px] border p-0 align-top", ri === 0 && "bg-sidebar/70 font-medium")}>
                   {readOnly ? (
                     <span className="block px-2.5 py-1.5">{cell}</span>
                   ) : (
@@ -1874,6 +1899,13 @@ function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit
                       onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
                       className="w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-surface"
                       data-table-cell={`${ri}:${ci}`}
+                    />
+                  )}
+                  {!readOnly && ri === 0 && (
+                    <div
+                      className="absolute -right-[3px] top-0 z-10 h-full w-[6px] cursor-col-resize hover:bg-primary/40"
+                      onMouseDown={(e) => startResize(e, ci)}
+                      data-table-resize={ci}
                     />
                   )}
                 </td>
@@ -1992,7 +2024,7 @@ function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
     : <div contentEditable={false} className={className} data-bookmark>{content}</div>;
 }
 
-function InlineImage({ fileId, name, mime, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; mime?: string; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string, mime?: string) => void }) {
+function InlineImage({ fileId, name, mime, width, onWidth, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; mime?: string; width?: number; onWidth?: (p?: number) => void; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string, mime?: string) => void }) {
   const [failure, setFailure] = useState<ImageFailure | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [automatic, setAutomatic] = useState(0);
@@ -2003,9 +2035,25 @@ function InlineImage({ fileId, name, mime, version, status, disableFileDownloads
     setAutomatic((n) => n + 1);
     setAttempt((n) => n + 1);
   }, [failure, version, status, automatic]);
-  return <figure contentEditable={false} className="my-2 select-none">
-    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片", mime)} onError={() => setFailure({ version, status })} data-preview-image />}
-  </figure>;
+  return (
+    <figure contentEditable={false} className="group/img my-2 select-none">
+      {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} style={width ? { width: `${width}%` } : undefined} className={cn("max-h-[480px] max-w-full cursor-zoom-in rounded-lg border object-contain", !width && "h-auto")} draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片", mime)} onError={() => setFailure({ version, status })} data-preview-image />}
+      {onWidth && (
+        <span className="mt-1 hidden items-center justify-center gap-1 group-hover/img:flex" data-img-sizes>
+          {[25, 50, 75, 100].map((p2) => (
+            <button
+              key={p2}
+              className={cn("rounded border px-1.5 py-0.5 text-[11px] text-subtle hover:bg-hover hover:text-foreground", width === p2 && "border-primary text-primary")}
+              onClick={() => onWidth(width === p2 ? undefined : p2)}
+              title={`宽度 ${p2}%`}
+            >
+              {p2}%
+            </button>
+          ))}
+        </span>
+      )}
+    </figure>
+  );
 }
 
 
