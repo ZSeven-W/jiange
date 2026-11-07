@@ -145,7 +145,19 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             starred={favorites.data?.some((f) => f.id === d.id)}
             onToggle={() => setOpen((o) => ({ ...o, [d.id]: !isOpen }))}
             onClick={() => go(hrefOf(d))}
-            onAdd={() => create.mutate({ id: d.id, workspaceId: d.workspaceId })}
+            onAdd={() => {
+              if (d.kind === "folder") {
+                // folder 子节点必须走 guarded 创建（fence 会拒旧式插入）
+                driveApi.createNode("doc", "未命名文档", d.id).then((e) => {
+                  qc.invalidateQueries({ queryKey: ["docs"] });
+                  qc.invalidateQueries({ queryKey: ["drive"] });
+                  setOpen((o) => ({ ...o, [d.id]: true }));
+                  go(hrefOf({ id: e.id, kind: "doc" }));
+                });
+                return;
+              }
+              create.mutate({ id: d.id, workspaceId: d.workspaceId });
+            }}
             onStar={() => {
               const starred = favorites.data?.some((f) => f.id === d.id);
               (starred ? extrasApi.unstar(d.id) : extrasApi.star(d.id)).then(() => {

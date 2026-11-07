@@ -4,19 +4,28 @@ import { driveApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { FolderIcon, FolderPlusIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
+import { FolderIcon, FolderPlusIcon, PlusIcon, RotateCcwIcon, TableIcon, Trash2Icon } from "lucide-react";
 
-/** 云盘：目录列表 + 面包屑 + 新建文件夹/移动/回收恢复。 */
+/** 云盘：目录列表 + 面包屑 + 新建（文档/多维表格/文件夹）/移动/回收恢复。 */
 export function DrivePage({ folderId }: { folderId: number | null }) {
   const qc = useQueryClient();
   const key = ["drive", folderId];
   const list = useQuery({ queryKey: key, queryFn: () => driveApi.children(folderId) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["drive"] });
   const [moving, setMoving] = useState<DriveEntry | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const createFolder = useMutation({
     mutationFn: async (title: string) => driveApi.create(title, folderId),
     onSuccess: invalidate,
+  });
+  const createNode = useMutation({
+    mutationFn: async ({ kind, title }: { kind: "doc" | "base"; title: string }) => driveApi.createNode(kind, title, folderId),
+    onSuccess: (entry) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["docs"] });
+      location.hash = hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" });
+    },
   });
   const trash = useMutation({
     mutationFn: (e: DriveEntry) => driveApi.trash(e.id, e.revision),
@@ -47,16 +56,53 @@ export function DrivePage({ folderId }: { folderId: number | null }) {
         </a>
         {folderId !== null && entries.length > 0 && <span className="text-subtle">/ …</span>}
         <div className="ml-auto flex items-center gap-2">
-          <button
-            className="flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
-            onClick={async () => {
-              const t = await askText("新建文件夹", "文件夹名称");
-              if (t && t.trim()) createFolder.mutate(t.trim());
-            }}
-            data-new-folder
-          >
-            <FolderPlusIcon size={14} strokeWidth={1.7} /> 新建文件夹
-          </button>
+          <div className="relative">
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90"
+              onClick={() => setCreating((v) => !v)}
+              data-drive-new-menu
+            >
+              <PlusIcon size={14} strokeWidth={1.7} /> 新建
+            </button>
+            {creating && <div className="fixed inset-0 z-30" onClick={() => setCreating(false)} data-drive-new-menu-backdrop />}
+            {creating && (
+              <div className="absolute right-0 top-9 z-40 w-[160px] overflow-hidden rounded-lg border bg-surface py-1 shadow-xl" data-drive-new-menu-list>
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-hover"
+                  onClick={async () => {
+                    setCreating(false);
+                    const t = await askText("新建文档", "文档名称");
+                    if (t && t.trim()) createNode.mutate({ kind: "doc", title: t.trim() });
+                  }}
+                  data-drive-new-doc
+                >
+                  <DocIcon /> 文档
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-hover"
+                  onClick={async () => {
+                    setCreating(false);
+                    const t = await askText("新建多维表格", "名称");
+                    if (t && t.trim()) createNode.mutate({ kind: "base", title: t.trim() });
+                  }}
+                  data-drive-new-base
+                >
+                  <TableIcon size={15} strokeWidth={1.7} /> 多维表格
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-hover"
+                  onClick={async () => {
+                    setCreating(false);
+                    const t = await askText("新建文件夹", "文件夹名称");
+                    if (t && t.trim()) createFolder.mutate(t.trim());
+                  }}
+                  data-drive-new-folder
+                >
+                  <FolderPlusIcon size={15} strokeWidth={1.7} /> 文件夹
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">

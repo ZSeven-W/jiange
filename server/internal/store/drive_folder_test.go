@@ -102,6 +102,29 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("prior deletion was undone: %+v %v", entries, err)
 	}
+	// Guarded creation of docs/bases inside folders; the fence triggers reject
+	// the legacy creation paths there.
+	docNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "doc", "Folder doc")
+	if err != nil {
+		t.Fatalf("create drive doc: %v", err)
+	}
+	baseNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "base", "Folder base")
+	if err != nil {
+		t.Fatalf("create drive base: %v", err)
+	}
+	if _, err = st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "wiki", "bad kind"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("bad kind: %v", err)
+	}
+	entries, err = st.ListDriveChildren(ctx, guard, ws.ID, &root.ID)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("folder children after create: %+v %v", entries, err)
+	}
+	if docNode.Revision != 1 || docNode.Kind != "doc" || baseNode.Kind != "base" {
+		t.Fatalf("created entries: %+v %+v", docNode, baseNode)
+	}
+	if _, err = st.CreateDriveNode(ctx, other, ws.ID, &root.ID, "doc", "unauthorized"); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("viewer cannot create doc: %v", err)
+	}
 	if err = st.RestoreDriveNode(ctx, guard, grand.ID, grand.Revision+1); err != nil {
 		t.Fatalf("restore earlier batch: %v", err)
 	}

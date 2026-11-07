@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -29,6 +30,9 @@ type DriveEntry struct {
 // must not be replaced with the legacy unguarded document tree operations.
 type DriveFolderStore interface {
 	CreateDriveFolder(context.Context, RestoreGuard, int64, *int64, string) (DriveEntry, error)
+	// CreateDriveNode creates a doc/base/folder under a folder with the same
+	// guard, destination checks and fence rules (drive_revision starts at 1).
+	CreateDriveNode(context.Context, RestoreGuard, int64, *int64, string, string) (DriveEntry, error)
 	ListDriveChildren(context.Context, RestoreGuard, int64, *int64) ([]DriveEntry, error)
 	MoveDriveNode(context.Context, RestoreGuard, int64, *int64, int64) error
 	TrashDriveNode(context.Context, RestoreGuard, int64, int64) error
@@ -145,6 +149,72 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		pp = &v
 	}
 	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1}
+	m.d.docs = append(m.d.docs, d)
+	return driveMemoryEntry(m, d, g.UserID), nil
+}
+
+// CreateDriveNode creates a doc or base under a folder (folder kind delegates
+// to CreateDriveFolder). The node is born into the versioned drive world:
+// drive_revision 1 and, for bases, the same default content as the legacy
+// initialized creation.
+func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string) (DriveEntry, error) {
+	if kind == "folder" {
+		return m.CreateDriveFolder(ctx, g, ws, parent, title)
+	}
+	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
+		return DriveEntry{}, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.driveSessionLocked(ctx, g)
+	if err != nil {
+		return DriveEntry{}, err
+	}
+	if !m.member(g.UserID, ws) {
+		return DriveEntry{}, ErrForbidden
+	}
+	if err = m.driveDestinationLocked(g.UserID, ws, parent, RoleEdit); err != nil {
+		return DriveEntry{}, err
+	}
+	if g.UserID <= 0 || g.UserID > int64(len(m.users)) {
+		return DriveEntry{}, ErrUnauthenticated
+	}
+	if !g.currentTime().Before(expires) {
+		return DriveEntry{}, ErrUnauthenticated
+	}
+	if err = ctx.Err(); err != nil {
+		return DriveEntry{}, err
+	}
+	now := time.Now()
+	var pp *int64
+	if parent != nil {
+		v := *parent
+		pp = &v
+	}
+	id := int64(len(m.d.docs) + 1)
+	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}
+	if kind == "doc" {
+		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
+	}
+	d := &memDoc{meta: meta, driveRevision: 1, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
+	if kind == "base" {
+		field := Field{BaseID: id, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
+		view := View{BaseID: id, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
+		records := make([]Record, 5)
+		for i := range records {
+			uid := g.UserID
+			records[i] = Record{BaseID: id, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
+		}
+		field.ID = m.id()
+		view.ID = m.id()
+		for i := range records {
+			records[i].ID = m.id()
+			records[i].Position = float64(records[i].ID)
+		}
+		m.b.fields = append(m.b.fields, field)
+		m.b.views = append(m.b.views, view)
+		m.b.records = append(m.b.records, records...)
+	}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -431,6 +501,62 @@ func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int
 			return e
 		}
 		out.Role = RoleManage
+		return drivePGEnd(ctx, g, exp)
+	})
+	return out, drivePGError(err)
+}
+
+// CreateDriveNode creates a doc or base under a folder (folder kind delegates
+// to CreateDriveFolder) with guard, destination checks and fence-compatible
+// insert (drive_revision 1). Bases get the same default content as the legacy
+// initialized creation, published in the same transaction.
+func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string) (out DriveEntry, err error) {
+	if kind == "folder" {
+		return p.CreateDriveFolder(ctx, g, ws, parent, title)
+	}
+	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
+		return out, ErrConflict
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if e := drivePGLockWorkspace(ctx, tx, ws); e != nil {
+			return e
+		}
+		exp, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		var member int
+		e = tx.QueryRow(ctx, `SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, ws, g.UserID).Scan(&member)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrForbidden
+		}
+		if e != nil {
+			return e
+		}
+		if e = drivePGDestination(ctx, tx, g, ws, parent, RoleEdit); e != nil {
+			return e
+		}
+		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision) VALUES($1,$2,$3,'V',$4,$5,1) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,updated_at`, ws, parent, kind, title, g.UserID).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.UpdatedAt); e != nil {
+			return e
+		}
+		out.Role = RoleManage
+		if kind == "doc" {
+			if _, e = tx.Exec(ctx, `INSERT INTO doc_heads (doc_id, seq) VALUES ($1, 0)`, out.ID); e != nil {
+				return e
+			}
+		} else {
+			if _, e = tx.Exec(ctx, `INSERT INTO base_fields (base_id,name,type,position,is_primary) VALUES ($1,'文本','text',1,true)`, out.ID); e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `INSERT INTO bt_views (base_id,type,name,config,pos) VALUES ($1,'grid','表格','{}'::jsonb,1)`, out.ID); e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `INSERT INTO base_records (base_id,cells,position,creator_id)
+				SELECT $1,'{}'::jsonb, n, $2 FROM generate_series(1,5) AS n`, out.ID, g.UserID); e != nil {
+				return e
+			}
+		}
 		return drivePGEnd(ctx, g, exp)
 	})
 	return out, drivePGError(err)

@@ -293,6 +293,8 @@ export interface DriveEntry {
 }
 export const driveApi = {
   create: (title: string, parentId: number | null = null) => request<DriveEntry>("POST", "/api/drive/folders", { title, parentId }),
+  createNode: (kind: "doc" | "base" | "folder", title: string, parentId: number | null = null) =>
+    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId }),
   children: (parentId: number | null = null) =>
     request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}`).then((r) => r.entries),
   move: (id: number, parentId: number | null, expected: number) =>
