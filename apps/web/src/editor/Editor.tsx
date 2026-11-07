@@ -36,7 +36,7 @@ import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
-import { askText } from "@/components/ui/ask";
+import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
 import { MathView } from "./MathView";
@@ -332,6 +332,28 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       um.seal();
     },
     [sync.client, run, um, onMathSource],
+  );
+
+  /** 删除块（hover ✕）：连子块一起删（columns 的子块、无文本依赖）。 */
+  const deleteBlockByKey = useCallback(
+    (blockKey: string) => {
+      const d = sync.client.doc;
+      if (!d) return;
+      const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
+      if (!d.hasBlock(b)) return;
+      void ask("删除此块？", undefined, true).then((ok) => {
+        if (!ok) return;
+        if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+        run((tx) => {
+          // 先删子块（columns 容器）
+          for (const ch of d.children(b)) tx.deleteBlock(ch);
+          tx.deleteBlock(b);
+          return undefined;
+        });
+        um.seal();
+      });
+    },
+    [sync.client, run, um],
   );
 
   /** 流程图块：双击弹多行编辑框改写 Mermaid 源码。 */
@@ -1357,6 +1379,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onPreviewImage={onPreviewImage}
                 onMathSource={readOnly ? undefined : editMathSource}
                 onDiagramSource={readOnly ? undefined : editDiagramSource}
+                onDeleteBlock={readOnly ? undefined : deleteBlockByKey}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   const key = idKey(ch);
@@ -1553,6 +1576,8 @@ interface BlockProps {
   /** 公式块：请求编辑源码 */
   onMathSource?: (blockKey: string) => void;
   onDiagramSource?: (blockKey: string) => void;
+  /** 删除整个块（媒体/公式/图表等 TEXTLESS 块的 hover ✕） */
+  onDeleteBlock?: (blockKey: string) => void;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -1567,7 +1592,7 @@ interface BlockProps {
   canDownload?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -1655,7 +1680,19 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             data-insert-after
           ><AddIcon className="size-[14px]" /></button>
         )}
-        {onDragStart && <span draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onDragStart(); }} onDragEnd={onDragEnd} title="拖动以移动" className="absolute -left-4 grid h-6 w-4 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover">⋮⋮</span>}
+        <span contentEditable={false} className="absolute -left-8 top-1/2 hidden -translate-y-1/2 flex-col items-center gap-0.5 group-hover:flex">
+          {onDeleteBlock && (
+            <button
+              className="grid h-5 w-5 place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover hover:text-destructive"
+              title="删除此块"
+              onClick={() => onDeleteBlock(id)}
+              data-delete-block
+            >
+              ✕
+            </button>
+          )}
+          {onDragStart && <span draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onDragStart(); }} onDragEnd={onDragEnd} title="拖动以移动" className="grid h-6 w-4 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover">⋮⋮</span>}
+        </span>
       </span>
       {type === "diagram" ? (
         <div
