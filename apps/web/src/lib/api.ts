@@ -291,6 +291,8 @@ export const docsApi = {
   recent: () => request<{ docs: RecentDoc[] }>("GET", "/api/recent").then((r) => r.docs),
   recordVisit: (id: number) => request<void>("POST", `/api/docs/${id}/visit`),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
+  getIcon: (id: number) => request<{ icon: string; revision: number }>("GET", `/api/docs/${id}/icon`),
+  setIcon: (id: number, icon: string, expectedRevision: number) => request<{ icon: string; revision: number } | undefined>("PUT", `/api/docs/${id}/icon`, { icon, expectedRevision }),
   create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),

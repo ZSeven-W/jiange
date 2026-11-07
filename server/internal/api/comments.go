@@ -80,40 +80,7 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 		s.commentMutationError(w, r, err)
 		return
 	}
-	s.notifyComment(r, d.ID, u, &c, in.ParentID)
 	s.commentResultAfterMutation(w, r, guard, d.ID, http.StatusCreated, c)
-}
-
-// notifyComment fans notifications out to the mentioned users and, for a
-// reply, the parent comment's author.
-func (s *Server) notifyComment(r *http.Request, docID int64, actor store.User, c *store.Comment, parentID *int64) {
-	kind := "mention"
-	recipients := map[int64]bool{}
-	if parentID != nil {
-		kind = "reply"
-		if uid, err := s.Store.CommentAuthor(r.Context(), docID, *parentID); err == nil && uid != actor.ID {
-			recipients[uid] = true
-		}
-	}
-	for _, uid := range c.Mentions {
-		if uid != actor.ID {
-			recipients[uid] = true
-		}
-	}
-	if len(recipients) == 0 {
-		return
-	}
-	items := make([]store.Notification, 0, len(recipients))
-	for uid := range recipients {
-		commentID := c.ID
-		items = append(items, store.Notification{
-			UserID: uid, DocID: docID, ActorID: actor.ID, ActorName: actor.Name,
-			CommentID: &commentID, Kind: kind, Preview: snippet(c.Body),
-		})
-	}
-	if err := s.Store.AddNotifications(r.Context(), items); err != nil {
-		s.Log.Error("notify comment", "err", err)
-	}
 }
 
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
@@ -165,34 +132,10 @@ func (s *Server) patchComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	u, _ := UserFrom(r.Context())
-	cur, newlyResolved, err := s.Store.PatchCommentGuarded(r.Context(), guard, d.ID, pathID(r, "cid"), in.Body, in.Resolved)
+	cur, _, err := s.Store.PatchCommentGuarded(r.Context(), guard, d.ID, pathID(r, "cid"), in.Body, in.Resolved)
 	if err != nil {
 		s.commentMutationError(w, r, err)
 		return
-	}
-	if newlyResolved {
-		// notify thread participants (author + mentioned) except the resolver
-		commentID := cur.ID
-		recipients := map[int64]bool{}
-		if cur.UserID != u.ID {
-			recipients[cur.UserID] = true
-		}
-		for _, uid := range cur.Mentions {
-			if uid != u.ID {
-				recipients[uid] = true
-			}
-		}
-		items := make([]store.Notification, 0, len(recipients))
-		for uid := range recipients {
-			items = append(items, store.Notification{
-				UserID: uid, DocID: d.ID, ActorID: u.ID, ActorName: u.Name,
-				CommentID: &commentID, Kind: "resolve", Preview: snippet(cur.Body),
-			})
-		}
-		if len(items) > 0 {
-			_ = s.Store.AddNotifications(r.Context(), items)
-		}
 	}
 	s.commentResultAfterMutation(w, r, guard, d.ID, http.StatusOK, cur)
 }

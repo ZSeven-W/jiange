@@ -128,11 +128,13 @@ func (m *Memory) AddCommentGuarded(ctx context.Context, guard RestoreGuard, c Co
 	if c.UserID != guard.UserID {
 		return Comment{}, ErrForbidden
 	}
+	var parentAuthor int64
 	if c.ParentID != nil {
 		found := false
 		for _, parent := range m.comments {
 			if parent.ID == *c.ParentID && parent.DocID == c.DocID {
 				found = true
+				parentAuthor = parent.UserID
 				break
 			}
 		}
@@ -153,7 +155,15 @@ func (m *Memory) AddCommentGuarded(ctx context.Context, guard RestoreGuard, c Co
 	now := time.Now()
 	c.CreatedAt, c.UpdatedAt = now, now
 	c.Mentions = append([]int64(nil), c.Mentions...)
+	items := m.commentNotificationsLocked(c, guard.UserID, parentAuthor, false)
+	if err = ctx.Err(); err != nil {
+		return Comment{}, err
+	}
+	if !guard.currentTime().Before(expiry) {
+		return Comment{}, ErrUnauthenticated
+	}
 	m.comments = append(m.comments, c)
+	m.publishCommentNotificationsLocked(items, now)
 	return c, nil
 }
 
@@ -178,6 +188,10 @@ func (m *Memory) PatchCommentGuarded(ctx context.Context, guard RestoreGuard, do
 		if resolved != nil {
 			c.Resolved = *resolved
 		}
+		var items []Notification
+		if changed {
+			items = m.commentNotificationsLocked(c, guard.UserID, 0, true)
+		}
 		if err = ctx.Err(); err != nil {
 			return Comment{}, false, err
 		}
@@ -186,6 +200,7 @@ func (m *Memory) PatchCommentGuarded(ctx context.Context, guard RestoreGuard, do
 		}
 		c.UpdatedAt = time.Now()
 		m.comments[i] = c
+		m.publishCommentNotificationsLocked(items, c.UpdatedAt)
 		return c, changed, nil
 	}
 	return Comment{}, false, ErrNotFound
@@ -275,9 +290,9 @@ func (p *Postgres) AddCommentGuarded(ctx context.Context, guard RestoreGuard, c 
 		if c.UserID != guard.UserID {
 			return ErrForbidden
 		}
+		var parentAuthor int64
 		if c.ParentID != nil {
-			var id int64
-			err = tx.QueryRow(ctx, `SELECT id FROM comments WHERE id=$1 AND doc_id=$2 FOR SHARE`, *c.ParentID, c.DocID).Scan(&id)
+			err = tx.QueryRow(ctx, `SELECT user_id FROM comments WHERE id=$1 AND doc_id=$2 FOR SHARE`, *c.ParentID, c.DocID).Scan(&parentAuthor)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -293,6 +308,9 @@ func (p *Postgres) AddCommentGuarded(ctx context.Context, guard RestoreGuard, c 
 			return err
 		}
 		if err = tx.QueryRow(ctx, `SELECT name FROM users WHERE id=$1`, c.UserID).Scan(&c.UserName); err != nil {
+			return err
+		}
+		if err = insertCommentNotificationsTx(ctx, tx, c, guard.UserID, parentAuthor, false); err != nil {
 			return err
 		}
 		if !guard.currentTime().Before(expiry) {
@@ -333,6 +351,11 @@ func (p *Postgres) PatchCommentGuarded(ctx context.Context, guard RestoreGuard, 
 		err = tx.QueryRow(ctx, `UPDATE comments SET body=$3,resolved=$4,updated_at=now() WHERE id=$1 AND doc_id=$2 RETURNING updated_at`, commentID, docID, c.Body, c.Resolved).Scan(&c.UpdatedAt)
 		if err != nil {
 			return err
+		}
+		if changed {
+			if err = insertCommentNotificationsTx(ctx, tx, c, guard.UserID, 0, true); err != nil {
+				return err
+			}
 		}
 		if !guard.currentTime().Before(expiry) {
 			return ErrUnauthenticated

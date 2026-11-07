@@ -1,5 +1,17 @@
 # 飞书文档界面核验记录
 
+## 2026-11-07：文档图标
+
+![桌面图标选择器](screenshots/document-icon-picker-desktop-20261107.jpg)
+
+![移动视口图标选择器](screenshots/document-icon-picker-mobile-20261107.jpg)
+
+![阅读者查看图标](screenshots/document-icon-readonly-20261107.jpg)
+
+已对照用户登录的飞书文档：添加图标会先生成表情，并在标题、面包屑和侧栏显示。隔离 PostgreSQL、Go 服务和合成账号下验证了添加、更换、移除、刷新后保留，以及阅读者可查看但没有更改入口。移动截图为 390×844 浏览器模拟视口；尚未验证真实手机。当前选择器只包含部分 Unicode 表情，尚缺飞书完整表情和专有图标库；匿名公开页、复制文档及历史版本的图标行为也尚未对齐验证。
+
+本次干净提交快照通过前端 494 项测试、TypeScript、生产构建和隔离 PostgreSQL 下的 Go 全量测试。构建仍提示部分资源包较大。
+
 ## 2026-11-07：评论权限与草稿
 
 ![评论权限设置](screenshots/document-comment-permissions-desktop-20261107.jpg)
