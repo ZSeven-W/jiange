@@ -32,6 +32,29 @@ func (d *Doc) Text(block OpID) string {
 	return string(rs)
 }
 
+// VisibleBlockText reads one visible block without materializing rich-text
+// marks throughout the document. It follows View's deleted-parent and cycle
+// handling; cycles are displayed at the root.
+func (d *Doc) VisibleBlockText(id OpID) (string, string, bool) {
+	b := d.blocks[id]
+	if b == nil || b.deleted || id == Root {
+		return "", "", false
+	}
+	seen := map[OpID]bool{id: true}
+	for parent := b.parent; parent != Root; {
+		if seen[parent] {
+			break
+		}
+		seen[parent] = true
+		p := d.blocks[parent]
+		if p == nil || p.deleted {
+			return "", "", false
+		}
+		parent = p.parent
+	}
+	return d.Text(id), b.props["type"].value, true
+}
+
 // InsertText inserts text at a visible index of block as `client`.
 func (d *Doc) InsertText(client uint64, block OpID, index int, text string) Op {
 	b := d.blocks[block]

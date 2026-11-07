@@ -13,6 +13,16 @@ function setup(text: string) {
 const state = (doc: Doc) => bodyBlocks(doc).map((b) => [doc.blockInfo(b).type, doc.text(b)]);
 
 describe("asynchronous slash insertion", () => {
+  it("does not remove a command that a peer turns into part of a formula", () => {
+    const { doc, block } = setup("/图片"), end = { b: block, o: 3 };
+    const captured = captureSlashInsertion(doc, { b: block, o: 0 }, { a: end, f: end }, false)!;
+    new Tx(doc).format(block, 1, 3, "math", "图片");
+    const tx = new Tx(doc);
+    expect(insertSlashBlock(tx, captured, "image", {})).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe("/图片");
+    expect(captureSlashInsertion(doc, { b: block, o: 0 }, { a: end, f: end }, false)).toBeNull();
+  });
   it.each(["math", "diagram", "video", "bookmark"])("preserves surrounding text and supports undo for %s", (type) => {
     const { doc, block } = setup("前/查询");
     const at = { b: block, o: 1 };

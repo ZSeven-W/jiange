@@ -39,6 +39,15 @@ type SeqOp struct {
 	Bytes    []byte
 }
 
+// TitleSnapshot is one consistent database observation of a node and its
+// collaborative history. It is not an authorization decision.
+type TitleSnapshot struct {
+	DirectoryTitle    string
+	Head, SnapshotSeq int64
+	Snapshot          []byte
+	Ops               []SeqOp
+}
+
 // DocCopy describes one snapshot-based copy. FileIDs are the distinct source
 // attachments referenced by that snapshot. Build runs inside the creation
 // transaction and must be deterministic, side-effect-free, and must not call
@@ -124,6 +133,7 @@ type DocStore interface {
 	OpsAfter(ctx context.Context, docID, after int64, limit int) ([]SeqOp, error)
 	Head(ctx context.Context, docID int64) (int64, error)
 	LatestSnapshot(ctx context.Context, docID int64) (seq int64, state []byte, err error) // ErrNotFound if none
+	ReadTitleSnapshot(ctx context.Context, docID int64) (TitleSnapshot, error)
 	SaveSnapshot(ctx context.Context, docID, seq int64, state []byte) error
 	// Listen calls fn(docID, head) whenever any instance appends ops; blocks until ctx ends.
 	Listen(ctx context.Context, fn func(docID, head int64)) error

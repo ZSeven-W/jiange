@@ -39,16 +39,53 @@ export function orderMap(blocks: OpId[]) {
   return new Map(blocks.map((b, i) => [idKey(b), i]));
 }
 
+export interface MathSpan { start: number; end: number; math: string; id?: string }
+/** New atoms carry an ID; legacy runs lack reliable boundaries and remain one atom. */
+export function mathSpansFromChars(chars: { ch: string; marks: Record<string, string> }[]): MathSpan[] {
+  const spans: MathSpan[] = [];
+  for (let start = 0; start < chars.length;) {
+    const math = chars[start].marks.math, id = chars[start].marks.mathId;
+    if (!math) { start++; continue; }
+    let end = start + 1;
+    while (end < chars.length && chars[end].marks.math === math && chars[end].marks.mathId === id) end++;
+    spans.push({ start, end, math, id });
+    start = end;
+  }
+  return spans;
+}
+export function mathSpans(doc: Doc, b: OpId): MathSpan[] { return mathSpansFromChars(doc.richChars(b)); }
+export function mathSpanAt(doc: Doc, b: OpId, index: number): MathSpan | null {
+  return mathSpans(doc, b).find(s => index >= s.start && index < s.end) ?? null;
+}
+
+/** Snap a caret accidentally inside a formula to its nearest edge. */
+export function snapMathPos(doc: Doc, pos: Pos): Pos {
+  const span = pos.o > 0 ? mathSpanAt(doc, pos.b, pos.o - 1) : null;
+  if (!span || pos.o >= span.end) return pos;
+  return { b: pos.b, o: pos.o - span.start < span.end - pos.o ? span.start : span.end };
+}
+
+/** Expand nonempty selected ranges to avoid copying or deleting part of an atom. */
+function expandMathSelection(doc: Doc, start: Pos, end: Pos): { start: Pos; end: Pos } {
+  if (eqId(start.b, end.b) && start.o === end.o) return { start, end };
+  const first = mathSpanAt(doc, start.b, start.o);
+  const last = end.o > 0 ? mathSpanAt(doc, end.b, end.o - 1) : null;
+  return {
+    start: first && first.start < start.o ? { b: start.b, o: first.start } : start,
+    end: last && last.end > end.o ? { b: end.b, o: last.end } : end,
+  };
+}
+
 export function normalize(doc: Doc, sel: Sel): { start: Pos; end: Pos; blocks: OpId[] } {
   if (eqId(sel.a.b, sel.f.b)) {
     const [start, end] = sel.a.o <= sel.f.o ? [sel.a, sel.f] : [sel.f, sel.a];
-    return { start, end, blocks: [sel.a.b] };
+    return { ...expandMathSelection(doc, start, end), blocks: [sel.a.b] };
   }
   const blocks = bodyBlocks(doc);
   const ord = orderMap(blocks);
   const [start, end] = cmpPos(ord, sel.a, sel.f) <= 0 ? [sel.a, sel.f] : [sel.f, sel.a];
   const i = ord.get(idKey(start.b)) ?? 0, j = ord.get(idKey(end.b)) ?? 0;
-  return { start, end, blocks: blocks.slice(i, j + 1) };
+  return { ...expandMathSelection(doc, start, end), blocks: blocks.slice(i, j + 1) };
 }
 
 /** The clipboard format cannot yet serialize nested column children. */
@@ -93,6 +130,7 @@ export function deleteRange(tx: Tx, sel: Sel): Pos {
 /** Splits a block at pos (Enter). Returns the caret. */
 export function splitBlock(tx: Tx, pos: Pos): Pos {
   const doc = tx.doc;
+  pos = snapMathPos(doc, pos);
   if (isColumnText(doc, pos.b)) {
     const n = tx.insert(pos.b, pos.o, "\n");
     return { b: pos.b, o: pos.o + n };
@@ -224,9 +262,11 @@ export function markdownShortcut(tx: Tx, pos: Pos, typed: string): Pos | null {
     const inner = [...m[1]].length;
     const end = pos.o; // after closing marker
     const s = end - w - inner - w;
+    if (doc.richChars(pos.b).slice(s, end).some((c) => !!c.marks.math)) continue;
     tx.delete(pos.b, end - w, end);
     tx.delete(pos.b, s, s + w);
     tx.format(pos.b, s, s + inner, key, useSource ? m[1] : "true");
+    if (key === "math") tx.format(pos.b, s, s + inner, "mathId", idKey(doc.visibleIds(pos.b)[s]));
     return { b: pos.b, o: s + inner };
   }
   return null;
@@ -289,27 +329,36 @@ export function parseText(text: string): ClipBlock[] {
   return text.replace(/\r\n?/g, "\n").split("\n").map((line) => ({ type: "paragraph", props: {}, chars: [...line].map((ch) => ({ ch, marks: {} })) }));
 }
 
+/** Copying creates fresh formula identities; preserved IDs would merge adjacent copies. */
+function insertClip(tx: Tx, b: OpId, offset: number, chars: ClipBlock["chars"]): number {
+  const n = tx.insert(b, offset, chars.map(c => c.ch).join(""), chars.map(c => c.marks));
+  const ids = tx.doc.visibleIds(b);
+  for (const span of mathSpansFromChars(chars)) tx.format(b, offset + span.start, offset + span.end, "mathId", idKey(ids[offset + span.start]));
+  return n;
+}
+
 /** Inserts clipboard blocks at pos: the first merges inline, the rest become blocks. */
 export function pasteBlocks(tx: Tx, pos: Pos, clip: ClipBlock[]): Pos {
   const doc = tx.doc;
   if (isSourceBlock(doc, pos.b)) return { b: pos.b, o: 0 };
+  pos = snapMathPos(doc, pos);
   if (clip.length === 0) return pos;
   const first = clip[0];
   if (clip.length === 1) {
-    const n = tx.insert(pos.b, pos.o, first.chars.map((c) => c.ch).join(""), first.chars.map((c) => c.marks));
+    const n = insertClip(tx, pos.b, pos.o, first.chars);
     return { b: pos.b, o: pos.o + n };
   }
   const info = doc.blockInfo(pos.b);
   const tail = doc.richChars(pos.b).slice(pos.o);
   tx.delete(pos.b, pos.o, len(doc, pos.b));
-  if (first.chars.length) tx.insert(pos.b, pos.o, first.chars.map((c) => c.ch).join(""), first.chars.map((c) => c.marks));
+  if (first.chars.length) insertClip(tx, pos.b, pos.o, first.chars);
   if (info.type === "paragraph" && pos.o === 0 && first.type !== "paragraph") tx.setProp(pos.b, "type", first.type);
   let after = pos.b;
   let caret: Pos = pos;
   clip.slice(1).forEach((cb, i) => {
     const nb = tx.create(cb.type || "paragraph", after, info.parent, cb.props);
     const text = cb.chars.map((c) => c.ch).join("");
-    if (text) tx.insert(nb, 0, text, cb.chars.map((c) => c.marks));
+    if (text) insertClip(tx, nb, 0, cb.chars);
     after = nb;
     caret = { b: nb, o: cb.chars.length };
     if (i === clip.length - 2 && tail.length) tx.insert(nb, cb.chars.length, tail.map((c) => c.ch).join(""), tail.map((c) => c.marks));

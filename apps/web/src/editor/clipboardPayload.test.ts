@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
-import { clipboardBlocks } from "./clipboardPayload";
-import { deleteRange, pasteBlocks } from "./model";
+import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
+import { deleteRange, mathSpans, pasteBlocks } from "./model";
 
 describe("clipboard payload validation", () => {
   it.each(["", "null", "{}", "[]", '[{"type":"paragraph","props":{}}]', '[{"type":"paragraph","props":{},"chars":[{}]}]', '[{"type":"paragraph","props":{},"chars":[{"ch":"ab","marks":{}}]}]', '[{"type":"image","props":{"fileId":"7"},"chars":[]}]', '[{"type":"divider","props":{},"chars":[]}]'])("keeps selected text when payload is unusable: %s", (raw) => {
@@ -25,5 +25,22 @@ describe("clipboard payload validation", () => {
     const rich = [{ type: "paragraph", props: {}, chars: [{ ch: "好", marks: { bold: "true" } }] }];
     expect(clipboardBlocks(JSON.stringify(rich), "其他")).toEqual(rich);
     expect(clipboardBlocks("", "\n")?.length).toBe(2);
+  });
+
+  it("keeps formula formatting when pasting inside a column and assigns a fresh identity", () => {
+    const doc = new Doc(1), tx = new Tx(doc), container = tx.create("columns", null, ROOT), block = tx.create("paragraph", null, container);
+    tx.insert(block, 0, "abc");
+    tx.format(block, 0, 3, "math", "x^2");
+    tx.format(block, 0, 3, "mathId", "original");
+    const rich = [{ type: "paragraph", props: {}, chars: doc.richChars(block) }];
+    const clip = columnClipboardBlocks(JSON.stringify(rich), "abc")!;
+    pasteBlocks(new Tx(doc), { b: block, o: 3 }, clip);
+    expect(doc.text(block)).toBe("abcabc");
+    const spans = mathSpans(doc, block);
+    expect(spans.map(({ start, end }) => [start, end])).toEqual([[0, 3], [3, 6]]);
+    expect(spans[1].id).not.toBe(spans[0].id);
+    expect(columnClipboardBlocks("", "一\n二")?.[0].chars.map(({ ch }) => ch).join("")).toBe("一\n二");
+    const unsupported = [{ type: "image", props: { fileId: "1" }, chars: [] }, { type: "paragraph", props: {}, chars: [{ ch: "字", marks: {} }] }];
+    expect(columnClipboardBlocks(JSON.stringify(unsupported), "字")).toBeNull();
   });
 });

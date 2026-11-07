@@ -22,6 +22,7 @@ export function validateUploadCommand(captured: SlashInsertion): "ok" | "middle"
   const ids = captured.doc.visibleIds(captured.anchor);
   const start = ids.findIndex((id) => eqId(id, captured.commandIds![0]));
   if (start < 0 || captured.commandIds.some((id, i) => !ids[start + i] || !eqId(id, ids[start + i]))) return "changed";
+  if (captured.doc.richChars(captured.anchor).slice(start, start + captured.commandIds.length).some((char) => !!char.marks.math)) return "changed";
   return start > 0 && start + captured.commandIds.length < ids.length ? "middle" : "ok";
 }
 
