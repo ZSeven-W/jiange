@@ -24,7 +24,7 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 }
 
 /** Right drawer: version list, read-only preview and restore (P6). */
-export function VersionPanel({ id, canEdit, disableFileDownloads, onClose }: { id: number; canEdit: boolean; disableFileDownloads: boolean; onClose: () => void }) {
+export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloads, onClose }: { id: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["versions", id], queryFn: () => docsApi.versions(id) });
   const [previewing, setPreviewing] = useState<number | null>(null);
@@ -116,7 +116,7 @@ export function VersionPanel({ id, canEdit, disableFileDownloads, onClose }: { i
             )}
           </div>
           {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canEdit} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
-          <div className="flex-1 overflow-y-auto px-5 py-4 text-[14px] leading-6">
+          <div className="flex-1 overflow-y-auto px-5 py-4 text-[14px] leading-6" data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
             {preview.data ? <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing} /> : <p className="text-subtle">加载中…</p>}
           </div>
         </div>

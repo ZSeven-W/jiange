@@ -53,7 +53,7 @@ func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, 
 	m.mu.Lock()
 	now := time.Now()
 	d := &memDoc{
-		meta:     DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now},
+		meta:     DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView},
 		ids:      map[[2]int64]bool{},
 		snaps:    map[int64][]byte{},
 		versions: map[int64]memVersion{},
@@ -116,7 +116,15 @@ func (m *Memory) SetCopyProtected(_ context.Context, id int64, on bool) error {
 	if d == nil {
 		return ErrNotFound
 	}
+	if d.meta.PermissionsRevision >= 9007199254740991 {
+		return ErrConflict
+	}
 	d.meta.CopyProtected = on
+	d.meta.CopyMinRole, d.meta.DownloadMinRole = RoleView, RoleView
+	if on {
+		d.meta.CopyMinRole, d.meta.DownloadMinRole = RoleManage, RoleManage
+	}
+	d.meta.PermissionsRevision++
 	return nil
 }
 

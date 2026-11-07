@@ -420,6 +420,12 @@ export class Doc {
     return { type: b.props.get("type")?.value ?? "", props, parent: b.loc.value.parent };
   }
 
+  /** Identity of the winning write, including writes that repeat the same value. */
+  propVersion(block: OpId, key: string): OpId | null {
+    const ts = this.block(block).props.get(key)?.ts;
+    return ts ? { ...ts } : null;
+  }
+
   /** Current Lamport clock (highest clock observed or generated). */
   get lamport(): number {
     return this.clock;

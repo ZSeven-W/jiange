@@ -10,6 +10,15 @@ import (
 func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var expiry time.Time
+	if c.Guard != nil {
+		guard := c.Guard
+		session, ok := m.sessions[string(guard.SessionHash)]
+		if !ok || guard.UserID != c.UserID || session.userID != c.UserID || !guard.currentTime().Before(session.expires) {
+			return DocMeta{}, ErrUnauthenticated
+		}
+		expiry = session.expires
+	}
 	source := m.doc(c.SourceID)
 	if source == nil || source.deleted || RoleRank(m.roleLocked(c.UserID, source)) < RoleRank(RoleView) {
 		return DocMeta{}, ErrNotFound
@@ -17,7 +26,7 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	if source.meta.Kind != "doc" {
 		return DocMeta{}, ErrConflict
 	}
-	if source.meta.CopyProtected && m.roleLocked(c.UserID, source) != RoleManage {
+	if !DocumentDownloadAllowed(source.meta, m.roleLocked(c.UserID, source)) {
 		return DocMeta{}, ErrCopyProtected
 	}
 	if c.UserID < 1 || c.UserID > int64(len(m.users)) || !m.member(c.UserID, c.WorkspaceID) {
@@ -62,13 +71,16 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	if err := ctx.Err(); err != nil {
 		return DocMeta{}, err
 	}
+	if c.Guard != nil && !c.Guard.currentTime().Before(expiry) {
+		return DocMeta{}, ErrUnauthenticated
+	}
 	var parentID *int64
 	if c.ParentID != nil {
 		id := *c.ParentID
 		parentID = &id
 	}
 	d := &memDoc{
-		meta: DocMeta{ID: newID, Kind: "doc", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now},
+		meta: DocMeta{ID: newID, Kind: "doc", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView},
 		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
 	}
 	for i, op := range ops {
@@ -77,6 +89,12 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 		}
 		d.ids[[2]int64{op.ClientID, op.Clock}] = true
 		d.ops = append(d.ops, SeqOp{Seq: int64(i + 1), ClientID: op.ClientID, Bytes: append([]byte(nil), op.Bytes...)})
+	}
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, err
+	}
+	if c.Guard != nil && !c.Guard.currentTime().Before(expiry) {
+		return DocMeta{}, ErrUnauthenticated
 	}
 	m.sh.files = append(m.sh.files, files...)
 	m.d.docs = append(m.d.docs, d)

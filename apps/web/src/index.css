@@ -110,3 +110,10 @@
   *::-webkit-scrollbar-track { background: transparent; }
   * { scrollbar-width: thin; scrollbar-color: #d0d3d6 transparent; }
 }
+
+/* Printing obeys the document download policy. Keep unrelated controls and
+   users' own comment drafts available; this is a UI restriction only. */
+@media print {
+  [data-document-print-restricted="true"] { display: none !important; }
+  body:has([data-document-print-restricted="true"]) aside:not([data-comments-panel]) { display: none !important; }
+}

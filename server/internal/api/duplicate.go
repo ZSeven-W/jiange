@@ -41,7 +41,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "unsupported", "多维表格暂不支持复制")
 		return
 	}
-	if d.CopyProtected && d.Role != store.RoleManage {
+	if !store.DocumentDownloadAllowed(d, d.Role) {
 		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
 		return
 	}
@@ -161,7 +161,11 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, FileIDs: fileIDs}, func(ids map[int64]int64) ([]store.RawOp, error) {
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, FileIDs: fileIDs, Guard: &guard}, func(ids map[int64]int64) ([]store.RawOp, error) {
 		ops, err := buildCopyOps(src, title, ids)
 		if err != nil {
 			return nil, errors.Join(errCopyProjection, err)
@@ -169,6 +173,8 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		return ops, nil
 	})
 	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
 	case errors.Is(err, store.ErrCopyProtected):
 		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
 	case errors.Is(err, store.ErrForbidden):

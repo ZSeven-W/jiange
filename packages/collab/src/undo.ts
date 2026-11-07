@@ -8,6 +8,7 @@ interface Entry<S> {
   before: S | null;
   after: S | null;
   tag?: string;
+  marker?: string;
   time: number;
 }
 
@@ -21,6 +22,7 @@ export class UndoManager<S = unknown> {
   private undos: Entry<S>[] = [];
   private redos: Entry<S>[] = [];
   private remap = new Map<string, OpId>();
+  private revisionValue = 0;
   mergeWindowMs = 800;
   limit = 500;
 
@@ -29,6 +31,41 @@ export class UndoManager<S = unknown> {
   }
   get canRedo() {
     return this.redos.length > 0;
+  }
+
+  /** Changes whenever the local history stacks or their grouping change. */
+  get revision() { return this.revisionValue; }
+
+  /** A marker lets an editor keep a guarded external action in undo order. */
+  recordMarker(marker: string, merged = false) {
+    this.revisionValue++;
+    this.redos = [];
+    if (merged && this.undos.at(-1)?.marker === marker) return;
+    this.undos.push({ items: [], before: null, after: null, marker, time: Date.now() });
+    if (this.undos.length > this.limit) this.undos.shift();
+  }
+
+  peekMarker(redo: boolean): string | null {
+    return (redo ? this.redos : this.undos).at(-1)?.marker ?? null;
+  }
+
+  /** Move a marker only after its owner has safely applied the inverse. */
+  moveMarker(redo: boolean, marker: string): boolean {
+    const from = redo ? this.redos : this.undos;
+    const to = redo ? this.undos : this.redos;
+    if (from.at(-1)?.marker !== marker) return false;
+    to.push(from.pop()!);
+    this.revisionValue++;
+    return true;
+  }
+
+  /** Drop only an explicitly discarded external action; no document is changed. */
+  discardMarker(redo: boolean, marker: string, expectedRevision: number): boolean {
+    const stack = redo ? this.redos : this.undos;
+    if (this.revisionValue !== expectedRevision || stack.at(-1)?.marker !== marker) return false;
+    stack.pop();
+    this.revisionValue++;
+    return true;
   }
 
   /** Follows the remap chain to the live id. */
@@ -45,6 +82,7 @@ export class UndoManager<S = unknown> {
   /** Records a local transaction. Consecutive entries with the same tag (e.g. typing) merge. */
   record(tx: Tx, before: S | null, after: S | null, tag?: string, now = Date.now()) {
     if (tx.items.length === 0) return;
+    this.revisionValue++;
     this.redos = [];
     const last = this.undos[this.undos.length - 1];
     if (tag && last && last.tag === tag && now - last.time < this.mergeWindowMs) {
@@ -60,7 +98,7 @@ export class UndoManager<S = unknown> {
   /** Stops merging into the last entry (e.g. on caret jump). */
   seal() {
     const last = this.undos[this.undos.length - 1];
-    if (last) last.tag = undefined;
+    if (last?.tag !== undefined) { last.tag = undefined; this.revisionValue++; }
   }
 
   undo(doc: Doc): { ops: Op[]; selection: S | null } | null {
@@ -72,8 +110,11 @@ export class UndoManager<S = unknown> {
   }
 
   private step(doc: Doc, from: Entry<S>[], to: Entry<S>[], sel: "before" | "after") {
+    // External actions must be processed by their owner, not silently dropped.
+    if (from.at(-1)?.marker) return null;
     const e = from.pop();
     if (!e) return null;
+    this.revisionValue++;
     const tx = new Tx(doc);
     const inverse: UndoItem[] = [];
     for (let i = e.items.length - 1; i >= 0; i--) {

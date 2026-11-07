@@ -32,3 +32,35 @@ describe("rendered formula and diagram blocks", () => {
     expect((html.match(/data-text=/g) ?? [])).toHaveLength(1);
   });
 });
+
+describe("separate copy and download controls", () => {
+  it.each([
+    { onCopyBlock: true, disableFileDownloads: false, codeCopy: false, fileLink: true },
+    { onCopyBlock: false, disableFileDownloads: true, codeCopy: true, fileLink: false },
+  ])("allows only the independently permitted action", ({ onCopyBlock, disableFileDownloads, codeCopy, fileLink }) => {
+    const doc = new Doc(1);
+    const tx = new Tx(doc);
+    const code = tx.create("code", null, ROOT);
+    tx.insert(code, 0, "example");
+    tx.create("file", code, ROOT, { fileId: "12", name: "report.pdf", size: "500" });
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const html = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} onCopyBlock={onCopyBlock} disableFileDownloads={disableFileDownloads} />);
+    expect(html.includes("data-code-copy")).toBe(codeCopy);
+    expect(html.includes('href="/api/files/12"')).toBe(fileLink);
+  });
+
+  it("limits media download controls independently of text copying", () => {
+    const doc = new Doc(1);
+    const tx = new Tx(doc);
+    const first = tx.create("video", null, ROOT, { url: "https://example.com/demo.mp4", name: "视频" });
+    tx.create("video", first, ROOT, { url: "https://example.com/watch", name: "外部视频" });
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const restricted = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} disableFileDownloads />);
+    expect(restricted).toContain('controlsList="nodownload"');
+    expect(restricted).not.toContain('href="https://example.com/watch"');
+    expect(restricted).toContain("当前不提供外部链接");
+    const allowed = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} disableFileDownloads={false} />);
+    expect(allowed).not.toContain('controlsList="nodownload"');
+    expect(allowed).toContain('href="https://example.com/watch"');
+  });
+});

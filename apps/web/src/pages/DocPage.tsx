@@ -27,7 +27,7 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, type CommentTarget } from "./commentAccess";
+import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, type CommentTarget } from "./commentAccess";
 import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
 import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
@@ -36,7 +36,7 @@ import { appendMarkdownOps } from "@/lib/mdImport";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
 import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
-import { canCopyDocument, copyErrorMessage } from "./documentCopy";
+import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
 import { Check, Eye, MessageSquare, Star } from "lucide-react";
 
@@ -53,21 +53,50 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     // A server restart does not necessarily trigger the browser's online event.
     // Retry temporary failures while this page is visible; do not retry a
     // definitive access denial without a fresh user action.
-    refetchInterval: (query) => query.state.error && !isDocAccessDenied(query.state.error) ? 5000 : false,
+    refetchInterval: (query) => query.state.error ? (isDocAccessDenied(query.state.error) ? false : 5000) : 15000,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
   const sync = useSyncDoc(id, me.user.id);
+  const [visiblePolicyVerified, setVisiblePolicyVerified] = useState(() => typeof document !== "undefined" && document.visibilityState !== "hidden");
+  const policyUpdatedAt = useRef(meta.dataUpdatedAt);
+  const requiredPolicyUpdateAfter = useRef(0);
+  policyUpdatedAt.current = meta.dataUpdatedAt;
+  useEffect(() => {
+    let active = true;
+    let generation = 0;
+    const visibility = () => {
+      const turn = ++generation;
+      setVisiblePolicyVerified(false);
+      requiredPolicyUpdateAfter.current = policyUpdatedAt.current;
+      if (document.visibilityState === "hidden") return;
+      void meta.refetch().then((result) => {
+        if (active && turn === generation && document.visibilityState !== "hidden") setVisiblePolicyVerified(result.isSuccess && !result.isError);
+      }).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", visibility);
+    return () => { active = false; generation++; document.removeEventListener("visibilitychange", visibility); };
+  }, [id, me.user.id, meta.refetch]);
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const metadataVerified = metadataState === "ready";
-  const exportContext = useRef({ id, user: me.user.id, client: sync.client, verified: metadataVerified, meta: meta.data, mounted: true });
+  useEffect(() => {
+    // If the first foreground check failed, a later successful polling retry
+    // can restore access without needing another visibility transition.
+    if (!visiblePolicyVerified && metadataVerified && !meta.isFetching && document.visibilityState !== "hidden" && meta.dataUpdatedAt > requiredPolicyUpdateAfter.current) setVisiblePolicyVerified(true);
+  }, [visiblePolicyVerified, metadataVerified, meta.isFetching, meta.dataUpdatedAt]);
+  // A cached policy is not proof while revalidation is in flight. Editing and
+  // local drafts stay available; only content-exporting interactions pause.
+  const permissionsVerified = metadataVerified && !meta.isFetching && visiblePolicyVerified;
+  const contentCopyAllowed = permissionsVerified && canCopyContent(meta.data);
+  const downloadAllowed = permissionsVerified && canDownloadDocument(meta.data);
+  const exportContext = useRef({ id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true });
   const exportingMarkdown = useRef(false);
   const [exportNotice, setExportNotice] = useState<{ id: number; user: number; text: string } | null>(null);
   useLayoutEffect(() => {
-    exportContext.current = { id, user: me.user.id, client: sync.client, verified: metadataVerified, meta: meta.data, mounted: true };
+    exportContext.current = { id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true };
     return () => { exportContext.current.mounted = false; };
-  }, [id, me.user.id, sync.client, metadataVerified, meta.data]);
+  }, [id, me.user.id, sync.client, permissionsVerified, meta.data]);
   const visitRecorder = useMemo(() => createVisitRecorder(
     () => docsApi.recordVisit(id),
     () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
@@ -148,9 +177,15 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
   const commentAccessDenied = (comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error)) || commentSuspended;
   const commentsAvailable = metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
-  const commentDraftExportAllowed = mayExportCommentDraftData(meta.data, metadataVerified, commentsAvailable);
+  const commentDraftExportAllowed = mayExportCommentDraftData(meta.data, permissionsVerified, commentsAvailable);
   const commentDraftExportAllowedRef = useRef(false);
   commentDraftExportAllowedRef.current = commentDraftExportAllowed;
+  const commentQuoteAllowed = commentsAvailable && contentCopyAllowed;
+  const commentQuoteAllowedRef = useRef(false);
+  // A transient refetch pauses displaying/copying quotes but must not erase a
+  // user's existing draft anchor while they are typing. A failed or denied
+  // verification still redacts it before any later persistence.
+  commentQuoteAllowedRef.current = mayRetainCommentQuote(meta.data, metadataVerified, commentsAvailable);
   const commentStorageReady = commentDraftStorageReady(commentStoragePrepared, { doc: id, user: me.user.id, session: commentSession }, commentStorageGeneration.current, commentsAvailable);
   const persistCommentDrafts = useCallback(() => {
     const active = commentStorage.current;
@@ -172,7 +207,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const revalidateCommentAccess = useCallback((recovery?: CommentRecovery) => {
     const target = { doc: id, user: me.user.id, session: commentSession };
     if (!matchesCommentTarget(commentIdentity.current, target.doc, target.user, target.session)) return;
-    if (recovery?.text.trim()) commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(recovery, commentDraftExportAllowedRef.current));
+    if (recovery?.text.trim()) commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(recovery, commentQuoteAllowedRef.current));
     freezeCommentDrafts();
     setCommentDenial(target);
     setCommentsTarget(null);
@@ -263,7 +298,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     return n;
   }, [sync.client.doc, sync.version]);
   const exportMd = async () => {
-    if (exportingMarkdown.current || !metadataVerified || !canCopyDocument(meta.data)) return;
+    if (exportingMarkdown.current || !permissionsVerified || !canCopyDocument(meta.data)) return;
     const d = sync.client.doc;
     if (!d) return;
     if (!sync.client.caughtUp || sync.client.blocked) {
@@ -277,8 +312,22 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     setExportNotice(null);
     try {
       if (losses.length && !await ask("Markdown 导出可能丢失内容", `${losses.join("；")}。仍要下载吗？`, false)) return;
+      const before = exportContext.current;
+      if (!before.mounted || before.id !== id || before.user !== me.user.id || before.client !== sync.client || before.client.doc !== d || !before.verified || !canCopyDocument(before.meta)) return;
+      // Confirm access with the server after the dialog. The cached policy may
+      // have been tightened while the user was reading the confirmation.
+      const latest = await docsApi.get(id);
       const current = exportContext.current;
       if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client || current.client.doc !== d || !current.verified || !canCopyDocument(current.meta)) return;
+      // Do not replace a newer cache value with the result of an older request.
+      if (!mayUseDownloadRecheck(id, before.meta, current.meta, latest)) {
+        if (current.meta === before.meta && latest.id === id) {
+          qc.setQueryData(docMetaKey(id, me.user.id), latest);
+          setExportNotice({ id, user: me.user.id, text: "下载权限已变化，无法导出。" });
+        }
+        return;
+      }
+      qc.setQueryData(docMetaKey(id, me.user.id), latest);
       if (!current.client.caughtUp || current.client.blocked) {
         setExportNotice({ id, user: me.user.id, text: "文档同步状态已变化，请同步完成后重新导出。" });
         return;
@@ -433,11 +482,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   }, [title]);
 
   const downloadPending = () => {
-    const replica = sync.client.doc;
-    // After a definitive denial, export only this account's unacknowledged
-    // operations. The replica also contains server content the user can no
-    // longer access and must not be exposed by this fallback.
-    const backup = { version: 1, userId: me.user.id, docId: id, clientId: sync.client.clientId, state: metadataState !== "denied" && replica ? Array.from(replica.encodeState()) : null, ops: sync.client.pendingOps() };
+    // Preserve the user's unacknowledged operations without embedding the
+    // server replica, whose download permission might have changed offline.
+    const backup = pendingDocumentBackup(me.user.id, id, sync.client.clientId, sync.client.pendingOps());
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
     a.download = `jiange-unsynced-${id}.json`;
@@ -527,10 +574,12 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
-          onExport={metadataVerified && canCopyDocument(meta.data) ? exportMd : undefined}
+          onExport={downloadAllowed ? exportMd : undefined}
           onImport={canEditContent ? importMd : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
           readOnly={!canComment}
+          allowContentCopy={contentCopyAllowed}
+          allowDocumentPrint={downloadAllowed}
           metadataVerified={metadataVerified}
           meta={meta.data}
           title={title}
@@ -566,7 +615,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div className="min-h-0 flex-1 overflow-y-auto">
           <article className={cn("mx-auto w-full max-w-[960px] px-7 pt-12 sm:px-16 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
-            <CollabText
+            <div data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}><CollabText
               sync={sync}
               block={TITLE}
               me={presence}
@@ -576,7 +625,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
               className="text-[32px] font-semibold leading-[1.3] tracking-tight [&_textarea]:font-semibold [&_textarea]:leading-[1.3]"
-            />
+            /></div>
             <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
               {meta.data && (
                 <>
@@ -587,7 +636,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 </>
               )}
             </div>
-            <div ref={body} className="mt-8 pl-1">
+            <div ref={body} className="mt-8 pl-1" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
@@ -595,7 +644,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 activeFindMatch={activeMatch}
                 me={presence}
                 readOnly={!canEditContent}
-                onCopyBlock={!!meta.data?.copyProtected && meta.data.role !== "manage"}
+                onCopyBlock={!contentCopyAllowed}
+                disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
                 upload={canEditContent ? (f) => docsApi.upload(id, f) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}
@@ -657,16 +707,18 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         <OutlinePanel
           items={outline}
           activeId={null}
+          allowCopy={contentCopyAllowed}
+          allowPrint={downloadAllowed}
           onClose={() => setOutlineOpen(false)}
           onJump={(bid) => {
             document.querySelector(`[data-block="${bid}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
           }}
         />
       )}
-      {preview && <ImagePreview src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />}
+      {preview && <ImagePreview src={preview.src} alt={preview.alt} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
-      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={!meta.data.copyProtected || meta.data.role === "manage"} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
-      {history && <VersionPanel id={id} canEdit={canEditContent} disableFileDownloads={!metadataVerified || !!meta.data?.copyProtected && meta.data.role !== "manage"} onClose={() => setHistory(false)} />}
+      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
+      {history && <VersionPanel id={id} canEdit={canEditContent} allowCopy={contentCopyAllowed} disableFileDownloads={!downloadAllowed} onClose={() => setHistory(false)} />}
       {meta.data?.copyProtected && (
         <div
           className="pointer-events-none fixed inset-0 z-50 select-none overflow-hidden"
@@ -691,7 +743,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           meId={me.user.id}
           session={commentSession}
           onAccessDenied={revalidateCommentAccess}
-          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentDraftExportAllowed)) : []}
+          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentQuoteAllowed)) : []}
           onDismissRecovery={() => {
             const doc = id, user = me.user.id, session = commentSession;
             if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
@@ -715,12 +767,14 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           }}
           onSnapshot={(value) => {
             if (!matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
-            commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(value, commentDraftExportAllowedRef.current));
+            commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(value, commentQuoteAllowedRef.current));
             persistCommentDrafts();
           }}
           onComposerSuspended={freezeCommentDrafts}
           canEdit={canComment && commentStorageReady}
           canManage={meta.data?.role === "manage"}
+          allowCopyQuote={contentCopyAllowed}
+          allowPrintQuote={downloadAllowed}
           draft={draft}
           onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}
           activeThread={activeThread}
@@ -781,6 +835,8 @@ function TopBar({
   onImport,
   onOutline,
   readOnly,
+  allowContentCopy,
+  allowDocumentPrint,
   metadataVerified,
 }: {
   ancestors: import("@/lib/api").DocMeta[];
@@ -798,6 +854,8 @@ function TopBar({
   onExport?: () => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
+  allowContentCopy: boolean;
+  allowDocumentPrint: boolean;
   metadataVerified: boolean;
   meta?: DocMeta;
   title: string;
@@ -811,7 +869,7 @@ function TopBar({
   return (
     <header className="flex h-16 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:px-5">
       <div className="min-w-0 flex-1">
-      <nav className="flex min-w-0 items-center gap-1.5 text-[13px]">
+      <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" data-document-print-restricted={!allowDocumentPrint ? "true" : undefined} onCopy={(event) => { if (!allowContentCopy) event.preventDefault(); }} onCut={(event) => { if (!allowContentCopy) event.preventDefault(); }}>
         <a href="#/" className="hidden truncate text-muted-foreground hover:text-foreground sm:block">
           {workspace}
         </a>
@@ -930,10 +988,6 @@ function DocMenu({
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => { setCopyError(""); setCopyNotice(""); }, [meta?.id]);
   const qc = useQueryClient();
-  const prot = useMutation({
-    mutationFn: (on: boolean) => docsApi.setCopyProtected(meta!.id, on),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["doc", meta?.id] }),
-  });
   const close = () => setOpen(false);
   const trash = async () => {
     if (!meta) return;
@@ -1020,15 +1074,6 @@ function DocMenu({
             </label>
           )}
           <div className="my-1 border-t" />
-          {meta?.role === "manage" && <label className={cn(item, "flex cursor-pointer items-center justify-between")} data-copy-protect>
-            防复制下载
-            <input
-              type="checkbox"
-              className="accent-primary"
-              checked={!!meta?.copyProtected}
-              onChange={(e) => prot.mutate(e.target.checked)}
-            />
-          </label>}
           {meta?.role === "manage" && meta.parentId && <div className="my-1 border-t" />}
           {meta?.role === "manage" && meta.parentId && (
             <button className={item} onClick={toRoot}>

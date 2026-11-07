@@ -7,7 +7,7 @@ import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIco
 import { Check, QrCode, X } from "lucide-react";
 import { ShareQRCode, verifiedShareUrl } from "@/components/shareLink";
 import { invitationConflict, inviteCandidates } from "@/components/shareInvite";
-import { changeCopyProtection, copyProtectionError, SharePermissions } from "@/components/sharePermissions";
+import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "@/components/sharePermissions";
 
 export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭" };
 
@@ -126,8 +126,9 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   const url = verifiedShareUrl(info.data, location.origin, !info.isFetching && !info.isError && !busy);
   const linkTitle = linkRole === "none" ? "仅指定协作者" : linkRole === "anon" ? "互联网上任何人" : "已登录用户";
   const linkDescription = linkRole === "none" ? "仅邀请的协作者可访问" : linkRole === "anon" ? "获得链接的人可阅读" : `获得链接的登录用户${ROLE_LABEL[linkRole] ?? "可访问"}`;
-  const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage";
-  const settingsMessage = settingsError || (info.isError || settings.isError ? "无法验证权限设置，请返回后重试。" : settings.data && settings.data.role !== "manage" ? "你已没有管理权限。" : !manage && !info.isFetching ? "你已没有管理权限。" : "");
+  const permissions = contentPermissions(settings.data);
+  const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage" && !!permissions;
+  const settingsMessage = settingsError || (info.isError || settings.isError ? "无法验证权限设置，请返回后重试。" : settings.data && settings.data.role !== "manage" ? "你已没有管理权限。" : !manage && !info.isFetching ? "你已没有管理权限。" : settings.data && !permissions ? "当前服务不支持分项权限设置，请刷新后重试。" : "");
   useLayoutEffect(() => {
     if (!showSettings) {
       if (restoreSettingsFocus.current) {
@@ -148,25 +149,25 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
     <div className={`fixed inset-0 z-40 ${showSettings && meta.kind !== "base" ? "bg-black/30" : ""}`} onMouseDown={onClose}>
       <section ref={dialogRef} role="dialog" aria-modal={showSettings && meta.kind !== "base" ? true : undefined} aria-labelledby="share-title" data-share-dialog onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
         if (!showSettings || meta.kind === "base" || event.key !== "Tab") return;
-        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)"));
+        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]"));
         if (!focusable.length) { event.preventDefault(); return; }
         const first = focusable[0], last = focusable[focusable.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       }} style={showSettings && meta.kind !== "base" ? { left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(500px, calc(100vw - 32px))", maxHeight: "calc(100dvh - 32px)" } : position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : { right: 16, top: 54, width: "min(480px, calc(100vw - 32px))" }} className="fixed flex max-h-[calc(100vh-2rem)] flex-col overflow-y-auto rounded-lg border bg-surface text-[14px] shadow-[0_8px_24px_rgba(31,35,41,0.16)]">
         {showSettings && meta.kind !== "base" ? <SharePermissions
-          protectedCopy={!!settings.data?.copyProtected}
+          permissions={permissions}
           busy={busy}
           loading={info.isFetching || settings.isFetching || (manage && !settings.data && !settings.isError)}
           enabled={!!settingsReady}
           error={settingsMessage}
           backRef={settingsBackRef}
           onBack={() => { restoreSettingsFocus.current = true; setShowSettings(false); setSettingsError(""); }}
-          onChange={(next) => {
-            if (!settingsReady || !settings.data) return;
-            const expected = !!settings.data.copyProtected;
+          onChange={(permissionKey, next) => {
+            if (!settingsReady || !permissions) return;
+            const expected = permissions;
             const id = meta.id;
-            void update(() => changeCopyProtection(expected, next, () => docsApi.get(id), (value, expectedValue) => docsApi.setCopyProtected(id, value, expectedValue), () => mountedRef.current && settingsContext.current.id === id && settingsContext.current.canManage), "settings");
+            void update(() => changeContentPermission(expected, permissionKey, next, () => docsApi.get(id), (value, expectedRevision) => docsApi.setContentPermissions(id, value, expectedRevision), () => mountedRef.current && settingsContext.current.id === id && settingsContext.current.canManage), "settings");
           }}
         /> : <>
         <header className="flex h-[45px] items-center justify-between px-4">

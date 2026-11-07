@@ -86,7 +86,7 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return false, err
 		}
-		allowDownload := fileReference && !meta.CopyProtected
+		allowDownload := fileReference && store.DocumentDownloadAllowed(meta, store.RoleView)
 		if !(imageReference && canInlineImage(file.Mime)) && !allowDownload {
 			return false, store.ErrNotFound
 		}

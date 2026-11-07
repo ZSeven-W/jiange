@@ -19,8 +19,11 @@ type docInput struct {
 	// Move: when true, ParentID (null = root) re-parents the doc.
 	Move bool `json:"move"`
 	// CopyProtected: watermark + copy/download restrictions (manage only).
-	CopyProtected         *bool `json:"copyProtected"`
-	ExpectedCopyProtected *bool `json:"expectedCopyProtected"`
+	CopyProtected               *bool   `json:"copyProtected"`
+	ExpectedCopyProtected       *bool   `json:"expectedCopyProtected"`
+	CopyMinRole                 *string `json:"copyMinRole"`
+	DownloadMinRole             *string `json:"downloadMinRole"`
+	ExpectedPermissionsRevision *int64  `json:"expectedPermissionsRevision"`
 }
 
 func cleanTitle(w http.ResponseWriter, t string) (string, bool) {
@@ -133,10 +136,23 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_copy_protection", "expectedCopyProtected requires copyProtected")
 		return
 	}
+	splitPermissions := in.CopyMinRole != nil || in.DownloadMinRole != nil
+	if splitPermissions && (in.CopyProtected != nil || in.ExpectedCopyProtected != nil || in.ExpectedPermissionsRevision == nil || *in.ExpectedPermissionsRevision < 0) || !splitPermissions && in.ExpectedPermissionsRevision != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "permissions revision and separate roles must be supplied together")
+		return
+	}
+	if in.CopyMinRole != nil && store.RoleRank(*in.CopyMinRole) == 0 || in.DownloadMinRole != nil && store.RoleRank(*in.DownloadMinRole) == 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "role must be view, edit or manage")
+		return
+	}
+	if splitPermissions && d.Kind != "doc" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "separate policies are only available for documents")
+		return
+	}
 	// Check the permissions of the whole request before applying any changes.
 	// In particular, an editor must not be able to change the title as a side
 	// effect of a rejected request that also contains a manager-only field.
-	if (in.CopyProtected != nil || in.Move) && d.Role != store.RoleManage {
+	if (in.CopyProtected != nil || splitPermissions || in.Move) && d.Role != store.RoleManage {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "需要manage权限")
 		return
 	}
@@ -157,7 +173,7 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	// Copy protection and any accompanying title/move fields must be committed
 	// together with the current manager/session check.
-	if in.CopyProtected != nil {
+	if in.CopyProtected != nil || splitPermissions {
 		guard, ok := s.viewGuard(w, r)
 		if !ok {
 			return
@@ -166,9 +182,12 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		if in.Title != nil {
 			cleanedTitle = &title
 		}
-		err := s.Store.PatchManagedDocGuarded(r.Context(), guard, d.ID, store.ManagedDocPatch{
-			Title: cleanedTitle, Move: in.Move, ParentID: in.ParentID, CopyProtected: *in.CopyProtected, ExpectedCopyProtected: in.ExpectedCopyProtected,
-		})
+		patch := store.ManagedDocPatch{Title: cleanedTitle, Move: in.Move, ParentID: in.ParentID, ExpectedCopyProtected: in.ExpectedCopyProtected,
+			CopyMinRole: in.CopyMinRole, DownloadMinRole: in.DownloadMinRole, ExpectedPermissionsRevision: in.ExpectedPermissionsRevision}
+		if in.CopyProtected != nil {
+			patch.CopyProtected = *in.CopyProtected
+		}
+		err := s.Store.PatchManagedDocGuarded(r.Context(), guard, d.ID, patch)
 		if err != nil {
 			s.shareMutationError(w, r, err)
 			return
