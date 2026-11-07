@@ -19,9 +19,6 @@ services:
       MINIO_ROOT_PASSWORD: jiange-dev-secret
     ports: ["9000:9000", "9001:9001"]
     volumes: [miniodata:/data]
-volumes:
-  pgdata:
-  miniodata:
   app:
     build: .
     depends_on:
@@ -33,3 +30,6 @@ volumes:
       JIANGE_S3_ACCESS_KEY: jiange
       JIANGE_S3_SECRET_KEY: jiange-dev-secret
     ports: ["8080:8080"]
+volumes:
+  pgdata:
+  miniodata:

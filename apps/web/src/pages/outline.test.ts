@@ -21,3 +21,45 @@ describe("outline & h4-h6", () => {
     expect(parseMarkdown(md).map((b) => b.type)).toEqual(["h4", "h5", "h6"]);
   });
 });
+
+import { diffViews, type DiffRow } from "./VersionDiff";
+import type { DocView } from "@/lib/api";
+
+const mk = (blocks: [string, string][]): DocView => ({
+  blocks: blocks.map(([type, text], i) => ({
+    id: String(i),
+    parent: "0",
+    type,
+    props: {},
+    spans: [{ text, marks: {} }],
+  })),
+});
+
+describe("version diff", () => {
+  it("marks added / removed / changed / same", () => {
+    const oldV = mk([
+      ["paragraph", "第一段"],
+      ["paragraph", "第二段"],
+      ["paragraph", "第三段"],
+    ]);
+    const newV = mk([
+      ["paragraph", "第一段"],
+      ["paragraph", "第二段改"],
+      ["paragraph", "新增段"],
+      ["paragraph", "第三段"],
+    ]);
+    const rows = diffViews(oldV, newV);
+    const kinds = rows.map((r) => r.kind);
+    expect(kinds).toContain("same");
+    expect(kinds).toContain("changed");
+    expect(kinds).toContain("added");
+    expect(rows.filter((r) => r.kind === "removed")).toHaveLength(0);
+    const changed = rows.find((r) => r.kind === "changed") as DiffRow;
+    expect(changed.oldText).toBe("第二段");
+    expect(changed.newText).toBe("第二段改");
+  });
+  it("removes produce removed rows", () => {
+    const rows = diffViews(mk([["paragraph", "A"], ["paragraph", "B"]]), mk([["paragraph", "A"]]));
+    expect(rows.map((r) => r.kind)).toEqual(["same", "removed"]);
+  });
+});

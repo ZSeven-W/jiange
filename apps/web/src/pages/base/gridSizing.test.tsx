@@ -27,7 +27,8 @@ describe("virtualized row sizing", () => {
     } }];
     const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} canEdit={false} fields={fields} records={records} members={[]} onMutate={() => {}} /></QueryClientProvider>);
     expect((html.match(/data-grid-cell-content/g) ?? [])).toHaveLength(3);
-    expect((html.match(/h-\[31px\]/g) ?? [])).toHaveLength(3);
+    // 每个富内容单元格都在固定高盒子中（行号列也复用 h-[31px]，故 ≥3）
+    expect((html.match(/h-\[31px\]/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(html).toContain("甲");
     expect(html).toContain("事项二");
     expect(html).toContain("笔记.txt");

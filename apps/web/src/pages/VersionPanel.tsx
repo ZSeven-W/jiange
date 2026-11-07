@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocView } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
+import { diffViews, type DiffRow } from "./VersionDiff";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 
 export function restoreErrorMessage(error: unknown): string {
@@ -24,10 +25,11 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 }
 
 /** Right drawer: version list, read-only preview and restore (P6). */
-export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloads, onClose }: { id: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; onClose: () => void }) {
+export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloads, currentView, onClose }: { id: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["versions", id], queryFn: () => docsApi.versions(id) });
   const [previewing, setPreviewing] = useState<number | null>(null);
+  const [diffMode, setDiffMode] = useState(false);
   const latest = useRef({ id, canEdit, previewing });
   latest.current = { id, canEdit, previewing };
   const mounted = useRef(true);
@@ -104,6 +106,17 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
         <div className="flex h-[55%] shrink-0 flex-col border-t" data-version-preview>
           <div className="flex items-center gap-2 border-b px-4 py-2 text-[13px] font-medium">
             版本预览（只读）
+            {currentView && preview.data && (
+              <label className="flex cursor-pointer items-center gap-1 text-[12px] font-normal text-muted-foreground" data-diff-toggle>
+                <input
+                  type="checkbox"
+                  className="accent-primary"
+                  checked={diffMode}
+                  onChange={(e) => setDiffMode(e.target.checked)}
+                />
+                对比当前
+              </label>
+            )}
             {canEdit && (
               <button
                 className="ml-auto h-7 rounded-md bg-primary px-3 text-[12px] font-normal text-white hover:opacity-90"
@@ -117,7 +130,15 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
           </div>
           {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canEdit} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
           <div className="flex-1 overflow-y-auto px-5 py-4 text-[14px] leading-6" data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
-            {preview.data ? <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing} /> : <p className="text-subtle">加载中…</p>}
+            {preview.data ? (
+              diffMode && currentView ? (
+                <VersionDiffView oldView={preview.data.view} newView={currentView} />
+              ) : (
+                <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing} />
+              )
+            ) : (
+              <p className="text-subtle">加载中…</p>
+            )}
           </div>
         </div>
       )}
@@ -128,4 +149,51 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
 /** Read-only snapshot projection shared with publicly shared documents. */
 export function VersionView({ view, disableFileDownloads = false, versionSeq }: { view: DocView; disableFileDownloads?: boolean; versionSeq?: number }) {
   return <ReadOnlyDoc view={view} disableFileDownloads={disableFileDownloads} imageVersionSeq={versionSeq} />;
+}
+
+
+/** 版本对比视图：老版本（红/删除线）vs 当前（绿底），changed 双列并排。 */
+function VersionDiffView({ oldView, newView }: { oldView: DocView; newView: DocView }) {
+  const rows = diffViews(oldView, newView);
+  const stats = {
+    added: rows.filter((r) => r.kind === "added").length,
+    removed: rows.filter((r) => r.kind === "removed").length,
+    changed: rows.filter((r) => r.kind === "changed").length,
+  };
+  return (
+    <div data-version-diff>
+      <div className="mb-3 flex items-center gap-3 text-[12px] text-muted-foreground">
+        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#00B42A]" />新增 {stats.added}</span>
+        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#F54A45]" />删除 {stats.removed}</span>
+        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#FF8800]" />修改 {stats.changed}</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map((r, i) => (
+          <DiffRowView key={i} r={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiffRowView({ r }: { r: DiffRow }) {
+  if (r.kind === "same") return <p className="text-foreground">{r.oldText}</p>;
+  if (r.kind === "removed")
+    return (
+      <p className="rounded bg-[#F54A45]/10 px-2 py-0.5 text-[#F54A45] line-through decoration-[#F54A45]/60">
+        − {r.oldText}
+      </p>
+    );
+  if (r.kind === "added")
+    return (
+      <p className="rounded bg-[#00B42A]/10 px-2 py-0.5 text-[#00B42A]">
+        + {r.newText}
+      </p>
+    );
+  return (
+    <div className="rounded bg-[#FF8800]/8 px-2 py-0.5">
+      <p className="text-[#F54A45] line-through decoration-[#F54A45]/60">− {r.oldText}</p>
+      <p className="text-[#00B42A]">+ {r.newText}</p>
+    </div>
+  );
 }
