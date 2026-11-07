@@ -12,12 +12,12 @@ import { stageStarter } from "./pendingStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { ChevronDown, FolderOpen, Plus, Star, Table2 } from "lucide-react";
 
-type HomeTab = "recent" | "mine" | "shared" | "favorites";
+type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
 const LIST_GRID = "grid grid-cols-[minmax(0,1fr)_100px] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
 
 export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favorites?: boolean }) {
   const qc = useQueryClient();
-  useEffect(() => { document.title = `${favorites ? "收藏" : recent ? "最近更新" : "主页"} - Jiange`; }, [favorites, recent]);
+  useEffect(() => { document.title = `${favorites ? "收藏" : recent ? "最近访问" : "主页"} - Jiange`; }, [favorites, recent]);
   const [tab, setTab] = useState<HomeTab>("recent");
   const [kind, setKind] = useState("all");
   const [newMenu, setNewMenu] = useState(false);
@@ -41,6 +41,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   }, [libraryOpen]);
   const selected = favorites ? "favorites" : recent ? "recent" : tab;
   const docs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
+  const recentDocs = useQuery({ queryKey: ["recent", me.user.id], queryFn: docsApi.recent, enabled: selected === "recent", refetchInterval: 15000, refetchIntervalInBackground: false });
   const shared = useQuery({ queryKey: ["shared"], queryFn: docsApi.shared, enabled: selected === "shared" });
   const favs = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, enabled: selected === "favorites" });
   const create = useMutation({
@@ -73,11 +74,11 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
     contentLock.current = true;
     createWithContent.mutate({ title: template.name, markdown: template.body }, { onSettled: () => { contentLock.current = false; } });
   };
-  const query = selected === "favorites" ? favs : selected === "shared" ? shared : docs;
+  const query = selected === "favorites" ? favs : selected === "shared" ? shared : selected === "recent" ? recentDocs : docs;
   const items = [...(query.data ?? [])]
     .filter((d) => (kind === "all" || (d.kind ?? "doc") === kind) && (selected !== "mine" || d.creatorId === me.user.id))
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  const pageTitle = favorites ? "收藏" : recent ? "最近更新" : "主页";
+    .sort((a, b) => selected === "recent" ? 0 : Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const pageTitle = favorites ? "收藏" : recent ? "最近访问" : "主页";
   const menu = newMenu && <div role="menu" className={`absolute top-[calc(100%+6px)] z-30 w-52 rounded-lg border bg-surface p-1.5 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="doc" />文档</button>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("base"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="base" />多维表格</button>
@@ -111,16 +112,16 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
           {createWithContent.isPending && <p role="status" className="mt-3 text-[13px] text-subtle">正在创建文档…</p>}
           {!recent && !favorites ? <div className="mt-7 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
             <nav aria-label="文档分类" className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
-              {([ ["recent", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}
+              {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}
             </nav>
             <TypeFilter kind={kind} onChange={setKind} />
-          </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? "收藏的文档" : "最近更新"}</div><TypeFilter kind={kind} onChange={setKind} /></div>}
+          </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? "收藏的文档" : "最近访问"}</div><TypeFilter kind={kind} onChange={setKind} /></div>}
           <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 text-[12px] text-subtle`}>
-            <span>标题</span><span className="hidden truncate lg:block">位置</span><span className="hidden truncate sm:block">所有者</span><span className="hidden truncate lg:block">创建时间</span><span className="truncate">最近更新</span>
+            <span>标题</span><span className="hidden truncate lg:block">位置</span><span className="hidden truncate sm:block">所有者</span><span className="hidden truncate lg:block">创建时间</span><span className="truncate">{selected === "recent" ? "最近访问" : "最近更新"}</span>
           </div>
-          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">加载中…</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">加载失败，请刷新后重试。</p> : items.length ? items.map((d) => <DocumentRow key={d.id} doc={d} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
+          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">加载中…</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">加载失败，请检查网络。 <button type="button" className="underline" onClick={() => void query.refetch()}>重试</button></p> : items.length ? items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
             <span className="grid size-14 place-items-center rounded-full bg-sidebar text-subtle">{selected === "favorites" ? <Star size={23} strokeWidth={1.4} /> : <FolderOpen size={24} strokeWidth={1.4} />}</span>
-            <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? "没有此类型的文档" : selected === "favorites" ? "还没有收藏的文档" : selected === "shared" ? "还没有与我共享的文档" : selected === "mine" ? "暂无我创建的文档" : "暂无文档"}</p>
+            <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? "没有此类型的文档" : selected === "favorites" ? "还没有收藏的文档" : selected === "shared" ? "还没有与我共享的文档" : selected === "mine" ? "暂无我创建的文档" : selected === "recent" ? "还没有最近访问的文档" : "暂无文档"}</p>
             {selected === "recent" && kind === "all" && <button onClick={() => create.mutate("doc")} disabled={create.isPending} className="mt-3 text-[13px] text-primary hover:underline">新建文档</button>}
           </div>}
         </div>
@@ -156,12 +157,12 @@ function dateLabel(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
 }
-function DocumentRow({ doc, workspaceName }: { doc: DocMeta; workspaceName?: string }) {
+function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?: string; workspaceName?: string }) {
   return <button onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} group h-14 w-full items-center gap-3 border-b px-2 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
     <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind === "base" ? "base" : "doc"} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
     <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || "未知"} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
-    <span className="truncate text-[12px] text-subtle">{dateLabel(doc.updatedAt)}</span>
+    <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
   </button>;
 }

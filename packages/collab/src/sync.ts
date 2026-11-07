@@ -1,5 +1,6 @@
 import { Doc } from "./doc";
 import { decodeOps, encodeOps } from "./encoding";
+import { idKey } from "./id";
 import type { Op } from "./ops";
 import { decodeServerMsg, encodeClientMsg } from "./protocol";
 
@@ -42,14 +43,16 @@ export class SyncClient {
   private awareness: string | null = null;
   status: SyncStatus = "connecting";
   droppedOnResync = 0;
-  /** After a resync, causally-unready ops are only dropped once catch-up reaches this seq. */
-  private catchUpTo = -1;
   private welcomeHead: number | null = null;
   private sequenceGap = false;
   private _caughtUp = false;
   private _blocked: string | null = null;
+  /** Causal errors are derived afresh from the current history, not a rejected write. */
+  private causalIssue: "missing_dependency" | "invalid_history" | null = null;
   /** ACKs have no rejection list. Keep a batch until an empty OPS fence is ACKed. */
   private awaitingFence = false;
+  /** ACKs received while history is unresolved stay tied to this transport. */
+  private deferredAcks: { firstSeq: number; count: number }[] = [];
   private rejectedTransport = false;
 
   constructor(readonly docId: number, private h: SyncHandlers = {}) {}
@@ -60,10 +63,34 @@ export class SyncClient {
 
   /** True only after this connection has received every operation through welcome's head. */
   get caughtUp(): boolean { return this._caughtUp; }
-  get blocked(): string | null { return this._blocked; }
+  get blocked(): string | null { return this.causalIssue ?? this._blocked; }
+  /** Server rejection, persisted even when a causal problem is also visible. */
+  get rejection(): string | null { return this._blocked; }
 
   private setBlocked(code: string | null) {
-    if (this._blocked !== code) { this._blocked = code; this.h.blocked?.(code); }
+    const before = this.blocked;
+    const changed = this._blocked !== code;
+    this._blocked = code;
+    if (changed || before !== this.blocked) this.h.blocked?.(this.blocked);
+  }
+
+  /** Check only once the advertised server history is fully received. */
+  private inspectCausality() {
+    if (!this.doc || this.welcomeHead === null || this.sequenceGap || this.lastSeq < this.welcomeHead) return;
+    const pending = this.doc.pendingIds();
+    let next: "missing_dependency" | "invalid_history" | null = null;
+    if (pending.length) {
+      const local = new Set(this.pendingOps().map((op) => idKey(op.id)));
+      next = pending.some((id) => !local.has(idKey(id))) ? "invalid_history" : "missing_dependency";
+    }
+    const before = this.blocked;
+    const previousIssue = this.causalIssue;
+    this.causalIssue = next;
+    if (next) this.setStatus("syncing");
+    if (before !== this.blocked) this.h.blocked?.(this.blocked);
+    if (next && next !== previousIssue) {
+      this.h.error?.(next, next === "missing_dependency" ? "本地草稿依赖的内容尚不可用，草稿已保留。" : "服务器历史包含无法解析的操作，已暂停同步。");
+    }
   }
 
   private refreshCaughtUp() {
@@ -90,7 +117,7 @@ export class SyncClient {
 
   /** Pending local ops may reference tombstones even after they were received. */
   private acknowledgeIfSafe() {
-    if (!this.send || !this.caughtUp || this._blocked || this.awaitingFence || this.inflight.length || this.queued.length || this.lastSeq <= this.safeSeq) return;
+    if (!this.send || !this.caughtUp || this.blocked || this.awaitingFence || this.inflight.length || this.queued.length || this.lastSeq <= this.safeSeq) return;
     this.safeSeq = this.lastSeq;
     this.send(encodeClientMsg({ type: "ack", seq: this.safeSeq }));
   }
@@ -115,6 +142,7 @@ export class SyncClient {
     this.queued = this.inflight.flat().concat(this.queued);
     this.inflight = [];
     this.awaitingFence = false;
+    this.deferredAcks = [];
     this.rejectedTransport = false;
     this.peers.clear();
     this.h.peers?.([]);
@@ -130,7 +158,7 @@ export class SyncClient {
 
   private flush() {
     // ACKs have no batch identifiers, so never have two batches outstanding.
-    if (!this.send || this.status === "connecting" || this._blocked || this.inflight.length || this.queued.length === 0) return;
+    if (!this.send || this.status === "connecting" || !this.caughtUp || this.blocked || this.inflight.length || this.queued.length === 0) return;
     const batch = this.queued;
     this.queued = [];
     this.inflight.push(batch);
@@ -145,7 +173,7 @@ export class SyncClient {
 
   /** Retry retained writes after the caller has checked access/connection state. */
   retryPending() {
-    if (!this._blocked) return;
+    if (!this._blocked || this.causalIssue) return;
     // A late ACK from the rejected connection must never acknowledge a retry.
     if (this.rejectedTransport) return;
     this.queued = this.inflight.flat().concat(this.queued);
@@ -164,7 +192,7 @@ export class SyncClient {
     if (this.doc) throw new Error("restore before the first connection");
     this.clientId = clientId;
     this.queued = ops.concat(this.queued);
-    if (blocked && ops.length) this.setBlocked(blocked);
+    if (blocked && ops.length && blocked !== "missing_dependency" && blocked !== "invalid_history") this.setBlocked(blocked);
   }
 
   setAwareness(state: unknown) {
@@ -176,6 +204,67 @@ export class SyncClient {
     this.h.peers?.([...this.peers].map(([clientId, state]) => ({ clientId, state })));
   }
 
+  private handleAck(m: { firstSeq: number; count: number }) {
+    if (this.sequenceGap) return;
+    // A failed batch is never acknowledged by current servers. A late or
+    // stray ACK must not remove the retained batch while writes are blocked.
+    if (this.causalIssue && !this._blocked && this.inflight.length) {
+      // The data ACK occupies sequence numbers even though we cannot finish
+      // confirming the batch yet. Advance only over a contiguous range so
+      // following remote OPS can supply the missing causal dependency.
+      const previous = this.deferredAcks[0];
+      if (previous) {
+        if (previous.firstSeq !== m.firstSeq || previous.count !== m.count) this.gap("conflicting deferred ACK");
+        return;
+      }
+      if (this.awaitingFence && m.count !== 0) {
+        this.gap("non-empty ACK for sync fence");
+        return;
+      }
+      if (m.count > 0 && m.firstSeq > this.lastSeq + 1) {
+        this.gap(`ack out of order: expected seq ${this.lastSeq + 1}, got ${m.firstSeq}`);
+        return;
+      }
+      if (m.count > 0) this.lastSeq = Math.max(this.lastSeq, m.firstSeq + m.count - 1);
+      this.deferredAcks.push({ firstSeq: m.firstSeq, count: m.count });
+      this.refreshCaughtUp();
+      return;
+    }
+    if (this.blocked || !this.inflight.length) return;
+    if (this.awaitingFence) {
+      if (m.count !== 0) { this.gap("non-empty ACK for sync fence"); return; }
+      this.awaitingFence = false;
+      this.inflight.shift();
+      this.flush();
+      this.acknowledgeIfSafe();
+      if (this.caughtUp && !this.blocked && !this.inflight.length && !this.queued.length) this.setStatus("synced");
+      return;
+    }
+    if (m.count > 0 && m.firstSeq > this.lastSeq + 1) {
+      // Keep the batch inflight: close() must be able to resend it after resync.
+      this.gap(`ack out of order: expected seq ${this.lastSeq + 1}, got ${m.firstSeq}`);
+      return;
+    }
+    if (m.count > 0) {
+      // A reconnect may replay an accepted local batch before its ACK arrives.
+      // Overlap is safe; never move the contiguous cursor backwards.
+      this.lastSeq = Math.max(this.lastSeq, m.firstSeq + m.count - 1);
+      this.refreshCaughtUp();
+    }
+    // Older servers acknowledge a partially accepted batch and only then
+    // send not_ready. An empty batch is a wire-compatible ordered fence:
+    // its ACK cannot arrive before the preceding batch's error.
+    this.awaitingFence = true;
+    this.send?.(encodeClientMsg({ type: "ops", batch: encodeOps([]) }));
+    return;
+  }
+
+  private drainDeferredAcks() {
+    while (!this.blocked && this.deferredAcks.length) {
+      this.handleAck(this.deferredAcks.shift()!);
+    }
+  }
+
   receive(bytes: Uint8Array) {
     const m = decodeServerMsg(bytes);
     switch (m.type) {
@@ -183,6 +272,7 @@ export class SyncClient {
         const pending = this.inflight.flat().concat(this.queued);
         this.inflight = [];
         this.awaitingFence = false;
+        this.deferredAcks = [];
         this.queued = [];
         let rebuilt = false;
         if (m.snapshot || !this.doc || m.clientId !== this.clientId) {
@@ -194,7 +284,6 @@ export class SyncClient {
           } else {
             for (const op of pending) fresh.apply(op);
             this.doc = fresh;
-            this.catchUpTo = m.headSeq;
             rebuilt = true;
           }
           this.lastSeq = m.snapshot ? m.snapshot.seq : this.doc && !rebuilt ? this.lastSeq : 0;
@@ -204,6 +293,7 @@ export class SyncClient {
         this.queued = pending;
         this.welcomeHead = m.headSeq;
         this.sequenceGap = this.lastSeq > m.headSeq;
+        this.inspectCausality();
         this.refreshCaughtUp();
         this.setStatus(pending.length || !this.caughtUp ? "syncing" : "synced");
         if (this.sequenceGap) {
@@ -211,13 +301,9 @@ export class SyncClient {
           if (rebuilt) this.h.change?.(true);
           return;
         }
-        // resend unacked ops BEFORE acknowledging anything new (required for safe tombstone GC)
-        if (pending.length && !this._blocked) {
-          const batch = this.queued;
-          this.queued = [];
-          this.inflight.push(batch);
-          this.send?.(encodeClientMsg({ type: "ops", batch: encodeOps(batch) }));
-        }
+        // Wait for the advertised history before replaying local edits. The
+        // nonempty queue prevents advancing the GC horizon while waiting.
+        this.flush();
         if (this.awareness) this.send?.(encodeClientMsg({ type: "aware", state: this.awareness }));
         if (rebuilt) this.h.change?.(true);
         this.acknowledgeIfSafe();
@@ -238,47 +324,18 @@ export class SyncClient {
           for (const op of ops.slice(skip)) this.doc.apply(op);
           this.lastSeq = m.firstSeq + ops.length - 1;
         }
-        if (this.catchUpTo >= 0 && this.lastSeq >= this.catchUpTo) {
-          this.droppedOnResync += this.doc.dropPending();
-          this.catchUpTo = -1;
-        }
+        this.inspectCausality();
         this.refreshCaughtUp();
+        this.drainDeferredAcks();
         if (skip < ops.length) this.h.change?.(true);
+        this.flush();
         this.acknowledgeIfSafe();
-        if (this.caughtUp && !this._blocked && !this.inflight.length && !this.queued.length) this.setStatus("synced");
+        if (this.caughtUp && !this.blocked && !this.inflight.length && !this.queued.length) this.setStatus("synced");
         return;
       }
-      case "ack": {
-        // A failed batch is never acknowledged by current servers. A late or
-        // stray ACK must not remove the retained batch while writes are blocked.
-        if (this._blocked || !this.inflight.length) return;
-        if (this.awaitingFence) {
-          if (m.count !== 0) { this.gap("non-empty ACK for sync fence"); return; }
-          this.awaitingFence = false;
-          this.inflight.shift();
-          this.flush();
-          this.acknowledgeIfSafe();
-          if (this.caughtUp && !this._blocked && !this.inflight.length && !this.queued.length) this.setStatus("synced");
-          return;
-        }
-        if (m.count > 0 && m.firstSeq > this.lastSeq + 1) {
-          // Keep the batch inflight: close() must be able to resend it after resync.
-          this.gap(`ack out of order: expected seq ${this.lastSeq + 1}, got ${m.firstSeq}`);
-          return;
-        }
-        if (m.count > 0) {
-          // A reconnect may replay an accepted local batch before its ACK arrives.
-          // Overlap is safe; never move the contiguous cursor backwards.
-          this.lastSeq = Math.max(this.lastSeq, m.firstSeq + m.count - 1);
-          this.refreshCaughtUp();
-        }
-        // Older servers acknowledge a partially accepted batch and only then
-        // send not_ready. An empty batch is a wire-compatible ordered fence:
-        // its ACK cannot arrive before the preceding batch's error.
-        this.awaitingFence = true;
-        this.send?.(encodeClientMsg({ type: "ops", batch: encodeOps([]) }));
+      case "ack":
+        this.handleAck(m);
         return;
-      }
       case "aware": {
         if (m.clientId === this.clientId) return;
         if (m.state === "") this.peers.delete(m.clientId);
@@ -294,6 +351,7 @@ export class SyncClient {
       }
       case "error":
         if (this.inflight.length && ["read_only", "not_ready", "forbidden", "bad_ops"].includes(m.code)) {
+          this.deferredAcks = [];
           this.setBlocked(m.code);
           // Freeze immediately, before the UI closes the transport. This
           // prevents retry before a late ACK from the rejected socket drains.

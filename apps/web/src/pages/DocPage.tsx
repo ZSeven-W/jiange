@@ -29,6 +29,7 @@ import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendMarkdownOps } from "@/lib/mdImport";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
+import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyDocument, copyErrorMessage } from "./documentCopy";
 import { Check, Eye, MessageSquare, Star } from "lucide-react";
@@ -54,6 +55,16 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const sync = useSyncDoc(id, me.user.id);
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const metadataVerified = metadataState === "ready";
+  const visitRecorder = useMemo(() => createVisitRecorder(
+    () => docsApi.recordVisit(id),
+    () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
+    () => { void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) }); },
+  ), [id, me.user.id, qc]);
+  useEffect(() => {
+    if (!metadataVerified) return;
+    visitRecorder.start();
+    return () => visitRecorder.stop();
+  }, [metadataVerified, visitRecorder]);
   const wasCaughtUp = useRef(false);
   useEffect(() => {
     // Also recover if the service returns while the browser remains online.
@@ -274,6 +285,10 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     } catch { setRetrySyncError("无法读取本账号的本地草稿，请检查浏览器存储权限。"); }
   };
   const retryPending = async () => {
+    if (sync.client.blocked === "missing_dependency" || sync.client.blocked === "invalid_history") {
+      setRetrySyncError("所需历史尚未恢复，请先下载本地备份并联系管理员。");
+      return;
+    }
     setRetryingSync(true);
     setRetrySyncError("");
     try {
@@ -353,9 +368,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。 <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? "正在重试…" : "重试"}</button></div>}
         {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
-          <span>{sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。</span>{" "}
-          <button type="button" onClick={downloadPending} className="underline">下载本地备份</button>{" "}
-          {sync.blocked && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="underline disabled:opacity-50">{retryingSync ? "检查中…" : "检查权限并重试"}</button>}
+          <span>{sync.blocked === "missing_dependency" ? "本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。" : sync.blocked === "invalid_history" ? "服务端文档历史不完整，无法确认同步状态；请联系管理员。" : `${sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。`}</span>{" "}
+          {sync.client.unacked > 0 && <><button type="button" onClick={downloadPending} className="underline">下载本地备份</button>{" "}</>}
+          {sync.blocked && sync.blocked !== "missing_dependency" && sync.blocked !== "invalid_history" && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="underline disabled:opacity-50">{retryingSync ? "检查中…" : "检查权限并重试"}</button>}
           {retrySyncError && <span className="ml-2">{retrySyncError}</span>}
         </div>}
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}

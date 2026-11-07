@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import { filterItems, pinyinMatch } from "./pinyin";
-import { bodyBlocks, copyRange, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "./model";
+import { bodyBlocks, clipText, copyRange, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "./model";
 
 function setup(...lines: string[]) {
   const d = new Doc(1);
@@ -82,7 +82,7 @@ describe("block editing", () => {
     const end = pasteBlocks(tx, { b: blocks[2], o: 1 }, clip);
     expect(texts(d)).toEqual(["paragraph:one", "h1:two", "paragraph:xne", "h1:twoy"]);
     expect(end.o).toBe(3);
-    expect(parseText("# T\n- a\n1. b").map((b) => b.type)).toEqual(["h1", "bullet", "ordered"]);
+    expect(clipText(parseText("# T\n- a\n1. b"))).toBe("# T\n- a\n1. b");
   });
 });
 

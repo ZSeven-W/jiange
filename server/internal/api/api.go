@@ -97,6 +97,8 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/notifications/read":               s.markNotificationsRead,
 		"GET /api/search":                            s.searchDocs,
 		"GET /api/favorites":                         s.listFavorites,
+		"GET /api/recent":                            s.listRecent,
+		"POST /api/docs/{id}/visit":                  s.recordVisit,
 		"PUT /api/docs/{id}/star":                    s.putFavorite,
 		"DELETE /api/docs/{id}/star":                 s.putFavorite,
 		"GET /api/docs/{id}/ancestors":               s.getAncestors,

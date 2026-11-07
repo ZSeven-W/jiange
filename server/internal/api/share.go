@@ -190,12 +190,18 @@ func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
 	httpx.JSON(w, http.StatusOK, d)
 }
 
 func (s *Server) sharedWithMe(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	docs, err := s.Store.SharedWithMe(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	docs, err = s.sanitizeDocList(r.Context(), u.ID, docs)
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -38,6 +38,11 @@ func (s *Server) listDocs(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	docs, err = s.sanitizeDocList(r.Context(), u.ID, docs)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"docs": docs})
 }
 
@@ -78,6 +83,7 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
 	httpx.JSON(w, http.StatusCreated, d)
 }
 
@@ -100,6 +106,13 @@ func (s *Server) docFromPath(w http.ResponseWriter, r *http.Request) (store.DocM
 
 func (s *Server) getDoc(w http.ResponseWriter, r *http.Request) {
 	if d, ok := s.docFromPath(w, r); ok {
+		u, _ := UserFrom(r.Context())
+		var err error
+		d, err = s.sanitizeDocMeta(r.Context(), u.ID, d, nil)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
 		httpx.JSON(w, http.StatusOK, d)
 	}
 }
@@ -165,6 +178,8 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	// not scoped to the caller and lacks Role and WorkspaceName. Reload the
 	// final state through the same access check as GET, including after a move.
 	if current, ok := s.docFromPath(w, r); ok {
+		u, _ := UserFrom(r.Context())
+		current = s.sanitizeWrittenDocMeta(r.Context(), u.ID, current)
 		httpx.JSON(w, http.StatusOK, current)
 	}
 }
@@ -184,6 +199,11 @@ func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	docs, err := s.Store.ListTrash(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	docs, err = s.sanitizeDocList(r.Context(), u.ID, docs)
 	if err != nil {
 		s.fail(w, r, err)
 		return

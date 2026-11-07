@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc } from "@jiange/collab";
+import { Doc, encodeOps, encodeServerMsg, SyncClient } from "@jiange/collab";
 import { pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, writePendingOps } from "./pendingOpsStorage";
 
 function memoryStorage() {
@@ -97,5 +97,34 @@ describe("offline draft ownership", () => {
     expect(current.otherDrafts).toBe(true);
     expect(readAccountDraftBackups(s, 10, 42).some((item) => item.raw === raw)).toBe(true);
     current.release();
+  });
+  it("retains a missing-dependency draft for its account and derives the block again after reload", async () => {
+    const local = new Doc(7), block = local.createBlock("paragraph");
+    const text = local.insertText(block.id, 0, "本地草稿")!;
+    const storage = memoryStorage(), locks = fakeLocks();
+    const owner = await preparePendingSession(storage, memoryStorage(), locks, 10, 42, fresh);
+    const client = new SyncClient(42);
+    client.restore(7, [text], "read_only");
+    client.open(() => {});
+    client.receive(encodeServerMsg({ type: "welcome", clientId: 7, headSeq: 0, snapshot: { seq: 0, state: new Doc(8).encodeState() } }));
+    expect(client.blocked).toBe("missing_dependency");
+    expect(client.rejection).toBe("read_only");
+    writePendingOps(storage, owner.key, { clientId: client.clientId, ops: client.pendingOps(), blocked: client.rejection ?? client.blocked });
+    const other = await preparePendingSession(storage, memoryStorage(), locks, 11, 42, fresh);
+    expect(other.draft).toBeNull();
+    expect(readAccountDraftBackups(storage, 11, 42)).toEqual([]);
+    owner.release(); other.release(); await settle();
+    const recovered = await preparePendingSession(storage, memoryStorage(), locks, 10, 42, fresh);
+    expect(recovered.draft?.ops).toEqual([text]);
+    const reloaded = new SyncClient(42);
+    reloaded.restore(recovered.draft!.clientId, recovered.draft!.ops, recovered.draft!.blocked);
+    reloaded.open(() => {});
+    reloaded.receive(encodeServerMsg({ type: "welcome", clientId: 7, headSeq: 0, snapshot: { seq: 0, state: new Doc(8).encodeState() } }));
+    expect(reloaded.blocked).toBe("missing_dependency");
+    expect(reloaded.pendingOps()).toEqual([text]);
+    reloaded.receive(encodeServerMsg({ type: "ops", firstSeq: 1, batch: encodeOps([block]) }));
+    expect(reloaded.blocked).toBe("read_only");
+    expect(reloaded.pendingOps()).toEqual([text]);
+    recovered.release();
   });
 });

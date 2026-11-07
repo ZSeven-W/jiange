@@ -24,12 +24,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
@@ -58,6 +59,10 @@ export interface DocMeta {
   kind?: "doc" | "base";
   workspaceName?: string;
   copyProtected?: boolean;
+}
+/** A document returned by the per-user recent-visit history. */
+export interface RecentDoc extends DocMeta {
+  viewedAt: string;
 }
 export type FieldType =
   | "text"
@@ -241,7 +246,10 @@ export interface Automation {
   };
 }
 export const extrasApi = {
-  search: (q: string) => request<{ docs: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`).then((r) => r.docs),
+  search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {
+    if (!Array.isArray(r?.docs)) throw new ApiError(502, "search_incomplete", "搜索未完成，请稍后重试。");
+    return r.docs;
+  }),
   favorites: () => request<{ docs: DocMeta[] }>("GET", "/api/favorites").then((r) => r.docs),
   star: (id: number) => request<void>("PUT", `/api/docs/${id}/star`),
   unstar: (id: number) => request<void>("DELETE", `/api/docs/${id}/star`),
@@ -249,8 +257,10 @@ export const extrasApi = {
 };
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
+  recent: () => request<{ docs: RecentDoc[] }>("GET", "/api/recent").then((r) => r.docs),
+  recordVisit: (id: number) => request<void>("POST", `/api/docs/${id}/visit`),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
-  create: (title = "", parentId: number | null = null) => request<DocMeta>("POST", "/api/docs", { title, parentId }),
+  create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   share: (id: number, email: string, role: Role | "") => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),

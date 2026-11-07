@@ -25,7 +25,8 @@ type Memory struct {
 	comments      []Comment
 	notifications []Notification
 	favorites     map[int64][]int64
-	links         map[[2]int64][]int64 // (fieldID, fromRecord) -> toRecords
+	recent        map[[2]int64]time.Time // (user, doc) -> last visit
+	links         map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
 	automations   []Automation
 }
 

@@ -16,7 +16,12 @@ const roleSQL = `CASE
 
 const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
 	LEFT JOIN LATERAL (
-		WITH RECURSIVE a AS (SELECT n.id, n.parent_id UNION ALL SELECT x.id, x.parent_id FROM nodes x JOIN a ON x.id = a.parent_id)
+		WITH RECURSIVE a AS (
+			SELECT n.id, n.parent_id, ARRAY[n.id] AS visited
+			UNION ALL
+			SELECT x.id, x.parent_id, a.visited || x.id FROM nodes x JOIN a ON x.id = a.parent_id
+			WHERE NOT x.id = ANY(a.visited)
+		)
 		SELECT max(grants.rank) AS r FROM (
 			SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
 			FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
