@@ -453,7 +453,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             matchCount={matches.length}
             activeIndex={activeFindIndex}
             canReplace={findCanReplace}
-            scopeNotice={`仅搜索正文文本块；标题、表格、分栏和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            scopeNotice={`仅搜索正文和分栏文本；标题、表格和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); requestFindScroll(); }}

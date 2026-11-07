@@ -51,4 +51,40 @@ describe("editor find highlights", () => {
     const normal = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} />);
     expect(normal).toContain("background:#00ff00");
   });
+
+  it("highlights the active match inside a column and removes it after a move", () => {
+    const doc = new Doc(1);
+    const tx = new Tx(doc);
+    const columns = tx.create("columns", null, ROOT);
+    const left = tx.create("paragraph", null, columns);
+    tx.insert(left, 0, "前😀目标后");
+    tx.format(left, 2, 4, "bg", "#00ff00");
+    const matches = findMatches(doc, "目标");
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const html = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} findMatches={matches} activeFindMatch={matches[0]} />);
+    expect(html).toContain(`data-column="${idKey(left)}"`);
+    expect((html.match(/data-find-active="true"/g) ?? [])).toHaveLength(1);
+    expect(html).not.toContain("background:#00ff00");
+    expect(doc.richChars(left)[2].marks.bg).toBe("#00ff00");
+    new Tx(doc).move(left, columns, ROOT);
+    const stale = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} findMatches={matches} activeFindMatch={matches[0]} />);
+    expect(stale).not.toContain("data-find-match");
+  });
+
+  it("keeps inline formula source out of search and groups a highlighted link", () => {
+    const doc = new Doc(1);
+    const tx = new Tx(doc);
+    const columns = tx.create("columns", null, ROOT);
+    const left = tx.create("paragraph", null, columns);
+    tx.insert(left, 0, "abc链接");
+    tx.format(left, 0, 3, "math", "x^2");
+    tx.format(left, 3, 5, "link", "https://example.com");
+    const matches = findMatches(doc, "链接");
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const html = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} findMatches={matches} activeFindMatch={matches[0]} />);
+    expect(html).toContain('title="$x^2$"');
+    expect((html.match(/href="https:\/\/example.com"/g) ?? [])).toHaveLength(1);
+    expect(html).toContain("data-find-active=\"true\"");
+    expect(findMatches(doc, "abc")).toHaveLength(0);
+  });
 });

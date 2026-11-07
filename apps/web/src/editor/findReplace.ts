@@ -1,9 +1,9 @@
-import { eqId, idKey, type Doc, type OpId, type Tx } from "@jiange/collab";
-import { bodyBlocks } from "./model";
+import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { TITLE } from "./model";
 
 // Only blocks whose text is visibly and directly editable by the body editor.
-// The title has a separate editor; table cells and column children have their
-// own representations. In particular, math/diagram text is hidden source.
+// The title has a separate editor and table cells have their own representation.
+// In particular, math/diagram text is hidden source.
 const SEARCHABLE_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "code", "callout"]);
 
 /** Whether a block's source is visible, editable text in the body editor. */
@@ -13,6 +13,8 @@ export interface FindMatch {
   /** Ties the snapshot to this live replica; block/character IDs are not document IDs. */
   doc: Doc;
   block: OpId;
+  /** The visible container at capture time; moving a block invalidates a match. */
+  parent: OpId;
   /** Original code-point offsets, useful for displaying the initial selection. */
   start: number;
   end: number;
@@ -26,12 +28,38 @@ export interface FindOptions {
   caseSensitive?: boolean;
 }
 
+/** Visible text blocks in canvas order, with each column at its container's position. */
+export function searchableLocations(doc: Doc): { block: OpId; parent: OpId }[] {
+  const out: { block: OpId; parent: OpId }[] = [];
+  const rootKey = idKey(ROOT);
+  const columns = new Map<string, OpId>();
+  const parse = (key: string): OpId => {
+    const [client, clock] = key.split(":").map(Number);
+    return { client, clock };
+  };
+  // view() already resolves deleted ancestors/cycles and gives depth-first
+  // canvas order. Do not call children() per column: each call rematerializes
+  // the entire document including every character.
+  for (const item of doc.view().blocks) {
+    const block = parse(item.id);
+    if (item.parent === rootKey) {
+      if (eqId(block, TITLE)) continue;
+      if (isSearchableBlockType(item.type)) out.push({ block, parent: ROOT });
+      else if (item.type === "columns") columns.set(item.id, block);
+    } else {
+      const parent = columns.get(item.parent);
+      if (parent && isSearchableBlockType(item.type)) out.push({ block, parent });
+    }
+  }
+  return out;
+}
+
 function literalRegExp(query: string, caseSensitive: boolean): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "gu" : "giu");
 }
 
 /**
- * Finds non-overlapping matches in current top-level editable body blocks.
+ * Finds non-overlapping matches in visible editable body and column blocks.
  * Offsets are Unicode code points, never UTF-16 indices. Unicode's simple
  * case folding is used without normalization or length-changing full folding.
  * Inline formula marks form boundaries, since their source is not visible text.
@@ -40,8 +68,7 @@ export function findMatches(doc: Doc, query: string, options: FindOptions = {}):
   if (!query) return [];
   const result: FindMatch[] = [];
   const pattern = literalRegExp(query, !!options.caseSensitive);
-  for (const block of bodyBlocks(doc)) {
-    if (!isSearchableBlockType(doc.blockInfo(block).type)) continue;
+  for (const { block, parent } of searchableLocations(doc)) {
     const chars = doc.richChars(block);
     const ids = doc.visibleIds(block);
     let from = 0;
@@ -63,7 +90,7 @@ export function findMatches(doc: Doc, query: string, options: FindOptions = {}):
         const end = boundaries.get(match.index! + match[0].length);
         // Ignore a match that would start/end inside a surrogate pair.
         if (start === undefined || end === undefined || start === end) continue;
-        result.push({ doc, block, start, end, ids: ids.slice(start, end).map((id) => ({ ...id })), text: match[0] });
+        result.push({ doc, block, parent: { ...parent }, start, end, ids: ids.slice(start, end).map((id) => ({ ...id })), text: match[0] });
       }
       from = to;
     }
@@ -74,7 +101,7 @@ export function findMatches(doc: Doc, query: string, options: FindOptions = {}):
 /** Resolve a snapshot only if the original visible characters still form the same range. */
 export function resolveFindMatch(doc: Doc, match: FindMatch): { start: number; end: number } | null {
   if (doc !== match.doc || !match.ids.length || !doc.hasBlock(match.block)) return null;
-  if (!isSearchableBlockType(doc.blockInfo(match.block).type) || !bodyBlocks(doc).some((block) => eqId(block, match.block))) return null;
+  if (!searchableLocations(doc).some(({ block, parent }) => eqId(block, match.block) && eqId(parent, match.parent))) return null;
   const ids = doc.visibleIds(match.block);
   const start = ids.findIndex((id) => eqId(id, match.ids[0]));
   const end = start + match.ids.length;
@@ -105,15 +132,15 @@ function sharedMarks(marks: Record<string, string>[]): Record<string, string> {
  */
 export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacement: string): { replaced: number; skipped: number } {
   const doc = tx.doc;
-  const order = new Map(bodyBlocks(doc).map((block, i) => [idKey(block), i]));
+  const order = new Map(searchableLocations(doc).map(({ block, parent }, i) => [idKey(block), { index: i, parent }]));
   type BlockSnapshot = { ids: OpId[]; positions: Map<string, number>; chars: ReturnType<Doc["richChars"]> };
   const snapshots = new Map<string, BlockSnapshot | null>();
   const planned: { match: FindMatch; start: number; end: number; marks: Record<string, string>; order: number }[] = [];
   let skipped = 0;
   for (const match of matches) {
     const key = idKey(match.block);
-    const blockOrder = order.get(key);
-    if (match.doc !== doc || !match.ids.length || blockOrder === undefined) { skipped++; continue; }
+    const location = order.get(key);
+    if (match.doc !== doc || !match.ids.length || !location || !eqId(location.parent, match.parent)) { skipped++; continue; }
     if (!snapshots.has(key)) {
       if (!doc.hasBlock(match.block) || !isSearchableBlockType(doc.blockInfo(match.block).type)) snapshots.set(key, null);
       else {
@@ -128,7 +155,7 @@ export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacemen
     const end = start + match.ids.length;
     const chars = state.chars.slice(start, end);
     if (chars.some((char) => !!char.marks.math) || chars.map((char) => char.ch).join("") !== match.text) { skipped++; continue; }
-    planned.push({ match, start, end, marks: sharedMarks(chars.map((char) => char.marks)), order: blockOrder });
+    planned.push({ match, start, end, marks: sharedMarks(chars.map((char) => char.marks)), order: location.index });
   }
   planned.sort((a, b) => {
     return b.order - a.order || b.start - a.start || b.end - a.end;

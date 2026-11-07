@@ -12,6 +12,15 @@ import { DocColorIcon } from "./FeishuIcons";
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
 
+export function renameErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return "无法重命名：文档不存在或当前没有编辑权限。";
+  if (error instanceof ApiError && error.status === 400) return "名称无效，请检查名称长度后重试。";
+  if (error instanceof ApiError && error.code === "upgrade_required") return "当前版本无法安全重命名，请刷新页面后重试。";
+  if (error instanceof ApiError && error.status === 409) return "文档已发生变化，请刷新后重新命名。";
+  // A disconnected client cannot know whether the server committed the write.
+  return "无法确认重命名是否完成，请刷新后查看。";
+}
+
 type SearchResultState<T> = { status: "idle" | "loading" | "error" | "empty"; docs: T[] } | { status: "ready"; docs: T[] };
 
 // Cached results are not authorization evidence: hide them until this request succeeds.
@@ -81,6 +90,16 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       go(hrefOf(d));
     },
   });
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: number; title: string }) => docsApi.rename(id, title),
+    onSettled: (_data, _error, { id }) => {
+      // Even an interrupted request may have committed; revalidate instead of
+      // treating a transport error as proof that the name did not change.
+      for (const key of [["docs"], ["search"], ["favorites"], ["recent"], ["shared"], ["doc", id]]) {
+        void qc.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
   const ws = me.workspaces[0];
   const kids = useMemo(() => {
     const m = new Map<number | null, DocMeta[]>();
@@ -128,12 +147,10 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
                 qc.invalidateQueries({ queryKey: ["favorites"] });
               });
             }}
-            onRename={async () => {
+            onRename={rename.isPending ? undefined : async () => {
+              rename.reset();
               const t = await askText("重命名", "文档名称", docTitle(d));
-              if (t && t.trim()) docsApi.rename(d.id, t.trim()).then(() => {
-                qc.invalidateQueries({ queryKey: ["docs"] });
-                qc.invalidateQueries({ queryKey: ["search"] });
-              });
+              if (t && t.trim()) rename.mutate({ id: d.id, title: t.trim() });
             }}
             onCopyLink={() => {
               navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hrefOf(d)}`).catch(() => {});
@@ -197,6 +214,12 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
         {(create.isError || createBase.isError) && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">新建失败，请稍后重试</p>}
+        {rename.isError && <div role="alert" className="px-2 py-1.5 text-xs text-destructive">
+          <p>{renameErrorMessage(rename.error)}</p>
+          {rename.error instanceof ApiError && rename.error.status === 409 && rename.variables && <label className="mt-2 block text-muted-foreground">你输入的名称（可复制）
+            <input readOnly value={rename.variables.title} className="mt-1 block h-8 w-full rounded border bg-surface px-2 text-foreground" />
+          </label>}
+        </div>}
         {kw && <p className="px-2 py-1.5 text-xs text-subtle">搜索有权访问的文档</p>}
         {kw
           ? (searchState.status === "loading" && <p role="status" className="px-2 py-1.5 text-xs text-subtle">搜索中…</p>)

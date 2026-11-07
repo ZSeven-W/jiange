@@ -41,15 +41,33 @@ describe("findMatches", () => {
     expect(findMatches(doc, "😀")[0]).toMatchObject({ start: 0, end: 1 });
   });
 
-  it("ignores hidden source, inline formula source, nested columns, tables and title", () => {
+  it("ignores hidden source, inline formula source, tables and title while finding visible column text", () => {
     const { doc, blocks } = setup(["paragraph", "xabcx"], ["math", "x"], ["diagram", "x"], ["table", "x"], ["columns", ""]);
     new Tx(doc).format(blocks[0], 1, 4, "math", "abc");
     const childTx = new Tx(doc);
     const child = childTx.create("paragraph", null, blocks[4]);
     childTx.insert(child, 0, "x");
-    expect(findMatches(doc, "x").map((m) => m.start)).toEqual([0, 4]);
+    expect(findMatches(doc, "x").map((m) => [m.block, m.start])).toEqual([[blocks[0], 0], [blocks[0], 4], [child, 0]]);
     expect(findMatches(doc, "abc")).toHaveLength(0);
     expect(findMatches(doc, "xabc")).toHaveLength(0);
+  });
+
+  it("finds columns in canvas order, excludes hidden child source, and resolves Unicode offsets", () => {
+    const { doc, blocks } = setup(["paragraph", "目标"], ["columns", ""], ["paragraph", "目标"]);
+    const tx = new Tx(doc);
+    const left = tx.create("paragraph", null, blocks[1]);
+    tx.insert(left, 0, "😀目标");
+    const right = tx.create("paragraph", left, blocks[1]);
+    tx.insert(right, 0, "目标目标");
+    const hidden = tx.create("math", right, blocks[1]);
+    tx.insert(hidden, 0, "目标");
+    const inline = tx.create("paragraph", hidden, blocks[1]);
+    tx.insert(inline, 0, "甲目标乙");
+    tx.format(inline, 1, 3, "math", "目标");
+    const matches = findMatches(doc, "目标");
+    expect(matches.map((m) => [m.block, m.start])).toEqual([[blocks[0], 0], [left, 1], [right, 0], [right, 2], [blocks[2], 0]]);
+    expect(resolveFindMatch(doc, matches[1])).toEqual({ start: 1, end: 3 });
+    expect(findMatches(doc, "甲目标乙")).toHaveLength(0);
   });
 });
 
@@ -155,13 +173,13 @@ describe("replaceMatches", () => {
     edit.insert(block, 0, "目标 ".repeat(1200));
     const ids = vi.spyOn(doc, "visibleIds");
     const chars = vi.spyOn(doc, "richChars");
-    const children = vi.spyOn(doc, "children");
+    const view = vi.spyOn(doc, "view");
     const tx = new Tx(doc);
     expect(replaceMatches(tx, matches, "完成")).toEqual({ replaced: 0, skipped: 1200 });
     expect(tx.ops).toHaveLength(0);
     expect(ids).toHaveBeenCalledTimes(1);
     expect(chars).toHaveBeenCalledTimes(1);
-    expect(children).toHaveBeenCalledTimes(1);
+    expect(view).toHaveBeenCalledTimes(1);
   });
 
   it("does not re-scan the body for every valid match during replace-all", () => {
@@ -169,11 +187,11 @@ describe("replaceMatches", () => {
     const matches = findMatches(doc, "目标");
     const ids = vi.spyOn(doc, "visibleIds");
     const chars = vi.spyOn(doc, "richChars");
-    const children = vi.spyOn(doc, "children");
+    const view = vi.spyOn(doc, "view");
     const tx = new Tx(doc);
     expect(replaceMatches(tx, matches, "")).toEqual({ replaced: 160, skipped: 0 });
     expect(doc.text(block)).toBe(" ".repeat(160));
-    expect(children).toHaveBeenCalledTimes(1);
+    expect(view).toHaveBeenCalledTimes(1);
     // Tx.delete currently reads ids and marks once per actual mutation. The
     // planner adds just one snapshot rather than two full scans per match.
     expect(ids.mock.calls.length).toBeLessThanOrEqual(matches.length + 1);
@@ -189,5 +207,53 @@ describe("replaceMatches", () => {
     if (late) doc.apply(late);
     expect(doc.text(block)).toContain("远端");
     expect(doc.text(block)).toContain("新");
+  });
+
+  it("replaces across columns and body and undoes all edits together", () => {
+    const { doc, blocks } = setup(["paragraph", "目标"], ["columns", ""], ["paragraph", "目标"]);
+    const init = new Tx(doc);
+    const left = init.create("paragraph", null, blocks[1]);
+    init.insert(left, 0, "😀目标");
+    const right = init.create("paragraph", left, blocks[1]);
+    init.insert(right, 0, "目标目标");
+    const matches = findMatches(doc, "目标");
+    const tx = new Tx(doc);
+    expect(replaceMatches(tx, matches, "新")).toEqual({ replaced: 5, skipped: 0 });
+    expect([doc.text(blocks[0]), doc.text(left), doc.text(right), doc.text(blocks[2])]).toEqual(["新", "😀新", "新新", "新"]);
+    const undo = new UndoManager();
+    undo.record(tx, null, null);
+    undo.undo(doc);
+    expect([doc.text(blocks[0]), doc.text(left), doc.text(right), doc.text(blocks[2])]).toEqual(["目标", "😀目标", "目标目标", "目标"]);
+    undo.redo(doc);
+    expect(doc.text(right)).toBe("新新");
+  });
+
+  it("skips a column match if its container or location has changed", () => {
+    const { doc, blocks } = setup(["columns", ""], ["columns", ""]);
+    const tx = new Tx(doc);
+    const child = tx.create("paragraph", null, blocks[0]);
+    tx.insert(child, 0, "目标");
+    const match = findMatches(doc, "目标")[0];
+    new Tx(doc).move(child, null, blocks[1]);
+    expect(resolveFindMatch(doc, match)).toBeNull();
+    expect(replaceMatches(new Tx(doc), [match], "新")).toEqual({ replaced: 0, skipped: 1 });
+    expect(doc.text(child)).toBe("目标");
+    const moved = findMatches(doc, "目标")[0];
+    new Tx(doc).deleteBlock(blocks[1]);
+    expect(resolveFindMatch(doc, moved)).toBeNull();
+    expect(replaceMatches(new Tx(doc), [moved], "新")).toEqual({ replaced: 0, skipped: 1 });
+    expect(doc.text(child)).toBe("目标");
+  });
+
+  it("skips column matches that acquire hidden formula formatting", () => {
+    const { doc, blocks } = setup(["columns", ""]);
+    const tx = new Tx(doc);
+    const child = tx.create("paragraph", null, blocks[0]);
+    tx.insert(child, 0, "目标");
+    const match = findMatches(doc, "目标")[0];
+    new Tx(doc).format(child, 0, 2, "math", "目标");
+    expect(resolveFindMatch(doc, match)).toBeNull();
+    expect(replaceMatches(new Tx(doc), [match], "新")).toEqual({ replaced: 0, skipped: 1 });
+    expect(doc.text(child)).toBe("目标");
   });
 });
