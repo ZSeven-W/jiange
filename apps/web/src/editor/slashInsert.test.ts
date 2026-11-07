@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import { bodyBlocks } from "./model";
-import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
+import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 
 function setup(text: string) {
   const doc = new Doc(1);
@@ -11,6 +11,76 @@ function setup(text: string) {
   return { doc, block };
 }
 const state = (doc: Doc) => bodyBlocks(doc).map((b) => [doc.blockInfo(b).type, doc.text(b)]);
+
+describe("typed slash and mention query identity", () => {
+  it.each(["/", "@"] as const)("follows %s when a peer inserts before it and rejects inserted query text", (kind) => {
+    const { doc, block } = setup(`前${kind}查询`);
+    const query = captureSlashQuery(doc, { b: block, o: 1 }, { b: block, o: 4 }, kind)!;
+    doc.insertText(block, 0, "协作");
+    expect(resolveSlashQuery(doc, query)).toEqual({ start: 3, end: 6, text: `${kind}查询` });
+    doc.insertText(block, 5, "远端");
+    expect(resolveSlashQuery(doc, query)).toBeNull();
+  });
+  it("accepts local append and deletion without accepting replacement characters", () => {
+    const { doc, block } = setup("/查");
+    const query = captureSlashQuery(doc, { b: block, o: 0 }, { b: block, o: 2 }, "/")!;
+    doc.insertText(block, 2, "询😀");
+    const appended = updateSlashQuery(query, { b: block, o: 4 }, "append")!;
+    expect(resolveSlashQuery(doc, appended)?.text).toBe("/查询😀");
+    new Tx(doc).delete(block, 3, 4);
+    const shortened = updateSlashQuery(appended, { b: block, o: 3 }, "delete")!;
+    expect(resolveSlashQuery(doc, shortened)?.text).toBe("/查询");
+    new Tx(doc).delete(block, 1, 2);
+    doc.insertText(block, 1, "查");
+    expect(resolveSlashQuery(doc, shortened)).toBeNull();
+  });
+  it("rejects removed, moved, converted, or formula-marked query blocks", () => {
+    const { doc, block } = setup("/查");
+    const query = captureSlashQuery(doc, { b: block, o: 0 }, { b: block, o: 2 }, "/")!;
+    new Tx(doc).format(block, 1, 2, "math", "查");
+    expect(resolveSlashQuery(doc, query)).toBeNull();
+    new Tx(doc).format(block, 1, 2, "math", null);
+    new Tx(doc).setProp(block, "type", "quote");
+    expect(resolveSlashQuery(doc, query)).toBeNull();
+  });
+  it.each(["/", "@"] as const)("consumes only verified %s IDs after a peer edit, and undo preserves the peer's text", (kind) => {
+    const { doc, block } = setup(`前${kind}查询`);
+    const query = captureSlashQuery(doc, { b: block, o: 1 }, { b: block, o: 4 }, kind)!;
+    doc.insertText(block, 0, "远端");
+    const tx = new Tx(doc);
+    const at = consumeSlashQuery(tx, query);
+    expect(at).toBe(3);
+    tx.insert(block, at!, "目标");
+    expect(doc.text(block)).toBe("远端前目标");
+    const undo = new UndoManager();
+    undo.record(tx, null, null);
+    undo.undo(doc);
+    expect(doc.text(block)).toBe(`远端前${kind}查询`);
+  });
+  it("produces no operations when a peer changes the captured command", () => {
+    const { doc, block } = setup("@成员");
+    const query = captureSlashQuery(doc, { b: block, o: 0 }, { b: block, o: 3 }, "@")!;
+    doc.insertText(block, 2, "远端");
+    const original = doc.text(block), tx = new Tx(doc);
+    expect(consumeSlashQuery(tx, query)).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe(original);
+  });
+  it("tracks a real peer's prefix insertion and rejects its insertion inside the query", () => {
+    const { doc, block } = setup("前/标题");
+    const peer = Doc.fromState(2, doc.encodeState());
+    const query = captureSlashQuery(doc, { b: block, o: 1 }, { b: block, o: 4 }, "/")!;
+    const prefix = peer.insertText(block, 0, "协作者");
+    if (prefix) doc.apply(prefix);
+    expect(resolveSlashQuery(doc, query)?.start).toBe(4);
+    const inside = peer.insertText(block, 6, "冲突");
+    if (inside) doc.apply(inside);
+    const before = doc.text(block), tx = new Tx(doc);
+    expect(consumeSlashQuery(tx, query)).toBeNull();
+    expect(doc.text(block)).toBe(before);
+    expect(tx.ops).toHaveLength(0);
+  });
+});
 
 describe("asynchronous slash insertion", () => {
   it("does not remove a command that a peer turns into part of a formula", () => {
@@ -102,6 +172,17 @@ describe("asynchronous slash insertion", () => {
     expect(insertSlashBlock(tx, captured, "math", {}, "x^2")).toBeNull();
     expect(tx.ops).toHaveLength(0);
     expect(doc.text(block)).toBe(before);
+  });
+
+  it("does not insert when the captured block changes type while a dialog is open", () => {
+    const { doc, block } = setup("/公式");
+    const end = { b: block, o: 3 };
+    const captured = captureSlashInsertion(doc, { b: block, o: 0 }, { a: end, f: end }, false)!;
+    new Tx(doc).setProp(block, "type", "quote");
+    const tx = new Tx(doc);
+    expect(insertSlashBlock(tx, captured, "math", {}, "x^2")).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe("/公式");
   });
 
   it("leaves an empty block untouched when opened through the plus button", () => {

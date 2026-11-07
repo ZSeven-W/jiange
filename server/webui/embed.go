@@ -15,7 +15,15 @@ var dist embed.FS
 // Dist reports whether a built frontend is embedded.
 func Built() bool {
 	entries, err := dist.ReadDir("dist")
-	return err == nil && len(entries) > 0
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".gitkeep" {
+			return true
+		}
+	}
+	return false
 }
 
 // Handler serves the SPA (hash routing, so / alone is enough).

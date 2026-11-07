@@ -84,6 +84,10 @@ type View struct {
 // the caller through GetDoc on the base node (kind 'base').
 type BaseStore interface {
 	CreateBase(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string) (DocMeta, error)
+	// CreateInitializedBase publishes a new base and its default field, view
+	// and rows atomically. It rechecks membership and the target parent in the
+	// same critical section/transaction as publication.
+	CreateInitializedBase(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string) (DocMeta, error)
 	Fields(ctx context.Context, baseID int64) ([]Field, error)
 	AddField(ctx context.Context, f Field) (Field, error)
 	UpdateField(ctx context.Context, f Field) (Field, error)
@@ -121,4 +125,8 @@ type BaseStore interface {
 	// QueryRecords returns the base's records filtered and ordered by a
 	// view config, executed server-side (SQL on Postgres, in memory elsewhere).
 	QueryRecords(ctx context.Context, baseID int64, fields []Field, cfg btquery.Config, limit int) ([]Record, error)
+	// QueryRecordsConstrained applies every mandatory filter with AND, followed
+	// by the caller's filter and sort. Constraints cannot be relaxed by an OR
+	// in the caller's view configuration.
+	QueryRecordsConstrained(ctx context.Context, baseID int64, fields []Field, mandatory []btquery.Config, cfg btquery.Config, limit int) ([]Record, error)
 }

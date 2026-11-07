@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CommentsPanel, focusCommentDraft, notifyCommentAccessError, sameCommentAnchor } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mergeRecoveredCommentDrafts, newCommentSession } from "./commentAccess";
+import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote } from "./commentAccess";
 import { ApiError, type Comment } from "@/lib/api";
 
 const time = "2026-01-01T00:00:00Z";
@@ -17,6 +17,25 @@ function renderPanel(canEdit: boolean, canManage: boolean) {
 }
 
 describe("comment permissions", () => {
+  it("redacts protected quotes and only permits export with current verified access", () => {
+    const anchor = { block: "1:1", startChar: "1:2", endChar: "1:3", quote: "受保护的原文" };
+    const record = { text: "我自己写的评论", draft: anchor };
+    expect(redactCommentDraftQuote(record, false)).toEqual({ text: record.text, draft: { ...anchor, quote: "" } });
+    expect(record.draft.quote).toBe("受保护的原文");
+    expect(redactCommentDraftQuote(record, true)).toEqual(record);
+    expect(mayExportCommentDraftData({ copyProtected: true, role: "edit" }, true, true)).toBe(false);
+    expect(mayExportCommentDraftData({ copyProtected: true, role: "manage" }, true, true)).toBe(true);
+    expect(mayExportCommentDraftData({ copyProtected: false, role: "edit" }, true, true)).toBe(true);
+    expect(mayExportCommentDraftData({ copyProtected: false, role: "manage" }, false, true)).toBe(false);
+    expect(mayExportCommentDraftData({ copyProtected: false, role: "manage" }, true, false)).toBe(false);
+    expect(mayExportCommentDraftData(undefined, true, true)).toBe(false);
+    const client = new QueryClient();
+    client.setQueryData(commentListKey(7, 1, 1), []);
+    client.setQueryData(commentMembersKey(7, 1, 1), []);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><CommentsPanel id={7} meId={1} session={1} canEdit canManage={false} draft={null} onDraftSent={() => {}} activeThread={null} onActivate={() => {}} onClose={() => {}} onAccessDenied={() => {}} onDismissRecovery={() => {}} onSnapshot={() => {}} onComposerSuspended={() => {}} recovery={[redactCommentDraftQuote(record, false)]} /></QueryClientProvider>);
+    expect(html).toContain("我自己写的评论");
+    expect(html).not.toContain("受保护的原文");
+  });
   it("escalates authorization failures but preserves other errors for retry", () => {
     const denied = vi.fn();
     for (const status of [401, 403, 404]) expect(notifyCommentAccessError(new ApiError(status, "denied", "denied"), denied)).toBe(true);

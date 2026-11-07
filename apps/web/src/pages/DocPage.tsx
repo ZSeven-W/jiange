@@ -26,7 +26,8 @@ import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, newCommentSession, type CommentTarget } from "./commentAccess";
+import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, type CommentTarget } from "./commentAccess";
+import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
 import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -121,8 +122,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [commentRevision, setCommentRevision] = useState(0);
   const [commentDenial, setCommentDenial] = useState<CommentTarget | null>(null);
   const commentDraftJournal = useRef(new CommentDraftJournal());
+  const commentStorage = useRef<{ doc: number; user: number; value: CommentDraftStorage } | null>(null);
+  const commentStorageGeneration = useRef(0);
+  const [commentStoragePrepared, setCommentStoragePrepared] = useState<(CommentTarget & { generation: number }) | null>(null);
+  const [commentStorageNotice, setCommentStorageNotice] = useState<{ doc: number; user: number; text: string } | null>(null);
+  const [commentStorageDamaged, setCommentStorageDamaged] = useState<{ doc: number; user: number; count: number } | null>(null);
   const [commentRecovery, setCommentRecovery] = useState<{ doc: number; user: number; values: CommentRecovery[] } | null>(null);
-  useEffect(() => { setCommentRecovery(null); }, [id, me.user.id]);
+  useEffect(() => { setCommentRecovery(null); setCommentStorageNotice(null); setCommentStorageDamaged(null); }, [id, me.user.id]);
   const commentRecoveryGate = useRef(new CommentRecoveryGate());
   const commentSession = useMemo(() => newCommentSession(), [id, me.user.id, metadataVerified, commentRevision]);
   const commentIdentity = useRef<CommentTarget>({ doc: id, user: me.user.id, session: commentSession });
@@ -133,14 +139,31 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
   const commentAccessDenied = (comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error)) || commentSuspended;
   const commentsAvailable = metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
-  const freezeCommentDrafts = useCallback(() => {
-    const values = commentDraftJournal.current.freeze(id, me.user.id);
-    if (values.length) setCommentRecovery({ doc: id, user: me.user.id, values });
+  const commentDraftExportAllowed = mayExportCommentDraftData(meta.data, metadataVerified, commentsAvailable);
+  const commentDraftExportAllowedRef = useRef(false);
+  commentDraftExportAllowedRef.current = commentDraftExportAllowed;
+  const commentStorageReady = commentDraftStorageReady(commentStoragePrepared, { doc: id, user: me.user.id, session: commentSession }, commentStorageGeneration.current, commentsAvailable);
+  const persistCommentDrafts = useCallback(() => {
+    const active = commentStorage.current;
+    if (!active || active.doc !== id || active.user !== me.user.id) return;
+    try {
+      active.value.write(commentDraftJournal.current.list(id, me.user.id), commentDraftJournal.current.recovered(id, me.user.id));
+      setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.text === "评论草稿无法保存到本机，关闭页面前请复制草稿。" ? null : previous);
+    } catch {
+      setCommentStorageNotice({ doc: id, user: me.user.id, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+    }
   }, [id, me.user.id]);
+  const freezeCommentDrafts = useCallback(() => {
+    const own = commentDraftJournal.current.freeze(id, me.user.id);
+    const active = commentStorage.current;
+    const values = active?.doc === id && active.user === me.user.id ? mergeRecoveredCommentDrafts(own, active.value.read()) : own;
+    if (values.length) setCommentRecovery({ doc: id, user: me.user.id, values });
+    persistCommentDrafts();
+  }, [id, me.user.id, persistCommentDrafts]);
   const revalidateCommentAccess = useCallback((recovery?: CommentRecovery) => {
     const target = { doc: id, user: me.user.id, session: commentSession };
     if (!matchesCommentTarget(commentIdentity.current, target.doc, target.user, target.session)) return;
-    if (recovery?.text.trim()) commentDraftJournal.current.save(id, me.user.id, recovery);
+    if (recovery?.text.trim()) commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(recovery, commentDraftExportAllowedRef.current));
     freezeCommentDrafts();
     setCommentDenial(target);
     setCommentsTarget(null);
@@ -175,6 +198,43 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       if (values.length) setCommentRecovery({ doc: id, user: me.user.id, values });
     }
   }, [commentsAvailable, freezeCommentDrafts]);
+  // Read local drafts only after this account's document and comment access
+  // have both been verified. Each page owns a unique, exclusively leased key.
+  useEffect(() => {
+    if (!commentsAvailable) return;
+    let cancelled = false;
+    let opened: CommentDraftStorage | null = null;
+    const generation = ++commentStorageGeneration.current;
+    const doc = id, user = me.user.id, session = commentSession;
+    setCommentStorageNotice({ doc, user, text: "正在准备评论草稿的本机保存。" });
+    void CommentDraftStorage.open(browserCommentDraftEnvironment, doc, user).then((value) => {
+      if (cancelled || !matchesCommentTarget(commentIdentity.current, doc, user, session)) { value.close(); return; }
+      opened = value;
+      commentStorage.current = { doc, user, value };
+      try {
+        value.write(commentDraftJournal.current.list(doc, user), commentDraftJournal.current.recovered(doc, user));
+        const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), value.read());
+        setCommentRecovery(values.length ? { doc, user, values } : null);
+        setCommentStorageDamaged(value.damaged().length ? { doc, user, count: value.damaged().length } : null);
+        setCommentStorageNotice(value.canClearOtherTabs() ? null : { doc, user, text: "此浏览器无法安全清除其他标签页的草稿，已保留这些记录。" });
+        setCommentStoragePrepared({ doc, user, session, generation });
+      } catch {
+        setCommentStorageNotice({ doc, user, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+        setCommentStoragePrepared({ doc, user, session, generation });
+      }
+    }).catch(() => {
+      if (!cancelled && matchesCommentTarget(commentIdentity.current, doc, user, session)) {
+        setCommentStorageNotice({ doc, user, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+        setCommentStoragePrepared({ doc, user, session, generation });
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (commentStorageGeneration.current === generation) commentStorageGeneration.current++;
+      const active = commentStorage.current;
+      if (active?.value === opened) { active.value.close(); commentStorage.current = null; }
+    };
+  }, [commentsAvailable, id, me.user.id, commentSession]);
   const ancestors = useQuery({ queryKey: ["ancestors", id], queryFn: () => extrasApi.ancestors(id) });
   const outline: OutlineItem[] = useMemo(() => {
     const d = sync.client.doc;
@@ -442,6 +502,16 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {metadataVerified && commentAccessDenied && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button></p>}
+        {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
+        {commentsAvailable && commentStorageDamaged?.doc === id && commentStorageDamaged.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageDamaged.count} 条本机草稿数据损坏，原始数据已保留。 {commentDraftExportAllowed && <button type="button" className="text-primary underline" onClick={() => {
+          if (!commentDraftExportAllowedRef.current || !matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
+          const active = commentStorage.current;
+          if (!active || active.doc !== id || active.user !== me.user.id) return;
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([JSON.stringify(active.value.damaged())], { type: "application/json" }));
+          a.download = `jiange-comment-damaged-${id}.json`;
+          a.click(); URL.revokeObjectURL(a.href);
+        }}>导出原始数据</button>}</p>}
         {metadataVerified && !commentAccessDenied && (comments.isError || members.isError) && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论加载失败。 <button type="button" className="text-primary underline" onClick={() => { void comments.refetch(); void members.refetch(); }}>重试</button></p>}
         {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。 <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? "正在重试…" : "重试"}</button></div>}
         {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
@@ -493,7 +563,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setActiveThread(cid);
                   if (cid !== null) setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 }}
-                onComment={canComment && commentsAvailable ? (anchor) => {
+                onComment={canComment && commentsAvailable && commentStorageReady ? (anchor) => {
                   setDraft(anchor);
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
@@ -580,14 +650,35 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           meId={me.user.id}
           session={commentSession}
           onAccessDenied={revalidateCommentAccess}
-          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values : []}
-          onDismissRecovery={() => { commentDraftJournal.current.dismiss(id, me.user.id); setCommentRecovery(null); }}
+          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentDraftExportAllowed)) : []}
+          onDismissRecovery={() => {
+            const doc = id, user = me.user.id, session = commentSession;
+            if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
+            const active = commentStorage.current;
+            if (!active || active.doc !== doc || active.user !== user) {
+              setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+              return;
+            }
+            try { active.value.write(commentDraftJournal.current.list(doc, user), []); }
+            catch { setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" }); return; }
+            commentDraftJournal.current.dismiss(doc, user);
+            void active.value.dismiss().then((complete) => {
+              if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
+              const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), active.value.read());
+              setCommentRecovery(values.length ? { doc, user, values } : null);
+              setCommentStorageDamaged(active.value.damaged().length ? { doc, user, count: active.value.damaged().length } : null);
+              setCommentStorageNotice(complete ? null : { doc, user, text: "部分草稿属于其他正在编辑的标签页或无法安全清除，已保留。" });
+            }).catch(() => {
+              if (matchesCommentTarget(commentIdentity.current, doc, user, session)) setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+            });
+          }}
           onSnapshot={(value) => {
             if (!matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
-            commentDraftJournal.current.save(id, me.user.id, value);
+            commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(value, commentDraftExportAllowedRef.current));
+            persistCommentDrafts();
           }}
           onComposerSuspended={freezeCommentDrafts}
-          canEdit={canComment}
+          canEdit={canComment && commentStorageReady}
           canManage={meta.data?.role === "manage"}
           draft={draft}
           onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}

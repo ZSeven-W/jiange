@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,14 +49,38 @@ export function closeArea(v: string | null) {
   emit();
 }
 
+/** A dialog belongs to its mounted app session; never carry it to another account. */
+export function cancelOutstandingAsks() {
+  const c = confirmReq, p = promptReq, a = areaReq;
+  confirmReq = null;
+  promptReq = null;
+  areaReq = null;
+  c?.resolve(false);
+  p?.resolve(null);
+  a?.resolve(null);
+  if (c || p || a) emit();
+}
+
+/** Register the single session host and catch a cancellation between render and mount. */
+export function subscribeAskHost(onChange: () => void, renderedVersion: number): () => void {
+  subs.add(onChange);
+  if (renderedVersion !== version) onChange();
+  return () => {
+    subs.delete(onChange);
+    cancelOutstandingAsks();
+  };
+}
+
 export function AskHost() {
   const [, bump] = useState(0);
-  useEffect(() => {
+  const renderedVersion = version;
+  useLayoutEffect(() => {
     const fn = () => bump((x) => x + 1);
-    subs.add(fn);
-    return () => {
-      subs.delete(fn);
-    };
+    // The previous session may have unmounted after this host rendered but
+    // before it subscribed. Re-render before paint if it cancelled a dialog.
+    // Unmount on account change cancels unresolved promises, so an old async
+    // continuation cannot submit under the next session's cookie.
+    return subscribeAskHost(fn, renderedVersion);
   }, []);
   const c = confirmReq;
   const p = promptReq;

@@ -53,34 +53,35 @@ func (s *Server) createBase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	b, err := s.Store.CreateBase(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title)
+	b, err := s.Store.CreateInitializedBase(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title)
 	if err != nil {
+		if errors.Is(err, store.ErrForbidden) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "not a member of this workspace")
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
+			return
+		}
+		if errors.Is(err, store.ErrConflict) {
+			httpx.Error(w, http.StatusConflict, "conflict", "目录正在变化，请重试")
+			return
+		}
 		s.fail(w, r, err)
 		return
-	}
-	// a new base starts like Feishu's: a primary text field, a default grid
-	// view and a few empty rows
-	ctx := r.Context()
-	s.Store.AddField(ctx, store.Field{BaseID: b.ID, Name: "标题", Type: "text"})
-	s.Store.AddView(ctx, store.View{BaseID: b.ID, Type: "grid", Name: "表格视图"})
-	for range 3 {
-		s.Store.AddRecord(ctx, store.Record{BaseID: b.ID, CreatorID: &u.ID})
 	}
 	b = s.sanitizeWrittenDocMeta(r.Context(), u.ID, b)
 	httpx.JSON(w, http.StatusCreated, b)
 }
 
 func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	b, ok := s.needBase(w, r, store.RoleView)
 	if !ok {
 		return
 	}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	recs, err := s.Store.Records(r.Context(), b.ID)
+	u, _ := UserFrom(r.Context())
+	read, err := s.readBaseAllowed(r.Context(), u.ID, b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -95,231 +96,81 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	views, err := s.Store.Views(r.Context(), b.ID)
+	workspaces, err := s.Store.Workspaces(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	// 展开 link/lookup 字段值：links[fromRecord] = [{id,title}]; lookups 同理派生
-	var linkIDs []int64
-	for _, rec := range recs {
-		linkIDs = append(linkIDs, rec.ID)
-	}
-	linkFields := []store.Field{}
-	lookupFields := []store.Field{}
-	for _, f := range fields {
-		if f.Type == "link" {
-			linkFields = append(linkFields, f)
-		} else if f.Type == "lookup" {
-			lookupFields = append(lookupFields, f)
-		}
-	}
-	expansions := map[string]any{}
-	for _, lf := range linkFields {
-		links, err := s.Store.LinksForRecords(r.Context(), lf.ID, linkIDs)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		// 目标记录标题（目标 base 的第一个 text 字段）
-		var targetBase int64
-		if len(lf.Options) > 0 {
-			targetBase, _ = strconv.ParseInt(lf.Options[0], 10, 64)
-		}
-		targetTitle := map[int64]string{}
-		if targetBase != 0 {
-			tf, err := s.Store.Fields(r.Context(), targetBase)
-			if err == nil {
-				titleField := int64(0)
-				for _, x := range tf {
-					if x.Type == "text" {
-						titleField = x.ID
-						break
-					}
-				}
-				if titleField != 0 {
-					trecs, err := s.Store.QueryRecords(r.Context(), targetBase, tf, store.BtQueryAll(), 0)
-					if err == nil {
-						for _, tr := range trecs {
-							var tv any
-							if raw, ok := tr.Cells[strconv.FormatInt(titleField, 10)]; ok {
-								_ = json.Unmarshal(raw, &tv)
-								if s2, ok := tv.(string); ok {
-									targetTitle[tr.ID] = s2
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		key := strconv.FormatInt(lf.ID, 10)
-		expansions[key] = links
-		expansions[key+":titles"] = targetTitle
-	}
-	// lookup 字段：按 (link 字段, 目标字段) 派生每个记录的值数组
-	for _, lf := range lookupFields {
-		if len(lf.Options) < 2 {
-			continue
-		}
-		linkFieldID, _ := strconv.ParseInt(lf.Options[0], 10, 64)
-		targetFieldID, _ := strconv.ParseInt(lf.Options[1], 10, 64)
-		var linkField *store.Field
-		for _, x := range fields {
-			if x.ID == linkFieldID && x.Type == "link" {
-				linkField = &x
-				break
-			}
-		}
-		if linkField == nil {
-			continue
-		}
-		links, err := s.Store.LinksForRecords(r.Context(), linkFieldID, linkIDs)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		var targetBase int64
-		if len(linkField.Options) > 0 {
-			targetBase, _ = strconv.ParseInt(linkField.Options[0], 10, 64)
-		}
-		values := map[int64][]any{}
-		if targetBase != 0 {
-			tf, err := s.Store.Fields(r.Context(), targetBase)
-			if err == nil {
-				if trecs, err := s.Store.QueryRecords(r.Context(), targetBase, tf, store.BtQueryAll(), 0); err == nil {
-					byID := map[int64]store.Record{}
-					for _, tr := range trecs {
-						byID[tr.ID] = tr
-					}
-					for from, tos := range links {
-						for _, to := range tos {
-							if tr, ok := byID[to]; ok {
-								if raw, ok := tr.Cells[strconv.FormatInt(targetFieldID, 10)]; ok {
-									var v any
-									if json.Unmarshal(raw, &v) == nil {
-										values[from] = append(values[from], v)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		expansions[strconv.FormatInt(lf.ID, 10)] = values
-	}
-	// locked 视图 = 行级/列级权限：非 manage 角色只能看到过滤后的行与
-	// 未隐藏的字段（查询时注入谓词，btquery 编译成 SQL WHERE）。
-	if b.Role != store.RoleManage {
-		for _, v := range views {
-			if v.Type != "grid" && v.Type != "kanban" && v.Type != "gallery" && v.Type != "calendar" {
-				continue
-			}
-			var cfg btquery.Config
-			if json.Unmarshal(v.Config, &cfg) != nil || !cfg.Locked {
-				continue
-			}
-			specs := store.Specs(fields)
-			if _, _, _, err := btquery.Compile(specs, cfg); err != nil {
-				break // 视图配置非法时按未锁定处理
-			}
-			recs, err = s.Store.QueryRecords(r.Context(), b.ID, fields, cfg, 10000)
-			if err != nil {
-				break
-			}
-			hidden := map[int64]bool{}
-			for _, id := range cfg.Hidden {
-				hidden[id] = true
-			}
-			visible := make([]store.Field, 0, len(fields))
-			for _, f := range fields {
-				if !hidden[f.ID] {
-					visible = append(visible, f)
-				}
-			}
-			fields = visible
-			stripped := make([]store.Record, 0, len(recs))
-			for _, rec := range recs {
-				cells := map[string]json.RawMessage{}
-				for k, v := range rec.Cells {
-					if !hidden[fieldIDOf(k, fields)] && !containsID(cfg.Hidden, k) {
-						cells[k] = v
-					}
-				}
-				rec.Cells = cells
-				stripped = append(stripped, rec)
-			}
-			recs = stripped
+	isMember := false
+	for _, ws := range workspaces {
+		if ws.ID == b.WorkspaceID {
+			isMember = true
 			break
 		}
 	}
-	// 双向关联：被指向的本 base 记录 → 源记录（标题 chips 渲染在详情抽屉）
-	reverse, err := s.Store.LinkFieldsTargeting(r.Context(), b.ID)
-	if err == nil && len(reverse) > 0 {
-		var selfIDs []int64
-		for _, rec := range recs {
-			selfIDs = append(selfIDs, rec.ID)
-		}
-		type revEntry struct {
-			SourceBase int64             `json:"sourceBase"`
-			FieldID    int64             `json:"fieldId"`
-			From       map[int64][]int64 `json:"from"`
-			Titles     map[int64]string  `json:"titles"`
-		}
-		var revs []revEntry
-		for _, rf := range reverse {
-			links, err := s.Store.LinksForRecords(r.Context(), rf.FieldID, selfIDs)
-			if err != nil || len(links) == 0 {
-				continue
-			}
-			// 源记录标题
-			srcFields, err := s.Store.Fields(r.Context(), rf.BaseID)
-			if err != nil {
-				continue
-			}
-			titleField := int64(0)
-			for _, x := range srcFields {
-				if x.Type == "text" {
-					titleField = x.ID
-					break
-				}
-			}
-			var srcIDs []int64
-			for _, tos := range links {
-				srcIDs = append(srcIDs, tos...)
-			}
-			if trecs, err := s.Store.QueryRecords(r.Context(), rf.BaseID, srcFields, store.BtQueryAll(), 0); err == nil {
-				titles := map[int64]string{}
-				for _, tr := range trecs {
-					for _, sid := range srcIDs {
-						if tr.ID == sid && titleField != 0 {
-							if raw, ok := tr.Cells[strconv.FormatInt(titleField, 10)]; ok {
-								var tv any
-								if json.Unmarshal(raw, &tv) == nil {
-									if s2, ok := tv.(string); ok {
-										titles[sid] = s2
-									}
-								}
-							}
-						}
+	if !isMember {
+		// External collaborators need names only for visible person/creator
+		// values, not the workspace's full member directory or email addresses.
+		used := map[int64]bool{}
+		for _, f := range read.fields {
+			for _, rec := range read.records {
+				if f.Type == "person" {
+					var id int64
+					if json.Unmarshal(rec.Cells[strconv.FormatInt(f.ID, 10)], &id) == nil && id > 0 {
+						used[id] = true
 					}
 				}
-				revs = append(revs, revEntry{SourceBase: rf.BaseID, FieldID: rf.FieldID, From: links, Titles: titles})
+				if f.Type == "created_by" && rec.CreatorID != nil {
+					used[*rec.CreatorID] = true
+				}
 			}
 		}
-		if revs == nil {
-			revs = []revEntry{}
+		visible := make([]store.User, 0)
+		for _, member := range members {
+			if used[member.ID] {
+				member.Email = ""
+				visible = append(visible, member)
+			}
 		}
-		expansions["reverse"] = revs
+		members = visible
 	}
-	u, _ := UserFrom(r.Context())
-	b, err = s.sanitizeDocMeta(r.Context(), u.ID, b, nil)
+	expansions, targets, err := s.expandBase(r.Context(), u.ID, &read, true)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"base": b, "fields": fields, "records": recs, "head": head, "members": members, "views": views, "expansions": expansions})
+	reads := append([]baseReadable{read}, targets...)
+	if !s.finishBaseRead(w, r, reads) {
+		return
+	}
+	// A direct share can preserve the same role after workspace membership is
+	// revoked; independently recheck membership before returning the directory.
+	currentWorkspaces, err := s.Store.Workspaces(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	currentMember := false
+	for _, ws := range currentWorkspaces {
+		if ws.ID == b.WorkspaceID {
+			currentMember = true
+			break
+		}
+	}
+	if currentMember != isMember {
+		httpx.Error(w, http.StatusConflict, "access_changed", "工作空间权限已变化，请重试")
+		return
+	}
+	meta, err := s.sanitizeDocMeta(r.Context(), u.ID, read.meta, nil)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"base": meta, "fields": read.fields, "records": read.records, "head": head,
+		"members": members, "views": visibleBaseViews(read.views, read.policy), "expansions": expansions,
+		"writeRestricted": len(read.policy.mandatory) > 0,
+	})
 }
 
 type fieldInput struct {
@@ -441,6 +292,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.allowBaseWrite(w, r, b) {
+		return
+	}
 	var in fieldInput
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -450,6 +304,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, 0, f.Formula) {
+		return
+	}
+	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
 		return
 	}
 	f, err := s.Store.AddField(r.Context(), f)
@@ -489,6 +346,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.allowBaseWrite(w, r, b) {
+		return
+	}
 	fields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -509,6 +369,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, f.ID, f.Formula) {
+		return
+	}
+	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
 		return
 	}
 	if f, err = s.Store.UpdateField(r.Context(), f); err != nil {
@@ -627,6 +490,9 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
+		return
+	}
+	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
 	fid := pathID(r, "fid")
@@ -749,6 +615,9 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 	if !ok {
 		return
 	}
+	if !s.allowBaseWrite(w, r, b) {
+		return
+	}
 	var in struct {
 		Cells    map[string]json.RawMessage `json:"cells"`
 		Position float64                    `json:"position"`
@@ -766,6 +635,11 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 	if msg := checkCells(fields, in.Cells); msg != "" {
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", msg)
 		return
+	}
+	for _, field := range fields {
+		if raw, exists := in.Cells[strconv.FormatInt(field.ID, 10)]; exists && field.Type == "link" && !s.allowLinkTarget(w, r, b.ID, field, raw) {
+			return
+		}
 	}
 	// locked 视图的隐藏字段对非 manage 角色写保护
 	if b.Role != store.RoleManage {
@@ -902,6 +776,9 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool
 func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
+		return
+	}
+	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
 	rid := pathID(r, "rid")

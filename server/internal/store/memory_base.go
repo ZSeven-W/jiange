@@ -31,6 +31,55 @@ func (m *Memory) CreateBase(ctx context.Context, ws, creator int64, parent *int6
 	return d, nil
 }
 
+// CreateInitializedBase does not expose a node before all default content is
+// ready. The same lock protects permission checks and all published state.
+func (m *Memory) CreateInitializedBase(ctx context.Context, ws, creator int64, parent *int64, title string) (DocMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, err
+	}
+	if creator < 1 || creator > int64(len(m.users)) || !m.member(creator, ws) {
+		return DocMeta{}, ErrForbidden
+	}
+	var parentID *int64
+	if parent != nil {
+		p := m.doc(*parent)
+		if p == nil || p.deleted || p.meta.WorkspaceID != ws || RoleRank(m.roleLocked(creator, p)) < RoleRank(RoleView) {
+			return DocMeta{}, ErrNotFound
+		}
+		id := *parent
+		parentID = &id
+	}
+	now := time.Now()
+	baseID := int64(len(m.d.docs) + 1)
+	d := &memDoc{
+		meta: DocMeta{ID: baseID, Kind: "base", WorkspaceID: ws, ParentID: parentID, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now},
+		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
+	}
+	field := Field{BaseID: baseID, Name: "文本", Type: "text", Position: 1}
+	view := View{BaseID: baseID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
+	records := make([]Record, 5)
+	for i := range records {
+		uid := creator
+		records[i] = Record{BaseID: baseID, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
+	}
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, err
+	}
+	field.ID = m.id()
+	view.ID = m.id()
+	for i := range records {
+		records[i].ID = m.id()
+		records[i].Position = float64(records[i].ID)
+	}
+	m.d.docs = append(m.d.docs, d)
+	m.b.fields = append(m.b.fields, field)
+	m.b.views = append(m.b.views, view)
+	m.b.records = append(m.b.records, records...)
+	return d.meta, nil
+}
+
 func (m *Memory) id() int64 { m.b.nextID++; return m.b.nextID }
 
 func (m *Memory) Fields(_ context.Context, base int64) ([]Field, error) {

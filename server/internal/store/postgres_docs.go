@@ -354,12 +354,32 @@ func (p *Postgres) listenOnce(ctx context.Context, fn func(int64, int64)) error 
 const subtreeCTE = `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id = t.id) `
 
 func (p *Postgres) Trash(ctx context.Context, id int64) error {
-	_, err := p.Pool.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = now() WHERE id IN (SELECT id FROM t) AND deleted_at IS NULL`, id)
-	return err
+	return p.setSubtreeDeleted(ctx, id, true)
 }
 
 func (p *Postgres) Restore(ctx context.Context, id int64) error {
-	_, err := p.Pool.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = NULL WHERE id IN (SELECT id FROM t)`, id)
+	return p.setSubtreeDeleted(ctx, id, false)
+}
+
+// Acquire the root lock in its own statement before taking the recursive
+// query's READ COMMITTED snapshot. A child creator that holds a share lock on
+// any ancestor then commits or aborts before the subtree is enumerated.
+func (p *Postgres) setSubtreeDeleted(ctx context.Context, id int64, deleted bool) error {
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var locked int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+			return notFound(err)
+		}
+		if deleted {
+			_, err := tx.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = now() WHERE id IN (SELECT id FROM t) AND deleted_at IS NULL`, id)
+			return err
+		}
+		_, err := tx.Exec(ctx, subtreeCTE+`UPDATE nodes SET deleted_at = NULL WHERE id IN (SELECT id FROM t)`, id)
+		return err
+	})
+	if retryableRestoreConflict(err) {
+		return ErrConflict
+	}
 	return err
 }
 

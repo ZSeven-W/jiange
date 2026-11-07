@@ -79,7 +79,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <AskHost />
       <button className="fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover md:hidden" onClick={() => setSidebarOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} />}
-      <div className={`${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 md:static md:block`}>
+      <div className={`${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" ? "md:hidden" : "md:static md:block"}`}>
         <Sidebar me={me} route={route} onLogout={onLogout} />
         <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={() => setSidebarOpen(false)} aria-label="关闭导航"><X size={16} /></button>
       </div>

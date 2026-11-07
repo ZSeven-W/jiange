@@ -50,6 +50,9 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.allowBaseWrite(w, r, b) {
+		return
+	}
 	var in viewInput
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -60,6 +63,17 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 	}
 	if !in.apply(w, &v) {
 		return
+	}
+	if b.Role != store.RoleManage {
+		var cfg btquery.Config
+		if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
+			return
+		}
+		if cfg.Locked {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
+			return
+		}
 	}
 	if err := s.checkViewConfig(w, r, b.ID, v); !err {
 		return
@@ -76,6 +90,9 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
+		return
+	}
+	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
 	views, err := s.Store.Views(r.Context(), b.ID)
@@ -102,6 +119,17 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &v) {
 		return
 	}
+	if b.Role != store.RoleManage {
+		var cfg btquery.Config
+		if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
+			return
+		}
+		if cfg.Locked {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
+			return
+		}
+	}
 	if err := s.checkViewConfig(w, r, b.ID, v); !err {
 		return
 	}
@@ -116,6 +144,9 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteView(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
+		return
+	}
+	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
 	if err := s.Store.DeleteView(r.Context(), b.ID, pathID(r, "vid")); err != nil {
@@ -145,11 +176,18 @@ func (s *Server) checkViewConfig(w http.ResponseWriter, r *http.Request, baseID 
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", err.Error())
 		return false
 	}
+	if cfg.Locked {
+		if err := btquery.ValidateLocked(store.Specs(fields), cfg); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "unsupported_locked_filter", err.Error())
+			return false
+		}
+	}
 	return true
 }
 
 // queryBase runs a view config server-side and returns the ordered records.
 func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	b, ok := s.needBase(w, r, store.RoleView)
 	if !ok {
 		return
@@ -158,29 +196,75 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		Filters *btquery.Filters `json:"filters"`
 		Sorts   []btquery.Sort   `json:"sorts"`
 		Limit   int              `json:"limit"`
+		ViewID  *int64           `json:"viewId"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	cfg := btquery.Config{Filters: in.Filters, Sorts: in.Sorts}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
+	u, _ := UserFrom(r.Context())
+	read, err := s.readBaseAllowed(r.Context(), u.ID, b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if err := btquery.Validate(store.Specs(fields), cfg); err != nil {
+	if in.ViewID != nil {
+		found := false
+		for _, view := range read.views {
+			if view.ID == *in.ViewID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			httpx.Error(w, http.StatusNotFound, "not_found", "view not found")
+			return
+		}
+	}
+	cfg := btquery.Config{Filters: in.Filters, Sorts: in.Sorts}
+	// A hidden field cannot be used as a filter or sort oracle.
+	if err := btquery.Validate(store.Specs(read.fields), cfg); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
-	recs, err := s.Store.QueryRecords(r.Context(), b.ID, fields, cfg, in.Limit)
+	// Link IDs and derived values must not be queried against raw cells:
+	// that would reveal inaccessible associations through result membership.
+	// Until the query engine supports authorized projection, fail explicitly.
+	unsafe := map[int64]bool{}
+	for _, field := range read.fields {
+		switch field.Type {
+		case "link", "lookup", "formula", "created_by", "created_at", "modified_at":
+			unsafe[field.ID] = true
+		}
+	}
+	if cfg.Filters != nil {
+		for _, rule := range cfg.Filters.Rules {
+			if unsafe[rule.F] {
+				httpx.Error(w, http.StatusBadRequest, "unsupported_query", "关联及派生字段暂不支持筛选")
+				return
+			}
+		}
+	}
+	for _, sort := range cfg.Sorts {
+		if unsafe[sort.F] {
+			httpx.Error(w, http.StatusBadRequest, "unsupported_query", "关联及派生字段暂不支持排序")
+			return
+		}
+	}
+	recs, err := s.Store.QueryRecordsConstrained(r.Context(), b.ID, read.allFields, read.policy.mandatory, cfg, in.Limit)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if recs == nil {
-		recs = []store.Record{}
+	read.records = stripBaseRecords(recs, read.allFields, read.policy)
+	_, targets, err := s.expandBase(r.Context(), u.ID, &read, false)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"records": recs})
+	if !s.finishBaseRead(w, r, append([]baseReadable{read}, targets...)) {
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"records": read.records})
 }
 
 // ---- public forms (collect responses without login) ----

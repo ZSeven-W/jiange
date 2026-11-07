@@ -84,6 +84,45 @@ func (p *Postgres) QueryRecords(ctx context.Context, base int64, fields []Field,
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Record, error) { return scanRecord(r) })
 }
 
+func (p *Postgres) QueryRecordsConstrained(ctx context.Context, base int64, fields []Field, mandatory []btquery.Config, cfg btquery.Config, limit int) ([]Record, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	specs := Specs(fields)
+	args := []any{base}
+	var clauses []string
+	for _, c := range mandatory {
+		if err := btquery.ValidateLocked(specs, c); err != nil {
+			return nil, err
+		}
+		where, next, _, err := btquery.Compile(specs, c, args...)
+		if err != nil {
+			return nil, err
+		}
+		args = next
+		if where != "" {
+			clauses = append(clauses, "("+where+")")
+		}
+	}
+	where, args, order, err := btquery.Compile(specs, cfg, args...)
+	if err != nil {
+		return nil, err
+	}
+	if where != "" {
+		clauses = append(clauses, "("+where+")")
+	}
+	q := fmt.Sprintf(`SELECT %s FROM base_records WHERE base_id=$1`, recordColsWithPrefix())
+	if len(clauses) > 0 {
+		q += " AND " + strings.Join(clauses, " AND ")
+	}
+	q += " ORDER BY " + firstNonEmpty(order, "position, id") + " LIMIT " + fmt.Sprint(limit)
+	rows, err := p.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Record, error) { return scanRecord(r) })
+}
+
 func firstNonEmpty(a, b string) string {
 	if strings.TrimSpace(a) != "" {
 		return a

@@ -3,6 +3,15 @@ let nextSession = 0;
 export type CommentTarget = { doc: number; user: number; session: number };
 export type SavedCommentDraft = { text: string; draft: { block: string; startChar: string; endChar: string; quote: string } | null; parentId?: number };
 
+/** Own comment text may be recovered, but protected document quotes may not be copied. */
+export function redactCommentDraftQuote(value: SavedCommentDraft, allowQuote: boolean): SavedCommentDraft {
+  return { ...value, draft: value.draft ? { ...value.draft, quote: allowQuote ? value.draft.quote : "" } : null };
+}
+
+export function mayExportCommentDraftData(meta: { copyProtected?: boolean; role?: string } | undefined, metadataVerified: boolean, commentsAvailable: boolean): boolean {
+  return metadataVerified && commentsAvailable && !!meta && (!meta.copyProtected || meta.role === "manage");
+}
+
 /** Keep frozen drafts until explicitly dismissed, even if a composer is reused. */
 export function mergeRecoveredCommentDrafts(existing: readonly SavedCommentDraft[], incoming: readonly SavedCommentDraft[]): SavedCommentDraft[] {
   const result = existing.map((item) => ({ ...item, draft: item.draft ? { ...item.draft } : null }));

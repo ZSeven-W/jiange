@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,9 +18,70 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
-func TestCSVImportInferAndErrors(t *testing.T) {
+// Exercise the preserved parser/import code on a test-only route. Production
+// deliberately does not register this legacy handler until its writes and
+// authorization checks share a transaction.
+func newLegacyCSVTestServer(t *testing.T, st store.Store) (*httptest.Server, *http.Client) {
+	t.Helper()
+	s := &Server{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/bases/{id}/import", s.requireUser(http.HandlerFunc(s.importCSVLegacy)))
+	mux.Handle("/", s.Handler())
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	jar, _ := cookiejar.New(nil)
+	return ts, &http.Client{Jar: jar}
+}
+
+func TestCSVImportTemporarilyDisabledWithoutMutation(t *testing.T) {
 	st := store.NewMemory()
-	ts, c := newTestServer(t, st, nil)
+	ts, client := newTestServer(t, st, nil)
+	res := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "csv-disabled@x.com", "name": "C", "password": "password123"})
+	res.Body.Close()
+	res = post(t, client, ts.URL+"/api/bases", nil)
+	var b store.DocMeta
+	if err := json.NewDecoder(res.Body).Decode(&b); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	beforeFields, err := st.Fields(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRecords, err := st.Records(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = post(t, client, ts.URL+"/api/bases/"+itoa(b.ID)+"/import", map[string]any{"csv": "任务\n新的任务", "header": true})
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("import status: %d", res.StatusCode)
+	}
+	var result struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "import_temporarily_unavailable" {
+		t.Fatalf("error: %+v", result)
+	}
+	afterFields, err := st.Fields(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRecords, err := st.Records(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeFields, afterFields) || !reflect.DeepEqual(beforeRecords, afterRecords) {
+		t.Fatal("disabled import mutated base")
+	}
+}
+
+func TestLegacyCSVImportInferAndErrors(t *testing.T) {
+	st := store.NewMemory()
+	ts, c := newLegacyCSVTestServer(t, st)
 	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "csv@x.com", "name": "C", "password": "password123"})
 	var b store.DocMeta
 	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
@@ -96,13 +159,9 @@ func TestCSVImportInferAndErrors(t *testing.T) {
 	}
 }
 
-func TestCSVImportPerf10k(t *testing.T) {
+func TestLegacyCSVImportPerf10k(t *testing.T) {
 	st := store.NewMemory()
-	s := &Server{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}
-	ts := httptest.NewServer(s.Handler())
-	defer ts.Close()
-	jar, _ := cookiejar.New(nil)
-	c := &http.Client{Jar: jar}
+	ts, c := newLegacyCSVTestServer(t, st)
 	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "perf@x.com", "name": "P", "password": "password123"})
 	var b store.DocMeta
 	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
