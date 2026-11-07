@@ -92,7 +92,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "join" ? (
         <JoinLink token={route.token} />
       ) : route.page === "drive" ? (
-        <DrivePage key={route.folderId ?? 0} folderId={route.folderId} />
+        <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (

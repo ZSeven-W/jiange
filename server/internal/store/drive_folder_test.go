@@ -30,28 +30,28 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err = st.CreateSession(ctx, other.SessionHash, outsider.ID, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	root, err := st.CreateDriveFolder(ctx, guard, ws.ID, nil, "Root")
+	root, err := st.CreateDriveFolder(ctx, guard, ws.ID, nil, "Root", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := st.CreateDriveFolder(ctx, guard, ws.ID, &root.ID, "Child")
+	child, err := st.CreateDriveFolder(ctx, guard, ws.ID, &root.ID, "Child", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grand, err := st.CreateDriveFolder(ctx, guard, ws.ID, &child.ID, "Previously deleted")
+	grand, err := st.CreateDriveFolder(ctx, guard, ws.ID, &child.ID, "Previously deleted", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = st.CreateDriveFolder(ctx, other, ws.ID, nil, "unauthorized"); !errors.Is(err, store.ErrForbidden) {
+	if _, err = st.CreateDriveFolder(ctx, other, ws.ID, nil, "unauthorized", false); !errors.Is(err, store.ErrForbidden) {
 		t.Fatalf("outside root workspace: %v", err)
 	}
 	if err = st.SetShare(ctx, root.ID, outsider.ID, store.RoleView); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = st.ListDriveChildren(ctx, other, ws.ID, &root.ID); err != nil {
+	if _, err = st.ListDriveChildren(ctx, other, ws.ID, &root.ID, false); err != nil {
 		t.Fatalf("inherited viewer listing: %v", err)
 	}
-	if _, err = st.CreateDriveFolder(ctx, other, ws.ID, &root.ID, "unauthorized"); !errors.Is(err, store.ErrForbidden) {
+	if _, err = st.CreateDriveFolder(ctx, other, ws.ID, &root.ID, "unauthorized", false); !errors.Is(err, store.ErrForbidden) {
 		t.Fatalf("viewer cannot create: %v", err)
 	}
 	if err = st.MoveDriveNode(ctx, guard, root.ID, &grand.ID, root.Revision); !errors.Is(err, store.ErrConflict) {
@@ -94,43 +94,98 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err = st.RestoreDriveNode(ctx, guard, root.ID, root.Revision+1); err != nil {
 		t.Fatalf("restore root: %v", err)
 	}
-	entries, err := st.ListDriveChildren(ctx, guard, ws.ID, &root.ID)
+	entries, err := st.ListDriveChildren(ctx, guard, ws.ID, &root.ID, false)
 	if err != nil || len(entries) != 1 || entries[0].ID != child.ID {
 		t.Fatalf("restored child: %+v %v", entries, err)
 	}
-	entries, err = st.ListDriveChildren(ctx, guard, ws.ID, &child.ID)
+	entries, err = st.ListDriveChildren(ctx, guard, ws.ID, &child.ID, false)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("prior deletion was undone: %+v %v", entries, err)
 	}
 	// Guarded creation of docs/bases inside folders; the fence triggers reject
 	// the legacy creation paths there.
-	docNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "doc", "Folder doc")
+	docNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "doc", "Folder doc", false)
 	if err != nil {
 		t.Fatalf("create drive doc: %v", err)
 	}
-	baseNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "base", "Folder base")
+	baseNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "base", "Folder base", false)
 	if err != nil {
 		t.Fatalf("create drive base: %v", err)
 	}
-	if _, err = st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "wiki", "bad kind"); !errors.Is(err, store.ErrConflict) {
+	if _, err = st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "wiki", "bad kind", false); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("bad kind: %v", err)
 	}
-	entries, err = st.ListDriveChildren(ctx, guard, ws.ID, &root.ID)
+	entries, err = st.ListDriveChildren(ctx, guard, ws.ID, &root.ID, false)
 	if err != nil || len(entries) != 3 {
 		t.Fatalf("folder children after create: %+v %v", entries, err)
 	}
 	if docNode.Revision != 1 || docNode.Kind != "doc" || baseNode.Kind != "base" {
 		t.Fatalf("created entries: %+v %+v", docNode, baseNode)
 	}
-	if _, err = st.CreateDriveNode(ctx, other, ws.ID, &root.ID, "doc", "unauthorized"); !errors.Is(err, store.ErrForbidden) {
+	if _, err = st.CreateDriveNode(ctx, other, ws.ID, &root.ID, "doc", "unauthorized", false); !errors.Is(err, store.ErrForbidden) {
 		t.Fatalf("viewer cannot create doc: %v", err)
+	}
+	// 我的空间：personal 节点对其他成员（含 workspace owner）不可见、不可编辑；
+	// 子节点继承空间；跨空间移动被拒；回收后不泄漏到他人回收站。
+	if err = st.AddWorkspaceMember(ctx, ws.ID, outsider.ID); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	mine, err := st.CreateDriveFolder(ctx, guard, ws.ID, nil, "我的空间根", true)
+	if err != nil {
+		t.Fatalf("personal create: %v", err)
+	}
+	if !mine.Personal {
+		t.Fatalf("personal flag missing: %+v", mine)
+	}
+	mineDoc, err := st.CreateDriveNode(ctx, guard, ws.ID, &mine.ID, "doc", "私有文档", false)
+	if err != nil {
+		t.Fatalf("personal child create: %v", err)
+	}
+	if !mineDoc.Personal {
+		t.Fatalf("child scope not inherited: %+v", mineDoc)
+	}
+	if entries, e := st.ListDriveChildren(ctx, guard, ws.ID, nil, true); e != nil || len(entries) != 1 || entries[0].ID != mine.ID {
+		t.Fatalf("personal root listing: %+v %v", entries, e)
+	}
+	if entries, e := st.ListDriveChildren(ctx, other, ws.ID, nil, true); e != nil || len(entries) != 0 {
+		t.Fatalf("member sees another user's personal scope: %+v %v", entries, e)
+	}
+	if _, e := st.ListDriveChildren(ctx, other, ws.ID, &mine.ID, false); !errors.Is(e, store.ErrForbidden) {
+		t.Fatalf("member lists personal folder: %v", e)
+	}
+	otherDocs, e := st.ListDocs(ctx, outsider.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, d := range otherDocs {
+		if d.ID == mine.ID || d.ID == mineDoc.ID {
+			t.Fatalf("personal node leaked to member doc list: %+v", d)
+		}
+	}
+	if e := st.MoveDriveNode(ctx, guard, mineDoc.ID, &root.ID, mineDoc.Revision); !errors.Is(e, store.ErrForbidden) {
+		t.Fatalf("cross-scope move: %v", e)
+	}
+	if e := st.TrashDriveNode(ctx, guard, mineDoc.ID, mineDoc.Revision); e != nil {
+		t.Fatalf("trash personal doc: %v", e)
+	}
+	trashList, e := st.ListTrash(ctx, outsider.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, d := range trashList {
+		if d.ID == mineDoc.ID {
+			t.Fatalf("personal trash leaked to member: %+v", d)
+		}
+	}
+	if e := st.RestoreDriveNode(ctx, guard, mineDoc.ID, mineDoc.Revision+1); e != nil {
+		t.Fatalf("creator restores personal doc: %v", err)
 	}
 	if err = st.RestoreDriveNode(ctx, guard, grand.ID, grand.Revision+1); err != nil {
 		t.Fatalf("restore earlier batch: %v", err)
 	}
 	expired := guard
 	expired.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	if _, err = st.CreateDriveFolder(ctx, expired, ws.ID, nil, "expired"); !errors.Is(err, store.ErrUnauthenticated) {
+	if _, err = st.CreateDriveFolder(ctx, expired, ws.ID, nil, "expired", false); !errors.Is(err, store.ErrUnauthenticated) {
 		t.Fatalf("expired create: %v", err)
 	}
 	if err = st.DeleteSession(ctx, guard.SessionHash); err != nil {

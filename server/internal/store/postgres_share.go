@@ -8,8 +8,15 @@ import (
 )
 
 // roleSQL computes the role of user $1 on node n (aliases m = workspace
-// membership LEFT JOIN, sh.r = best inherited share rank).
+// membership LEFT JOIN, sh.r = best inherited share rank). Personal-scope
+// nodes (我的空间) grant nothing through membership — not even to workspace
+// owners/admins; only the creator and explicit shares apply.
 const roleSQL = `CASE
+	WHEN n.personal THEN CASE
+		WHEN n.creator_id = $1 OR sh.r = 3 THEN 'manage'
+		WHEN sh.r = 2 THEN 'edit'
+		WHEN sh.r = 1 THEN 'view'
+		ELSE '' END
 	WHEN m.role IN ('owner','admin') OR (m.user_id IS NOT NULL AND n.creator_id = $1) OR sh.r = 3 THEN 'manage'
 	WHEN m.user_id IS NOT NULL OR sh.r = 2 THEN 'edit'
 	WHEN sh.r = 1 THEN 'view' ELSE '' END`

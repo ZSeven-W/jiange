@@ -19,6 +19,7 @@ type memDoc struct {
 	iconRevision    int64
 	cover           DocCover
 	deleted         bool
+	personal        bool // 我的空间：仅创建者与显式分享可见
 	ops             []SeqOp
 	ids             map[[2]int64]bool
 	ranges          map[int64][]memoryOpRange
@@ -92,7 +93,8 @@ func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	defer m.mu.Unlock()
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
-		if m.member(uid, d.meta.WorkspaceID) && !d.deleted {
+		// 个人空间节点只出现在创建者的列表里
+		if m.member(uid, d.meta.WorkspaceID) && !d.deleted && (!d.personal || d.meta.CreatorID == uid) {
 			meta := d.meta
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
@@ -410,6 +412,12 @@ func (m *Memory) AddMember(ws, uid int64) {
 	m.members[uid] = append(m.members[uid], ws)
 }
 
+// AddWorkspaceMember adds a regular member (tests / invite flows).
+func (m *Memory) AddWorkspaceMember(_ context.Context, ws, uid int64) error {
+	m.AddMember(ws, uid)
+	return nil
+}
+
 func (m *Memory) subtree(id int64) []*memDoc {
 	out := []*memDoc{m.doc(id)}
 	for i := 0; i < len(out); i++ {
@@ -442,7 +450,7 @@ func (m *Memory) ListTrash(_ context.Context, uid int64) ([]DocMeta, error) {
 	defer m.mu.Unlock()
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
-		if d.deleted && m.member(uid, d.meta.WorkspaceID) {
+		if d.deleted && m.member(uid, d.meta.WorkspaceID) && (!d.personal || d.meta.CreatorID == uid) {
 			out = append(out, d.meta)
 		}
 	}

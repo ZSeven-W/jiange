@@ -52,6 +52,12 @@ func (p *Postgres) CreateUser(ctx context.Context, email, name, hash string) (u 
 	return u, w, err
 }
 
+// AddWorkspaceMember adds a regular member (tests / invite flows).
+func (p *Postgres) AddWorkspaceMember(ctx context.Context, ws, uid int64) error {
+	_, err := p.Pool.Exec(ctx, `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, ws, uid)
+	return err
+}
+
 func (p *Postgres) UserByEmail(ctx context.Context, email string) (u User, err error) {
 	err = p.Pool.QueryRow(ctx,
 		`SELECT id, email, name, password_hash, created_at FROM users WHERE lower(email) = lower($1)`, email,

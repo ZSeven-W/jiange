@@ -14,11 +14,17 @@ type memShare struct {
 	commentAttempts map[commentAttemptKey]commentAttemptReceipt
 }
 
-// roleLocked computes uid's role on doc d; caller holds m.mu.
+// roleLocked computes uid's role on doc d; caller holds m.mu. Personal-scope
+// nodes (我的空间) grant nothing through membership — workspace owners
+// included; only the creator and explicit shares apply.
 func (m *Memory) roleLocked(uid int64, d *memDoc) string {
 	ws := d.meta.WorkspaceID
 	best := ""
-	if m.member(uid, ws) {
+	if d.personal {
+		if d.meta.CreatorID == uid {
+			return RoleManage
+		}
+	} else if m.member(uid, ws) {
 		if d.meta.CreatorID == uid || (int(ws) <= len(m.workspaces) && m.workspaces[ws-1].OwnerID == uid) {
 			return RoleManage
 		}
