@@ -18,15 +18,19 @@ const (
 	MsgError   = 0x15
 )
 
-// ClientMsg is a decoded client→server message.
+// ClientMsg is a decoded client→server message. HistoryEpoch is present only
+// in version-2 HELLOs (trailing uvar); a v2 client caches (epoch, lastSeq) so
+// the server can refuse to replay into a rewound history after a restore.
 type ClientMsg struct {
-	Type     byte
-	DocID    uint64
-	ClientID uint64
-	LastSeq  uint64
-	Batch    []byte
-	Seq      uint64
-	State    string
+	Type         byte
+	DocID        uint64
+	ClientID     uint64
+	LastSeq      uint64
+	HasEpoch     bool
+	HistoryEpoch uint64
+	Batch        []byte
+	Seq          uint64
+	State        string
 }
 
 func (w *writer) bytes(b []byte) { w.uvar(uint64(len(b))); w.b = append(w.b, b...) }
@@ -53,7 +57,13 @@ func DecodeClientMsg(b []byte) (m ClientMsg, err error) {
 	case MsgHello:
 		if m.DocID, err = r.uvar(); err == nil {
 			if m.ClientID, err = r.uvar(); err == nil {
-				m.LastSeq, err = r.uvar()
+				if m.LastSeq, err = r.uvar(); err == nil && r.i < len(b) {
+					// v2 hello: one trailing epoch uvar. Anything else stays a
+					// trailing-bytes error; unknown extensions are never guessed.
+					if m.HistoryEpoch, err = r.uvar(); err == nil {
+						m.HasEpoch = true
+					}
+				}
 			}
 		}
 	case MsgOps:
@@ -80,24 +90,41 @@ func EncodeHello(docID, clientID, lastSeq uint64) []byte {
 	return w.b
 }
 
+// EncodeHelloV2 appends the caller's cached history epoch. Old servers reject
+// the trailing byte and close the connection; the client then falls back to
+// v1 for that session (P0.5 negotiation).
+func EncodeHelloV2(docID, clientID, lastSeq, epoch uint64) []byte {
+	w := &writer{}
+	w.u8(MsgHello)
+	w.uvar(docID)
+	w.uvar(clientID)
+	w.uvar(lastSeq)
+	w.uvar(epoch)
+	return w.b
+}
+
 func EncodeClientOps(batch []byte) []byte { w := &writer{}; w.u8(MsgOps); w.bytes(batch); return w.b }
 func EncodeClientAck(seq uint64) []byte   { w := &writer{}; w.u8(MsgAck); w.uvar(seq); return w.b }
 func EncodeClientAware(s string) []byte   { w := &writer{}; w.u8(MsgAware); w.str(s); return w.b }
 
-// ServerMsg is a decoded server→client message.
+// ServerMsg is a decoded server→client message. HasEpoch marks a v2 WELCOME
+// whose history epoch follows the v1 payload: an epoch change means the log
+// rewound (restore/PITR) and every cached seq is meaningless.
 type ServerMsg struct {
-	Type     byte
-	ClientID uint64
-	HeadSeq  uint64
-	HasSnap  bool
-	SnapSeq  uint64
-	State    []byte
-	FirstSeq uint64
-	Batch    []byte
-	Count    uint64
-	Aware    string
-	Code     string
-	Message  string
+	Type         byte
+	ClientID     uint64
+	HeadSeq      uint64
+	HasSnap      bool
+	SnapSeq      uint64
+	State        []byte
+	HasEpoch     bool
+	HistoryEpoch uint64
+	FirstSeq     uint64
+	Batch        []byte
+	Count        uint64
+	Aware        string
+	Code         string
+	Message      string
 }
 
 func EncodeWelcome(clientID, head uint64, snapSeq uint64, state []byte) []byte {
@@ -112,6 +139,24 @@ func EncodeWelcome(clientID, head uint64, snapSeq uint64, state []byte) []byte {
 	} else {
 		w.u8(0)
 	}
+	return w.b
+}
+
+// EncodeWelcomeV2 is sent only to clients whose HELLO carried an epoch: v1
+// decoders treat the trailing byte as an error instead of misreading it.
+func EncodeWelcomeV2(clientID, head uint64, snapSeq uint64, state []byte, epoch uint64) []byte {
+	w := &writer{}
+	w.u8(MsgWelcome)
+	w.uvar(clientID)
+	w.uvar(head)
+	if state != nil {
+		w.u8(1)
+		w.uvar(snapSeq)
+		w.bytes(state)
+	} else {
+		w.u8(0)
+	}
+	w.uvar(epoch)
 	return w.b
 }
 
@@ -168,6 +213,12 @@ func DecodeServerMsg(b []byte) (m ServerMsg, err error) {
 			m.HasSnap = true
 			if m.SnapSeq, err = r.uvar(); err == nil {
 				m.State, err = r.bytes()
+			}
+		}
+		if err == nil && r.i < len(b) {
+			// v2 welcome: one trailing epoch uvar (only to v2 clients).
+			if m.HistoryEpoch, err = r.uvar(); err == nil {
+				m.HasEpoch = true
 			}
 		}
 	case MsgSOps:

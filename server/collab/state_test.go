@@ -129,7 +129,11 @@ func TestMessageVectors(t *testing.T) {
 		var got []byte
 		switch v.Dir + ":" + v.Msg["type"].(string) {
 		case "c2s:hello":
-			got = EncodeHello(num(v.Msg, "docId"), num(v.Msg, "clientId"), num(v.Msg, "lastSeq"))
+			if epoch, ok := v.Msg["historyEpoch"]; ok {
+				got = EncodeHelloV2(num(v.Msg, "docId"), num(v.Msg, "clientId"), num(v.Msg, "lastSeq"), uint64(epoch.(float64)))
+			} else {
+				got = EncodeHello(num(v.Msg, "docId"), num(v.Msg, "clientId"), num(v.Msg, "lastSeq"))
+			}
 		case "c2s:ops":
 			got = EncodeClientOps(hx(v.Msg, "batchHex"))
 		case "c2s:ack":
@@ -137,8 +141,15 @@ func TestMessageVectors(t *testing.T) {
 		case "c2s:aware":
 			got = EncodeClientAware(v.Msg["state"].(string))
 		case "s2c:welcome":
+			epoch, hasEpoch := v.Msg["historyEpoch"]
 			if _, ok := v.Msg["stateHex"]; ok {
-				got = EncodeWelcome(num(v.Msg, "clientId"), num(v.Msg, "headSeq"), num(v.Msg, "snapSeq"), hx(v.Msg, "stateHex"))
+				if hasEpoch {
+					got = EncodeWelcomeV2(num(v.Msg, "clientId"), num(v.Msg, "headSeq"), num(v.Msg, "snapSeq"), hx(v.Msg, "stateHex"), uint64(epoch.(float64)))
+				} else {
+					got = EncodeWelcome(num(v.Msg, "clientId"), num(v.Msg, "headSeq"), num(v.Msg, "snapSeq"), hx(v.Msg, "stateHex"))
+				}
+			} else if hasEpoch {
+				got = EncodeWelcomeV2(num(v.Msg, "clientId"), num(v.Msg, "headSeq"), 0, nil, uint64(epoch.(float64)))
 			} else {
 				got = EncodeWelcome(num(v.Msg, "clientId"), num(v.Msg, "headSeq"), 0, nil)
 			}
