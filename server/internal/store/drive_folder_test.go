@@ -63,6 +63,34 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err = st.TrashDriveNode(ctx, guard, root.ID, root.Revision); err != nil {
 		t.Fatalf("trash root: %v", err)
 	}
+	// Legacy (pre-drive) deletions carry no trash batch; the guarded restore
+	// must still accept them using the revision the trash listing reports.
+	legacy, err := st.CreateDoc(ctx, ws.ID, owner.ID, nil, "Legacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Trash(ctx, legacy.ID); err != nil {
+		t.Fatalf("legacy trash: %v", err)
+	}
+	trash, err := st.ListTrash(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyListed *store.DocMeta
+	for i := range trash {
+		if trash[i].ID == legacy.ID {
+			legacyListed = &trash[i]
+		}
+	}
+	if legacyListed == nil || legacyListed.DriveRevision != 0 || legacyListed.TrashBatchID != 0 {
+		t.Fatalf("legacy trash meta: %+v", legacyListed)
+	}
+	if err = st.RestoreDriveNode(ctx, guard, legacy.ID, legacyListed.DriveRevision); err != nil {
+		t.Fatalf("guarded restore of legacy deletion: %v", err)
+	}
+	if docs, e := st.ListDocs(ctx, owner.ID); e != nil || len(docs) == 0 {
+		t.Fatalf("legacy restore listed: %v %v", docs, e)
+	}
 	if err = st.RestoreDriveNode(ctx, guard, root.ID, root.Revision+1); err != nil {
 		t.Fatalf("restore root: %v", err)
 	}

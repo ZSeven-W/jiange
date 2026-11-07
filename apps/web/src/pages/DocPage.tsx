@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
-import { docsApi, type DocMeta, type Me } from "@/lib/api";
+import { docsApi, driveApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
@@ -1069,14 +1069,19 @@ function DocMenu({
   const close = () => setOpen(false);
   const trash = async () => {
     if (!meta) return;
-    await docsApi.trash(meta.id);
+    // 版本化云盘删除：folder 子树会被 fence 拒绝旧式语句
+    await driveApi.trash(meta.id, meta.driveRevision ?? 0);
     qc.invalidateQueries({ queryKey: ["docs"] });
+    qc.invalidateQueries({ queryKey: ["drive"] });
+    qc.invalidateQueries({ queryKey: ["trash"] });
     location.hash = "#/";
   };
   const toRoot = async () => {
     if (!meta) return;
-    await docsApi.move(meta.id, null);
+    // 版本化云盘移动：folder 子树会被 fence 拒绝旧式语句
+    await driveApi.move(meta.id, null, meta.driveRevision ?? 0);
     qc.invalidateQueries({ queryKey: ["docs"] });
+    qc.invalidateQueries({ queryKey: ["drive"] });
     setOpen(false);
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
