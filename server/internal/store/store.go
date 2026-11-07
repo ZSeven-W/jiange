@@ -9,8 +9,11 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("store: not found")
-	ErrConflict = errors.New("store: conflict")
+	ErrNotFound        = errors.New("store: not found")
+	ErrConflict        = errors.New("store: conflict")
+	ErrForbidden       = errors.New("store: forbidden")
+	ErrUnauthenticated = errors.New("store: session expired")
+	ErrCopyProtected   = errors.New("store: copying prohibited")
 )
 
 type User struct {

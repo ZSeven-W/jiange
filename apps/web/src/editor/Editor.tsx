@@ -14,6 +14,8 @@ import {
   joinBackward,
   joinForward,
   isSourceBlock,
+  isColumnText,
+  selectionContainsColumns,
   len,
   LIST_TYPES,
   markdownShortcut,
@@ -40,6 +42,9 @@ import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
 import { askArea } from "@/components/ui/ask";
 import { AddIcon } from "@/components/FeishuIcons";
+import { shouldRetryImage, type ImageFailure } from "./imageRetry";
+import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
+import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { commentSelection } from "./commentAnchor";
 import { isSearchableBlockType, type FindMatch } from "./findReplace";
@@ -109,7 +114,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
-  const composing = useRef<{ sel: Sel } | null>(null);
+  const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]> } | null>(null);
+  const blockedComposition = useRef<Sel | null>(null);
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), []);
   const readOnlyRef = useRef(!!readOnly);
@@ -121,6 +127,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
+  const [columnNotice, setColumnNotice] = useState("");
   const recordExternal = useCallback<ExternalUndoRecorder>((tx, options) => {
     if (readOnlyRef.current || tx.doc !== sync.client.doc || !tx.ops.length) return;
     // Template/import operations can race with other replicas editing the new
@@ -253,6 +260,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const d = sync.client.doc,
         s = sel.current;
       if (!d || !s || readOnlyRef.current) return;
+      // Cross-column selections cannot be represented as a root block range.
+      // Never let a structural operation delete unrelated document blocks.
+      if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) { setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。"); return; }
       const tx = new Tx(d);
       const r = fn(tx, s);
       const next: Sel | null = r ? ("a" in r ? r : { a: r, f: r }) : s;
@@ -343,7 +353,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const n = tx.insert(p.b, p.o, text);
         if (marks) for (const [k, v] of Object.entries(marks)) tx.format(p.b, p.o, p.o + n, k, v);
         p = { b: p.b, o: p.o + n };
-        const md = markdownShortcut(tx, p, [...text].pop() ?? "");
+        const md = isColumnText(tx.doc, p.b) ? null : markdownShortcut(tx, p, [...text].pop() ?? "");
         if (md) {
           um.seal();
           return md;
@@ -465,7 +475,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const el = root.current,
       s = sel.current,
       d = sync.client.doc;
-    if (el && s && d && document.activeElement === el && !composing.current) {
+    if (el && s && d && (document.activeElement === el || el.contains(document.activeElement)) && !composing.current) {
       const a = posToDom(el, s.a),
         f = posToDom(el, s.f);
       const ds = document.getSelection();
@@ -514,7 +524,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           if (!t) return;
           insertText(t);
           const end = sel.current?.f;
-          if ((t === "/" || t === "@") && end) setSlash({ at: { b: end.b, o: Math.max(0, end.o - 1) }, index: 0, kind: t });
+          if ((t === "/" || t === "@") && end && !isColumnText(d, end.b)) setSlash({ at: { b: end.b, o: Math.max(0, end.o - 1) }, index: 0, kind: t });
           else setSlash((cur) => (cur ? { ...cur, index: 0 } : cur)); // 过滤词变化 → 高亮回到第一项
           return;
         }
@@ -566,24 +576,51 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         "delete",
       );
     };
-    const onCompStart = () => {
+    const onCompStart = (event: CompositionEvent) => {
       if (readOnlyRef.current) return;
+      blockedComposition.current = null;
       readSel();
       const s = sel.current,
         d = sync.client.doc;
       if (!s || !d) return;
+      if (!eqId(s.a.b, s.f.b)) {
+        event.preventDefault();
+        blockedComposition.current = s;
+        setColumnNotice("暂不支持跨块输入法替换，请在单个文本块内操作。");
+        return;
+      }
       if (slashRef.current?.fromButton) {
         menuComposition.current = slashRef.current.at.b;
         composing.current = { sel: s };
         return;
       }
-      if (!collapsed(s)) run((tx, s2) => deleteRange(tx, s2));
-      composing.current = { sel: sel.current! };
+      // Keep selected characters intact until composition actually commits.
+      const anchor = captureCompositionSelection(d, s);
+      if (!anchor) { event.preventDefault(); blockedComposition.current = s; setColumnNotice("输入位置无效，请重新选择文字。"); return; }
+      composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b) };
     };
     const onCompEnd = (e: CompositionEvent) => {
+      if (blockedComposition.current) {
+        const blocked = blockedComposition.current;
+        blockedComposition.current = null;
+        const current = sync.client.doc;
+        // Some IMEs ignore preventDefault and mutate every selected DOM block.
+        // Recreate the projection from the unchanged CRDT, including any
+        // intervening blocks and nested column text.
+        const affected = current ? bodyBlocks(current).flatMap((b) => [b, ...current.children(b)]) : [blocked.a.b, blocked.f.b];
+        setRemount((m) => {
+          const next = { ...m };
+          for (const b of affected) next[idKey(b)] = (next[idKey(b)] ?? 0) + 1;
+          return next;
+        });
+        if (e.data) setConflictDraft({ text: e.data, message: "暂不支持跨块输入，内容未应用。请复制草稿后在单个文本块内重试。" });
+        force((x) => x + 1);
+        return;
+      }
       const c = composing.current;
       if (readOnlyRef.current) {
         if (c) setRemount((m) => ({ ...m, [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1 }));
+        if (c && e.data) setConflictDraft({ text: e.data, message: "编辑权限已变化，输入内容未应用。请复制草稿后重试。" });
         composing.current = null; menuComposition.current = null; return;
       }
       composing.current = null;
@@ -595,7 +632,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         return;
       }
       if (!c) return;
-      sel.current = c.sel;
+      const currentDoc = sync.client.doc;
+      const selection = currentDoc && c.anchor ? resolveCompositionSelection(currentDoc, c.anchor) : null;
+      if (!selection) {
+        setRemount((m) => ({ ...m, [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1 }));
+        if (e.data) setConflictDraft({ text: e.data, message: "输入位置已被协作者修改或删除，内容未应用。请复制草稿后重试。" });
+        return;
+      }
+      sel.current = selection;
       // throw away the browser's DOM mutations for this block and commit the text
       setRemount((m) => ({
         ...m,
@@ -808,23 +852,15 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       }
       if (it.id === "columns") {
         const info = tx.doc.blockInfo(b);
-        let cb: OpId;
-        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
-          tx.setProp(b, "type", "columns");
-          cb = b;
-        } else {
-          cb = tx.create("columns", b, info.parent);
-        }
-        const c1 = tx.create("paragraph", null, cb);
-        void c1;
-        const c2 = tx.create("paragraph", null, cb);
-        void c2;
+        const cb = tx.create("columns", b, info.parent);
+        const c1 = createColumn(tx, cb, null);
+        createColumn(tx, cb, c1);
         const nb = tx.create("paragraph", cb, info.parent);
         return { b: nb, o: 0 };
       }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
       return { b, o: offset };
-    });
+    }, undefined, it.id === "columns");
     um.seal();
   };
 
@@ -864,6 +900,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const s = sel.current,
       d = sync.client.doc;
     if (!s || !d) return;
+    if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) {
+      if (!e.metaKey && !e.ctrlKey || e.key === "Backspace" || e.key === "Delete") e.preventDefault();
+      if (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1) setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。");
+      return;
+    }
     const k = e.key.toLowerCase();
     if (mod && k === "z") {
       e.preventDefault();
@@ -898,6 +939,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     if (mod && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
+      if (isColumnText(d, s.f.b)) return;
       const bs = bodyBlocks(d);
       const i = bs.findIndex((b) => eqId(b, s.f.b));
       const up = e.key === "ArrowUp";
@@ -930,9 +972,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   };
 
   const onCopy = (e: React.ClipboardEvent, cut = false) => {
+    readSel();
     const s = sel.current,
       d = sync.client.doc;
     if (!s || !d || collapsed(s)) return;
+    if (selectionContainsColumns(d, s)) {
+      e.preventDefault();
+      setColumnNotice("暂不支持复制或剪切包含分栏的选区，请分别选择栏内内容。");
+      return;
+    }
+    if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) { if (cut) { e.preventDefault(); setColumnNotice("暂不支持跨栏剪切，请在同一栏内选择内容。"); } return; }
     e.preventDefault();
     const clip = copyRange(d, s);
     e.clipboardData.setData("text/plain", clipText(clip));
@@ -942,12 +991,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const onPaste = (e: React.ClipboardEvent) => {
     if (readOnlyRef.current) return;
     e.preventDefault();
+    readSel();
     if (slashRef.current?.fromButton) {
       const text = e.clipboardData.getData("text/plain");
       setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + text).slice(0, 32), index: 0 } : m);
       return;
     }
     const files = [...e.clipboardData.files];
+    const currentDoc = sync.client.doc;
+    if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
+      if (files.length) return;
+      insertText(e.clipboardData.getData("text/plain"), "paste");
+      um.seal();
+      return;
+    }
     if (files.length && upload && sel.current) {
       void insertFiles(files, sel.current.f.b, true);
       return;
@@ -1018,6 +1075,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
+      {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {conflictDraft !== null && <div role="alert" contentEditable={false} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-[13px] text-foreground">
         <p>{conflictDraft.message}</p>
         <textarea aria-label="未应用的草稿" readOnly value={conflictDraft.text} className="mt-2 w-full resize-y rounded border bg-surface p-2" rows={3} />
@@ -1037,7 +1095,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         onCopy={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e))}
         onCut={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e, true))}
         onPaste={onPaste}
-        onFocus={() => {
+        onFocus={(event) => {
+          // A nested editable column receives focus before the browser places
+          // the clicked caret. Restoring a stale/root selection at that point
+          // would redirect the first keystroke into another block.
+          if (event.target !== event.currentTarget) { sel.current = null; return; }
           if (!sel.current && doc && blocks.length)
             sel.current = {
               a: { b: blocks[0], o: 0 },
@@ -1060,7 +1122,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 type={info.type}
                 props={info.props}
                 number={numbers.get(k)}
-                spans={doc.richChars(b)}
+                spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
                 findRanges={findRanges.get(k)}
                 anchors={anchorFlags(doc, b, comments)}
                 activeThread={activeThread}
@@ -1081,26 +1143,27 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onDiagramSource={readOnly ? undefined : editDiagramSource}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
-                  return { id: idKey(ch), type: ci.type, props: ci.props, spans: doc.richChars(ch) };
+                  return { id: idKey(ch), type: ci.type, props: ci.props, spans: composing.current?.snapshot && eqId(composing.current.sel.a.b, ch) ? composing.current.snapshot : doc.richChars(ch) };
                 })}
+                columnRemount={remount}
+                syncVersion={sync.version}
+                syncStatus={sync.status}
                 onAddColumn={readOnly ? undefined : () => {
                   if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
-                  tx.create("paragraph", null, b);
-                  um.record(tx, sel.current, sel.current, "column");
+                  const children = doc.children(b);
+                  createColumn(tx, b, children.at(-1) ?? null);
+                  um.record(safeColumnUndo(tx), sel.current, sel.current, "column");
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();
                 }}
                 onDeleteColumn={readOnly ? undefined : (col) => {
                   if (readOnlyRef.current) return;
-                  const tx = new Tx(doc);
                   const cid = { client: Number(col.split(":")[0]), clock: Number(col.split(":")[1]) };
-                  if (doc.hasBlock(cid)) tx.deleteBlock(cid);
-                  um.record(tx, sel.current, sel.current, "column");
-                  sync.client.push(tx.ops);
-                  force((x) => x + 1);
-                  publish();
+                  // Block tombstones cannot be undone with the same ID. A
+                  // collaborator may still send edits to it after undo.
+                  if (requestColumnDeletion(doc, cid) === "unsupported") setColumnNotice("暂不支持安全删除分栏：协作者可能仍在编辑，栏内容已保留。");
                 }}
                 onTableEdit={readOnly ? undefined : (r, c, v) => {
                   if (readOnlyRef.current) return;
@@ -1166,7 +1229,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
             })
           }
           onLink={(url) => run((tx, s) => toggleMark(tx, s, "link", url))}
-          onType={(t) => run((tx, s) => setBlockType(tx, s, t))}
+          onType={(t) => run((tx, s) => { if (!isColumnText(tx.doc, s.f.b)) return setBlockType(tx, s, t); setColumnNotice("暂不支持更改栏内块类型。"); })}
           onComment={onComment ? () => {
             const s = sel.current;
             if (!doc || !s) return;
@@ -1235,6 +1298,9 @@ const BLOCK_CLASS: Record<string, string> = {
 interface BlockProps {
   /** columns 容器：渲染其子块（每栏一个） */
   childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[] }[];
+  columnRemount?: Record<string, number>;
+  syncVersion: number;
+  syncStatus: SyncDoc["status"];
   onAddColumn?: () => void;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
@@ -1263,7 +1329,7 @@ interface BlockProps {
   canCopy?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -1350,12 +1416,12 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
         <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>
           <div className="flex gap-2">
             {(childBlocks ?? []).map((ch) => (
-              <div key={ch.id} className="group/col min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id}>
-                <div data-text className="whitespace-pre-wrap break-words text-[15px] leading-7">
+              <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
+                <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none">
                   {ch.spans.map((c, i) => (
                     <Run key={i} text={c.ch} marks={c.marks} />
                   ))}
-                  {ch.spans.length === 0 && <span className="text-subtle">空栏</span>}
+                  {ch.spans.length === 0 && <br />}
                 </div>
                 {onDeleteColumn && <button
                   className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border bg-surface text-[11px] text-subtle hover:text-destructive group-hover/col:grid"
@@ -1383,21 +1449,12 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           <MessageCircle size={11} strokeWidth={1.7} className="inline" /> {commentBadge}
         </button>
       )}
-      {type === "math" || type === "diagram" ? null : type === "table" ? (
+      {type === "math" || type === "diagram" || type === "columns" ? null : type === "table" ? (
         <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <figure contentEditable={false} className="my-2 select-none">
-          <img
-            src={`/api/files/${props.fileId}`}
-            alt={props.name}
-            className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border"
-            draggable={false}
-            onClick={() => onPreviewImage?.(`/api/files/${props.fileId}`, props.name ?? "图片")}
-            data-preview-image
-          />
-        </figure>
+        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} version={syncVersion} status={syncStatus} onPreviewImage={onPreviewImage} />
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} />
       ) : type === "bookmark" ? (
@@ -1419,13 +1476,13 @@ function Block({ id, type, props, number, spans, childBlocks, onAddColumn, onDel
           <span className="shrink-0 text-subtle">↗</span>
         </a>
       ) : type === "file" ? (
-        <a contentEditable={false} href={`/api/files/${props.fileId}`} className="my-1 flex w-[360px] select-none items-center gap-3 rounded-lg border px-3.5 py-2.5 hover:bg-hover" data-file-card>
+        <div contentEditable={false} className="my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5" data-file-card>
           <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
           <span className="min-w-0">
-            <span className="block truncate text-[14px] font-medium">{props.name}</span>
-            <span className="block text-[12px] text-subtle">{fmtSize(Number(props.size ?? 0))}</span>
+            {canCopy ? <a href={`/api/files/${props.fileId}`} className="block truncate text-[14px] font-medium hover:underline">{props.name}</a> : <span className="block truncate text-[14px] font-medium">{props.name}</span>}
+            <span className="block text-[12px] text-subtle">{canCopy ? fmtSize(Number(props.size ?? 0)) : "下载已关闭"}</span>
           </span>
-        </a>
+        </div>
       ) : type === "code" ? (
         <div className="overflow-hidden rounded-lg border border-[#e5e7eb] dark:border-[#3c4043]">
           <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 dark:border-[#3c4043] dark:bg-[#23262a]" data-code-header>
@@ -1662,6 +1719,22 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
 
 function fmtSize(n: number) {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+}
+
+function InlineImage({ fileId, name, version, status, onPreviewImage }: { fileId?: string; name?: string; version: number; status: SyncDoc["status"]; onPreviewImage?: (src: string, alt: string) => void }) {
+  const [failure, setFailure] = useState<ImageFailure | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [automatic, setAutomatic] = useState(0);
+  const src = `/api/files/${fileId}`;
+  useEffect(() => {
+    if (!failure || !shouldRetryImage(failure, version, status, automatic)) return;
+    setFailure(null);
+    setAutomatic((n) => n + 1);
+    setAttempt((n) => n + 1);
+  }, [failure, version, status, automatic]);
+  return <figure contentEditable={false} className="my-2 select-none">
+    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onClick={() => onPreviewImage?.(src, name ?? "图片")} onError={() => setFailure({ version, status })} data-preview-image />}
+  </figure>;
 }
 
 

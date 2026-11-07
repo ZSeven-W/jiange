@@ -1,14 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { docsApi, type DocView } from "@/lib/api";
+import { ApiError, docsApi, type DocView } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 
+export function restoreErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.message && error.message !== "Conflict") return error.message;
+    if (error.status === 409) return "文档已变化或版本无法安全还原，请重新查看后重试。";
+    if (error.status === 401 || error.status === 403 || error.status === 404) return "当前无权还原该版本，请检查文档权限。";
+  }
+  return "还原失败，请检查网络后重试。";
+}
+
+export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { error: unknown; canEdit: boolean; onRetry: () => void; onDismiss: () => void }) {
+  return <div role="alert" className="mx-4 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-destructive">
+    <p>{restoreErrorMessage(error)}</p>
+    <div className="mt-2 flex gap-3">
+      {canEdit && <button type="button" className="underline" onClick={onRetry}>重新尝试</button>}
+      <button type="button" className="underline" onClick={onDismiss}>关闭提示</button>
+    </div>
+  </div>;
+}
+
 /** Right drawer: version list, read-only preview and restore (P6). */
-export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: boolean; onClose: () => void }) {
+export function VersionPanel({ id, canEdit, disableFileDownloads, onClose }: { id: number; canEdit: boolean; disableFileDownloads: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["versions", id], queryFn: () => docsApi.versions(id) });
   const [previewing, setPreviewing] = useState<number | null>(null);
+  const latest = useRef({ id, canEdit, previewing });
+  latest.current = { id, canEdit, previewing };
+  const mounted = useRef(true);
+  const confirming = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const preview = useQuery({
     queryKey: ["versions", id, previewing],
     queryFn: () => docsApi.versionPreview(id, previewing!),
@@ -25,6 +49,18 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
       setPreviewing(null);
     },
   });
+  const startRestore = async () => {
+    const target = latest.current;
+    if (!target.canEdit || target.previewing === null || restore.isPending || confirming.current) return;
+    confirming.current = true;
+    try {
+      const confirmed = await ask("还原到该版本？", "当前内容会被新操作覆盖（历史保留）。", false);
+      if (confirmed && mounted.current && latest.current.id === target.id && latest.current.canEdit && latest.current.previewing === target.previewing) {
+        restore.reset();
+        restore.mutate(target.previewing);
+      }
+    } finally { confirming.current = false; }
+  };
   return (
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl" data-version-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
@@ -51,7 +87,7 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
           <div
             key={v.seq}
             className={`mb-2 cursor-pointer rounded-lg border p-3 text-[13px] hover:bg-hover ${previewing === v.seq ? "border-primary" : ""}`}
-            onClick={() => setPreviewing(v.seq)}
+            onClick={() => { if (!restore.isPending) { restore.reset(); setPreviewing(v.seq); } }}
             data-version-item={v.seq}
           >
             <div className="flex items-center gap-2 font-medium">
@@ -72,17 +108,16 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
               <button
                 className="ml-auto h-7 rounded-md bg-primary px-3 text-[12px] font-normal text-white hover:opacity-90"
                 disabled={restore.isPending}
-                onClick={async () => {
-                  if (await ask("还原到该版本？", "当前内容会被新操作覆盖（历史保留）。", false)) restore.mutate(previewing);
-                }}
+                onClick={() => void startRestore()}
                 data-restore-version
               >
                 {restore.isPending ? "还原中…" : "还原到此版本"}
               </button>
             )}
           </div>
+          {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canEdit} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
           <div className="flex-1 overflow-y-auto px-5 py-4 text-[14px] leading-6">
-            {preview.data ? <VersionView view={preview.data.view} /> : <p className="text-subtle">加载中…</p>}
+            {preview.data ? <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing} /> : <p className="text-subtle">加载中…</p>}
           </div>
         </div>
       )}
@@ -91,6 +126,6 @@ export function VersionPanel({ id, canEdit, onClose }: { id: number; canEdit: bo
 }
 
 /** Read-only snapshot projection shared with publicly shared documents. */
-export function VersionView({ view }: { view: DocView }) {
-  return <ReadOnlyDoc view={view} />;
+export function VersionView({ view, disableFileDownloads = false, versionSeq }: { view: DocView; disableFileDownloads?: boolean; versionSeq?: number }) {
+  return <ReadOnlyDoc view={view} disableFileDownloads={disableFileDownloads} imageVersionSeq={versionSeq} />;
 }

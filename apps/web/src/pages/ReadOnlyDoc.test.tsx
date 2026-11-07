@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
+import { VersionView } from "./VersionPanel";
 import type { DocView } from "@/lib/api";
 
 // Mermaid is asynchronous and requires a browser; exercise its integration here.
@@ -50,5 +51,16 @@ describe("read-only document snapshots", () => {
     expect(protectedHTML).toContain('src="/api/public/example-token/files/12"');
     expect(protectedHTML).not.toContain('/files/34');
     expect(protectedHTML).toContain("下载已关闭");
+  });
+
+  it("keeps images visible in protected versions without exposing attachment links", () => {
+    const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "预览图" }), b("1:2", "file", "", { fileId: "34", name: "方案.pdf" })] };
+    const protectedHTML = renderToStaticMarkup(<VersionView view={view} disableFileDownloads versionSeq={42} />);
+    expect(protectedHTML).toContain('src="/api/files/12?version=42"');
+    expect(protectedHTML).not.toContain('href="/api/files/34"');
+    expect(protectedHTML).toContain("下载已关闭");
+    const managerHTML = renderToStaticMarkup(<VersionView view={view} versionSeq={42} />);
+    expect(managerHTML).toContain('src="/api/files/12?version=42"');
+    expect(managerHTML).toContain('href="/api/files/34"');
   });
 });

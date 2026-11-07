@@ -15,6 +15,12 @@ export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
 export const SOURCE_BLOCK_TYPES = new Set(["math", "diagram"]);
 export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns", ...SOURCE_BLOCK_TYPES]);
 export const isSourceBlock = (doc: Doc, b: OpId) => doc.hasBlock(b) && SOURCE_BLOCK_TYPES.has(doc.blockInfo(b).type);
+/** Legacy column contents are paragraph children of the columns block. */
+export const isColumnText = (doc: Doc, b: OpId) => {
+  if (!doc.hasBlock(b)) return false;
+  const parent = doc.blockInfo(b).parent;
+  return doc.hasBlock(parent) && doc.blockInfo(parent).type === "columns";
+};
 export const INLINE_MARKS = ["bold", "italic", "underline", "strike", "code", "link", "color", "bg", "math"] as const;
 
 /** Body blocks in document order (the title block is edited separately). */
@@ -34,6 +40,10 @@ export function orderMap(blocks: OpId[]) {
 }
 
 export function normalize(doc: Doc, sel: Sel): { start: Pos; end: Pos; blocks: OpId[] } {
+  if (eqId(sel.a.b, sel.f.b)) {
+    const [start, end] = sel.a.o <= sel.f.o ? [sel.a, sel.f] : [sel.f, sel.a];
+    return { start, end, blocks: [sel.a.b] };
+  }
   const blocks = bodyBlocks(doc);
   const ord = orderMap(blocks);
   const [start, end] = cmpPos(ord, sel.a, sel.f) <= 0 ? [sel.a, sel.f] : [sel.f, sel.a];
@@ -41,13 +51,19 @@ export function normalize(doc: Doc, sel: Sel): { start: Pos; end: Pos; blocks: O
   return { start, end, blocks: blocks.slice(i, j + 1) };
 }
 
+/** The clipboard format cannot yet serialize nested column children. */
+export function selectionContainsColumns(doc: Doc, sel: Sel): boolean {
+  return normalize(doc, sel).blocks.some((b) => doc.blockInfo(b).type === "columns");
+}
+
 export const collapsed = (s: Sel) => eqId(s.a.b, s.f.b) && s.a.o === s.f.o;
 
 /** Deletes the selected range (possibly spanning blocks); returns the caret. */
 export function deleteRange(tx: Tx, sel: Sel): Pos {
   const doc = tx.doc;
+  if (!eqId(sel.a.b, sel.f.b) && (isColumnText(doc, sel.a.b) || isColumnText(doc, sel.f.b))) return sel.a;
   const { start, end, blocks } = normalize(doc, sel);
-  if (blocks.some((b) => isSourceBlock(doc, b))) {
+  if (blocks.some((b) => isSourceBlock(doc, b) || doc.blockInfo(b).type === "columns")) {
     // Source text is not part of the visible selection. Preserve these blocks
     // and delete only selected characters in normal text blocks; in particular,
     // never merge text across an atomic block or tombstone it as a side effect.
@@ -77,6 +93,10 @@ export function deleteRange(tx: Tx, sel: Sel): Pos {
 /** Splits a block at pos (Enter). Returns the caret. */
 export function splitBlock(tx: Tx, pos: Pos): Pos {
   const doc = tx.doc;
+  if (isColumnText(doc, pos.b)) {
+    const n = tx.insert(pos.b, pos.o, "\n");
+    return { b: pos.b, o: pos.o + n };
+  }
   const info = doc.blockInfo(pos.b);
   if (SOURCE_BLOCK_TYPES.has(info.type)) return { b: tx.create("paragraph", pos.b, info.parent), o: 0 };
   const n = len(doc, pos.b);
@@ -108,6 +128,7 @@ export function splitBlock(tx: Tx, pos: Pos): Pos {
 /** Backspace at the start of a block. */
 export function joinBackward(tx: Tx, b: OpId): Pos {
   const doc = tx.doc;
+  if (isColumnText(doc, b)) return { b, o: 0 };
   const info = doc.blockInfo(b);
   if (SOURCE_BLOCK_TYPES.has(info.type)) return { b, o: 0 };
   if ((info.props.indent ?? "0") !== "0") {
@@ -122,7 +143,7 @@ export function joinBackward(tx: Tx, b: OpId): Pos {
   const i = blocks.findIndex((x) => eqId(x, b));
   if (i <= 0) return { b, o: 0 };
   const prev = blocks[i - 1];
-  if (isSourceBlock(doc, prev)) return { b, o: 0 };
+  if (isSourceBlock(doc, prev) || doc.blockInfo(prev).type === "columns") return { b, o: 0 };
   if (TEXTLESS.has(doc.blockInfo(prev).type)) {
     tx.deleteBlock(prev);
     return { b, o: 0 };
@@ -137,13 +158,14 @@ export function joinBackward(tx: Tx, b: OpId): Pos {
 /** Delete at the end of a block: pull the next block in. */
 export function joinForward(tx: Tx, b: OpId): Pos {
   const doc = tx.doc;
+  if (isColumnText(doc, b)) return { b, o: len(doc, b) };
   if (isSourceBlock(doc, b)) return { b, o: 0 };
   const blocks = bodyBlocks(doc);
   const i = blocks.findIndex((x) => eqId(x, b));
   const at = len(doc, b);
   if (i < 0 || i === blocks.length - 1) return { b, o: at };
   const next = blocks[i + 1];
-  if (isSourceBlock(doc, next)) return { b, o: at };
+  if (isSourceBlock(doc, next) || doc.blockInfo(next).type === "columns") return { b, o: at };
   if (TEXTLESS.has(doc.blockInfo(next).type)) {
     tx.deleteBlock(next);
     return { b, o: at };

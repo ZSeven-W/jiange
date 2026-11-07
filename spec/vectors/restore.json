@@ -1,0 +1,916 @@
+{
+  "state": "SlMBLwgHAQAAAVUHAQEBBHR5cGUHY29sdW1ucwcBAAAHAgcBAUEHAgABBHR5cGUJcGFyYWdyYXBoBwIFBwMBAAAD5LitBwQBAQAD5paHBwUBAgAE8J+YgAcGAQMAAUEHBwEEAAFCAgcIBGJvbGQBBHRydWUHAwAHBQEHCQRsaW5rARNodHRwczovL2V4YW1wbGUuY29tBwYABwcBBwoHAQFCBwoAAQR0eXBlCXBhcmFncmFwaAcKAgcLAQAAA+WPswcMAQEAA+S+pwAHDQcKAVUHDQACBmluZGVudAExBxIEdHlwZQJoMgcNBAcOAQAAA+W1jAcPAQEAA+WllwcQAQIAA+WGhQcRAQMAA+WuuQAHEwAAAVYHEwABBHR5cGUJcGFyYWdyYXBoBy4DBxQBAAAD5qCHBxUBAQAD6aKYBxYBAgAE8J+YgAIHFwRib2xkAQR0cnVlBxQABxUBBy8EYm9sZAAHFAAHFQEHGAAAAVcHGAEBBHR5cGUJcGFyYWdyYXBoBxgFBxkBAAABRgcaAQEAAUkHGwECAAFSBxwBAwABUwcdAQQAAVQABx4AAAFXBx4AAQR0eXBlCXBhcmFncmFwaAceBgcfAQAAAVMHIAEBAAFFByEBAgABQwciAQMAAU8HIwEEAAFOByQBBQABRAAHJQAAAVgHJQEBBHR5cGUJcGFyYWdyYXBoByUDByYBAAABQQcnAQEBAUIHKAECAAFDAQcpBWNvbG9yAQRibHVlBycABycB",
+  "ops": [
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 48
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "U",
+      "type": "columns",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 49
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 19,
+        "clock": 48
+      },
+      "pos": "A",
+      "type": "paragraph",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tins",
+      "id": {
+        "client": 19,
+        "clock": 50
+      },
+      "block": {
+        "client": 19,
+        "clock": 49
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 1,
+      "text": "中文😀AB",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "mark",
+      "id": {
+        "client": 19,
+        "clock": 55
+      },
+      "block": {
+        "client": 19,
+        "clock": 49
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "bold",
+      "value": "true",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 19,
+          "clock": 50
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 19,
+          "clock": 52
+        },
+        "side": 1
+      }
+    },
+    {
+      "t": "mark",
+      "id": {
+        "client": 19,
+        "clock": 56
+      },
+      "block": {
+        "client": 19,
+        "clock": 49
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "link",
+      "value": "https://example.com",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 19,
+          "clock": 53
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 19,
+          "clock": 54
+        },
+        "side": 1
+      }
+    },
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 57
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 19,
+        "clock": 48
+      },
+      "pos": "B",
+      "type": "paragraph",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tins",
+      "id": {
+        "client": 19,
+        "clock": 58
+      },
+      "block": {
+        "client": 19,
+        "clock": 57
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 1,
+      "text": "右侧",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 60
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 19,
+        "clock": 57
+      },
+      "pos": "U",
+      "type": "h2",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tins",
+      "id": {
+        "client": 19,
+        "clock": 61
+      },
+      "block": {
+        "client": 19,
+        "clock": 60
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 1,
+      "text": "嵌套内容",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bset",
+      "id": {
+        "client": 19,
+        "clock": 65
+      },
+      "block": {
+        "client": 19,
+        "clock": 60
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "indent",
+      "value": "1",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bset",
+      "id": {
+        "client": 19,
+        "clock": 66
+      },
+      "block": {
+        "client": 7,
+        "clock": 19
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "type",
+      "value": "h1",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "mark",
+      "id": {
+        "client": 19,
+        "clock": 67
+      },
+      "block": {
+        "client": 7,
+        "clock": 19
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "bold",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 7,
+          "clock": 20
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "mark",
+      "id": {
+        "client": 19,
+        "clock": 68
+      },
+      "block": {
+        "client": 7,
+        "clock": 19
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "bold",
+      "value": "true",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 7,
+          "clock": 20
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 7,
+          "clock": 21
+        },
+        "side": 1
+      }
+    },
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 69
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "W",
+      "type": "paragraph",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tins",
+      "id": {
+        "client": 19,
+        "clock": 70
+      },
+      "block": {
+        "client": 19,
+        "clock": 69
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 1,
+      "text": "FIRST",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bmove",
+      "id": {
+        "client": 19,
+        "clock": 75
+      },
+      "block": {
+        "client": 7,
+        "clock": 30
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "W000000000001V",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "bcreate",
+      "id": {
+        "client": 19,
+        "clock": 76
+      },
+      "block": {
+        "client": 0,
+        "clock": 0
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "X",
+      "type": "paragraph",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tins",
+      "id": {
+        "client": 19,
+        "clock": 77
+      },
+      "block": {
+        "client": 19,
+        "clock": 76
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 1,
+      "text": "ABC",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "tdel",
+      "id": {
+        "client": 19,
+        "clock": 80
+      },
+      "block": {
+        "client": 19,
+        "clock": 76
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "",
+      "value": null,
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 19,
+        "clock": 78
+      },
+      "len": 1,
+      "start": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 0,
+          "clock": 0
+        },
+        "side": 0
+      }
+    },
+    {
+      "t": "mark",
+      "id": {
+        "client": 19,
+        "clock": 81
+      },
+      "block": {
+        "client": 19,
+        "clock": 76
+      },
+      "parent": {
+        "client": 0,
+        "clock": 0
+      },
+      "pos": "",
+      "type": "",
+      "key": "color",
+      "value": "blue",
+      "side": 0,
+      "text": "",
+      "target": {
+        "client": 0,
+        "clock": 0
+      },
+      "len": 0,
+      "start": {
+        "char": {
+          "client": 19,
+          "clock": 78
+        },
+        "side": 0
+      },
+      "end": {
+        "char": {
+          "client": 19,
+          "clock": 78
+        },
+        "side": 1
+      }
+    }
+  ],
+  "expected": {
+    "blocks": [
+      {
+        "id": "19:48",
+        "parent": "0:0",
+        "type": "columns",
+        "props": {},
+        "spans": []
+      },
+      {
+        "id": "19:49",
+        "parent": "19:48",
+        "type": "paragraph",
+        "props": {},
+        "spans": [
+          {
+            "text": "中文😀",
+            "marks": {
+              "bold": "true"
+            }
+          },
+          {
+            "text": "AB",
+            "marks": {
+              "link": "https://example.com"
+            }
+          }
+        ]
+      },
+      {
+        "id": "19:57",
+        "parent": "19:48",
+        "type": "paragraph",
+        "props": {},
+        "spans": [
+          {
+            "text": "右侧",
+            "marks": {}
+          }
+        ]
+      },
+      {
+        "id": "19:60",
+        "parent": "19:57",
+        "type": "h2",
+        "props": {
+          "indent": "1"
+        },
+        "spans": [
+          {
+            "text": "嵌套内容",
+            "marks": {}
+          }
+        ]
+      },
+      {
+        "id": "7:19",
+        "parent": "0:0",
+        "type": "h1",
+        "props": {},
+        "spans": [
+          {
+            "text": "标题",
+            "marks": {
+              "bold": "true"
+            }
+          },
+          {
+            "text": "😀",
+            "marks": {}
+          }
+        ]
+      },
+      {
+        "id": "19:69",
+        "parent": "0:0",
+        "type": "paragraph",
+        "props": {},
+        "spans": [
+          {
+            "text": "FIRST",
+            "marks": {}
+          }
+        ]
+      },
+      {
+        "id": "7:30",
+        "parent": "0:0",
+        "type": "paragraph",
+        "props": {},
+        "spans": [
+          {
+            "text": "SECOND",
+            "marks": {}
+          }
+        ]
+      },
+      {
+        "id": "19:76",
+        "parent": "0:0",
+        "type": "paragraph",
+        "props": {},
+        "spans": [
+          {
+            "text": "AC",
+            "marks": {}
+          }
+        ]
+      }
+    ]
+  }
+}
