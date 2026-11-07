@@ -36,7 +36,8 @@ import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftS
 import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
 import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./commentAttemptApi";
 import { CommentAttemptRecovery } from "./CommentAttemptRecovery";
-import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
+import { OutlinePanel, outlineOf, type OutlineItem } from "./OutlinePanel";
+import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendMarkdownOps } from "@/lib/mdImport";
@@ -144,7 +145,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [history, setHistory] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
+  const [preview, setPreview] = useState<{ src: string; alt: string; mime?: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const pendingCommentScroll = useRef<number | null>(null);
@@ -715,7 +716,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setDraft(anchor);
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
-                onPreviewImage={(src, alt) => setPreview({ src, alt })}
+                onPreviewImage={(src, alt, mime) => setPreview({ src, alt, mime })}
                 people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name }))}
                 onMentionPerson={(uid, name) => {
                   // 文档内 @人 → 通知中心（mention）
@@ -772,7 +773,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           }}
         />
       )}
-      {preview && <ImagePreview src={preview.src} alt={preview.alt} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
+      {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {history && (

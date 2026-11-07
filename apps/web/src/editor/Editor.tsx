@@ -107,7 +107,7 @@ interface Props {
   /** 单独控制附件下载；未提供时兼容旧的合并设置。 */
   disableFileDownloads?: boolean;
   /** 点击图片 → 大图预览 */
-  onPreviewImage?: (src: string, alt: string) => void;
+  onPreviewImage?: (src: string, alt: string, mime?: string) => void;
   /** 公式块编辑器（默认 askText；返回 null 表示取消） */
   onMathSource?: (src: string) => Promise<string | null>;
   /** @人 提及插入（发通知用） */
@@ -1549,7 +1549,7 @@ interface BlockProps {
   /** The insertion affordance is visible on an otherwise blank document. */
   alwaysShowInsert?: boolean;
   touchActive?: boolean;
-  onPreviewImage?: (src: string, alt: string) => void;
+  onPreviewImage?: (src: string, alt: string, mime?: string) => void;
   /** 公式块：请求编辑源码 */
   onMathSource?: (blockKey: string) => void;
   onDiagramSource?: (blockKey: string) => void;
@@ -1711,13 +1711,20 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
+        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} mime={props.mime} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
         <BookmarkBlock url={props.url} name={props.name} />
       ) : type === "file" ? (
-        <div contentEditable={false} className="my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5" data-file-card>
+        <div
+          contentEditable={false}
+          className={cn("my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5", onPreviewImage && isPreviewable(props.mime) && "cursor-zoom-in hover:bg-hover")}
+          onClick={() => {
+            if (onPreviewImage && isPreviewable(props.mime)) onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime);
+          }}
+          data-file-card
+        >
           <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
           <span className="min-w-0">
             {canDownload ? <a href={`/api/files/${props.fileId}`} className="block truncate text-[14px] font-medium hover:underline">{props.name}</a> : <span className="block truncate text-[14px] font-medium">{props.name}</span>}
@@ -1948,7 +1955,7 @@ function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
     : <div contentEditable={false} className={className} data-bookmark>{content}</div>;
 }
 
-function InlineImage({ fileId, name, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string) => void }) {
+function InlineImage({ fileId, name, mime, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; mime?: string; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string, mime?: string) => void }) {
   const [failure, setFailure] = useState<ImageFailure | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [automatic, setAutomatic] = useState(0);
@@ -1960,7 +1967,7 @@ function InlineImage({ fileId, name, version, status, disableFileDownloads = fal
     setAttempt((n) => n + 1);
   }, [failure, version, status, automatic]);
   return <figure contentEditable={false} className="my-2 select-none">
-    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片")} onError={() => setFailure({ version, status })} data-preview-image />}
+    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片", mime)} onError={() => setFailure({ version, status })} data-preview-image />}
   </figure>;
 }
 
@@ -2001,4 +2008,10 @@ function VideoBlock({ url, name, disableFileDownloads = false }: { url?: string;
       )}
     </div>
   );
+}
+
+
+/** 可在线预览的附件 mime：图片/PDF/纯文本类。 */
+function isPreviewable(mime?: string): boolean {
+  return !!mime && (mime.startsWith("image/") || mime === "application/pdf" || mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
 }
