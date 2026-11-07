@@ -39,12 +39,44 @@ type SeqOp struct {
 	Bytes    []byte
 }
 
+// DocCopy describes one snapshot-based copy. FileIDs are the distinct source
+// attachments referenced by that snapshot. Build runs inside the creation
+// transaction and must be deterministic, side-effect-free, and must not call
+// the Store; it receives freshly allocated attachment IDs for the new doc.
+type DocCopy struct {
+	SourceID, UserID, WorkspaceID int64
+	ParentID                      *int64
+	Title                         string
+	FileIDs                       []int64
+}
+
+type DocCopyBuilder func(map[int64]int64) ([]RawOp, error)
+
+// RestoreGuard identifies the already-authenticated caller without storing a
+// raw session token. Now is evaluated after locks are acquired.
+type RestoreGuard struct {
+	UserID      int64
+	SessionHash []byte
+	Now         func() time.Time
+}
+
+func (g RestoreGuard) currentTime() time.Time {
+	if g.Now != nil {
+		return g.Now()
+	}
+	return time.Now()
+}
+
 // DocStore persists documents, their op logs and snapshots.
 type DocStore interface {
 	ShareStore
 	BaseStore
 	// CreateDoc creates a doc node; initial ops get seqs 1..n.
 	CreateDoc(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string, initial []RawOp) (DocMeta, error)
+	// CopyDoc atomically creates the document, its file references and all ops.
+	// Referenced blobs are immutable and shared; any future blob garbage
+	// collector must retain an object while any attachment references it.
+	CopyDoc(ctx context.Context, copy DocCopy, build DocCopyBuilder) (DocMeta, error)
 	ListDocs(ctx context.Context, userID int64) ([]DocMeta, error)
 	// Search lists the user's accessible docs whose title or collaborative
 	// text matches q (title match only on Memory; Postgres also greps ops).
@@ -81,6 +113,11 @@ type DocStore interface {
 	// AppendOps assigns consecutive seqs to ops not already stored (by
 	// client/clock identity). seqs[i] is 0 for duplicates.
 	AppendOps(ctx context.Context, docID int64, ops []RawOp) (seqs []int64, err error)
+	// AppendRestoreOps atomically verifies the current edit grant and head before
+	// appending a restore plan derived from that exact head. It returns
+	// ErrConflict when concurrent edits invalidate the plan, or ErrForbidden
+	// when the caller no longer has edit access.
+	AppendRestoreOps(ctx context.Context, guard RestoreGuard, docID, expectedHead int64, ops []RawOp) (seqs []int64, err error)
 	OpsAfter(ctx context.Context, docID, after int64, limit int) ([]SeqOp, error)
 	Head(ctx context.Context, docID int64) (int64, error)
 	LatestSnapshot(ctx context.Context, docID int64) (seq int64, state []byte, err error) // ErrNotFound if none

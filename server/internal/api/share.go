@@ -252,20 +252,67 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 	// bypass access checks after an invitation or link is revoked.
 	w.Header().Set("Cache-Control", "private, no-store")
 	u, _ := UserFrom(r.Context())
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	f, err := s.Store.GetFile(r.Context(), id)
-	if err == nil {
-		_, err = s.Store.GetDoc(r.Context(), u.ID, f.DocID)
-	}
-	if err != nil || s.Blobs == nil {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 || s.Blobs == nil {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	s.serveFile(w, r, f, false)
+	f, err := s.Store.GetFile(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	authorize := func() (bool, error) {
+		meta, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID)
+		if err != nil {
+			return false, store.ErrNotFound
+		}
+		requireRaster := meta.CopyProtected && meta.Role != store.RoleManage
+		if !requireRaster {
+			return false, nil
+		}
+		if !canInlineImage(f.Mime) {
+			return false, store.ErrNotFound
+		}
+		visible, err := s.isProtectedImage(r, f)
+		if err != nil {
+			return false, err
+		}
+		if !visible {
+			return false, store.ErrNotFound
+		}
+		// Resolving the current or historic image reference can involve replaying
+		// a long document or reading a remote snapshot. Access can be revoked
+		// while that is in progress, so check the caller again after the read.
+		if _, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID); err != nil {
+			return false, store.ErrNotFound
+		}
+		return true, nil
+	}
+	requireRaster, err := authorize()
+	if err != nil {
+		s.fileAccessError(w, r, err)
+		return
+	}
+	s.serveFileAuthorized(w, r, f, requireRaster, authorize)
 }
 
 // serveFile is called only after a document-specific authorization check.
 func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, f store.FileMeta, requireRaster bool) {
+	s.serveFileAuthorized(w, r, f, requireRaster, nil)
+}
+
+func (s *Server) fileAccessError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
+	} else {
+		s.fail(w, r, err)
+	}
+}
+
+// recheck runs after opening the blob and again immediately before response
+// headers; file access and network transmission are still not transactional.
+func (s *Server) serveFileAuthorized(w http.ResponseWriter, r *http.Request, f store.FileMeta, requireRaster bool, recheck func() (bool, error)) {
 	rc, err := s.Blobs.Get(r.Context(), f.ObjectKey)
 	if errors.Is(err, blob.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
@@ -276,20 +323,49 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, f store.FileM
 	}
 	defer rc.Close()
 	var body io.Reader = rc
-	if requireRaster {
+	check := func() bool {
+		if recheck == nil {
+			return true
+		}
+		restricted, err := recheck()
+		if err != nil {
+			s.fileAccessError(w, r, err)
+			return false
+		}
+		requireRaster = requireRaster || restricted
+		return true
+	}
+	if !check() {
+		return
+	}
+	validated := false
+	validate := func() bool {
+		if !requireRaster || validated {
+			return true
+		}
 		// Upload MIME metadata is supplied by the uploader. Check the bytes too,
 		// otherwise a PDF masquerading as an image could bypass download limits.
 		buffered := bufio.NewReader(rc)
 		header, err := buffered.Peek(512)
 		if err != nil && !errors.Is(err, io.EOF) {
 			s.fail(w, r, err)
-			return
+			return false
 		}
 		if !isRasterImage(header) {
 			httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
-			return
+			return false
 		}
 		body = buffered
+		validated = true
+		return true
+	}
+	if !validate() || !check() || !validate() {
+		return
+	}
+	// If the second check newly required raster validation, that read could
+	// block too. Recheck once more after it, before sending response headers.
+	if validated && !check() {
+		return
 	}
 	w.Header().Set("Content-Type", f.Mime)
 	w.Header().Set("Content-Length", strconv.FormatInt(f.Size, 10))

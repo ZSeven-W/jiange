@@ -19,10 +19,17 @@ import (
 )
 
 var ErrNotFound = errors.New("blob not found")
+var ErrSizeUnknown = errors.New("blob size unavailable")
 
 type Store interface {
 	Put(ctx context.Context, key, mime string, body []byte) error
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+}
+
+// Sizer is an optional, read-only metadata capability. Callers can fall back
+// to streaming when a backend cannot report an object length.
+type Sizer interface {
+	Size(ctx context.Context, key string) (int64, error)
 }
 
 // Memory is an in-process blob store.
@@ -48,6 +55,16 @@ func (s *Memory) Get(_ context.Context, key string) (io.ReadCloser, error) {
 		return nil, ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (s *Memory) Size(_ context.Context, key string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.m[key]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return int64(len(b)), nil
 }
 
 // S3 talks path-style S3 (MinIO) at Endpoint (e.g. http://127.0.0.1:9000).
@@ -166,4 +183,26 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("get %s: %s", key, resp.Status)
 	}
 	return resp.Body, nil
+}
+
+// Size performs a signed HEAD request without transferring attachment bytes.
+func (s *S3) Size(ctx context.Context, key string) (int64, error) {
+	resp, err := s.do(ctx, http.MethodHead, key, "", nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return 0, ErrNotFound
+	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return 0, ErrSizeUnknown
+	case http.StatusOK:
+		if resp.ContentLength < 0 {
+			return 0, ErrSizeUnknown
+		}
+		return resp.ContentLength, nil
+	default:
+		return 0, fmt.Errorf("head %s: %s", key, resp.Status)
+	}
 }

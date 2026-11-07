@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/collab"
+	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -171,7 +172,7 @@ func (s *Server) restoreVersion(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	cur, _, err := StateAtHead(r.Context(), s.Store, d.ID)
+	cur, head, err := StateAtHead(r.Context(), s.Store, d.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -182,9 +183,13 @@ func (s *Server) restoreVersion(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	ops := collab.RestoreOps(cur, target, uint64(client))
-	if len(ops) == 0 {
-		httpx.JSON(w, http.StatusOK, map[string]any{"restored": 0})
+	ops, err := collab.RestoreOpsChecked(cur, target, uint64(client))
+	if errors.Is(err, collab.ErrRestoreUnrepresentable) {
+		httpx.Error(w, http.StatusConflict, "restore_unrepresentable", "该版本的格式或锚点暂无法安全还原，当前文档未更改")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
 		return
 	}
 	raws := make([]store.RawOp, len(ops))
@@ -196,7 +201,22 @@ func (s *Server) restoreVersion(w http.ResponseWriter, r *http.Request) {
 		}
 		raws[i] = store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b}
 	}
-	if _, err := s.Store.AppendOps(r.Context(), d.ID, raws); err != nil {
+	cookie, err := r.Cookie(CookieName)
+	if err != nil || cookie.Value == "" {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未还原版本")
+		return
+	}
+	guard := store.RestoreGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
+	if _, err := s.Store.AppendRestoreOps(r.Context(), guard, d.ID, head, raws); errors.Is(err, store.ErrUnauthenticated) {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未还原版本")
+		return
+	} else if errors.Is(err, store.ErrConflict) {
+		httpx.Error(w, http.StatusConflict, "restore_conflict", "文档已更新，请重新查看版本后重试；当前文档未更改")
+		return
+	} else if errors.Is(err, store.ErrForbidden) || errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有编辑权限，未还原版本")
+		return
+	} else if err != nil {
 		s.fail(w, r, err)
 		return
 	}

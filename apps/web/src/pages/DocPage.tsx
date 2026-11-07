@@ -30,6 +30,7 @@ import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendMarkdownOps } from "@/lib/mdImport";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
+import { canCopyDocument, copyErrorMessage } from "./documentCopy";
 import { Check, Eye, MessageSquare, Star } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
@@ -461,7 +462,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       )}
       {preview && <ImagePreview src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
-      {history && <VersionPanel id={id} canEdit={canEditContent} onClose={() => setHistory(false)} />}
+      {history && <VersionPanel id={id} canEdit={canEditContent} disableFileDownloads={!metadataVerified || !!meta.data?.copyProtected && meta.data.role !== "manage"} onClose={() => setHistory(false)} />}
       {meta.data?.copyProtected && (
         <div
           className="pointer-events-none fixed inset-0 z-50 select-none overflow-hidden"
@@ -676,6 +677,15 @@ function DocMenu({
   wordCount: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [copyPending, setCopyPending] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const [copyNotice, setCopyNotice] = useState("");
+  const copying = useRef(false);
+  const live = useRef(true);
+  const currentMeta = useRef(meta);
+  currentMeta.current = meta;
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => { setCopyError(""); setCopyNotice(""); }, [meta?.id]);
   const qc = useQueryClient();
   const prot = useMutation({
     mutationFn: (on: boolean) => docsApi.setCopyProtected(meta!.id, on),
@@ -696,17 +706,35 @@ function DocMenu({
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
   const duplicate = async () => {
-    if (!meta) return;
-    const nd = await docsApi.duplicate(meta.id);
-    qc.invalidateQueries({ queryKey: ["docs"] });
+    if (!canCopyDocument(meta) || copying.current) return;
+    const sourceId = meta!.id;
+    copying.current = true;
+    setCopyPending(true);
+    setCopyError("");
+    setCopyNotice("");
     setOpen(false);
-    location.hash = `#/doc/${nd.id}`;
+    try {
+      const nd = await docsApi.duplicate(sourceId);
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      // Do not navigate if the user left the document or lost verified access
+      // while the request was running.
+      if (live.current && currentMeta.current?.id === sourceId && canCopyDocument(currentMeta.current)) go(hrefOf(nd));
+      else if (live.current) setCopyNotice("副本已创建，请在主页查看。");
+    } catch (error) {
+      if (live.current) setCopyError(copyErrorMessage(error));
+    } finally {
+      copying.current = false;
+      if (live.current) setCopyPending(false);
+    }
   };
   return (
     <div className="relative">
       <button className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" onClick={() => setOpen((o) => !o)} data-more-menu>
         <MoreIcon className="size-4" />
       </button>
+      {copyPending && <span role="status" className="absolute right-0 top-9 z-40 whitespace-nowrap rounded-md border bg-surface px-3 py-2 text-[13px] text-muted-foreground shadow-lg">正在创建副本…</span>}
+      {copyNotice && <div role="status" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] shadow-lg"><span className="min-w-0 flex-1">{copyNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setCopyNotice("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
+      {copyError && <div role="alert" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] text-destructive shadow-lg"><span className="min-w-0 flex-1">{copyError}</span><button type="button" aria-label="关闭错误提示" onClick={() => setCopyError("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {open && (
         <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
           <div className="px-3 py-1.5 text-[12px] text-subtle" data-word-count>字数统计：{wordCount}</div>
@@ -723,8 +751,8 @@ function DocMenu({
               导出 Markdown
             </button>
           )}
-          {meta && (
-            <button className={item} onClick={duplicate} data-duplicate>
+          {canCopyDocument(meta) && (
+            <button className={cn(item, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate>
               创建副本
             </button>
           )}

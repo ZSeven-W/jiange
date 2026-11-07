@@ -204,6 +204,73 @@ func (m *Memory) AppendOps(_ context.Context, doc int64, ops []RawOp) ([]int64, 
 	return seqs, nil
 }
 
+// AppendRestoreOps checks authorization and head while holding the same lock
+// used by ordinary writes and grant changes; no partial batch is published.
+func (m *Memory) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, expectedHead int64, ops []RawOp) ([]int64, error) {
+	m.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	session, ok := m.sessions[string(guard.SessionHash)]
+	if !ok || session.userID != guard.UserID || !guard.currentTime().Before(session.expires) {
+		m.mu.Unlock()
+		return nil, ErrUnauthenticated
+	}
+	d := m.doc(doc)
+	if d == nil || d.deleted || RoleRank(m.roleLocked(guard.UserID, d)) < RoleRank(RoleEdit) {
+		m.mu.Unlock()
+		return nil, ErrForbidden
+	}
+	if int64(len(d.ops)) != expectedHead {
+		m.mu.Unlock()
+		return nil, ErrConflict
+	}
+	seen := make(map[[2]int64]bool, len(ops))
+	for _, op := range ops {
+		key := [2]int64{op.ClientID, op.Clock}
+		if d.ids[key] || seen[key] {
+			m.mu.Unlock()
+			return nil, ErrConflict
+		}
+		seen[key] = true
+	}
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	seqs := make([]int64, len(ops))
+	rows := make([]SeqOp, len(ops))
+	times := make([]time.Time, len(ops))
+	now := time.Now()
+	for i, op := range ops {
+		seqs[i] = expectedHead + int64(i) + 1
+		rows[i] = SeqOp{seqs[i], op.ClientID, op.Bytes}
+		times[i] = now
+	}
+	if !guard.currentTime().Before(session.expires) {
+		m.mu.Unlock()
+		return nil, ErrUnauthenticated
+	}
+	if len(ops) == 0 {
+		m.mu.Unlock()
+		return seqs, nil
+	}
+	for key := range seen {
+		d.ids[key] = true
+	}
+	d.ops = append(d.ops, rows...)
+	d.opAt = append(d.opAt, times...)
+	d.meta.UpdatedAt = now
+	head := int64(len(d.ops))
+	subs := slices.Clone(m.d.subs)
+	m.mu.Unlock()
+	for _, fn := range subs {
+		fn(doc, head)
+	}
+	return seqs, nil
+}
+
 func (m *Memory) OpsAfter(_ context.Context, doc, after int64, limit int) ([]SeqOp, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

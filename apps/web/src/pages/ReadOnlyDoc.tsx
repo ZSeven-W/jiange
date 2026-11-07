@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
 import { DiagramView } from "@/editor/DiagramView";
 import { MathView } from "@/editor/MathView";
@@ -18,9 +18,11 @@ function safeURL(url?: string): string | undefined {
   } catch { return undefined; }
 }
 
-function fileURL(id?: string, publicToken?: string): string | undefined {
+function fileURL(id?: string, publicToken?: string, versionSeq?: number): string | undefined {
   if (!id || !/^[1-9]\d*$/.test(id)) return undefined;
-  return publicToken ? `/api/public/${encodeURIComponent(publicToken)}/files/${id}` : `/api/files/${id}`;
+  if (publicToken) return `/api/public/${encodeURIComponent(publicToken)}/files/${id}`;
+  const suffix = Number.isSafeInteger(versionSeq) && (versionSeq ?? 0) > 0 ? `?version=${versionSeq}` : "";
+  return `/api/files/${id}${suffix}`;
 }
 
 function RichText({ spans }: { spans: Span[] }) {
@@ -36,9 +38,10 @@ function RichText({ spans }: { spans: Span[] }) {
   })}</>;
 }
 
-function ReadOnlyImage({ block, publicToken }: { block: Block; publicToken?: string }) {
+function ReadOnlyImage({ block, publicToken, versionSeq, recovery }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number }) {
   const [failed, setFailed] = useState(false);
-  const src = fileURL(block.props.fileId, publicToken);
+  const src = fileURL(block.props.fileId, publicToken, versionSeq);
+  useEffect(() => { setFailed(false); }, [src, recovery]);
   if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
   return <figure className="my-2"><img src={src} alt={block.props.name || "图片"} referrerPolicy="no-referrer" className="max-h-[480px] max-w-full rounded-lg border" onError={() => setFailed(true)} /></figure>;
 }
@@ -66,7 +69,7 @@ function ReadOnlyVideo({ url, name }: { url?: string; name?: string }) {
 const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8DEF8", "#FDEBE1"];
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
-export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean }) {
+export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number }) {
   const children = new Map<string, Block[]>();
   for (const block of view.blocks) {
     const group = children.get(block.parent) ?? [];
@@ -101,7 +104,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false }:
         case "table": content = <ReadOnlyTable data={block.props.tableData} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-3 border-border" />; break;
-        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}`} block={block} publicToken={publicToken} />; break;
+        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
           content = <div className="my-1 flex w-[360px] max-w-full items-center gap-3 rounded-lg border px-3.5 py-2.5"><span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(block.props.name?.split(".").pop() || "FILE").slice(0, 4).toUpperCase()}</span><span className="min-w-0">{href ? <a href={href} rel="noreferrer" className="block truncate text-[14px] font-medium hover:underline">{block.props.name || "附件"}</a> : <span className="block truncate text-[14px] font-medium">{block.props.name || "附件"}</span>}<span className="block text-[12px] text-subtle">{disableFileDownloads ? "下载已关闭" : formatSize(block.props.size)}</span></span></div>; break;

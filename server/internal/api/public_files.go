@@ -41,46 +41,61 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	doc, _, err := StateAtHead(r.Context(), s.Store, docID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	imageReference, fileReference := false, false
-	for _, block := range doc.View().Blocks {
-		if block.Props["fileId"] == strconv.FormatInt(fileID, 10) {
-			imageReference = imageReference || block.Type == "image"
-			fileReference = fileReference || block.Type == "file"
+	authorize := func() (bool, error) {
+		doc, _, err := StateAtHead(r.Context(), s.Store, docID)
+		if err != nil {
+			return false, err
 		}
+		imageReference, fileReference := false, false
+		for _, block := range doc.View().Blocks {
+			if block.Props["fileId"] == strconv.FormatInt(fileID, 10) {
+				imageReference = imageReference || block.Type == "image"
+				fileReference = fileReference || block.Type == "file"
+			}
+		}
+		currentDoc, currentRole, err := s.Store.DocByToken(r.Context(), tok)
+		if errors.Is(err, store.ErrNotFound) || err == nil && (currentDoc != docID || currentRole != "anon") {
+			return false, store.ErrNotFound
+		}
+		if err != nil {
+			return false, err
+		}
+		meta, err := s.Store.GetDocSystem(r.Context(), docID)
+		if err != nil {
+			return false, err
+		}
+		// Fetching document metadata can block. A link revoked while it was being
+		// read must not authorize delivery based on the preceding token check.
+		currentDoc, currentRole, err = s.Store.DocByToken(r.Context(), tok)
+		if errors.Is(err, store.ErrNotFound) || err == nil && (currentDoc != docID || currentRole != "anon") {
+			return false, store.ErrNotFound
+		}
+		if err != nil {
+			return false, err
+		}
+		// Settings can change while the previous metadata read is blocked.
+		// Check again before deciding whether the referenced file can download.
+		meta, err = s.Store.GetDocSystem(r.Context(), docID)
+		if err != nil {
+			return false, err
+		}
+		currentDoc, currentRole, err = s.Store.DocByToken(r.Context(), tok)
+		if errors.Is(err, store.ErrNotFound) || err == nil && (currentDoc != docID || currentRole != "anon") {
+			return false, store.ErrNotFound
+		}
+		if err != nil {
+			return false, err
+		}
+		allowDownload := fileReference && !meta.CopyProtected
+		if !(imageReference && canInlineImage(file.Mime)) && !allowDownload {
+			return false, store.ErrNotFound
+		}
+		return !allowDownload, nil
 	}
-	if !imageReference && !fileReference {
-		notFound()
-		return
-	}
-	// A close, role change, or token rotation during materialization must not
-	// accidentally authorize this request based on an earlier link setting.
-	currentDoc, currentRole, err := s.Store.DocByToken(r.Context(), tok)
-	if errors.Is(err, store.ErrNotFound) || err == nil && (currentDoc != docID || currentRole != "anon") {
-		notFound()
-		return
-	}
+	requireRaster, err := authorize()
 	if err != nil {
-		s.fail(w, r, err)
+		s.fileAccessError(w, r, err)
 		return
 	}
-	meta, err := s.Store.GetDocSystem(r.Context(), docID)
-	if errors.Is(err, store.ErrNotFound) {
-		notFound()
-		return
-	}
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	allowDownload := fileReference && !meta.CopyProtected
-	if !(imageReference && canInlineImage(file.Mime)) && !allowDownload {
-		notFound()
-		return
-	}
-	s.serveFile(w, r, file, !allowDownload)
+	s.serveFileAuthorized(w, r, file, requireRaster, authorize)
 }

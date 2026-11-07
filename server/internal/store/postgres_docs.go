@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // NotifyChannel carries "docID:head" payloads after each append.
@@ -175,6 +176,92 @@ func (p *Postgres) AppendOps(ctx context.Context, doc int64, ops []RawOp) (seqs 
 		return err
 	})
 	return
+}
+
+// AppendRestoreOps serializes with ordinary AppendOps on doc_heads and holds
+// the effective grant rows until the transaction commits.
+func (p *Postgres) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, expectedHead int64, ops []RawOp) (seqs []int64, err error) {
+	seqs = make([]int64, len(ops))
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var head int64
+		if err := tx.QueryRow(ctx, `SELECT seq FROM doc_heads WHERE doc_id=$1 FOR UPDATE`, doc).Scan(&head); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		var sessionUser int64
+		var expires time.Time
+		if err := tx.QueryRow(ctx, `SELECT user_id, expires_at FROM sessions WHERE token_hash=$1 FOR SHARE`, guard.SessionHash).Scan(&sessionUser, &expires); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrUnauthenticated
+			}
+			return err
+		}
+		if sessionUser != guard.UserID || !guard.currentTime().Before(expires) {
+			return ErrUnauthenticated
+		}
+		role, _, kind, err := lockCopySource(ctx, tx, doc, guard.UserID)
+		if errors.Is(err, ErrNotFound) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		if kind != "doc" || RoleRank(role) < RoleRank(RoleEdit) {
+			return ErrForbidden
+		}
+		if head != expectedHead {
+			return ErrConflict
+		}
+		if !guard.currentTime().Before(expires) {
+			return ErrUnauthenticated
+		}
+		for i, op := range ops {
+			tag, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1,$2,$3,$4,$5)
+				ON CONFLICT (doc_id, client_id, clock) DO NOTHING`, doc, head+1, op.ClientID, op.Clock, op.Bytes)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return ErrConflict
+			}
+			head++
+			seqs[i] = head
+		}
+		if len(ops) == 0 {
+			if !guard.currentTime().Before(expires) {
+				return ErrUnauthenticated
+			}
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE doc_heads SET seq=$2 WHERE doc_id=$1`, doc, head); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10))
+		if err != nil {
+			return err
+		}
+		if !guard.currentTime().Before(expires) {
+			return ErrUnauthenticated
+		}
+		return nil
+	})
+	if err != nil {
+		if retryableRestoreConflict(err) {
+			return nil, ErrConflict
+		}
+		return nil, err
+	}
+	return seqs, nil
+}
+
+func retryableRestoreConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
 }
 
 func (p *Postgres) OpsAfter(ctx context.Context, doc, after int64, limit int) ([]SeqOp, error) {
