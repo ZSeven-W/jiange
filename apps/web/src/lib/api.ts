@@ -289,14 +289,16 @@ export interface DriveEntry {
   icon?: string;
   role: Role;
   revision: number;
+  personal?: boolean;
   updatedAt: string;
 }
 export const driveApi = {
-  create: (title: string, parentId: number | null = null) => request<DriveEntry>("POST", "/api/drive/folders", { title, parentId }),
-  createNode: (kind: "doc" | "base" | "folder", title: string, parentId: number | null = null) =>
-    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId }),
-  children: (parentId: number | null = null) =>
-    request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}`).then((r) => r.entries),
+  create: (title: string, parentId: number | null = null, personal = false) =>
+    request<DriveEntry>("POST", "/api/drive/folders", { title, parentId, scope: personal ? "personal" : "shared" }),
+  createNode: (kind: "doc" | "base" | "folder", title: string, parentId: number | null = null, personal = false) =>
+    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
+  children: (parentId: number | null = null, personal = false) =>
+    request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}${personal ? `${parentId ? "&" : "?"}scope=personal` : ""}`).then((r) => r.entries),
   move: (id: number, parentId: number | null, expected: number) =>
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),

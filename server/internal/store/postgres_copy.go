@@ -23,7 +23,7 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 	seen := map[int64]bool{}
 	current := docID
 	var workspaceID, creatorID int64
-	var protected bool
+	var protected, personal bool
 	var kind string
 	for current != 0 {
 		if seen[current] {
@@ -32,10 +32,10 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		seen[current] = true
 		var a ancestor
 		var ws, creator int64
-		var nodeProtected bool
+		var nodeProtected, nodePersonal bool
 		var nodeKind string
-		err := tx.QueryRow(ctx, `SELECT id,parent_id,workspace_id,creator_id,copy_protected,kind,link_role,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR SHARE`, current).
-			Scan(&a.id, &a.parent, &ws, &creator, &nodeProtected, &nodeKind, &a.link, &a.deleted)
+		err := tx.QueryRow(ctx, `SELECT id,parent_id,workspace_id,creator_id,copy_protected,kind,link_role,deleted_at IS NOT NULL,personal FROM nodes WHERE id=$1 FOR SHARE`, current).
+			Scan(&a.id, &a.parent, &ws, &creator, &nodeProtected, &nodeKind, &a.link, &a.deleted, &nodePersonal)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, "", ErrNotFound
 		}
@@ -46,7 +46,7 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 			if a.deleted {
 				return "", false, "", ErrNotFound
 			}
-			workspaceID, creatorID, protected, kind = ws, creator, nodeProtected, nodeKind
+			workspaceID, creatorID, protected, kind, personal = ws, creator, nodeProtected, nodeKind, nodePersonal
 		}
 		chain = append(chain, a)
 		if a.parent == nil {
@@ -61,8 +61,13 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		return "", false, "", err
 	}
 	if err == nil {
-		best = RoleEdit
-		if memberRole == "owner" || memberRole == "admin" || creatorID == userID {
+		// 我的空间：成员身份不授予任何角色（与 roleSQL 一致），创建者保持 manage
+		if !personal {
+			best = RoleEdit
+			if memberRole == "owner" || memberRole == "admin" || creatorID == userID {
+				best = RoleManage
+			}
+		} else if creatorID == userID {
 			best = RoleManage
 		}
 	}

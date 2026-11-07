@@ -6,21 +6,25 @@ import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { FolderIcon, FolderPlusIcon, PlusIcon, RotateCcwIcon, TableIcon, Trash2Icon } from "lucide-react";
 
-/** 云盘：目录列表 + 面包屑 + 新建（文档/多维表格/文件夹）/移动/回收恢复。 */
-export function DrivePage({ folderId }: { folderId: number | null }) {
+/** 云盘：目录列表 + 面包屑 + 我的空间/共享空间 + 新建（文档/多维表格/文件夹）/移动/回收恢复。 */
+export function DrivePage({ folderId, personalRoot }: { folderId: number | null; personalRoot: boolean }) {
   const qc = useQueryClient();
-  const key = ["drive", folderId];
-  const list = useQuery({ queryKey: key, queryFn: () => driveApi.children(folderId) });
+  const list = useQuery({
+    queryKey: ["drive", folderId, personalRoot],
+    queryFn: () => driveApi.children(folderId, personalRoot),
+  });
+  // 顶层空间由路由决定；目录内空间由其条目继承（子节点跟随父目录）
+  const scope = folderId === null ? personalRoot : (list.data?.[0]?.personal ?? false);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["drive"] });
   const [moving, setMoving] = useState<DriveEntry | null>(null);
   const [creating, setCreating] = useState(false);
 
   const createFolder = useMutation({
-    mutationFn: async (title: string) => driveApi.create(title, folderId),
+    mutationFn: async (title: string) => driveApi.create(title, folderId, scope),
     onSuccess: invalidate,
   });
   const createNode = useMutation({
-    mutationFn: async ({ kind, title }: { kind: "doc" | "base"; title: string }) => driveApi.createNode(kind, title, folderId),
+    mutationFn: async ({ kind, title }: { kind: "doc" | "base"; title: string }) => driveApi.createNode(kind, title, folderId, scope),
     onSuccess: (entry) => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["docs"] });
@@ -51,9 +55,23 @@ export function DrivePage({ folderId }: { folderId: number | null }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-[52px] shrink-0 items-center gap-2 border-b px-5 text-[14px]">
-        <a href="#/drive" className="font-semibold hover:text-primary">
-          云盘
-        </a>
+        <span className="font-semibold">云盘</span>
+        <div className="ml-2 flex items-center gap-1 rounded-lg bg-hover/60 p-0.5 text-[13px]" data-drive-tabs>
+          <a
+            href="#/drive"
+            className={cn("rounded-md px-2.5 py-1", !scope ? "bg-surface font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            data-drive-tab-shared
+          >
+            共享空间
+          </a>
+          <a
+            href="#/drive/mine"
+            className={cn("rounded-md px-2.5 py-1", scope ? "bg-surface font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            data-drive-tab-personal
+          >
+            我的空间
+          </a>
+        </div>
         {folderId !== null && entries.length > 0 && <span className="text-subtle">/ …</span>}
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
@@ -127,7 +145,7 @@ export function DrivePage({ folderId }: { folderId: number | null }) {
                 onTrash={() => void ask(`删除「${e.title}」？`, "会移到回收站，可恢复。").then((ok) => ok && trash.mutate(e))}
               />
             ))}
-            {entries.length === 0 && list.isSuccess && <p className="px-4 py-12 text-center text-[13px] text-subtle" data-drive-empty>此文件夹为空</p>}
+            {entries.length === 0 && list.isSuccess && <p className="px-4 py-12 text-center text-[13px] text-subtle" data-drive-empty>{scope ? "此处为空；我的空间仅自己可见，分享后他人才能访问" : "此文件夹为空"}</p>}
           </div>
         )}
       </div>
@@ -224,5 +242,3 @@ function MoveDialog({ entry, onDone }: { entry: DriveEntry; onDone: () => void }
     </div>
   );
 }
-
-export const _unused = cn;

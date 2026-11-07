@@ -41,6 +41,8 @@ type Store interface {
 	// CreateUser creates the user and a personal workspace atomically.
 	CreateUser(ctx context.Context, email, name, passwordHash string) (User, Workspace, error)
 	UserByEmail(ctx context.Context, email string) (User, error)
+	// AddWorkspaceMember adds a regular member (tests / invite flows).
+	AddWorkspaceMember(ctx context.Context, ws, uid int64) error
 	CreateSession(ctx context.Context, tokenHash []byte, userID int64, expires time.Time) error
 	SessionUser(ctx context.Context, tokenHash []byte, now time.Time) (User, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error

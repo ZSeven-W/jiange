@@ -23,17 +23,19 @@ type DriveEntry struct {
 	CreatorID   int64     `json:"creatorId"`
 	Role        string    `json:"role"`
 	Revision    int64     `json:"revision"`
+	Personal    bool      `json:"personal"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // DriveFolderStore implements the versioned directory API. These operations
 // must not be replaced with the legacy unguarded document tree operations.
+// The trailing bool on create/list is the personal scope (我的空间): children
+// inherit the scope of their parent folder; top-level nodes take it from the
+// request.
 type DriveFolderStore interface {
-	CreateDriveFolder(context.Context, RestoreGuard, int64, *int64, string) (DriveEntry, error)
-	// CreateDriveNode creates a doc/base/folder under a folder with the same
-	// guard, destination checks and fence rules (drive_revision starts at 1).
-	CreateDriveNode(context.Context, RestoreGuard, int64, *int64, string, string) (DriveEntry, error)
-	ListDriveChildren(context.Context, RestoreGuard, int64, *int64) ([]DriveEntry, error)
+	CreateDriveFolder(context.Context, RestoreGuard, int64, *int64, string, bool) (DriveEntry, error)
+	CreateDriveNode(context.Context, RestoreGuard, int64, *int64, string, string, bool) (DriveEntry, error)
+	ListDriveChildren(context.Context, RestoreGuard, int64, *int64, bool) ([]DriveEntry, error)
 	MoveDriveNode(context.Context, RestoreGuard, int64, *int64, int64) error
 	TrashDriveNode(context.Context, RestoreGuard, int64, int64) error
 	RestoreDriveNode(context.Context, RestoreGuard, int64, int64) error
@@ -104,7 +106,7 @@ func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, mi
 	return nil
 }
 func driveMemoryEntry(m *Memory, d *memDoc, user int64) DriveEntry {
-	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, Role: m.roleLocked(user, d), Revision: d.driveRevision, UpdatedAt: d.meta.UpdatedAt}
+	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, UpdatedAt: d.meta.UpdatedAt}
 }
 
 func cloneDriveParent(parent *int64) *int64 {
@@ -114,7 +116,7 @@ func cloneDriveParent(parent *int64) *int64 {
 }
 
 const maxDriveRevision = int64(9007199254740991)
-func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64, parent *int64, title string) (DriveEntry, error) {
+func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64, parent *int64, title string, personal bool) (DriveEntry, error) {
 	if ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
 	}
@@ -125,13 +127,16 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		return DriveEntry{}, err
 	}
 	// The current workspace model grants workspace members access to all
-	// nodes. Until external folder ownership is modelled, avoid creating a
-	// node whose creator would unexpectedly lack management access.
+	// shared-scope nodes. Personal-scope nodes are the creator's 我的空间:
+	// membership grants nothing there, so the creator always keeps manage.
 	if !m.member(g.UserID, ws) {
 		return DriveEntry{}, ErrForbidden
 	}
 	if err = m.driveDestinationLocked(g.UserID, ws, parent, RoleEdit); err != nil {
 		return DriveEntry{}, err
+	}
+	if parent != nil {
+		personal = m.doc(*parent).personal // 子节点继承父目录空间
 	}
 	if g.UserID <= 0 || g.UserID > int64(len(m.users)) {
 		return DriveEntry{}, ErrUnauthenticated
@@ -148,7 +153,7 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		v := *parent
 		pp = &v
 	}
-	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1}
+	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1, personal: personal}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -157,9 +162,9 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 // to CreateDriveFolder). The node is born into the versioned drive world:
 // drive_revision 1 and, for bases, the same default content as the legacy
 // initialized creation.
-func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string) (DriveEntry, error) {
+func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string, personal bool) (DriveEntry, error) {
 	if kind == "folder" {
-		return m.CreateDriveFolder(ctx, g, ws, parent, title)
+		return m.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
 	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
@@ -175,6 +180,9 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 	}
 	if err = m.driveDestinationLocked(g.UserID, ws, parent, RoleEdit); err != nil {
 		return DriveEntry{}, err
+	}
+	if parent != nil {
+		personal = m.doc(*parent).personal // 子节点继承父目录空间
 	}
 	if g.UserID <= 0 || g.UserID > int64(len(m.users)) {
 		return DriveEntry{}, ErrUnauthenticated
@@ -196,7 +204,7 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 	if kind == "doc" {
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
-	d := &memDoc{meta: meta, driveRevision: 1, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
+	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
 	if kind == "base" {
 		field := Field{BaseID: id, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
 		view := View{BaseID: id, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
@@ -218,7 +226,7 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
-func (m *Memory) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64, parent *int64) ([]DriveEntry, error) {
+func (m *Memory) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64, parent *int64, personal bool) ([]DriveEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	expires, err := m.driveSessionLocked(ctx, g)
@@ -228,9 +236,12 @@ func (m *Memory) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64
 	if err = m.driveDestinationLocked(g.UserID, ws, parent, RoleView); err != nil {
 		return nil, err
 	}
+	if parent != nil {
+		personal = m.doc(*parent).personal // 目录内空间由父目录决定
+	}
 	out := make([]DriveEntry, 0)
 	for _, d := range m.d.docs {
-		if d.meta.WorkspaceID == ws && !d.deleted && sameDriveParent(d.meta.ParentID, parent) && RoleRank(m.roleLocked(g.UserID, d)) >= RoleRank(RoleView) {
+		if d.meta.WorkspaceID == ws && !d.deleted && d.personal == personal && sameDriveParent(d.meta.ParentID, parent) && RoleRank(m.roleLocked(g.UserID, d)) >= RoleRank(RoleView) {
 			out = append(out, driveMemoryEntry(m, d, g.UserID))
 		}
 	}
@@ -263,6 +274,10 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 		return err
 	}
 	if parent != nil {
+		if m.doc(*parent).personal != d.personal {
+			// 跨空间移动会静默改变整棵子树的可见性，先拒绝（顶层移动保持原空间）
+			return ErrForbidden
+		}
 		for x := m.doc(*parent); x != nil; {
 			if x.meta.ID == id {
 				return ErrConflict
@@ -337,7 +352,8 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	if d == nil || !d.deleted || d.driveRevision != expected {
 		return ErrConflict
 	}
-	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+	// 个人空间节点只有创建者能还原（空间 owner 也不行）
+	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
 		return ErrForbidden
 	}
 	if d.meta.ParentID != nil {
@@ -428,35 +444,38 @@ func drivePGValidChain(ctx context.Context, tx pgx.Tx, id, ws int64) error {
 	}
 	return nil
 }
-func drivePGDestination(ctx context.Context, tx pgx.Tx, g RestoreGuard, ws int64, parent *int64, min string) error {
+// drivePGDestination validates the destination and returns the parent
+// folder's personal scope (false at the workspace root).
+func drivePGDestination(ctx context.Context, tx pgx.Tx, g RestoreGuard, ws int64, parent *int64, min string) (bool, error) {
 	if parent == nil {
 		var member int
 		err := tx.QueryRow(ctx, `SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, ws, g.UserID).Scan(&member)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrForbidden
+			return false, ErrForbidden
 		}
-		return err
+		return false, err
 	}
 	var kind string
 	var pws int64
-	err := tx.QueryRow(ctx, `SELECT kind,workspace_id FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *parent).Scan(&kind, &pws)
+	var personal bool
+	err := tx.QueryRow(ctx, `SELECT kind,workspace_id,personal FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *parent).Scan(&kind, &pws, &personal)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && (kind != "folder" || pws != ws) {
-		return ErrForbidden
+		return false, ErrForbidden
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err = drivePGValidChain(ctx, tx, *parent, ws); err != nil {
-		return err
+		return false, err
 	}
 	role, _, _, err := lockCopySource(ctx, tx, *parent, g.UserID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if RoleRank(role) < RoleRank(min) {
-		return ErrForbidden
+		return false, ErrForbidden
 	}
-	return nil
+	return personal, nil
 }
 func drivePGEnd(ctx context.Context, g RestoreGuard, expires time.Time) error {
 	if err := ctx.Err(); err != nil {
@@ -473,7 +492,7 @@ func drivePGError(err error) error {
 	}
 	return err
 }
-func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64, parent *int64, title string) (out DriveEntry, err error) {
+func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64, parent *int64, title string, personal bool) (out DriveEntry, err error) {
 	if ws <= 0 || !validDriveTitle(title) {
 		return out, ErrConflict
 	}
@@ -493,10 +512,12 @@ func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int
 		if e != nil {
 			return e
 		}
-		if e = drivePGDestination(ctx, tx, g, ws, parent, RoleEdit); e != nil {
+		parentPersonal, e := drivePGDestination(ctx, tx, g, ws, parent, RoleEdit)
+		if e != nil {
 			return e
 		}
-		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision) VALUES($1,$2,'folder','V',$3,$4,1) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,updated_at`, ws, parent, title, g.UserID).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.UpdatedAt)
+		personal = parent == nil && personal || parent != nil && parentPersonal
+		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,'folder','V',$3,$4,1,$5) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, ws, parent, title, g.UserID, personal).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt)
 		if e != nil {
 			return e
 		}
@@ -510,9 +531,9 @@ func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int
 // to CreateDriveFolder) with guard, destination checks and fence-compatible
 // insert (drive_revision 1). Bases get the same default content as the legacy
 // initialized creation, published in the same transaction.
-func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string) (out DriveEntry, err error) {
+func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string, personal bool) (out DriveEntry, err error) {
 	if kind == "folder" {
-		return p.CreateDriveFolder(ctx, g, ws, parent, title)
+		return p.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
 	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
 		return out, ErrConflict
@@ -533,11 +554,13 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 		if e != nil {
 			return e
 		}
-		if e = drivePGDestination(ctx, tx, g, ws, parent, RoleEdit); e != nil {
+		parentPersonal, e := drivePGDestination(ctx, tx, g, ws, parent, RoleEdit)
+		if e != nil {
 			return e
 		}
-		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision) VALUES($1,$2,$3,'V',$4,$5,1) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,updated_at`, ws, parent, kind, title, g.UserID).
-			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.UpdatedAt); e != nil {
+		personal = parent == nil && personal || parent != nil && parentPersonal
+		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,$3,'V',$4,$5,1,$6) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, ws, parent, kind, title, g.UserID, personal).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt); e != nil {
 			return e
 		}
 		out.Role = RoleManage
@@ -561,7 +584,7 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 	})
 	return out, drivePGError(err)
 }
-func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64, parent *int64) (out []DriveEntry, err error) {
+func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64, parent *int64, personal bool) (out []DriveEntry, err error) {
 	out = make([]DriveEntry, 0)
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		if e := drivePGLockWorkspaceRead(ctx, tx, ws); e != nil {
@@ -571,17 +594,21 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if e != nil {
 			return e
 		}
-		if e = drivePGDestination(ctx, tx, g, ws, parent, RoleView); e != nil {
+		parentPersonal, e := drivePGDestination(ctx, tx, g, ws, parent, RoleView)
+		if e != nil {
 			return e
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,`+roleSQL+`,n.drive_revision,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent)
+		if parent != nil {
+			personal = parentPersonal // 目录内空间由父目录决定
+		}
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,`+roleSQL+`,n.drive_revision,n.personal,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var d DriveEntry
-			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.Role, &d.Revision, &d.UpdatedAt); e != nil {
+			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.Role, &d.Revision, &d.Personal, &d.UpdatedAt); e != nil {
 				return e
 			}
 			out = append(out, d)
@@ -607,8 +634,8 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 			return e
 		}
 		var currentWS, rev int64
-		var deleted bool
-		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&currentWS, &rev, &deleted)
+		var deleted, nodePersonal bool
+		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,deleted_at IS NOT NULL,personal FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&currentWS, &rev, &deleted, &nodePersonal)
 		if e != nil {
 			return e
 		}
@@ -625,8 +652,13 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 		if RoleRank(role) < RoleRank(RoleManage) {
 			return ErrForbidden
 		}
-		if e = drivePGDestination(ctx, tx, g, ws, parent, RoleEdit); e != nil {
+		parentPersonal, e := drivePGDestination(ctx, tx, g, ws, parent, RoleEdit)
+		if e != nil {
 			return e
+		}
+		if parent != nil && parentPersonal != nodePersonal {
+			// 跨空间移动会静默改变整棵子树的可见性，先拒绝（顶层移动保持原空间）
+			return ErrForbidden
 		}
 		if parent != nil {
 			var cyc bool
@@ -667,15 +699,19 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 			return e
 		}
 		var actualWS, rev, creator int64
-		var deleted bool
+		var deleted, personal bool
 		var batch *int64
 		var parent *int64
-		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,creator_id,deleted_at IS NOT NULL,trash_batch_id,parent_id FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&actualWS, &rev, &creator, &deleted, &batch, &parent)
+		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,creator_id,deleted_at IS NOT NULL,trash_batch_id,parent_id,personal FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&actualWS, &rev, &creator, &deleted, &batch, &parent, &personal)
 		if e != nil {
 			return e
 		}
 		if actualWS != ws || rev != expected || deleted != restore {
 			return ErrConflict
+		}
+		// 个人空间节点只有创建者能还原（空间 owner/admin 也不行）
+		if personal && creator != g.UserID {
+			return ErrForbidden
 		}
 		if !restore {
 			if e = drivePGValidChain(ctx, tx, id, ws); e != nil {

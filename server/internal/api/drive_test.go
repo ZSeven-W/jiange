@@ -76,6 +76,55 @@ func TestDriveVerticalSlice(t *testing.T) {
 
 func strconv64(v int64) string { return strconv.FormatInt(v, 10) }
 
+// 我的空间：scope=personal 的顶层节点不进共享目录，也不泄漏到 /api/docs。
+func TestDrivePersonalScope(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "ps@x.com", "name": "PS", "password": "password123"})
+
+	var mine store.DriveEntry
+	if res := post(t, c, ts.URL+"/api/drive/folders", map[string]any{"title": "私人", "scope": "personal"}); res.StatusCode != 201 {
+		t.Fatalf("personal create: %d", res.StatusCode)
+	} else {
+		json.NewDecoder(res.Body).Decode(&mine)
+	}
+	if !mine.Personal {
+		t.Fatalf("personal flag: %+v", mine)
+	}
+
+	// 共享目录不含它；个人目录含它
+	var list struct{ Entries []store.DriveEntry }
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/drive/children").Body).Decode(&list)
+	if len(list.Entries) != 0 {
+		t.Fatalf("shared listing leaked personal: %+v", list.Entries)
+	}
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/drive/children?scope=personal").Body).Decode(&list)
+	if len(list.Entries) != 1 || list.Entries[0].ID != mine.ID {
+		t.Fatalf("personal listing: %+v", list.Entries)
+	}
+
+	// 个人空间里建文档，出现在 /api/docs（创建者本人）
+	var doc store.DriveEntry
+	if res := post(t, c, ts.URL+"/api/drive/nodes", map[string]any{"kind": "doc", "title": "私人文档", "parentId": mine.ID}); res.StatusCode != 201 {
+		t.Fatalf("create in personal: %d", res.StatusCode)
+	} else {
+		json.NewDecoder(res.Body).Decode(&doc)
+	}
+	if !doc.Personal {
+		t.Fatalf("child scope: %+v", doc)
+	}
+	var docs struct{ Docs []store.DocMeta }
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/docs").Body).Decode(&docs)
+	found := false
+	for _, d := range docs.Docs {
+		if d.ID == doc.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("creator cannot see own personal doc: %+v", docs.Docs)
+	}
+}
+
 // guarded 新建：doc/base 可直接建在文件夹内（旧创建端点会被 fence 拒绝）。
 func TestDriveCreateNodesInFolder(t *testing.T) {
 	ts, c := newTestServer(t, store.NewMemory(), nil)

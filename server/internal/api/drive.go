@@ -36,6 +36,7 @@ func (s *Server) postDriveFolder(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID int64  `json:"workspaceId"`
 		ParentID    *int64 `json:"parentId"`
 		Title       string `json:"title"`
+		Scope       string `json:"scope"` // personal = 我的空间（顶层有效，子目录继承父目录）
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -52,7 +53,7 @@ func (s *Server) postDriveFolder(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		return
 	}
-	entry, err := s.Store.CreateDriveFolder(r.Context(), g, in.WorkspaceID, in.ParentID, title)
+	entry, err := s.Store.CreateDriveFolder(r.Context(), g, in.WorkspaceID, in.ParentID, title, in.Scope == "personal")
 	if driveWriteErr(w, err, "create folder") {
 		return
 	}
@@ -73,6 +74,7 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 		ParentID    *int64 `json:"parentId"`
 		Kind        string `json:"kind"`
 		Title       string `json:"title"`
+		Scope       string `json:"scope"` // personal = 我的空间（顶层有效，子目录继承父目录）
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -93,7 +95,7 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		return
 	}
-	entry, err := s.Store.CreateDriveNode(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, title)
+	entry, err := s.Store.CreateDriveNode(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, title, in.Scope == "personal")
 	if driveWriteErr(w, err, "create node") {
 		return
 	}
@@ -125,7 +127,7 @@ func (s *Server) listDriveChildren(w http.ResponseWriter, r *http.Request) {
 		}
 		wsID = ws[0].ID
 	}
-	entries, err := s.Store.ListDriveChildren(r.Context(), g, wsID, parent)
+	entries, err := s.Store.ListDriveChildren(r.Context(), g, wsID, parent, r.URL.Query().Get("scope") == "personal")
 	if driveWriteErr(w, err, "list children") {
 		return
 	}
