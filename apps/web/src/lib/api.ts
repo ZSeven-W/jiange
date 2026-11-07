@@ -277,7 +277,7 @@ export const docsApi = {
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
-  share: (id: number, email: string, role: Role | "") => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role }),
+  share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),

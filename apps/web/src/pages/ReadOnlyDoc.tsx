@@ -4,19 +4,10 @@ import { DiagramView } from "@/editor/DiagramView";
 import { MathView } from "@/editor/MathView";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
+import { safeURL } from "@/lib/safeURL";
 
 type Block = DocView["blocks"][number];
 type Span = Block["spans"][number];
-
-/** Never turn untrusted document data into a javascript: or data: link. */
-function safeURL(url?: string): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("#/doc/")) return url;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : undefined;
-  } catch { return undefined; }
-}
 
 function fileURL(id?: string, publicToken?: string, versionSeq?: number): string | undefined {
   if (!id || !/^[1-9]\d*$/.test(id)) return undefined;

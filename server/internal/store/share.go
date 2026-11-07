@@ -58,6 +58,8 @@ type ShareStore interface {
 	ListShares(ctx context.Context, docID int64) ([]Share, error)
 	// SetShare grants role ("" revokes) to a user.
 	SetShare(ctx context.Context, docID, userID int64, role string) error
+	// AddShare creates a grant only if no direct grant already exists.
+	AddShare(ctx context.Context, docID, userID int64, role string) error
 	GetLink(ctx context.Context, docID int64) (Link, error)
 	SetLink(ctx context.Context, docID int64, l Link) error
 	// ChangeLinkRole atomically changes a setting and rotates the token when a

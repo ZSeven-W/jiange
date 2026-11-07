@@ -54,7 +54,7 @@ describe("starter templates", () => {
     expect(hasUnsupportedImportBlocks("正文 ![图片](https://example.com/p.png)" )).toBe(true);
     expect(hasUnsupportedImportBlocks("正文 ![图片][ref]\n\n[ref]: https://example.com/p.png")).toBe(true);
     expect(hasUnsupportedImportBlocks('<img src="https://example.com/p.png">')).toBe(true);
-    expect(hasUnsupportedImportBlocks("[文件](https://example.com/f.pdf)")).toBe(true);
+    expect(hasUnsupportedImportBlocks("[文件](https://example.com/f.pdf)")).toBe(false);
   });
   it("keeps template blocks available for remote edits that arrive after a safe undo", () => {
     const { doc } = setup();

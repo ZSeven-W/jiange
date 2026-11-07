@@ -65,7 +65,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
     try {
       const markdown = await file.text();
       if (!parseMarkdown(markdown).length) { setImportError("文件没有可导入的内容。"); contentLock.current = false; return; }
-      if (hasUnsupportedImportBlocks(markdown)) { setImportError("暂不支持导入图片或独立文件链接，请先移除这些内容。"); contentLock.current = false; return; }
+      if (hasUnsupportedImportBlocks(markdown)) { setImportError("暂不支持导入图片，请先移除图片内容。"); contentLock.current = false; return; }
       createWithContent.mutate({ title: file.name.replace(/\.(md|markdown)$/i, "") || "导入文档", markdown }, { onSettled: () => { contentLock.current = false; } });
     } catch { setImportError("读取文件失败，请重试。"); contentLock.current = false; }
   };

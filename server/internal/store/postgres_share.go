@@ -53,6 +53,22 @@ func (p *Postgres) SetShare(ctx context.Context, doc, uid int64, role string) er
 	return err
 }
 
+func (p *Postgres) AddShare(ctx context.Context, doc, uid int64, role string) error {
+	if RoleRank(role) == 0 {
+		return ErrConflict
+	}
+	result, err := p.Pool.Exec(ctx, `INSERT INTO doc_shares (doc_id,user_id,role)
+		SELECT n.id,$2,$3 FROM nodes n WHERE n.id=$1 AND n.creator_id<>$2 AND n.deleted_at IS NULL
+		ON CONFLICT (doc_id,user_id) DO NOTHING`, doc, uid, role)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 func (p *Postgres) GetLink(ctx context.Context, doc int64) (l Link, err error) {
 	var tok *string
 	err = p.Pool.QueryRow(ctx, `SELECT link_role, link_token FROM nodes WHERE id=$1`, doc).Scan(&l.Role, &tok)

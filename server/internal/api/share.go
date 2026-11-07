@@ -63,7 +63,10 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var in struct{ Email, Role string }
+	var in struct {
+		Email, Role string
+		CreateOnly  bool `json:"createOnly"`
+	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
@@ -79,7 +82,20 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if err := s.Store.SetShare(r.Context(), d.ID, u.ID, in.Role); err != nil {
+	if in.CreateOnly && store.RoleRank(in.Role) == 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_role", "role must be view, edit or manage")
+		return
+	}
+	if in.CreateOnly {
+		err = s.Store.AddShare(r.Context(), d.ID, u.ID, in.Role)
+	} else {
+		err = s.Store.SetShare(r.Context(), d.ID, u.ID, in.Role)
+	}
+	if errors.Is(err, store.ErrConflict) && in.CreateOnly {
+		httpx.Error(w, http.StatusConflict, "already_shared", "该用户已经是协作者")
+		return
+	}
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
