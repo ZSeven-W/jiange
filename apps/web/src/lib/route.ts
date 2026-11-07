@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null };
 
 export function parseHash(h: string): Route {
   const m = /^#\/doc\/(\d+)/.exec(h);
@@ -16,6 +16,10 @@ export function parseHash(h: string): Route {
   const fm = h.match(/^#\/form\/([A-Za-z0-9_-]{43})\/?$/);
   if (fm) return { page: "form", token: fm[1] };
   if (h.startsWith("#/form/")) return { page: "legacy-form" };
+  if (h.startsWith("#/drive")) {
+    const m = h.match(/^#\/drive\/(\d+)/);
+    return { page: "drive", folderId: m ? Number(m[1]) : null };
+  }
   const pb = h.match(/^#\/p\/([A-Za-z0-9_-]+)/);
   if (pb) return { page: "public", token: pb[1] };
   if (h.startsWith("#/trash")) return { page: "trash" };

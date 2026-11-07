@@ -56,7 +56,7 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base";
+  kind?: "doc" | "base" | "folder";
   workspaceName?: string;
   copyProtected?: boolean;
   copyMinRole?: Role;
@@ -276,6 +276,26 @@ export interface Automation {
     schedule?: { every?: string };
   };
 }
+export interface DriveEntry {
+  id: number;
+  workspaceId: number;
+  parentId: number | null;
+  kind: string;
+  title: string;
+  icon?: string;
+  role: Role;
+  revision: number;
+  updatedAt: string;
+}
+export const driveApi = {
+  create: (title: string, parentId: number | null = null) => request<DriveEntry>("POST", "/api/drive/folders", { title, parentId }),
+  children: (parentId: number | null = null) =>
+    request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}`).then((r) => r.entries),
+  move: (id: number, parentId: number | null, expected: number) =>
+    request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
+  trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
+  restore: (id: number, expected: number) => request<void>("POST", `/api/drive/restore/${id}`, { expected }),
+};
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {
     if (!Array.isArray(r?.docs)) throw new ApiError(502, "search_incomplete", "搜索未完成，请稍后重试。");
