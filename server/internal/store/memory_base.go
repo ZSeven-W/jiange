@@ -11,12 +11,14 @@ import (
 )
 
 type memBase struct {
-	fields   []Field
-	records  []Record
-	views    []View
-	events   []BtEvent
-	nextID   int64
-	eventSeq int64
+	fields      []Field
+	records     []Record
+	recordIndex map[int64]int // lazily populated; validated after slice deletion
+	views       []View
+	events      map[int64][]BtEvent // per-base event log; never broadcast another base's rows
+	nextID      int64
+	eventSeq    int64
+	formLinks   map[[2]int64]formLink // Base and view -> hash-only publication
 }
 
 func (m *Memory) CreateBase(ctx context.Context, ws, creator int64, parent *int64, title string) (DocMeta, error) {
@@ -259,17 +261,29 @@ func (m *Memory) MapFieldCells(_ context.Context, base, field int64, fn func(jso
 func (m *Memory) AppendBtEvent(_ context.Context, base int64, body json.RawMessage) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appendBtEventLocked(base, body), nil
+}
+
+// appendBtEventLocked appends to one base while the caller holds m.mu.
+func (m *Memory) appendBtEventLocked(base int64, body json.RawMessage) int64 {
+	if m.b.events == nil {
+		m.b.events = make(map[int64][]BtEvent)
+	}
 	m.b.eventSeq++
-	m.b.events = append(m.b.events, BtEvent{Seq: m.b.eventSeq, Body: body})
-	return m.b.eventSeq, nil
+	m.b.events[base] = append(m.b.events[base], BtEvent{Seq: m.b.eventSeq, Body: slices.Clone(body)})
+	return m.b.eventSeq
 }
 
 func (m *Memory) BtEventsAfter(_ context.Context, base, after int64, limit int) ([]BtEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []BtEvent
-	for _, e := range m.b.events {
+	if limit <= 0 {
+		return out, nil
+	}
+	for _, e := range m.b.events[base] {
 		if e.Seq > after {
+			e.Body = slices.Clone(e.Body)
 			out = append(out, e)
 			if len(out) == limit {
 				break
@@ -282,5 +296,9 @@ func (m *Memory) BtEventsAfter(_ context.Context, base, after int64, limit int) 
 func (m *Memory) BtHead(_ context.Context, base int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.b.eventSeq, nil
+	events := m.b.events[base]
+	if len(events) == 0 {
+		return 0, nil
+	}
+	return events[len(events)-1].Seq, nil
 }

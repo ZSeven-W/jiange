@@ -13,10 +13,12 @@ export function FieldForm({
   initial,
   onSubmit,
   onCancel,
+  onAcknowledge,
 }: {
   initial?: Field;
   onSubmit: (f: Partial<Field>) => void | Promise<void>;
   onCancel: () => void;
+  onAcknowledge?: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
@@ -28,6 +30,7 @@ export function FieldForm({
   const [typeQuery, setTypeQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
   const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const anchor = useRef<HTMLSpanElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -64,18 +67,18 @@ export function FieldForm({
     const close = (event: MouseEvent) => {
       const target = event.target as Node;
       if (form.current?.contains(target) || typeMenu.current?.contains(target) || anchor.current?.closest("th")?.contains(target)) return;
-      if (!saving) onCancel();
+      if (!saving && !uncertain) onCancel();
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
       if (typesOpen) setTypesOpen(false);
-      else if (!saving) onCancel();
+      else if (!saving && !uncertain) onCancel();
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
-  }, [onCancel, saving, typesOpen]);
+  }, [onCancel, saving, typesOpen, uncertain]);
   const def = REGISTRY[type];
   const typeChanged = initial !== undefined && initial.type !== type;
   const names = opts.split(/[,，\n]+/).map((x) => x.trim()).filter(Boolean);
@@ -93,17 +96,18 @@ export function FieldForm({
       style={position}
       className="fixed z-[100] max-h-[calc(100vh-32px)] space-y-4 overflow-y-auto rounded-lg border bg-surface p-3 text-left text-[13px] font-normal text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.16)]"
       data-field-form
-      onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape" && !saving) { event.preventDefault(); typesOpen ? setTypesOpen(false) : onCancel(); } }}
+      onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape" && !saving) { event.preventDefault(); if (typesOpen) setTypesOpen(false); else if (!uncertain) onCancel(); } }}
       onPaste={(event) => event.stopPropagation()}
       onSubmit={async (e) => {
         e.preventDefault();
-        if (saving) return;
+        if (saving || uncertain) return;
         setSaving(true); setError("");
         try {
           await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined });
           onCancel();
         } catch {
-          setError("无法确认字段是否保存，请检查网络后重试。");
+          setError("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。");
+          setUncertain(true);
         } finally { setSaving(false); }
       }}
     >
@@ -146,11 +150,12 @@ export function FieldForm({
       )}
       {typeChanged && <p className="text-[12px] leading-4 text-amber-600">切换类型会自动转换兼容的值，不兼容的值将被清空。</p>}
       {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
+      {uncertain && <button type="button" className="text-[12px] text-primary underline" onClick={() => { onAcknowledge?.(); setUncertain(false); setError(""); }}>已核对，允许再次提交</button>}
       <div className="flex justify-end gap-2">
         <button type="button" disabled={saving} onClick={onCancel} className="h-8 rounded-md border px-4 hover:bg-hover disabled:opacity-50">
           取消
         </button>
-        <button type="submit" disabled={saving} className="h-8 rounded-md bg-primary px-4 text-white hover:bg-primary-hover disabled:opacity-50">
+        <button type="submit" disabled={saving || uncertain} className="h-8 rounded-md bg-primary px-4 text-white hover:bg-primary-hover disabled:opacity-50">
           {saving ? "保存中…" : "确定"}
         </button>
       </div>

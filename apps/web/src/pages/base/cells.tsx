@@ -169,18 +169,26 @@ export function CellEditor({
   record,
   members,
   seed,
+  draft,
+  onDraft,
   onCommit,
   onCancel,
+  onInvalid,
 }: {
   field: Field;
   record: BaseRecord;
   members: User[];
   seed?: string;
-  onCommit: (v: Cell | null, dir?: "down" | "right") => void;
+  /** Parent-owned draft survives a virtualized cell being unmounted. */
+  draft?: Cell | null;
+  onDraft?: (value: Cell | null) => void;
+  onCommit: (v: Cell | null, dir?: "down" | "right", raw?: string) => void;
   onCancel: () => void;
+  onInvalid?: (raw: string) => void;
 }) {
-  const value = displayValue(record, field, members);
+  const value = draft === undefined ? displayValue(record, field, members) : draft ?? undefined;
   const [text, setText] = useState(seed ?? (typeof value === "string" || typeof value === "number" ? String(value) : ""));
+  const completed = useRef(false);
 
   if (field.type === "select")
     return (
@@ -191,7 +199,7 @@ export function CellEditor({
         ))}
       </select>
     );
-  if (field.type === "multi_select") return <MultiSelectEditor field={field} value={isStringArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} />;
+  if (field.type === "multi_select") return <MultiSelectEditor field={field} value={isStringArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} onDraft={onDraft} />;
   if (field.type === "person" || field.type === "created_by")
     return (
       <select
@@ -213,8 +221,15 @@ export function CellEditor({
     return <AttachmentEditor baseId={record.baseId} field={field} value={isAttachmentArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} />;
 
   const commit = (dir?: "down" | "right") => {
+    if (completed.current) return;
+    completed.current = true;
     const v = REGISTRY[field.type].parse(text, field);
-    onCommit(v === undefined ? (text === "" ? null : (value ?? null)) : v, dir);
+    if (v === undefined && text !== "") {
+      onInvalid?.(text);
+      onCancel();
+      return;
+    }
+    onCommit(v === undefined ? null : v, dir, text);
   };
   return (
     <input
@@ -223,7 +238,7 @@ export function CellEditor({
       inputMode={field.type === "number" ? "decimal" : undefined}
       className={cn("w-full bg-transparent outline-none", field.type === "number" && "text-right")}
       value={text}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => { setText(e.target.value); onDraft?.(e.target.value); }}
       onBlur={() => commit()}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
@@ -236,6 +251,7 @@ export function CellEditor({
         }
         if (e.key === "Escape") {
           e.preventDefault();
+          completed.current = true;
           onCancel();
         }
       }}
@@ -243,7 +259,7 @@ export function CellEditor({
   );
 }
 
-function MultiSelectEditor({ field, value, onCommit, onCancel }: { field: Field; value: string[]; onCommit: (v: Cell | null) => void; onCancel: () => void }) {
+function MultiSelectEditor({ field, value, onCommit, onCancel, onDraft }: { field: Field; value: string[]; onCommit: (v: Cell | null) => void; onCancel: () => void; onDraft?: (value: Cell | null) => void }) {
   const [sel, setSel] = useState<string[]>(value);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -261,7 +277,11 @@ function MultiSelectEditor({ field, value, onCommit, onCancel }: { field: Field;
             type="checkbox"
             className="accent-primary"
             checked={sel.includes(o)}
-            onChange={(e) => setSel((s) => (e.target.checked ? [...s, o] : s.filter((x) => x !== o)))}
+            onChange={(e) => {
+              const next = e.target.checked ? [...sel, o] : sel.filter((x) => x !== o);
+              setSel(next);
+              onDraft?.(next.length ? next : null);
+            }}
           />
           {o}
         </label>
@@ -296,6 +316,7 @@ function AttachmentEditor({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
   return (
     <div className="flex items-center gap-2">
       <input
@@ -307,12 +328,15 @@ function AttachmentEditor({
         onChange={async (e) => {
           const files = [...(e.target.files ?? [])];
           if (!files.length) return;
+          e.currentTarget.value = ""; // selecting the same file after an upload error must fire again
           setBusy(true);
+          setError(false);
           try {
             const refs = await Promise.all(files.map((f) => docsApi.upload(baseId, f)));
             onCommit([...value, ...refs]);
           } catch {
             setBusy(false);
+            setError(true);
           }
         }}
       />
@@ -324,9 +348,10 @@ function AttachmentEditor({
       >
         {busy ? "上传中…" : `上传（已 ${value.length} 个）`}
       </button>
-      <button className="h-6 rounded border px-2 text-[12px]" onClick={onCancel}>
+      <button className="h-6 rounded border px-2 text-[12px]" disabled={busy} onClick={onCancel}>
         取消
       </button>
+      {error && <span role="alert" className="text-[12px] text-destructive">上传失败，请重试。</span>}
     </div>
   );
 }

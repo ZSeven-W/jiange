@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { baseApi, docsApi, type FilterRule, type ViewConfig } from "@/lib/api";
+import { ApiError, baseApi, docsApi, type FilterRule, type ViewConfig } from "@/lib/api";
 import { Grid } from "./base/Grid";
 import { Kanban } from "./base/Kanban";
 import { Gallery } from "./base/Gallery";
@@ -14,11 +14,20 @@ import { view } from "./base/view";
 import { popupPosition } from "./base/popupPosition";
 import { baseLoadError } from "./base/loadError";
 import { canExportBase } from "./base/csvAvailability";
-import { ask } from "@/components/ui/ask";
+import { blocksBaseCopy, guardBaseClipboard } from "./base/copyPolicy";
+import { formatBaseChange, lastBaseChange } from "./base/viewPresentation";
+import { ViewTabs } from "./base/ViewTabs";
+import { ViewConfigActions } from "./base/ViewConfigActions";
+import { CsvImport } from "./base/CsvImport";
+import { FormPublication } from "./base/FormPublication";
+import { FormSetup, validFormSelection } from "./base/FormSetup";
+import { saveFormConfig } from "./base/publicFormApi";
+import { BaseAuthorizationEpoch, BaseAuthorizationFence, isBaseAuthorizationError, newBaseQueryScope, recordsForAuthorizedQuery } from "./base/queryAuthorization";
+import { refreshWrites, useWriteLedger, WriteIssues } from "./base/writeSafety";
 import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { ArrowDownUp, BarChart3, Calendar, ChevronRight, ClipboardList, Eye, Filter, Home, Images, KanbanSquare, LockKeyhole, Plus, Search, Share2, Table2, Zap } from "lucide-react";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronRight, ClipboardList, Eye, Filter, Home, Images, KanbanSquare, ListFilter, Plus, Search, Share2, Table2, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -43,16 +52,23 @@ const EMPTY_CONFIG: ViewConfig = {};
 export function BasePage({ id }: { id: number }) {
   const qc = useQueryClient();
   const key = ["base", id];
-  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.get(id, signal), refetchOnMount: "always" });
+  // A fresh object is required on each successful access check. The filtered
+  // query is scoped to that exact authorization snapshot, never an old cache.
+  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.get(id, signal), refetchOnMount: "always", structuralSharing: false });
+  const [queryScope] = useState(newBaseQueryScope);
+  const authorizationEpoch = useRef(new BaseAuthorizationEpoch());
+  const queryEpoch = authorizationEpoch.current.read(id, q.data, q.isFetching);
   const accessReady = q.isFetchedAfterMount && q.isSuccess;
   useBaseSync(id, { ready: accessReady, restricted: !!q.data?.writeRestricted });
   const [viewId, setViewId] = useState<number | null>(null);
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
+  const [gridDetailOpen, setGridDetailOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
-  const [viewError, setViewError] = useState(false);
-  const [recordError, setRecordError] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const { ledger, issues } = useWriteLedger(id);
   const [saveError, setSaveError] = useState(false);
+  const [formSaveError, setFormSaveError] = useState<{ viewId: number; message: string } | null>(null);
   const [savingView, setSavingView] = useState(false);
   const savingKey = useRef<string | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -61,6 +77,11 @@ export function BasePage({ id }: { id: number }) {
   const configDrafts = useRef(new Map<string, ViewConfig>());
   const [filter, setFilter] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["base", id] });
+
+  useEffect(() => {
+    if (detailRecord === null || !q.isFetchedAfterMount || q.isFetching) return;
+    if (q.isError || (q.isSuccess && !q.data.records.some((record) => record.id === detailRecord))) setDetailRecord(null);
+  }, [detailRecord, q.isFetchedAfterMount, q.isFetching, q.isError, q.isSuccess, q.data]);
 
   useEffect(() => { document.title = `${q.data?.base.title || "未命名多维表格"} - Jiange`; }, [q.data?.base.title]);
   const views = q.data?.views ?? [];
@@ -83,54 +104,112 @@ export function BasePage({ id }: { id: number }) {
   const sortsActive = (cfg.sorts?.length ?? 0) > 0;
   const queryActive = filtersActive || sortsActive;
   const serverQuery = useQuery({
-    queryKey: ["base", id, "query", cfg],
+    queryKey: ["base", id, "query", queryScope, queryEpoch, cfg],
     queryFn: ({ signal }) => baseApi.query(id, { filters: cfg.filters, sorts: cfg.sorts }, signal),
     enabled: queryActive && accessReady && !q.isFetching,
   });
+  const queryDenied = queryActive && serverQuery.isError && isBaseAuthorizationError(serverQuery.error);
+  const authorizationFence = useRef(new BaseAuthorizationFence());
+  const queryAccessBlocked = authorizationFence.current.observe(q.data, q.isSuccess, q.isFetching, queryDenied, queryActive && serverQuery.isSuccess);
+  const revalidateBase = q.refetch;
+  useEffect(() => {
+    if (!authorizationFence.current.takeAutomaticRetry(queryDenied)) return;
+    void revalidateBase();
+  }, [queryDenied, revalidateBase]);
+
+  // A retained write draft may contain values or field names from a prior
+  // authorization snapshot. Hide it while that snapshot is unverified.
+  ledger.setAuthorization(accessReady && !q.isFetching && !queryAccessBlocked && q.data ? {
+    base: q.data.base,
+    fields: q.data.fields,
+    records: q.data.records,
+    views: q.data.views,
+    expansions: q.data.expansions ?? {},
+    writeRestricted: q.data.writeRestricted,
+  } : null);
 
   if (q.isError) {
     return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">{baseLoadError(q.error)}</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">重试</button></div></div>;
   }
+  if (queryAccessBlocked) return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">无法确认多维表格访问权限，已隐藏数据。</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">重新验证</button></div></div>;
   if (!accessReady || !q.data) return <div className="grid flex-1 place-items-center text-[13px] text-subtle" role="status">正在确认多维表格访问权限…</div>;
   const { base, fields, members } = q.data;
+  // The previous policy is not authorization evidence while it is refreshed.
+  const preventCopy = blocksBaseCopy(base, q.isFetching);
   // link/lookup 展开值写进展示缓存（cells），真值在 bt_links
-  const recordsRaw = foldExpansions(q.data.fields, q.data.records, q.data.expansions ?? {});
   const canEdit = (base.role === "edit" || base.role === "manage") && !q.data.writeRestricted;
   const hidden = new Set(cfg.hidden ?? []);
   const visibleFields = fields.filter((f) => !hidden.has(f.id));
-  const source = foldExpansions(q.data.fields, queryActive ? (serverQuery.isError ? [] : serverQuery.data?.records ?? []) : q.data.records, q.data.expansions ?? {});
+  const queryRecords = queryActive ? recordsForAuthorizedQuery(q.data.records, serverQuery.data?.records, q.isFetching, serverQuery.isSuccess) : [];
+  const source = foldExpansions(q.data.fields, queryActive ? queryRecords : q.data.records, q.data.expansions ?? {});
   const records = view(source, visibleFields, members, null, filter);
+  const directDetailOpen = !q.isFetching && detailRecord !== null && q.data.records.some((record) => record.id === detailRecord);
   const dirty = current ? JSON.stringify(cfg) !== JSON.stringify(current.config ?? EMPTY_CONFIG) : false;
 
   const save = async () => {
     if (!current || savingKey.current) return;
+    if (current.type === "form" && (base.role !== "manage" || !validFormSelection(cfg, fields))) return;
     const draftKey = `${id}:${current.id}`;
     savingKey.current = draftKey;
     setSavingView(true);
     setSaveError(false);
+    setFormSaveError(null);
     try {
-      await baseApi.patchView(id, current.id, { config: cfg });
+      if (current.type === "form") {
+        const request = new AbortController();
+        const timeout = window.setTimeout(() => request.abort(), 15_000);
+        try { await saveFormConfig(id, current.id, current.config ?? EMPTY_CONFIG, fields, cfg, request.signal); }
+        finally { window.clearTimeout(timeout); }
+      } else await baseApi.patchView(id, current.id, { config: cfg });
       if (configDrafts.current.get(draftKey) === cfg) configDrafts.current.delete(draftKey);
       await refresh();
     }
-    catch { setSaveError(true); }
+    catch (error) {
+      if (current.type === "form") {
+        const message = error instanceof ApiError && error.status === 409 ? "表单或字段已变化，未保存。请检查当前配置后重试。"
+          : error instanceof ApiError && [401, 403, 404].includes(error.status) ? "权限已变化或表单不存在，未保存配置。"
+          : error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) ? `未保存：${error.message || "配置无效。"}`
+          : "无法确认配置是否保存，请检查当前配置后重试。";
+        setFormSaveError({ viewId: current.id, message });
+        void refresh();
+      } else setSaveError(true);
+    }
     finally { savingKey.current = null; setSavingView(false); }
   };
   const newView = async (type: import("@/lib/api").View["type"], name: string) => {
     setViewMenuOpen(false);
-    setViewError(false);
+    setViewError(null);
+    const op = ledger.begin("新建视图", name, "view:write");
+    if (op === null) return;
+    let v: import("@/lib/api").View;
     try {
-      const v = await baseApi.addView(id, { type, name });
-      await refresh();
-      setViewId(v.id);
-      setCfgState(v.config ?? EMPTY_CONFIG);
-    } catch {
-      setViewError(true);
+      v = await baseApi.addView(id, { type, name });
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+        ledger.complete(op);
+        setViewError("无法新建视图，请检查权限或视图配置。");
+      } else {
+        ledger.fail(op, "无法确认视图是否创建，请刷新并核对后再操作。");
+        setViewError("无法确认视图是否创建，请核对列表。");
+      }
+      refreshWrites(refresh);
+      return;
     }
+    ledger.complete(op);
+    try { await refresh(); setViewId(v.id); setCfgState(v.config ?? EMPTY_CONFIG); }
+    catch { setViewError("视图已创建，但列表刷新失败，请重新加载。"); }
+  };
+  const addRecord = async () => {
+    if (ledger.blocked("batch")) return;
+    const op = ledger.begin("新增记录", "", "record:create");
+    if (op === null) return;
+    try { await baseApi.addRecord(id); ledger.complete(op); }
+    catch { ledger.fail(op, "无法确认是否创建，请刷新并核对记录，勿直接重复新增。"); }
+    finally { refreshWrites(refresh); }
   };
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-surface">
+    <div className="flex min-w-0 flex-1 flex-col bg-surface" onCopyCapture={(event) => guardBaseClipboard(event, preventCopy)} onCutCapture={(event) => guardBaseClipboard(event, preventCopy)}>
       <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-surface pl-14 pr-3 md:px-4" data-base-header>
         <button onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover md:grid" title="返回云文档" aria-label="返回云文档"><Home size={17} strokeWidth={1.6} /></button>
         <span className="hidden h-8 w-px bg-border md:block" />
@@ -140,103 +219,47 @@ export function BasePage({ id }: { id: number }) {
             <span className="grid size-4 shrink-0 place-items-center rounded-[4px] bg-[#8d6cdf] text-white"><Table2 size={11} strokeWidth={2} /></span>
             <BaseTitle id={id} title={base.title || "未命名多维表格"} canEdit={canEdit} onRenamed={refresh} />
           </div>
-          <p className="pt-0.5 text-[11px] text-subtle">{canEdit ? "可编辑" : "只读"}</p>
+          <p className="pt-0.5 text-[11px] text-subtle">最近修改：{formatBaseChange(lastBaseChange(base.updatedAt, q.data.records))}{!canEdit && " · 只读"}</p>
         </div>
         <button ref={shareAnchor} onClick={() => setSharing(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Share2 size={14} />分享</button>
         {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="hidden h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover sm:flex"><Zap size={15} />自动化</button>}
       </header>
+      {!directDetailOpen && !gridDetailOpen && <WriteIssues ledger={ledger} issues={issues} />}
       {q.data.writeRestricted && <div role="status" className="border-b bg-[#fff8e8] px-4 py-2 text-[12px] text-[#8f6200]">此表启用了权限视图，当前暂不支持在受限权限下编辑。你可以查看允许访问的数据。</div>}
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-[237px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
           <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索记录" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
           <div className="flex h-9 items-center gap-2 rounded-md bg-[#edf2ff] px-2.5 text-[13px] font-medium text-primary dark:bg-accent"><Table2 size={16} strokeWidth={1.7} />数据表</div>
           {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Zap size={16} strokeWidth={1.7} />自动化</button>}
-          {canEdit && <button onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover"><Plus size={15}/>新建视图</button>}
+          {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>新建视图</button>}
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col bg-surface">
       {/* 视图导航 */}
-      <div className="flex h-11 shrink-0 items-center gap-1 border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
-        <div className="flex min-w-0 items-center overflow-x-auto">
-        {views.map((v) => (
-          <button
-            key={v.id}
-            className={`group/view flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 ${v.id === current?.id ? "bg-surface font-medium text-foreground shadow-[0_-1px_4px_rgba(31,35,41,0.05)]" : "text-muted-foreground hover:bg-hover hover:text-foreground"}`}
-            onClick={() => setViewId(v.id)}
-            data-view-tab={v.type}
-          >
-            <ViewIcon type={v.type} /> {v.name}
-            {views.length > 1 && canEdit && (
-              <span
-                className="hidden rounded p-0.5 text-[11px] text-subtle hover:text-destructive group-hover/view:inline"
-                title="删除视图"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (await ask(`删除视图「${v.name}」？`, "删除后不可恢复。")) {
-                    baseApi.deleteView(id, v.id).then(refresh);
-                    setViewId(null);
-                  }
-                }}
-              >
-                ✕
-              </span>
-            )}
-          </button>
-        ))}
-        </div>
+      <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 whitespace-nowrap border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
+        <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewIcon type={type} />} onSelect={setViewId} onRefresh={refresh} />
         {canEdit && (
           <div className="relative shrink-0">
-            <button className="flex h-8 items-center gap-1 rounded px-2 text-subtle hover:bg-hover hover:text-foreground" title="新建视图" aria-label="新建视图" aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((v) => !v)}><Plus size={15} /><span className="hidden sm:inline">新建视图</span></button>
+            <button disabled={ledger.blocked("view:write")} className="flex h-8 items-center gap-1 rounded px-2 text-subtle hover:bg-hover hover:text-foreground disabled:opacity-50" title="新建视图" aria-label="新建视图" aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((v) => !v)}><Plus size={15} /><span className="hidden sm:inline">新建视图</span></button>
             {viewMenuOpen && <div className="absolute left-0 top-8 z-30 w-44 rounded-lg border bg-surface p-1.5 shadow-lg max-sm:fixed max-sm:left-4 max-sm:top-24">
               <div className="px-2.5 pb-1 pt-1 text-[12px] text-subtle">基础视图</div>
               {([ ["grid", "表格视图", Table2, "text-[#3370ff]"], ["kanban", "看板视图", KanbanSquare, "text-[#19a55b]"], ["calendar", "日历视图", Calendar, "text-[#0ea5a4]"], ["gantt", "甘特视图", BarChart3, "text-[#df4f9a]"], ["gallery", "画册视图", Images, "text-[#8758d8]"], ["form", "表单视图", ClipboardList, "text-[#ed823d]"] ] as const).map(([type, name, Icon, color]) => <button key={type} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-hover" onClick={() => void newView(type, name)}><Icon size={16} className={color} />{name}</button>)}
             </div>}
           </div>
         )}
-        {viewError && <span role="alert" className="text-xs text-destructive">新建视图失败</span>}
-        {saveError && <span role="alert" className="text-xs text-destructive">无法确认视图是否已保存，请检查后重试</span>}
-        <div className="ml-auto flex items-center gap-3 text-muted-foreground">
-          {canEdit && current && (
-            <>
-              <label className="flex cursor-pointer items-center gap-1.5 hover:text-foreground" title="锁定后，协作成员只能看到此视图过滤后的行，隐藏字段对其剔除且不可写" data-lock-toggle>
-                <input
-                  type="checkbox"
-                  className="accent-primary"
-                  checked={!!cfg.locked}
-                  onChange={(e) => setCfg({ ...cfg, locked: e.target.checked || undefined })}
-                />
-                <LockKeyhole size={13} />权限视图
-              </label>
-              {dirty && (
-                <><button className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover" onClick={() => setCfg(current.config ?? EMPTY_CONFIG)} data-clear-view>清除</button><button disabled={savingView} className="rounded-md bg-primary px-2.5 py-1 font-medium text-white hover:opacity-90 disabled:opacity-50" onClick={save} data-save-view>{savingView ? "保存中…" : "保存"}</button></>
-              )}
-            </>
-          )}
-        </div>
+        {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
+        {saveError && <span role="alert" title="无法确认视图是否已保存，请检查后重试" className="min-w-0 max-w-28 truncate text-xs text-destructive">无法确认视图是否已保存，请检查后重试</span>}
+        {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
       <div className="flex min-h-11 shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap border-b px-4 py-1 text-[13px]" data-base-toolbar>
-        {canEdit && current?.type !== "form" && <button className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover" onClick={async () => { setRecordError(false); try { await baseApi.addRecord(id); await refresh(); } catch { setRecordError(true); } }}><Plus size={15} />添加记录</button>}
-        {recordError && <span role="alert" className="text-xs text-destructive">添加失败</span>}
+        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />添加记录</button>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">筛选结果不可用，请重试</span>}
-        {queryActive && serverQuery.isLoading && <span role="status" className="text-xs text-subtle">正在加载筛选结果…</span>}
+        {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">正在加载筛选结果…</span>}
+        {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">筛选仅覆盖当前加载的记录，更多记录可能未显示。</span>}
         {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />}
-        {current?.type === "grid" && (
-          <select
-            className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
-            value={cfg.group ?? ""}
-            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-            data-grid-group
-          >
-            <option value="">分组：无</option>
-            {fields.map((f) => (
-              <option key={f.id} value={f.id}>
-                按「{f.name}」
-              </option>
-            ))}
-          </select>
-        )}
+        {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
         )}
@@ -255,7 +278,7 @@ export function BasePage({ id }: { id: number }) {
             ))}
           </select>
         )}
-        {current?.type === "form" && <a className="rounded-md border px-2.5 py-1 text-primary hover:bg-hover" href={`#/form/${id}/${current.id}`} target="_blank" rel="noreferrer">打开收集表</a>}
+        {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
         {current?.type === "calendar" && (
           <select
             className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
@@ -276,7 +299,7 @@ export function BasePage({ id }: { id: number }) {
             自动化
           </button>
         )}
-        {canEdit && current?.type === "grid" && <span className="rounded-md px-2 py-1 text-subtle" title="导入功能暂不可用" data-import-csv>导入 CSV（暂不可用）</span>}
+        {canEdit && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
         {!canExportBase(base, q.data.writeRestricted) ? (
           <span className="rounded-md px-2 py-1 text-subtle" title="当前权限不支持导出" data-export-csv>导出 CSV（不可用）</span>
         ) : (
@@ -311,17 +334,18 @@ export function BasePage({ id }: { id: number }) {
         />
       )}
       {current?.type === "gantt" && (
-        <Gantt baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} startFieldId={cfg.group} onMutate={refresh} />
+        <Gantt baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} startFieldId={cfg.group} onMutate={refresh} onOpen={(r) => setDetailRecord(r.id)} />
       )}
       {autoOpen && (
         <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />
       )}
-      {detailRecord !== null && (() => {
+      {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         return rec ? (
           <RecordDetail
             baseId={id}
             canEdit={canEdit}
+            preventCopy={preventCopy}
             fields={fields}
             record={rec}
             members={members}
@@ -330,6 +354,7 @@ export function BasePage({ id }: { id: number }) {
           />
         ) : null;
       })()}
+      {current?.type === "form" && <FormSetup config={cfg} fields={fields} canEdit={base.role === "manage" && canEdit} saving={savingView} dirty={dirty} error={formSaveError?.viewId === current.id ? formSaveError.message : null} onChange={setCfg} onSave={() => void save()} onReset={() => { setCfg(current.config ?? EMPTY_CONFIG); setFormSaveError(null); }} />}
       {current?.type === "kanban" ? (
         <Kanban
           baseId={id}
@@ -340,8 +365,8 @@ export function BasePage({ id }: { id: number }) {
           groupFieldId={cfg.group}
           onMutate={refresh}
         />
-      ) : (current?.type === "grid" || current?.type === "form") ? (
-        <Grid baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} groupBy={cfg.group} onMutate={refresh} />
+      ) : current?.type === "grid" ? (
+        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} />
       ) : null}
           </div>
         </div>
@@ -359,7 +384,7 @@ function ViewIcon({ type }: { type: import("@/lib/api").View["type"] }) {
 }
 
 /** Toolbar popover: the label button toggles; outside clicks close; inner clicks stay. */
-function Popover({ label, active, children }: { label: string; active?: boolean; children: React.ReactNode }) {
+function Popover({ label, active, children }: { label: string; active?: boolean; children: React.ReactNode | ((close: () => void) => React.ReactNode) }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -388,15 +413,25 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {label.startsWith("筛选") ? <Filter size={15} /> : label.startsWith("排序") ? <ArrowDownUp size={15} /> : <Eye size={15} />} {label}
+        {label.startsWith("筛选") ? <Filter size={15} /> : label.startsWith("排序") ? <ArrowDownUp size={15} /> : label.startsWith("分组") ? <ListFilter size={15} /> : <Eye size={15} />} {label}
       </button>
       {open && position && createPortal(
         <div ref={body} style={position} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
-          {children}
+          {typeof children === "function" ? children(() => setOpen(false)) : children}
         </div>, document.body
       )}
     </div>
   );
+}
+
+function GroupBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (value: ViewConfig) => void }) {
+  return <Popover label="分组" active={!!cfg.group}>
+    {(close) => <div data-grid-group role="group" aria-label="分组字段" className="space-y-1">
+      <div className="px-2 pb-1 text-[12px] text-subtle">选择分组字段</div>
+      <button type="button" onClick={() => { onChange({ ...cfg, group: undefined }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover">不分组{!cfg.group && <Check size={15} className="text-primary" />}</button>
+      {fields.map((field) => <button key={field.id} type="button" onClick={() => { onChange({ ...cfg, group: field.id }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover"><span className="truncate">{field.name}</span>{cfg.group === field.id && <Check size={15} className="shrink-0 text-primary" />}</button>)}
+    </div>}
+  </Popover>;
 }
 
 function opsFor(type: string): string[] {

@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -19,16 +23,253 @@ type csvRowError struct {
 	Err string `json:"err"`
 }
 
-// importCSV is temporarily disabled: the legacy importer performs several
-// independent writes after checking permissions. A concurrent view lock or
-// revocation can otherwise allow writes that the caller is no longer allowed
-// to make. Restore this endpoint only after import and authorization/config
-// changes use the same transactional guard.
+// importCSV validates and publishes schema, records and reload event in one
+// guarded transaction; no field or row is published on an operational error.
 func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.needBase(w, r, store.RoleEdit); !ok {
+	b, ok := s.needBase(w, r, store.RoleEdit)
+	if !ok {
 		return
 	}
-	httpx.Error(w, http.StatusServiceUnavailable, "import_temporarily_unavailable", "导入暂不可用，请稍后重试")
+	var in struct {
+		CSV    string   `json:"csv"`
+		Header bool     `json:"header"`
+		Types  []string `json:"types"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if !utf8.ValidString(in.CSV) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_csv", "CSV 必须使用 UTF-8 编码")
+		return
+	}
+	reader := csv.NewReader(strings.NewReader(preserveCSVBlankLines(strings.TrimPrefix(in.CSV, "\ufeff"))))
+	reader.FieldsPerRecord = -1
+	var rows [][]string
+	for {
+		row, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_csv", err.Error())
+			return
+		}
+		if len(rows) >= 10001 || len(row) > 500 {
+			httpx.Error(w, http.StatusBadRequest, "csv_too_large", "最多导入 10000 行、500 列")
+			return
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		httpx.Error(w, http.StatusBadRequest, "empty_csv", "CSV 没有数据")
+		return
+	}
+	if len(rows) > 10001 || len(rows[0]) > 500 {
+		httpx.Error(w, http.StatusBadRequest, "csv_too_large", "最多导入 10000 行、500 列")
+		return
+	}
+	u, _ := UserFrom(r.Context())
+	cookie, err := r.Cookie(CookieName)
+	if err != nil || cookie.Value == "" {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+		return
+	}
+	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
+	var rowErrors []csvRowError
+	var fieldCount int
+	count, err := s.Store.ImportBaseCSV(r.Context(), guard, b.ID, func(fields []store.Field) (store.BaseImportPlan, error) {
+		plan, errs, e := csvImportPlan(rows, in.Header, in.Types, fields)
+		rowErrors, fieldCount = errs, len(plan.Columns)
+		return plan, e
+	})
+	if errors.Is(err, store.ErrUnauthenticated) {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未导入数据")
+		return
+	}
+	if errors.Is(err, store.ErrForbidden) || errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导入，未修改数据")
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		httpx.Error(w, http.StatusConflict, "import_conflict", "表格已变化，请重试；未修改数据")
+		return
+	}
+	var invalid *csvPlanError
+	if errors.As(err, &invalid) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_csv", invalid.Error())
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(b.ID)
+	}
+	if rowErrors == nil {
+		rowErrors = []csvRowError{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"imported": count, "fields": fieldCount, "errors": rowErrors})
+}
+
+type csvPlanError struct{ message string }
+
+func (e *csvPlanError) Error() string { return e.message }
+
+// encoding/csv intentionally discards empty physical lines. A single-column
+// CSV exported by this app represents empty records as such lines, so quote
+// them only outside a quoted field before parsing. Quoted multiline content
+// and malformed input remain for encoding/csv to validate normally.
+func preserveCSVBlankLines(input string) string {
+	var out strings.Builder
+	out.Grow(len(input))
+	quoted, fieldStart, lineStart := false, true, true
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		if lineStart && !quoted && (c == '\n' || c == '\r' && i+1 < len(input) && input[i+1] == '\n') {
+			out.WriteString(`""`)
+		}
+		if c == '"' {
+			if quoted && i+1 < len(input) && input[i+1] == '"' {
+				out.WriteString(`""`)
+				i++
+				lineStart = false
+				continue
+			}
+			if quoted || fieldStart {
+				quoted = !quoted
+			}
+		}
+		out.WriteByte(c)
+		if c == '\n' {
+			lineStart = true
+			if !quoted {
+				fieldStart = true
+			}
+		} else {
+			lineStart = false
+			if !quoted {
+				fieldStart = c == ','
+			}
+		}
+	}
+	return out.String()
+}
+
+func csvImportPlan(rows [][]string, header bool, types []string, fields []store.Field) (store.BaseImportPlan, []csvRowError, error) {
+	var plan store.BaseImportPlan
+	headers, data := rows[0], rows[1:]
+	if !header {
+		headers, data = make([]string, len(rows[0])), rows
+		for i := range headers {
+			headers[i] = "列" + strconv.Itoa(i+1)
+		}
+	}
+	if len(data) > 10000 || len(headers) == 0 || len(headers) > 500 {
+		return plan, nil, &csvPlanError{"最多导入 10000 行、500 列"}
+	}
+	byName := map[string]store.Field{}
+	ambiguous := map[string]bool{}
+	for _, f := range fields {
+		if _, ok := byName[f.Name]; ok {
+			ambiguous[f.Name] = true
+		}
+		byName[f.Name] = f
+	}
+	seen := map[string]bool{}
+	columnFields := make([]store.Field, 0, len(headers))
+	for i, name := range headers {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name = "列" + strconv.Itoa(i+1)
+		}
+		if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 100 || seen[name] || ambiguous[name] {
+			return plan, nil, &csvPlanError{fmt.Sprintf("第 %d 列的字段名称无效或重复", i+1)}
+		}
+		seen[name] = true
+		f, exists := byName[name]
+		if !exists {
+			// Infer only when the exact source spelling is representable; leading
+			// or trailing whitespace may be meaningful in text identifiers.
+			typ := inferType(columnExact(data, i))
+			if i < len(types) && types[i] != "" {
+				typ = types[i]
+			}
+			f = store.Field{Name: name, Type: typ}
+			if typ == "select" || typ == "multi_select" {
+				optionSeen := map[string]bool{}
+				for _, value := range column(data, i) {
+					parts := []string{value}
+					if typ == "multi_select" {
+						parts = strings.Split(value, ";")
+					}
+					for _, part := range parts {
+						part = strings.TrimSpace(part)
+						if part != "" && !optionSeen[part] {
+							optionSeen[part] = true
+							f.Options = append(f.Options, part)
+						}
+					}
+				}
+			}
+		}
+		switch f.Type {
+		case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating":
+		default:
+			return plan, nil, &csvPlanError{fmt.Sprintf("字段「%s」的类型暂不支持 CSV 导入", name)}
+		}
+		c := store.ImportColumn{}
+		if exists {
+			c.ExistingID = f.ID
+		} else {
+			c.New = f
+		}
+		plan.Columns = append(plan.Columns, c)
+		columnFields = append(columnFields, f)
+	}
+	var errs []csvRowError
+	for ri, row := range data {
+		cells := map[int]json.RawMessage{}
+		bad := ""
+		if len(row) > len(headers) {
+			bad = "列数超过表头"
+		}
+		for ci := range headers {
+			if bad != "" || ci >= len(row) {
+				break
+			}
+			raw := row[ci]
+			if raw == "" {
+				continue
+			}
+			f := columnFields[ci]
+			value := raw
+			if f.Type != "text" {
+				value = strings.TrimSpace(raw)
+			}
+			if value == "" {
+				continue
+			}
+			cell, err := csvValue(f, value)
+			if err != nil || !validCell(f, cell) {
+				bad = fmt.Sprintf("第 %d 列「%s」的值无效", ci+1, f.Name)
+				break
+			}
+			cells[ci] = cell
+		}
+		if bad != "" {
+			number := ri + 1
+			if header {
+				number++
+			}
+			errs = append(errs, csvRowError{Row: number, Err: bad})
+			continue
+		}
+		// A CSV row with explicitly empty cells is still a record. Dropping it
+		// silently breaks export/import round trips and changes row positions.
+		plan.Rows = append(plan.Rows, cells)
+	}
+	return plan, errs, nil
 }
 
 // importCSVLegacy is kept only as a reference for a future transactional
@@ -162,6 +403,21 @@ func csvValue(f store.Field, v string) (json.RawMessage, error) {
 			return nil, fmt.Errorf("不是数字")
 		}
 		return mustJSON(n)
+	case "rating":
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("不是评分")
+		}
+		return mustJSON(n)
+	case "multi_select":
+		var values []string
+		for _, part := range strings.Split(v, ";") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				values = append(values, part)
+			}
+		}
+		return mustJSON(values)
 	case "checkbox":
 		switch strings.ToLower(v) {
 		case "true", "1", "yes", "是", "x":
@@ -213,6 +469,16 @@ func column(rows [][]string, i int) []string {
 	return out
 }
 
+func columnExact(rows [][]string, i int) []string {
+	var out []string
+	for _, r := range rows {
+		if i < len(r) && r[i] != "" {
+			out = append(out, r[i])
+		}
+	}
+	return out
+}
+
 // inferType looks at the values: all numbers → number, all bool-ish →
 // checkbox, all ISO dates → date, otherwise text.
 func inferType(values []string) string {
@@ -221,11 +487,11 @@ func inferType(values []string) string {
 	}
 	allNum, allBool, allDate := true, true, true
 	for _, v := range values {
-		if _, err := strconv.ParseFloat(v, 64); err != nil {
+		if n, err := strconv.ParseFloat(v, 64); err != nil || strconv.FormatFloat(n, 'f', -1, 64) != v {
 			allNum = false
 		}
-		switch strings.ToLower(v) {
-		case "true", "false", "是", "否":
+		switch v {
+		case "true", "false":
 		default:
 			allBool = false
 		}

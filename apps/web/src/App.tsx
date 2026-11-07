@@ -52,8 +52,9 @@ export default function App() {
   // Public links must resolve before authentication is required.
   if (route.page === "public") return <PublicDoc key={route.token} token={route.token} />;
   if (route.page === "form") {
-    return <PublicForm key={`${route.base}:${route.vid}`} baseId={route.base} viewId={route.vid} />;
+    return <PublicForm key={route.token} token={route.token} />;
   }
+  if (route.page === "legacy-form") return <div className="grid min-h-full place-items-center p-6 text-center text-muted-foreground"><p>此收集表链接已失效，请联系创建者获取新的分享链接。</p></div>;
   if (checkingAuth) return <div className="grid h-full place-items-center text-subtle">正在确认账号…</div>;
   if (authCheckError) return <div className="grid h-full place-items-center text-destructive"><div>无法确认当前账号。<button type="button" onClick={() => void verifyExternalAuth()} className="ml-2 underline">重试</button></div></div>;
   if (me.isPending) return <div className="grid h-full place-items-center text-subtle">加载中…</div>;

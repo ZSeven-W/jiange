@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/internal/btquery"
 )
@@ -41,6 +42,29 @@ func (m *Memory) AddView(_ context.Context, v View) (View, error) {
 	return v, nil
 }
 
+// A type change must fence in-flight publication requests even when this view
+// has never had a public link: otherwise an old revision-0 request can publish
+// after a form is changed away and back again. The caller holds m.mu.
+func (m *Memory) invalidateFormOnTypeChangeLocked(before, after View) error {
+	if before.Type != "form" || after.Type == "form" {
+		return nil
+	}
+	key := [2]int64{before.BaseID, before.ID}
+	link := m.b.formLinks[key]
+	if link.revision >= maxPublicFormRevision {
+		return ErrConflict
+	}
+	if m.b.formLinks == nil {
+		m.b.formLinks = make(map[[2]int64]formLink)
+	}
+	link.hash = nil
+	link.revision++
+	link.windowStarted = time.Time{}
+	link.windowCount = 0
+	m.b.formLinks[key] = link
+	return nil
+}
+
 func (m *Memory) UpdateView(_ context.Context, v View) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,6 +79,9 @@ func (m *Memory) UpdateView(_ context.Context, v View) (View, error) {
 			if v.Config == nil {
 				v.Config = x.Config
 			}
+			if err := m.invalidateFormOnTypeChangeLocked(x, v); err != nil {
+				return View{}, err
+			}
 			m.b.views[i] = v
 			return v, nil
 		}
@@ -65,6 +92,21 @@ func (m *Memory) UpdateView(_ context.Context, v View) (View, error) {
 func (m *Memory) DeleteView(_ context.Context, base, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	count, found := 0, false
+	for _, v := range m.b.views {
+		if v.BaseID == base {
+			count++
+			if v.ID == id {
+				found = true
+			}
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	if count <= 1 {
+		return ErrConflict
+	}
 	n := len(m.b.views)
 	out := m.b.views[:0]
 	for _, v := range m.b.views {
@@ -76,6 +118,7 @@ func (m *Memory) DeleteView(_ context.Context, base, id int64) error {
 	if n == len(out) {
 		return ErrNotFound
 	}
+	delete(m.b.formLinks, [2]int64{base, id})
 	return nil
 }
 

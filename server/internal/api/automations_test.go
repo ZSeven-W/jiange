@@ -114,8 +114,9 @@ func TestFormSubmitAutomationAndWebhook(t *testing.T) {
 		"type": "form", "name": "反馈表单",
 		"config": map[string]any{"fields": []int64{fb.ID}},
 	}).Body).Decode(&fv)
+	token := publishTestForm(t, c, u, fv.ID)
 	anon := &http.Client{} // 无 cookie = 未登录
-	res := post(t, anon, ts.URL+"/api/forms/"+strconv.FormatInt(b.ID, 10)+"/"+strconv.FormatInt(fv.ID, 10),
+	res := post(t, anon, ts.URL+"/api/forms/"+token,
 		map[string]any{"cells": map[string]any{strconv.FormatInt(fb.ID, 10): "很好用"}})
 	if res.StatusCode != 201 {
 		t.Fatalf("form submit: %d", res.StatusCode)

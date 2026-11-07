@@ -246,7 +246,15 @@ func (p *Postgres) MapFieldCells(ctx context.Context, base, field int64, fn func
 
 func (p *Postgres) AppendBtEvent(ctx context.Context, base int64, body json.RawMessage) (int64, error) {
 	var seq int64
-	err := p.Pool.QueryRow(ctx, `INSERT INTO bt_events (base_id, body) VALUES ($1, $2) RETURNING id`, base, body).Scan(&seq)
+	// Guarded operations also insert events under this node lock. Serializing
+	// allocation through commit prevents a later visible event from advancing
+	// the room past an earlier uncommitted event on the same base.
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := lockBaseNode(ctx, tx, base); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO bt_events (base_id, body) VALUES ($1, $2) RETURNING id`, base, body).Scan(&seq)
+	})
 	return seq, err
 }
 

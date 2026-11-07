@@ -1,9 +1,9 @@
 // Package btsync streams bitable change events over WebSocket. One room per
 // open base: every REST mutation appends an event to bt_events and pokes the
-// room, which fans the log out to connections in seq order. Clients apply
-// events in order, so concurrent writes to a cell converge everywhere with
-// the last committed write winning. After a disconnect a client resends its
-// last seen seq and the room replays everything after it.
+// room, which fans the log out to connections in ID order. IDs are global,
+// so gaps do not indicate missing events for this Base. Clients should use
+// events as invalidation hints and fetch an authorized snapshot until the
+// protocol has per-Base sequencing and an atomic snapshot/head.
 package btsync
 
 import (
@@ -101,7 +101,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64, checks
 	if len(checks) > 0 {
 		check = checks[0]
 	}
-	c := &conn{out: make(chan []byte, outBuffer)}
+	c := &conn{out: make(chan []byte, outBuffer), cancel: cancel}
 	go c.writeLoop(ctx, ws, check, cancel)
 	room := h.room(baseID)
 	defer h.release(room)
@@ -200,7 +200,9 @@ func (r *room) replay(c *conn, lastSeq int64) {
 		if len(events) == 0 {
 			return
 		}
-		c.send(mustJSON(map[string]any{"t": "events", "events": events}))
+		if !c.send(invalidationFrame(events)) {
+			return
+		}
 		from = events[len(events)-1].Seq
 	}
 }
@@ -218,7 +220,7 @@ func (r *room) catchUp() {
 		if len(events) == 0 {
 			return
 		}
-		msg := mustJSON(map[string]any{"t": "events", "events": events})
+		msg := invalidationFrame(events)
 		for c := range r.conns {
 			c.send(msg)
 		}
@@ -227,6 +229,22 @@ func (r *room) catchUp() {
 			return
 		}
 	}
+}
+
+// Store events can contain full cells, including links to other Bases the
+// receiver cannot access. Never send raw payloads: even unrestricted Base
+// readers may not have permission to those targets. Preserve sequence IDs and
+// the existing reload kind so older clients refetch an authorized snapshot.
+func invalidationFrame(events []store.BtEvent) []byte {
+	type hint struct {
+		Seq  int64          `json:"seq"`
+		Body map[string]any `json:"body"`
+	}
+	hints := make([]hint, 0, len(events))
+	for _, event := range events {
+		hints = append(hints, hint{Seq: event.Seq, Body: map[string]any{"kind": "reload"}})
+	}
+	return mustJSON(map[string]any{"t": "events", "events": hints})
 }
 
 // sweepLoop periodically catches up so events appended by other instances
@@ -245,14 +263,20 @@ func (r *room) sweepLoop() {
 }
 
 type conn struct {
-	out chan []byte
+	out    chan []byte
+	cancel context.CancelFunc
 }
 
 // send queues a frame; a slow consumer is dropped instead of stalling the room.
-func (c *conn) send(b []byte) {
+func (c *conn) send(b []byte) bool {
 	select {
 	case c.out <- b:
+		return true
 	default:
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return false
 	}
 }
 
@@ -262,6 +286,9 @@ func (c *conn) writeLoop(ctx context.Context, ws *websocket.Conn, check func(con
 		case <-ctx.Done():
 			return
 		case b := <-c.out:
+			if ctx.Err() != nil {
+				return
+			}
 			// Re-evaluate access immediately before every replay or live frame.
 			// The payload can include the complete row, including hidden fields.
 			if check != nil && check(ctx) != nil {

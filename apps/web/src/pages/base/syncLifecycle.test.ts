@@ -39,6 +39,8 @@ describe("base realtime access lifecycle", () => {
     };
     vi.stubGlobal("location", { protocol: "http:", host: "localhost" });
     vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
     stop = undefined;
   });
   afterEach(() => { if (typeof stop === "function") stop(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -71,15 +73,25 @@ describe("base realtime access lifecycle", () => {
     expect(Socket.instances).toHaveLength(1);
   });
 
-  it("discards a sequence gap, fetches a fresh snapshot, and cancels on unmount", async () => {
+  it("treats a global sequence gap as an invalidation without applying its payload", async () => {
     useBaseSync(1, { ready: true, restricted: false });
     stop = harness.effect?.();
     Socket.instances[0].onmessage?.({ data: JSON.stringify({ t: "events", events: [{ seq: 6, body: { kind: "record", op: "del", rid: 3 } }] }) });
     expect(data.head).toBe(4);
+    expect(refresh).toHaveBeenCalledTimes(1);
     if (typeof stop === "function") stop();
     stop = undefined;
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(refresh).not.toHaveBeenCalled();
+    // The first authorized snapshot can finish after unmount, but no further
+    // periodic request or reconnect may be scheduled.
+    expect(refresh).toHaveBeenCalledTimes(1);
     expect(Socket.instances).toHaveLength(1);
+  });
+
+  it("polls unrestricted bases even when no event arrives", async () => {
+    useBaseSync(1, { ready: true, restricted: false });
+    stop = harness.effect?.();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["base", 1], exact: true }, { throwOnError: true });
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; base: number; vid: number } | { page: "public"; token: string };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string };
 
 export function parseHash(h: string): Route {
   const m = /^#\/doc\/(\d+)/.exec(h);
@@ -11,8 +11,11 @@ export function parseHash(h: string): Route {
   if (j) return { page: "join", token: j[1] };
   if (h.startsWith("#/recent")) return { page: "recent" };
   if (h.startsWith("#/favorites")) return { page: "favorites" };
-  const fm = h.match(/^#\/form\/(\d+)\/(\d+)/);
-  if (fm) return { page: "form", base: Number(fm[1]), vid: Number(fm[2]) };
+  // Old numeric links were enumerable and are intentionally no longer public.
+  if (/^#\/form\/\d+\/\d+\/?$/.test(h)) return { page: "legacy-form" };
+  const fm = h.match(/^#\/form\/([A-Za-z0-9_-]{43})\/?$/);
+  if (fm) return { page: "form", token: fm[1] };
+  if (h.startsWith("#/form/")) return { page: "legacy-form" };
   const pb = h.match(/^#\/p\/([A-Za-z0-9_-]+)/);
   if (pb) return { page: "public", token: pb[1] };
   if (h.startsWith("#/trash")) return { page: "trash" };
