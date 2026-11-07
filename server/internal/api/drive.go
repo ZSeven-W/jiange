@@ -59,6 +59,47 @@ func (s *Server) postDriveFolder(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, entry)
 }
 
+// postDriveNode creates a doc/base/folder inside any folder (guarded). The
+// legacy creation endpoints cannot insert under a folder: the fence triggers
+// require drive_revision 1 and a guarded session.
+func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	g, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		WorkspaceID int64  `json:"workspaceId"`
+		ParentID    *int64 `json:"parentId"`
+		Kind        string `json:"kind"`
+		Title       string `json:"title"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Kind != "doc" && in.Kind != "base" && in.Kind != "folder" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "kind 必须是 doc/base/folder")
+		return
+	}
+	if in.WorkspaceID == 0 {
+		ws, werr := s.Store.Workspaces(r.Context(), u.ID)
+		if werr != nil || len(ws) == 0 {
+			s.fail(w, r, werr)
+			return
+		}
+		in.WorkspaceID = ws[0].ID
+	}
+	title := driveCleanTitle(w, in.Title)
+	if title == "" {
+		return
+	}
+	entry, err := s.Store.CreateDriveNode(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, title)
+	if driveWriteErr(w, err, "create node") {
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, entry)
+}
+
 // listDriveChildren lists one directory level (folder contents).
 func (s *Server) listDriveChildren(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())

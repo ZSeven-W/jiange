@@ -76,6 +76,58 @@ func TestDriveVerticalSlice(t *testing.T) {
 
 func strconv64(v int64) string { return strconv.FormatInt(v, 10) }
 
+// guarded 新建：doc/base 可直接建在文件夹内（旧创建端点会被 fence 拒绝）。
+func TestDriveCreateNodesInFolder(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "cn@x.com", "name": "CN", "password": "password123"})
+
+	var folder store.DriveEntry
+	if res := post(t, c, ts.URL+"/api/drive/folders", map[string]any{"title": "交付"}); res.StatusCode != 201 {
+		t.Fatalf("create folder: %d", res.StatusCode)
+	} else {
+		json.NewDecoder(res.Body).Decode(&folder)
+	}
+
+	// 非法 kind
+	if res := post(t, c, ts.URL+"/api/drive/nodes", map[string]any{"kind": "wiki", "title": "X", "parentId": folder.ID}); res.StatusCode != 400 {
+		t.Fatalf("invalid kind accepted: %d", res.StatusCode)
+	}
+
+	var doc, base store.DriveEntry
+	if res := post(t, c, ts.URL+"/api/drive/nodes", map[string]any{"kind": "doc", "title": "会议纪要", "parentId": folder.ID}); res.StatusCode != 201 {
+		t.Fatalf("create doc: %d", res.StatusCode)
+	} else {
+		json.NewDecoder(res.Body).Decode(&doc)
+	}
+	if doc.Kind != "doc" || doc.Revision != 1 || doc.ParentID == nil || *doc.ParentID != folder.ID {
+		t.Fatalf("doc entry: %+v", doc)
+	}
+	if res := post(t, c, ts.URL+"/api/drive/nodes", map[string]any{"kind": "base", "title": "跟踪表", "parentId": folder.ID}); res.StatusCode != 201 {
+		t.Fatalf("create base: %d", res.StatusCode)
+	} else {
+		json.NewDecoder(res.Body).Decode(&base)
+	}
+	if base.Kind != "base" || base.Revision != 1 {
+		t.Fatalf("base entry: %+v", base)
+	}
+
+	// 目录里可见两条
+	var children struct{ Entries []store.DriveEntry }
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/drive/children?parent="+strconv64(folder.ID)).Body).Decode(&children)
+	if len(children.Entries) != 2 {
+		t.Fatalf("children: %+v", children.Entries)
+	}
+
+	// 建出的 doc 可通过旧文档接口读取（标题/正文路径完好）
+	if res := cGet(t, c, ts.URL+"/api/docs/"+strconv64(doc.ID)); res.StatusCode != 200 {
+		t.Fatalf("get created doc: %d", res.StatusCode)
+	}
+	// 建出的 base 有默认字段（getBase 返回 fields）
+	if res := cGet(t, c, ts.URL+"/api/bases/"+strconv64(base.ID)); res.StatusCode != 200 {
+		t.Fatalf("get base: %d", res.StatusCode)
+	}
+}
+
 // 回收站页走旧还原端点：fence 触发器拒绝对 folder 子树的旧式 undelete，
 // 端点内部必须改走 guarded RestoreDriveNode（用回收站列表带回的修订号）。
 func TestTrashEndpointRestoresDriveBatch(t *testing.T) {
