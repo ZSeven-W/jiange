@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/btformula"
-	"github.com/ZSeven-W/jiange/server/internal/btquery"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -227,30 +226,10 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	return true
 }
 
-func fieldIDOf(key string, _ []store.Field) int64 {
-	id, _ := strconv.ParseInt(key, 10, 64)
-	return id
-}
-
-func containsID(ids []int64, key string) bool {
-	id, _ := strconv.ParseInt(key, 10, 64)
-	for _, x := range ids {
-		if x == id {
-			return true
-		}
-	}
-	return false
-}
-
 // validateFormula checks a formula expression's syntax and field references.
-func (s *Server) validateFormula(w http.ResponseWriter, r *http.Request, baseID, excludeField int64, formula string) bool {
+func validateFormula(w http.ResponseWriter, fields []store.Field, excludeField int64, formula string) bool {
 	if utf8.RuneCountInString(formula) > 2000 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_formula", "公式最长 2000 字")
-		return false
-	}
-	fields, err := s.Store.Fields(r.Context(), baseID)
-	if err != nil {
-		s.fail(w, r, err)
 		return false
 	}
 	names := make([]string, 0, len(fields))
@@ -303,42 +282,32 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &f) {
 		return
 	}
-	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, 0, f.Formula) {
+	fields, err := s.Store.Fields(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if f.Type == "formula" && f.Formula != "" && !validateFormula(w, fields, 0, f.Formula) {
 		return
 	}
 	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
 		return
 	}
-	f, err := s.Store.AddField(r.Context(), f)
-	if err != nil {
-		s.fail(w, r, err)
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
 		return
 	}
-	// 双向关联：在对侧 base 自动建伴随 link 字段，options 互指（[对侧base, 伴随字段]）
-	if f.Type == "link" && len(f.Options) == 1 {
-		if target, err := strconv.ParseInt(f.Options[0], 10, 64); err == nil && target > 0 && target != b.ID {
-			if tb, err := s.Store.GetDocSystem(r.Context(), target); err == nil {
-				name := strings.TrimSpace(b.Title)
-				if name == "" {
-					name = "未命名多维表格"
-				}
-				companion, err := s.Store.AddField(r.Context(), store.Field{BaseID: target, Name: name, Type: "link"})
-				if err == nil {
-					f.Options = []string{f.Options[0], strconv.FormatInt(companion.ID, 10)}
-					if f, err = s.Store.UpdateField(r.Context(), f); err != nil {
-						s.fail(w, r, err)
-						return
-					}
-					companion.Options = []string{strconv.FormatInt(b.ID, 10), strconv.FormatInt(f.ID, 10)}
-					_, _ = s.Store.UpdateField(r.Context(), companion)
-					s.btEvent(r.Context(), target, map[string]any{"kind": "reload"})
-					_ = tb
-				}
-			}
+	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, After: &f, Fields: fields})
+	if err != nil {
+		s.fieldMutationError(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		for _, id := range result.Notify {
+			s.BtHub.Notify(id)
 		}
 	}
-	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "add", "field": f})
-	httpx.JSON(w, http.StatusCreated, f)
+	httpx.JSON(w, http.StatusCreated, result.Field)
 }
 
 func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
@@ -368,32 +337,38 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &f) {
 		return
 	}
-	if f.Type == "formula" && f.Formula != "" && !s.validateFormula(w, r, b.ID, f.ID, f.Formula) {
+	if f.Type == "formula" && f.Formula != "" && !validateFormula(w, fields, f.ID, f.Formula) {
 		return
 	}
 	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
 		return
 	}
-	if f, err = s.Store.UpdateField(r.Context(), f); err != nil {
-		s.fail(w, r, err)
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
 		return
 	}
-	if old.Type != f.Type || ((f.Type == "select" || f.Type == "multi_select") && !slices.Equal(old.Options, f.Options)) {
-		if err := s.Store.MapFieldCells(r.Context(), b.ID, f.ID, func(v json.RawMessage) json.RawMessage {
-			return convertCell(old, f, v)
-		}); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		s.btEvent(r.Context(), b.ID, map[string]any{"kind": "reload"})
+	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, After: &f, Fields: fields, Convert: convertCell})
+	if err != nil {
+		s.fieldMutationError(w, r, err)
+		return
 	}
-	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "update", "field": f})
-	httpx.JSON(w, http.StatusOK, f)
+	if s.BtHub != nil {
+		for _, id := range result.Notify {
+			s.BtHub.Notify(id)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, result.Field)
 }
 
 // convertCell rewrites a cell after its field changed type (or a select's
 // options shrank). Values that cannot be represented are cleared (nil).
 func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
+	// A value already valid for the destination type needs no conversion.
+	// This preserves compatible values such as text→email/url/phone and
+	// integer number→rating instead of silently clearing them.
+	if validCell(to, v) {
+		return v
+	}
 	if from.Type == to.Type {
 		if to.Type == "select" {
 			var s string
@@ -495,16 +470,47 @@ func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
-	fid := pathID(r, "fid")
-	if err := s.Store.DeleteField(r.Context(), b.ID, fid); errors.Is(err, store.ErrNotFound) {
-		httpx.Error(w, http.StatusNotFound, "not_found", "field not found")
-		return
-	} else if err != nil {
+	fields, err := s.Store.Fields(r.Context(), b.ID)
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "field", "op": "del", "fid": fid})
+	idx := slices.IndexFunc(fields, func(f store.Field) bool { return f.ID == pathID(r, "fid") })
+	if idx < 0 {
+		httpx.Error(w, http.StatusNotFound, "not_found", "field not found")
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	old := fields[idx]
+	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, Fields: fields})
+	if err != nil {
+		s.fieldMutationError(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		for _, id := range result.Notify {
+			s.BtHub.Notify(id)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) fieldMutationError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未修改字段")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许修改字段")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "字段不存在")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "field_conflict", "字段、关联表或权限视图已变化或存在依赖，请检查后重试")
+	default:
+		s.fail(w, r, err)
+	}
 }
 
 // checkCells validates values against field types (null clears a cell).
@@ -608,187 +614,4 @@ func validCell(f store.Field, v json.RawMessage) bool {
 		return json.Unmarshal(v, &n) == nil && n >= 1 && n <= 5 && n == float64(int(n))
 	}
 	return false
-}
-
-func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, create bool) {
-	b, ok := s.needBase(w, r, store.RoleEdit)
-	if !ok {
-		return
-	}
-	if !s.allowBaseWrite(w, r, b) {
-		return
-	}
-	var in struct {
-		Cells    map[string]json.RawMessage `json:"cells"`
-		Position float64                    `json:"position"`
-		// Move: when true, Position repositions the record (kanban drag).
-		Move bool `json:"move"`
-	}
-	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
-		return
-	}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if msg := checkCells(fields, in.Cells); msg != "" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_cell", msg)
-		return
-	}
-	for _, field := range fields {
-		if raw, exists := in.Cells[strconv.FormatInt(field.ID, 10)]; exists && field.Type == "link" && !s.allowLinkTarget(w, r, b.ID, field, raw) {
-			return
-		}
-	}
-	// locked 视图的隐藏字段对非 manage 角色写保护
-	if b.Role != store.RoleManage {
-		for _, v := range func() []store.View {
-			vs, _ := s.Store.Views(r.Context(), b.ID)
-			return vs
-		}() {
-			if v.Type != "grid" && v.Type != "kanban" {
-				continue
-			}
-			var cfg btquery.Config
-			if json.Unmarshal(v.Config, &cfg) != nil || !cfg.Locked {
-				continue
-			}
-			for k := range in.Cells {
-				if containsID(cfg.Hidden, k) {
-					id, _ := strconv.ParseInt(k, 10, 64)
-					name := ""
-					for _, f := range fields {
-						if f.ID == id {
-							name = f.Name
-						}
-					}
-					httpx.Error(w, http.StatusForbidden, "forbidden", "字段 "+name+" 受权限保护")
-					return
-				}
-			}
-			break
-		}
-	}
-	u, _ := UserFrom(r.Context())
-	var rec store.Record
-	if create {
-		for k, v := range in.Cells {
-			if len(v) == 0 || string(v) == "null" {
-				delete(in.Cells, k)
-			}
-		}
-		rec, err = s.Store.AddRecord(r.Context(), store.Record{BaseID: b.ID, Cells: in.Cells, Position: in.Position, CreatorID: &u.ID})
-	} else if in.Move {
-		rec, err = s.Store.MoveRecord(r.Context(), b.ID, pathID(r, "rid"), in.Position)
-	} else {
-		rec, err = s.Store.SetCells(r.Context(), b.ID, pathID(r, "rid"), in.Cells)
-	}
-	if errors.Is(err, store.ErrNotFound) {
-		httpx.Error(w, http.StatusNotFound, "not_found", "record not found")
-		return
-	} else if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	// link 字段：cells 只作展示缓存，真值写 bt_links
-	linkFields := map[string]store.Field{}
-	for _, x := range fields {
-		if x.Type == "link" {
-			linkFields[strconv.FormatInt(x.ID, 10)] = x
-		}
-	}
-	for k, raw := range in.Cells {
-		f, ok := linkFields[k]
-		if !ok {
-			continue
-		}
-		var arr []int64
-		_ = json.Unmarshal(raw, &arr)
-		rid := rec.ID
-		if ferr := s.Store.SetLinks(r.Context(), b.ID, f.ID, rid, arr); ferr != nil {
-			s.fail(w, r, ferr)
-			return
-		}
-		// 对称写链：伴随字段在对侧 base 镜像记录（to 侧每个记录的 from 集合 = 本 from）
-		if len(f.Options) > 1 {
-			if companionBase, err1 := strconv.ParseInt(f.Options[0], 10, 64); err1 == nil {
-				if companionField, err2 := strconv.ParseInt(f.Options[1], 10, 64); err2 == nil {
-					// 取对侧该字段的现有链，重建为对称集合
-					var all []store.Record
-					all, err3 := s.Store.Records(r.Context(), companionBase)
-					if err3 != nil {
-						continue
-					}
-					var ids []int64
-					for _, r2 := range all {
-						ids = append(ids, r2.ID)
-					}
-					existing, _ := s.Store.LinksForRecords(r.Context(), companionField, ids)
-					for _, to := range arr {
-						set := map[int64]bool{}
-						for _, from := range existing[to] {
-							set[from] = true
-						}
-						if containsInt(arr, rid) {
-							// 本记录在 to 的集合里：确保存在
-						}
-						set[rid] = true
-						out := make([]int64, 0, len(set))
-						for from := range set {
-							out = append(out, from)
-						}
-						if err := s.Store.SetLinks(r.Context(), companionBase, companionField, to, out); err != nil {
-							s.Log.Error("symmetric link", "err", err)
-						}
-					}
-					// 从不再关联的目标中移除本记录
-					for to, froms := range existing {
-						if !containsInt(arr, to) {
-							out := make([]int64, 0, len(froms))
-							for _, from := range froms {
-								if from != rid {
-									out = append(out, from)
-								}
-							}
-							if err := s.Store.SetLinks(r.Context(), companionBase, companionField, to, out); err != nil {
-								s.Log.Error("symmetric unlink", "err", err)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	op := "update"
-	if create {
-		op = "add"
-	}
-	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "record", "op": op, "record": rec})
-	s.runAutomations(r.Context(), b.ID, "record_matches", rec)
-	status := http.StatusOK
-	if create {
-		status = http.StatusCreated
-	}
-	httpx.JSON(w, status, rec)
-}
-
-func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
-	b, ok := s.needBase(w, r, store.RoleEdit)
-	if !ok {
-		return
-	}
-	if !s.allowBaseWrite(w, r, b) {
-		return
-	}
-	rid := pathID(r, "rid")
-	if err := s.Store.DeleteRecord(r.Context(), b.ID, rid); errors.Is(err, store.ErrNotFound) {
-		httpx.Error(w, http.StatusNotFound, "not_found", "record not found")
-		return
-	} else if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.btEvent(r.Context(), b.ID, map[string]any{"kind": "record", "op": "del", "rid": rid})
-	w.WriteHeader(http.StatusNoContent)
 }

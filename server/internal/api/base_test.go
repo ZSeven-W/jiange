@@ -363,19 +363,22 @@ func TestBaseRealtimeEvents(t *testing.T) {
 	var rec store.Record
 	json.NewDecoder(post(t, c, u+"/records", map[string]any{"cells": map[string]string{strconv.FormatInt(f.ID, 10): "hi"}}).Body).Decode(&rec)
 
-	// events may arrive in several frames; wait until the record add shows up
-	kinds := []string{}
-	for seen := map[string]bool{}; !seen["record:add"]; {
+	// Events may arrive in several frames. They are reload hints rather than
+	// raw cell payloads, which can reveal links to inaccessible targets.
+	var seqs []float64
+	for len(seqs) < 2 {
 		m := readUntil("events")
 		for _, e := range m["events"].([]any) {
-			body := e.(map[string]any)["body"].(map[string]any)
-			k := body["kind"].(string) + ":" + body["op"].(string)
-			kinds = append(kinds, k)
-			seen[k] = true
+			event := e.(map[string]any)
+			body := event["body"].(map[string]any)
+			if body["kind"] != "reload" || len(body) != 1 {
+				t.Fatalf("unexpected event payload: %v", body)
+			}
+			seqs = append(seqs, event["seq"].(float64))
 		}
 	}
-	if kinds[0] != "field:add" {
-		t.Fatalf("unexpected event stream: %v", kinds)
+	if seqs[0] >= seqs[1] {
+		t.Fatalf("event order: %v", seqs)
 	}
 
 	// GET reports the event head so a fresh client knows where to resume

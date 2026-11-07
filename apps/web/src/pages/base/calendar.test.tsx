@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BaseRecord, Field } from "@/lib/api";
 import { CalendarView, calendarDate, calendarDays, calendarKey, groupCalendarRecords, shiftCalendar } from "./CalendarView";
+import { sessionWriteLedger } from "./writeSafety";
 
 const record = (id: number, date?: string): BaseRecord => ({ id, baseId: 1, position: id, cells: { "1": `记录${id}`, ...(date === undefined ? {} : { "2": date }) } });
 const fields: Field[] = [{ id: 1, name: "名称", type: "text", position: 1 }, { id: 2, name: "日期", type: "date", position: 2 }];
 const date = (value: string) => calendarDate(value)!;
+const renderCalendar = (element: React.ReactElement) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}>{element}</QueryClientProvider>);
 afterEach(() => vi.useRealTimers());
 
 describe("calendar date handling", () => {
@@ -42,7 +45,7 @@ describe("calendar date handling", () => {
 describe("calendar view", () => {
   it("shows dated events in their day and undated/invalid records in a separate list", () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-07T12:00:00Z"));
-    const html = renderToStaticMarkup(<CalendarView baseId={1} canEdit fields={fields} records={[record(1, "2026-11-07"), record(2), record(3, "2026-02-30")]} members={[]} onMutate={() => {}} onOpen={() => {}} />);
+    const html = renderCalendar(<CalendarView baseId={1} canEdit fields={fields} records={[record(1, "2026-11-07"), record(2), record(3, "2026-02-30")]} members={[]} onMutate={() => {}} onOpen={() => {}} />);
     expect(html).toContain('data-day="2026-11-07"');
     expect(html).toContain('aria-label="未排期记录"');
     expect(html).toContain('data-event="1"');
@@ -54,11 +57,21 @@ describe("calendar view", () => {
   });
 
   it("does not offer mutation controls to viewers or fake a missing date field", () => {
-    const readonly = renderToStaticMarkup(<CalendarView baseId={1} canEdit={false} fields={fields} records={[record(1)]} members={[]} onMutate={() => {}} onOpen={() => {}} />);
+    const readonly = renderCalendar(<CalendarView baseId={1} canEdit={false} fields={fields} records={[record(1)]} members={[]} onMutate={() => {}} onOpen={() => {}} />);
     expect(readonly).not.toContain("新增记录");
     expect(readonly).not.toContain('draggable="true"');
-    const empty = renderToStaticMarkup(<CalendarView baseId={1} canEdit fields={fields.slice(0, 1)} records={[record(1)]} members={[]} onMutate={() => {}} />);
+    const empty = renderCalendar(<CalendarView baseId={1} canEdit fields={fields.slice(0, 1)} records={[record(1)]} members={[]} onMutate={() => {}} />);
     expect(empty).toContain("日历需要日期字段");
     expect(empty).not.toContain('data-day=');
+  });
+
+  it("blocks calendar record creation while another create has an unknown result", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-07T12:00:00Z"));
+    const client = new QueryClient();
+    const ledger = sessionWriteLedger(client, 1);
+    const op = ledger.begin("新增记录", "", "record:create")!;
+    ledger.fail(op, "结果不确定");
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><CalendarView baseId={1} canEdit fields={fields} records={[record(1)]} members={[]} onMutate={() => {}} /></QueryClientProvider>);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="2026-11-07 新增记录"/);
   });
 });

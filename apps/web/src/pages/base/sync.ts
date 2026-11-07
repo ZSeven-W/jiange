@@ -13,7 +13,7 @@ export interface BaseData {
   writeRestricted?: boolean;
 }
 
-/** One realtime change from the server's per-base event log. */
+/** One realtime change from the server's globally numbered event log. */
 export interface BtEvent {
   seq: number;
   body: {
@@ -71,6 +71,13 @@ export function startRestrictedPolling(refresh: () => Promise<void>, env: {
   let stopped = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let unlisten = () => {};
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (timer !== undefined) env.clearTimer(timer);
+    unlisten();
+  };
   const schedule = () => {
     if (!stopped) timer = env.setTimer(tick, interval);
   };
@@ -79,7 +86,7 @@ export function startRestrictedPolling(refresh: () => Promise<void>, env: {
     if (stopped) return;
     if (running || !env.visible()) { schedule(); return; }
     running = true;
-    void refresh().catch(() => { /* query state reports failure to the page */ }).finally(() => {
+    void refresh().catch(() => { stop(); /* page reports the failed access check */ }).finally(() => {
       running = false;
       if (timer === undefined) schedule();
     });
@@ -89,17 +96,47 @@ export function startRestrictedPolling(refresh: () => Promise<void>, env: {
     if (timer !== undefined) env.clearTimer(timer);
     tick();
   };
-  const unlisten = env.listen(wake);
+  unlisten = env.listen(wake);
   schedule();
-  return () => {
-    stopped = true;
-    if (timer !== undefined) env.clearTimer(timer);
-    unlisten();
+  return stop;
+}
+
+/** Coalesce invalidations but repeat a fetch if a change arrives while it runs. */
+export function createSnapshotRefresher(refresh: () => Promise<void>) {
+  let inFlight: Promise<void> | null = null;
+  let dirty = false;
+  let stopped = false;
+  const request = (): Promise<void> => {
+      if (stopped) return Promise.resolve();
+      if (inFlight) { dirty = true; return inFlight; }
+      const run = (async () => {
+        do {
+          dirty = false;
+          await refresh();
+        } while (dirty && !stopped);
+      })();
+      inFlight = run;
+      // Install both handlers: using finally without handling its returned
+      // promise would introduce an unhandled rejection on network failure.
+      void run.then(() => {
+        if (inFlight !== run) return;
+        inFlight = null;
+        // A promise callback may mark dirty after the loop's final check but
+        // before this cleanup runs. Do not lose that invalidation.
+        if (dirty && !stopped) void request().catch(() => {});
+      }, () => { if (inFlight === run) inFlight = null; });
+      return run;
+  };
+  return {
+    request,
+    stop() { stopped = true; dirty = false; },
   };
 }
 
-/** Live updates only after a successful access check. Locked-view readers use
- * authorized HTTP refreshes: the server intentionally denies unfiltered WS. */
+/** Events are invalidations, not authoritative row patches. Current event IDs
+ * are global and the HTTP snapshot and head are not atomic. Periodic checked
+ * snapshots provide eventual recovery until the protocol has per-base epochs
+ * and an atomic snapshot. Restricted readers never open an unfiltered WS. */
 export function useBaseSync(baseId: number, options: { ready: boolean; restricted: boolean }) {
   const qc = useQueryClient();
   useEffect(() => {
@@ -107,9 +144,10 @@ export function useBaseSync(baseId: number, options: { ready: boolean; restricte
     const key = ["base", baseId] as const;
     let ws: WebSocket | null = null;
     let closed = false;
+    let failed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retries = 0;
-    let lastSeq = qc.getQueryData<BaseData>(key)?.head ?? 0;
+    let stopPolling = () => {};
 
     // Refetch the authorization-bearing snapshot before reconnecting or
     // refreshing derived query results. A rejected snapshot remains an error
@@ -121,72 +159,61 @@ export function useBaseSync(baseId: number, options: { ready: boolean; restricte
       // realtime stream from reconnecting; its own observer reports errors.
       void qc.invalidateQueries({ queryKey: [...key, "query"] });
     };
+    const snapshots = createSnapshotRefresher(async () => {
+      try { await refresh(); }
+      catch (error) {
+        failed = true;
+        stopPolling();
+        snapshots.stop();
+        ws?.close();
+        throw error;
+      }
+    });
+    stopPolling = startRestrictedPolling(() => snapshots.request(), {
+      visible: () => document.visibilityState === "visible",
+      listen: (wake) => {
+        window.addEventListener("focus", wake);
+        document.addEventListener("visibilitychange", wake);
+        return () => { window.removeEventListener("focus", wake); document.removeEventListener("visibilitychange", wake); };
+      },
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id),
+    });
 
     if (options.restricted) {
-      const stop = startRestrictedPolling(refresh, {
-        visible: () => document.visibilityState === "visible",
-        listen: (wake) => {
-          window.addEventListener("focus", wake);
-          document.addEventListener("visibilitychange", wake);
-          return () => { window.removeEventListener("focus", wake); document.removeEventListener("visibilitychange", wake); };
-        },
-        setTimer: (fn, ms) => setTimeout(fn, ms),
-        clearTimer: (id) => clearTimeout(id),
-      });
-      return () => { closed = true; stop(); };
+      return () => { closed = true; snapshots.stop(); stopPolling(); };
     }
 
-    const onEvents = (events: BtEvent[]) => {
-      for (const ev of events) {
-        const state = qc.getQueryState(key);
-        const cached = qc.getQueryData<BaseData>(key);
-        if (closed || state?.status !== "success" || !cached || cached.writeRestricted) return;
-        // A concurrent HTTP snapshot can replace a newer event cache. Refresh
-        // before applying further deltas rather than silently skipping data.
-        if (cached.head < lastSeq) { ws?.close(); return; }
-        if (cached.head > lastSeq) lastSeq = cached.head;
-        if (ev.seq <= lastSeq) continue;
-        // Never apply events after a gap: reload a fresh authorized snapshot.
-        if (ev.seq !== lastSeq + 1) { ws?.close(); return; }
-        lastSeq = ev.seq;
-        if (ev.body.kind === "reload") {
-          // The payload does not carry a projection and may include a lock or
-          // role change. Drop the stream and re-check the complete snapshot.
-          ws?.close();
-          return;
-        }
-        qc.setQueryData<BaseData | undefined>(key, (d) => (d ? { ...applyBtEvent(d, ev), head: ev.seq } : d));
-      }
-    };
     const connect = () => {
       const cached = qc.getQueryData<BaseData>(key);
-      if (closed || !cached || cached.writeRestricted || qc.getQueryState(key)?.status !== "success") return;
-      lastSeq = cached.head;
+      if (closed || failed || !cached || cached.writeRestricted || qc.getQueryState(key)?.status !== "success") return;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       ws = new WebSocket(`${proto}//${location.host}/api/bases/${baseId}/sync`);
       ws.onopen = () => {
         retries = 0;
-        ws!.send(JSON.stringify({ t: "hello", lastSeq }));
+        ws!.send(JSON.stringify({ t: "hello", lastSeq: qc.getQueryData<BaseData>(key)?.head ?? 0 }));
       };
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data);
-          if (m.t === "events" && Array.isArray(m.events)) onEvents(m.events);
+          if (m.t === "events" && Array.isArray(m.events) && m.events.length) void snapshots.request().catch(() => {});
         } catch {
           /* ignore malformed frames */
         }
       };
       ws.onclose = () => {
-        if (closed) return;
+        if (closed || failed) return;
         retries++;
         // A close can mean the grant or lock changed. Never reopen the raw
         // stream using the old grant; re-read permissions first.
-        timer = setTimeout(() => { void refresh().then(connect).catch(() => {}); }, Math.min(10000, 500 * 2 ** retries));
+        timer = setTimeout(() => { void snapshots.request().then(connect).catch(() => {}); }, Math.min(10000, 500 * 2 ** retries));
       };
     };
     connect();
     return () => {
       closed = true;
+      snapshots.stop();
+      stopPolling();
       if (timer !== undefined) clearTimeout(timer);
       ws?.close();
     };

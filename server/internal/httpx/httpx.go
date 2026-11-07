@@ -85,12 +85,18 @@ func safeLogPath(rawPath string) string {
 				continue
 			}
 			j := next(i + 1)
-			if j >= len(parts) || parts[j] != "public" && parts[j] != "share" {
+			if j >= len(parts) || parts[j] != "public" && parts[j] != "share" && parts[j] != "forms" {
 				continue
 			}
 			k := next(j + 1)
 			if k < len(parts) {
-				parts[k] = "[redacted]"
+				if parts[j] == "forms" {
+					// Redact the entire tail even for malformed or encoded paths;
+					// bearer credentials must never reach an access log.
+					parts = append(parts[:k], "[redacted]")
+				} else {
+					parts[k] = "[redacted]"
+				}
 				found = true
 			}
 		}

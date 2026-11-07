@@ -1,13 +1,17 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
+import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu } from "./fields";
 import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
-import { planPaste, rangeText } from "./tsv";
+import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
 import { ChevronRight } from "lucide-react";
+import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
+import { authorizedDetailRecord } from "./recordAuthorization";
+import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
+import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -18,44 +22,71 @@ function loadWidths(baseId: number): Record<number, number> {
   }
 }
 
-/** Selection: anchor cell + cursor cell (indices into the rendered grid). */
-interface Sel {
-  ar: number;
-  af: number;
-  rr: number;
-  rf: number;
-}
 interface Edit {
-  ri: number;
-  fi: number;
-  seed?: string;
+  rid: number;
+  fid: number;
+  draft: Cell | null;
+  dirty: boolean;
+  authorization: string | null;
+  authored: boolean;
 }
 
 export function Grid({
   baseId,
   canEdit,
   fields,
+  allFields,
   records,
+  authorizedRecords,
+  detailAccessReady = true,
+  selectionAccessReady = true,
+  preventCopy = false,
   members,
   groupBy,
   onMutate,
+  onDetailVisibilityChange,
 }: {
   baseId: number;
   canEdit: boolean;
   fields: Field[];
+  /** Full authorized order, including fields hidden only in the current view. */
+  allFields?: Field[];
   records: BaseRecord[];
+  /** Records from the current authorized Base snapshot, before local filters. */
+  authorizedRecords?: BaseRecord[];
+  /** Hide details during authorization revalidation. */
+  detailAccessReady?: boolean;
+  /** Query/filter results must also be current before resuming a batch. */
+  selectionAccessReady?: boolean;
+  preventCopy?: boolean;
   members: User[];
   /** grid grouping field id (from the view config), null = ungrouped */
   groupBy?: number | null;
   onMutate: () => void;
+  onDetailVisibilityChange?: (visible: boolean) => void;
 }) {
-  const [edit, setEdit] = useState<Edit | null>(null);
+  const { ledger } = useWriteLedger(baseId);
+  const [edit, setEditState] = useState<Edit | null>(null);
+  const editRef = useRef<Edit | null>(null);
+  const setEdit = (next: Edit | null | ((current: Edit | null) => Edit | null)) => {
+    const value = typeof next === "function" ? next(editRef.current) : next;
+    editRef.current = value;
+    setEditState(value);
+  };
   const [newField, setNewField] = useState(false);
   const [editField, setEditField] = useState<Field | null>(null);
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
-  const [drag, setDrag] = useState<{ fid: number; at: number | null }>({ fid: 0, at: null });
-  const [sel, setSel] = useState<Sel | null>(null);
-  const [detail, setDetail] = useState<BaseRecord | null>(null);
+  const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
+  const [dragError, setDragError] = useState<string | null>(null);
+  const [sel, setSel] = useState<GridSelection | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const detail = authorizedDetailRecord(detailId, authorizedRecords ?? records, detailAccessReady);
+  useEffect(() => {
+    if (detailId === null || !detailAccessReady || detail) return;
+    setDetailId(null);
+    onDetailVisibilityChange?.(false);
+  }, [detailId, detailAccessReady, detail, onDetailVisibilityChange]);
+  useEffect(() => () => { onDetailVisibilityChange?.(false); }, [onDetailVisibilityChange]);
   const [stats, setStats] = useState<Record<number, string>>(() => {
     try {
       return JSON.parse(localStorage.getItem(`jiange:stats:${baseId}`) ?? "{}");
@@ -66,6 +97,26 @@ export function Grid({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
+  const current = useRef({ baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, fields, allFields });
+  current.current = { baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, fields, allFields };
+  useEffect(() => { current.current.mounted = true; return () => { current.current.mounted = false; }; }, []);
+  useEffect(() => () => {
+    const draft = editRef.current;
+    if (!draft?.dirty) return;
+    const op = ledger.begin(`记录 #${draft.rid} · 字段 #${draft.fid}`, cellDraft(draft.draft), `cell:${draft.rid}:${draft.fid}`, draft.authorization, false, draft.authored);
+    if (op !== null) ledger.fail(op, "离开表格时输入尚未提交，请复制后核对。");
+    editRef.current = null;
+  }, [ledger]);
+  useEffect(() => {
+    const active = editRef.current;
+    if (!active) return;
+    if (canEdit && records.some((record) => record.id === active.rid) && fields.some((field) => field.id === active.fid)) return;
+    if (active.dirty) {
+      const op = ledger.begin(`记录 #${active.rid} · 字段 #${active.fid}`, cellDraft(active.draft), `cell:${active.rid}:${active.fid}`, active.authorization, false, active.authored);
+      if (op !== null) ledger.fail(op, "记录、字段或编辑权限已变化；输入未提交，请复制后核对。");
+    }
+    setEdit(null);
+  }, [canEdit, records, fields, edit, ledger]);
   useEffect(() => {
     const el = gridRef.current;
     if (!el) return;
@@ -99,9 +150,15 @@ export function Grid({
 
   const rows = records.length;
   const cols = fields.length;
+  // Never use a stale numeric offset after sort, filtering, insertion, deletion,
+  // field reordering or a changed authorization projection.
+  const selection = validGridSelection(sel, records, fields) ? sel : null;
+  const readSelection = () => validGridSelection(sel, records, fields) ? sel : null;
+  const setSelection = (rect: SelectionRect | null) => setSel(rect ? captureGridSelection(rect, records, fields) : null);
+  useEffect(() => { setSel((current) => current && !validGridSelection(current, records, fields) ? null : current); }, [records, fields]);
   const inRange = (r: number, f: number) =>
-    !!sel && r >= Math.min(sel.ar, sel.rr) && r <= Math.max(sel.ar, sel.rr) && f >= Math.min(sel.af, sel.rf) && f <= Math.max(sel.af, sel.rf);
-  const isCursor = (r: number, f: number) => !!sel && sel.rr === r && sel.rf === f;
+    !!selection && r >= Math.min(selection.ar, selection.rr) && r <= Math.max(selection.ar, selection.rr) && f >= Math.min(selection.af, selection.rf) && f <= Math.max(selection.af, selection.rf);
+  const isCursor = (r: number, f: number) => !!selection && selection.rr === r && selection.rf === f;
 
   const scrollCellIntoView = (r: number, f: number) => {
     const el = gridRef.current;
@@ -119,53 +176,95 @@ export function Grid({
   };
 
   const move = (dr: number, df: number, extend = false) => {
-    setSel((s) => {
-      const base = s ?? { ar: 0, af: 0, rr: 0, rf: 0 };
-      const rr = Math.min(rows - 1, Math.max(0, base.rr + dr));
-      const rf = Math.min(cols - 1, Math.max(0, base.rf + df));
-      return extend ? { ...base, rr, rf } : { ar: rr, af: rf, rr, rf };
-    });
+    if (!rows || !cols) { setSelection(null); setEdit(null); return; }
+    const base = readSelection() ?? { ar: 0, af: 0, rr: 0, rf: 0 };
+    const rr = Math.min(rows - 1, Math.max(0, base.rr + dr));
+    const rf = Math.min(cols - 1, Math.max(0, base.rf + df));
+    setSelection(extend ? { ar: base.ar, af: base.af, rr, rf } : { ar: rr, af: rf, rr, rf });
     setEdit(null);
-    scrollCellIntoView(Math.min(rows - 1, Math.max(0, (sel?.rr ?? 0) + dr)), Math.min(cols - 1, Math.max(0, (sel?.rf ?? 0) + df)));
+    scrollCellIntoView(rr, rf);
   };
 
-  const setCell = async (rec: BaseRecord, f: Field, v: Cell | null, dir?: "down" | "right") => {
+  const setCell = async (rec: BaseRecord, f: Field, v: Cell | null, dir?: "down" | "right", raw?: string) => {
+    const existing = editRef.current;
+    const authorization = existing?.rid === rec.id && existing.fid === f.id ? existing.authorization : undefined;
+    const authored = existing?.rid === rec.id && existing.fid === f.id ? existing.authored : raw !== undefined && isAuthoredCellType(f.type);
     setEdit(null);
+    if (!current.current.mounted || current.current.baseId !== baseId || !current.current.canEdit) {
+      const held = ledger.begin(`记录 #${rec.id} · ${f.name}`, raw ?? cellDraft(v), `cell:${rec.id}:${f.id}`, authorization, false, authored);
+      if (held !== null) ledger.fail(held, "编辑权限或页面已变化；输入未提交，请复制后核对。");
+      return;
+    }
+    const cur = rec.cells[f.id];
+    if (cur === v || (cur === undefined && (v === null || v === ""))) {
+      if (dir === "down") move(1, 0);
+      if (dir === "right") move(0, 1);
+      return;
+    }
+    const draft = raw ?? cellDraft(v);
+    const op = ledger.blocked("batch") ? null : ledger.begin(`记录 #${rec.id} · ${f.name}`, draft, `cell:${rec.id}:${f.id}`, authorization, false, authored);
+    if (op === null) { const held = ledger.begin(`记录 #${rec.id} · ${f.name}`, draft, `cell:${rec.id}:${f.id}`, authorization, true, authored); if (held !== null) ledger.fail(held, "尚有未确认的修改，请先核对；本次输入未提交。"); return; }
     if (dir === "down") move(1, 0);
     if (dir === "right") move(0, 1);
-    const cur = rec.cells[f.id];
-    if (cur === v || (cur === undefined && (v === null || v === ""))) return;
-    await baseApi.setCells(baseId, rec.id, { [f.id]: v === "" ? null : v }).catch(() => {});
-    onMutate();
+    try {
+      await baseApi.setCells(baseId, rec.id, { [f.id]: v === "" ? null : v });
+      ledger.complete(op);
+    } catch {
+      ledger.fail(op, CELL_UNKNOWN);
+    } finally { refreshWrites(onMutate); }
   };
 
   const startEdit = (ri: number, fi: number, seed?: string) => {
     if (!canEdit) return;
     const f = fields[fi];
-    if (!f || REGISTRY[f.type].readonly || f.type === "checkbox" || f.type === "link" || f.type === "lookup") return;
-    setSel({ ar: ri, af: fi, rr: ri, rf: fi });
-    setEdit({ ri, fi, seed });
+    const r = records[ri];
+    if (!f || !r || ledger.blocked("batch") || ledger.blocked(`cell:${r.id}:${f.id}`) || REGISTRY[f.type].readonly || f.type === "checkbox" || f.type === "link" || f.type === "lookup") return;
+    setSelection({ ar: ri, af: fi, rr: ri, rf: fi });
+    const authored = isAuthoredCellType(f.type);
+    setEdit({ rid: r.id, fid: f.id, draft: seed ?? displayValue(r, f, members) ?? null, dirty: seed !== undefined, authorization: ledger.capture(`cell:${r.id}:${f.id}`, authored), authored });
+  };
+
+  // Each batch is bound to IDs captured at initiation. A successful write can
+  // trigger WS/HTTP revalidation; wait for that fresh authorization rather than
+  // aborting normal multi-row pastes, then check every original target again.
+  const awaitBatchAuthorization = async (recordIds: number[], fieldIds: number[]) => {
+    if (!await waitForBatchTargets(() => current.current, baseId, recordIds, fieldIds)) throw new WriteNotAttempted();
   };
 
   const clearRange = async () => {
-    if (!canEdit || !sel) return;
-    const r0 = Math.min(sel.ar, sel.rr);
-    const r1 = Math.max(sel.ar, sel.rr);
-    const f0 = Math.min(sel.af, sel.rf);
-    const f1 = Math.max(sel.af, sel.rf);
-    await Promise.all(
-      records.slice(r0, r1 + 1).map((rec) => {
+    const active = readSelection();
+    if (!canEdit || !active) return;
+    const r0 = Math.min(active.ar, active.rr);
+    const r1 = Math.max(active.ar, active.rr);
+    const f0 = Math.min(active.af, active.rf);
+    const f1 = Math.max(active.af, active.rf);
+    const selected = records.slice(r0, r1 + 1);
+    if (!selected.length || !fields[f0] || !fields[f1] || ledger.hasCellWrites()) return;
+    const original = rangeText(records, fields, members, r0, r1, f0, f1);
+    const op = ledger.begin("清空单元格", original, "batch");
+    if (op === null) return;
+    try {
+      const targetFields = fields.slice(f0, f1 + 1).map((field) => field.id);
+      const targetRecords = selected.map((record) => record.id);
+      const result = await runWriteBatch(selected.map((rec) => async () => {
+        await awaitBatchAuthorization(targetRecords, targetFields);
         const cells: Record<string, Cell | null> = {};
         for (let f = f0; f <= f1; f++) cells[fields[f].id] = null;
-        return baseApi.setCells(baseId, rec.id, cells).catch(() => {});
-      }),
-    );
-    onMutate();
+        return baseApi.setCells(baseId, rec.id, cells);
+      }));
+      if (result.complete) ledger.complete(op);
+      else ledger.fail(op, result.attempted === result.confirmed
+        ? `已确认清空 ${result.confirmed} 行；数据或权限已变化，后续 ${result.total - result.attempted} 行未尝试。请核对后再操作。`
+        : `已确认清空 ${result.confirmed} 行；当前行结果未知，后续 ${result.total - result.attempted} 行未尝试。请核对后再操作。`);
+    } catch {
+      ledger.fail(op, "清空结果无法确认，请核对后再操作。");
+    } finally { refreshWrites(onMutate); }
   };
 
   const copy = async () => {
-    if (!sel) return;
-    const text = rangeText(records, fields, members, sel.ar, sel.rr, sel.af, sel.rf);
+    const active = readSelection();
+    if (preventCopy || !active) return;
+    const text = rangeText(records, fields, members, active.ar, active.rr, active.af, active.rf);
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -174,26 +273,83 @@ export function Grid({
   };
 
   const paste = async (text: string) => {
-    if (!canEdit || !sel) return;
-    const plan = planPaste(records, fields, Math.min(sel.ar, sel.rr), Math.min(sel.af, sel.rf), text);
-    for (const row of plan.addRows) {
-      const cells: Record<string, Cell> = {};
-      for (const [k, v] of Object.entries(row.cells)) if (v !== null) cells[k] = v;
-      await baseApi.addRecord(baseId, cells).catch(() => {});
-    }
-    await Promise.all(plan.patches.map((p) => baseApi.setCells(baseId, p.rid, p.cells).catch(() => {})));
-    onMutate();
+    if (!canEdit) return;
+    const active = readSelection();
+    if (!active) { const held = ledger.begin("粘贴", text); if (held !== null) ledger.fail(held, "选区已变化或尚未选择，本次粘贴未提交；请重新选择单元格。"); return; }
+    const plan = planPaste(records, fields, Math.min(active.ar, active.rr), Math.min(active.af, active.rf), text);
+    const scope = { kind: "paste" as const, ...plan.scope };
+    const total = plan.patches.length + plan.addRows.length;
+    if (!total) { const held = ledger.begin("粘贴", text, undefined, undefined, false, true, scope); if (held !== null) ledger.fail(held, `${plan.skipped.length ? skippedPasteMessage(plan.skipped) : "没有可粘贴的内容。"}本次粘贴未提交。`, plan.skipped.length ? skippedPasteMessage(plan.skipped) : undefined); return; }
+    const op = ledger.hasCellWrites() ? null : ledger.begin("粘贴", text, "batch", undefined, false, true, scope);
+    if (op === null) { const held = ledger.begin("粘贴", text, undefined, undefined, false, true, scope); if (held !== null) ledger.fail(held, "尚有未确认的修改，请先核对；本次粘贴未提交。"); return; }
+    try {
+      const ensureCurrent = () => awaitBatchAuthorization(plan.scope.recordIds, plan.scope.fieldIds);
+      const existing = plan.patches.map((patch) => async () => { await ensureCurrent(); return baseApi.setCells(baseId, patch.rid, patch.cells); });
+      const additions = plan.addRows.map((row) => async () => {
+        await ensureCurrent();
+        const cells: Record<string, Cell> = {};
+        for (const [k, v] of Object.entries(row.cells)) if (v !== null) cells[k] = v;
+        return baseApi.addRecord(baseId, cells);
+      });
+      const result = await runWriteBatch([...existing, ...additions]);
+      if (result.complete && !plan.skipped.length) ledger.complete(op);
+      else if (result.complete) ledger.fail(op, `已确认处理 ${result.confirmed} 行。${skippedPasteMessage(plan.skipped)}原始内容已保留，请核对后再操作，勿直接重复粘贴。`, skippedPasteMessage(plan.skipped));
+      else ledger.fail(op, `${result.attempted === result.confirmed ? `已确认处理 ${result.confirmed} 行；数据或权限已变化，后续 ${result.total - result.attempted} 行未尝试。` : `已确认处理 ${result.confirmed} 行；当前行结果未知，后续 ${result.total - result.attempted} 行未尝试。`}${plan.skipped.length ? skippedPasteMessage(plan.skipped) : ""}新增行可能已创建，请核对后再操作，勿直接重复粘贴。`, plan.skipped.length ? skippedPasteMessage(plan.skipped) : "粘贴结果未全部确认，请先核对。");
+    } catch {
+      ledger.fail(op, "粘贴结果无法确认，请核对记录后再操作，勿直接重复粘贴。");
+    } finally { refreshWrites(onMutate); }
+  };
+
+  const addRecord = async () => {
+    const op = ledger.begin("新增记录", "", "record:create");
+    if (op === null) return;
+    try { await baseApi.addRecord(baseId); ledger.complete(op); }
+    catch { ledger.fail(op, "无法确认是否创建。请刷新并核对记录，勿直接重复新增。"); }
+    finally { refreshWrites(onMutate); }
+  };
+
+  const deleteRecord = async (rec: BaseRecord) => {
+    const op = ledger.begin(`删除记录 #${rec.id}`, "", `record:delete:${rec.id}`);
+    if (op === null) return;
+    try { await baseApi.deleteRecord(baseId, rec.id); ledger.complete(op); }
+    catch { ledger.fail(op, "无法确认是否删除。请刷新并核对记录。"); }
+    finally { refreshWrites(onMutate); }
+  };
+
+  const deleteField = async (f: Field) => {
+    if (!current.current.mounted || current.current.baseId !== baseId || !current.current.canEdit) return;
+    const op = ledger.begin(`删除字段「${f.name}」`, "", `field:delete:${f.id}`);
+    if (op === null) return;
+    try { await baseApi.deleteField(baseId, f.id); ledger.complete(op); }
+    catch { ledger.fail(op, "无法确认字段是否删除。请刷新并核对字段列表。"); }
+    finally { refreshWrites(onMutate); }
+  };
+
+  const saveField = async (patch: Partial<Field>, fid?: number) => {
+    if (!current.current.mounted || current.current.baseId !== baseId || !current.current.canEdit) throw new Error("editing unavailable");
+    const label = fid === undefined ? "新增字段" : `修改字段 #${fid}`;
+    const op = ledger.begin(label, cellDraft(patch), fid === undefined ? "field:create" : `field:edit:${fid}`);
+    if (op === null) throw new Error("previous result unresolved");
+    try {
+      if (fid === undefined) await baseApi.addField(baseId, patch);
+      else await baseApi.patchField(baseId, fid, patch);
+      ledger.complete(op);
+    } catch (error) {
+      ledger.fail(op, "无法确认字段是否已保存。请刷新并核对字段列表，勿直接重复提交。");
+      throw error;
+    } finally { refreshWrites(onMutate); }
   };
 
   const onKey = (e: React.KeyboardEvent) => {
     if (edit) return; // the cell editor handles its own keys
-    if (!sel && !["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Tab", "Enter"].includes(e.key)) return;
     const mod = e.metaKey || e.ctrlKey;
+    const selection = readSelection();
     if (mod && e.key.toLowerCase() === "c") {
-      e.preventDefault();
-      void copy();
+      if (preventCopy || sel) e.preventDefault();
+      if (!preventCopy && selection) void copy();
       return;
     }
+    if (!selection && !["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Tab", "Enter"].includes(e.key)) return;
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
@@ -209,48 +365,48 @@ export function Grid({
         return move(0, 1, e.shiftKey);
       case "Home":
         e.preventDefault();
-        return setSel((s) => (s ? { ...s, rf: 0, af: e.shiftKey ? s.af : 0 } : s));
+        return selection && setSelection({ ...selection, rf: 0, af: e.shiftKey ? selection.af : 0 });
       case "End":
         e.preventDefault();
-        return setSel((s) => (s ? { ...s, rf: cols - 1, af: e.shiftKey ? s.af : cols - 1 } : s));
+        return selection && setSelection({ ...selection, rf: cols - 1, af: e.shiftKey ? selection.af : cols - 1 });
       case "Tab":
         e.preventDefault();
         return e.shiftKey ? tab(-1) : tab(1);
       case "Enter":
         e.preventDefault();
-        if (!sel) return setSel({ ar: 0, af: 0, rr: 0, rf: 0 });
-        return fields[sel.rf]?.type === "checkbox" ? toggleAt(sel.rr, sel.rf) : startEdit(sel.rr, sel.rf);
+        if (!selection) return setSelection({ ar: 0, af: 0, rr: 0, rf: 0 });
+        return fields[selection.rf]?.type === "checkbox" ? toggleAt(selection.rr, selection.rf) : startEdit(selection.rr, selection.rf);
       case "F2":
         e.preventDefault();
-        if (sel) startEdit(sel.rr, sel.rf);
+        if (selection) startEdit(selection.rr, selection.rf);
         return;
       case " ":
         e.preventDefault();
-        if (sel && fields[sel.rf]?.type === "checkbox") toggleAt(sel.rr, sel.rf);
+        if (selection && fields[selection.rf]?.type === "checkbox") toggleAt(selection.rr, selection.rf);
         return;
       case "Delete":
       case "Backspace":
         e.preventDefault();
         return void clearRange();
       case "Escape":
-        return setSel((s) => (s ? { ar: s.rr, af: s.rf, rr: s.rr, rf: s.rf } : s));
+        return selection && setSelection({ ar: selection.rr, af: selection.rf, rr: selection.rr, rf: selection.rf });
     }
-    if (!mod && !e.altKey && canEdit && e.key.length === 1 && sel) {
+    if (!mod && !e.altKey && canEdit && e.key.length === 1 && selection) {
       e.preventDefault();
-      startEdit(sel.rr, sel.rf, e.key);
+      startEdit(selection.rr, selection.rf, e.key);
     }
   };
 
   const tab = (dir: 1 | -1) => {
-    move(0, dir);
-    setSel((s) => {
-      if (!s) return s;
-      const rr = s.rr;
-      const rf = s.rf;
-      if (rf === cols - 1 && dir === 1 && rr < rows - 1) return { ar: rr + 1, af: 0, rr: rr + 1, rf: 0 };
-      if (rf === 0 && dir === -1 && rr > 0) return { ar: rr - 1, af: cols - 1, rr: rr - 1, rf: cols - 1 };
-      return s;
-    });
+    if (!rows || !cols) return;
+    const base = readSelection() ?? { rr: 0, rf: 0 };
+    let rr = base.rr, rf = base.rf;
+    if (dir === 1 && rf === cols - 1 && rr < rows - 1) { rr++; rf = 0; }
+    else if (dir === -1 && rf === 0 && rr > 0) { rr--; rf = cols - 1; }
+    else rf = Math.min(cols - 1, Math.max(0, rf + dir));
+    setSelection({ ar: rr, af: rf, rr, rf });
+    setEdit(null);
+    scrollCellIntoView(rr, rf);
   };
 
   const toggleAt = (ri: number, fi: number) => {
@@ -260,14 +416,25 @@ export function Grid({
     void setCell(rec, f, rec.cells[f.id] === true ? null : true);
   };
 
-  // Reorder: drop at `index` (position in the fields array without the dragged one).
-  const reorder = async (fid: number, index: number) => {
-    const rest = fields.filter((f) => f.id !== fid);
-    if (rest.length === 0) return;
-    const prev = index > 0 ? rest[index - 1].position : rest[0].position - 1;
-    const next = index < rest.length ? rest[index].position : rest[rest.length - 1].position + 1;
-    await baseApi.patchField(baseId, fid, { position: (prev + next) / 2 }).catch(() => {});
-    onMutate();
+  // The drop slot is measured before removing the dragged field.
+  const reorder = async (fid: number, index: number, order: number[], allOrder: number[]) => {
+    setDragError(null);
+    if (!current.current.mounted || !current.current.canEdit || !current.current.detailAccessReady || !current.current.selectionAccessReady) { setDragError("正在确认权限，请稍后重新拖动字段。"); return; }
+    const full = current.current.allFields;
+    if (!full || full.length !== allOrder.length || !allOrder.every((id, i) => full[i]?.id === id)) { setDragError("字段顺序已变化，请刷新后重新拖动。"); return; }
+    const plan = planFieldReorder(current.current.fields, fid, index, order);
+    if (plan.kind === "noop") return;
+    if (plan.kind !== "move") { setDragError("字段顺序已变化或无法安全调整，请刷新后重新拖动。"); return; }
+    const desired = mergeVisibleFieldOrder(allOrder, order, plan.desiredIds);
+    if (!desired) { setDragError("无法确认完整字段顺序，请刷新后重新拖动。"); return; }
+    const op = ledger.begin("调整字段顺序", "", `field:order:${fid}`);
+    if (op === null) return;
+    try { await baseApi.reorderFields(baseId, allOrder, desired); ledger.complete(op); }
+    catch (error) {
+      if (error instanceof ApiError && error.status === 409) { ledger.complete(op); setDragError("字段顺序已变化，未执行拖动，请刷新后重试。"); }
+      else ledger.fail(op, "无法确认顺序是否已保存，请刷新并核对。");
+    }
+    finally { refreshWrites(onMutate); }
   };
 
   const startResize = (e: React.MouseEvent, f: Field) => {
@@ -287,8 +454,8 @@ export function Grid({
   const dropOn = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     const fid = Number(e.dataTransfer.getData("text/field")) || drag.fid;
-    if (fid) void reorder(fid, index);
-    setDrag({ fid: 0, at: null });
+    if (canEdit && fid && fid === drag.fid) void reorder(fid, index, drag.order, drag.allOrder);
+    setDrag({ fid: 0, at: null, order: [], allOrder: [] });
   };
 
   // --- column statistics (sum/avg/count/empty), chosen per column ---
@@ -362,11 +529,11 @@ export function Grid({
               <td className="sticky left-0 z-10 w-14 border bg-surface px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
                 <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
-                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => setDetail(rec)} data-expand={rec.id}>
+                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
                     ⤢
                   </button>
                   {canEdit && (
-                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => baseApi.deleteRecord(baseId, rec.id).then(onMutate)}>
+                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => void deleteRecord(rec)}>
                       ✕
                     </button>
                   )}
@@ -375,7 +542,7 @@ export function Grid({
               {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {winFields.map((f, wj) => {
                 const j = c0 + wj;
-                const editing = edit?.ri === i && edit.fi === j;
+                const editing = edit?.rid === rec.id && edit.fid === f.id;
                 const ro = REGISTRY[f.type].readonly;
                 return (
                   <td
@@ -388,7 +555,8 @@ export function Grid({
                     )}
                     onClick={(e) => {
                       setEdit(null);
-                      setSel(e.shiftKey && sel ? { ...sel, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
+                      const active = readSelection();
+                      setSelection(e.shiftKey && active ? { ar: active.ar, af: active.af, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
                       gridRef.current?.focus();
                     }}
                     onDoubleClick={() => startEdit(i, j)}
@@ -399,9 +567,11 @@ export function Grid({
                         field={f}
                         record={rec}
                         members={members}
-                        seed={edit?.seed}
-                        onCommit={(v, dir) => setCell(rec, f, v, dir)}
+                        draft={editRef.current?.draft}
+                        onDraft={(draft) => { const previous = editRef.current; if (previous?.rid === rec.id && previous.fid === f.id) editRef.current = { ...previous, draft, dirty: true }; }}
+                        onCommit={(v, dir, raw) => void setCell(rec, f, v, dir, raw)}
                         onCancel={() => setEdit(null)}
+                        onInvalid={(raw) => { const op = ledger.begin(`记录 #${rec.id} · ${f.name}`, raw, `cell:${rec.id}:${f.id}`, editRef.current?.authorization, false, editRef.current?.authored ?? false); if (op !== null) ledger.fail(op, "输入格式无效，未保存；请复制后修改。"); }}
                       />
                     ) : <div className="flex h-[31px] min-w-0 items-center overflow-hidden" data-grid-cell-content>
                       <CellView
@@ -423,12 +593,16 @@ export function Grid({
               );
 
   return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
     <div
       ref={gridRef}
       className="min-h-0 flex-1 overflow-auto outline-none"
       data-grid-scroll
       tabIndex={0}
       onKeyDown={onKey}
+      onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }}
+      onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}
       onPaste={(e) => {
         if (edit) return;
         const text = e.clipboardData.getData("text/plain");
@@ -438,14 +612,16 @@ export function Grid({
         }
       }}
     >
+      {detailId !== null && !detailAccessReady && <aside className="fixed inset-y-0 right-0 z-40 grid w-full max-w-[420px] place-items-center border-l bg-surface text-[13px] text-subtle shadow-xl" role="status">正在确认记录访问权限…</aside>}
       {detail && (
         <RecordDetail
           baseId={baseId}
           canEdit={canEdit}
+          preventCopy={preventCopy}
           fields={fields}
-          record={records.find((r) => r.id === detail.id) ?? detail}
+          record={detail}
           members={members}
-          onClose={() => setDetail(null)}
+          onClose={() => { setDetailId(null); onDetailVisibilityChange?.(false); }}
           onMutate={onMutate}
         />
       )}
@@ -465,12 +641,13 @@ export function Grid({
                 key={f.id}
                 className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
                 style={{ width: width(f), minWidth: width(f) }}
-                draggable
+                draggable={canEdit && !!allFields}
                 data-th={f.id}
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/field", String(f.id));
                   e.dataTransfer.effectAllowed = "move";
-                  setDrag({ fid: f.id, at: null });
+                  if (!canEdit || !allFields) { e.preventDefault(); return; }
+                  setDrag({ fid: f.id, at: null, order: fields.map((field) => field.id), allOrder: allFields.map((field) => field.id) });
                 }}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -478,8 +655,11 @@ export function Grid({
                   const at = before ? i : i + 1;
                   if (drag.at !== at) setDrag((d) => ({ ...d, at }));
                 }}
-                onDrop={(e) => dropOn(e, drag.at ?? i)}
-                onDragEnd={() => setDrag({ fid: 0, at: null })}
+                onDrop={(e) => {
+                  const before = e.clientX < e.currentTarget.getBoundingClientRect().left + e.currentTarget.offsetWidth / 2;
+                  dropOn(e, before ? i : i + 1);
+                }}
+                onDragEnd={() => setDrag({ fid: 0, at: null, order: [], allOrder: [] })}
               >
                   <div className="flex items-center gap-1">
                     <span className="mr-0.5 hidden cursor-grab text-subtle group-hover/th:inline" title="拖拽排序" data-drag-handle>
@@ -489,11 +669,11 @@ export function Grid({
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
-                        <FieldMenu field={f} onEdit={() => setEditField(f)} onDelete={() => baseApi.deleteField(baseId, f.id).then(onMutate)} />
+                        <FieldMenu field={f} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} />
                       </span>
                     )}
                   </div>
-                {editField?.id === f.id && <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => baseApi.patchField(baseId, f.id, patch).then(onMutate)} />}
+                {editField?.id === f.id && <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
               );
@@ -508,10 +688,10 @@ export function Grid({
                 }}
                 onDrop={(e) => dropOn(e, fields.length)}
               >
-                <button className="size-full text-[16px] text-subtle hover:text-foreground" onClick={() => setNewField((v) => !v)} aria-label="添加字段">
+                <button className="size-full text-[16px] text-subtle hover:text-foreground" onClick={() => setNewField((v) => !v)} aria-label="添加字段" disabled={ledger.blocked("field:create")}>
                   +
                 </button>
-                {newField && <FieldForm onCancel={() => setNewField(false)} onSubmit={(f) => baseApi.addField(baseId, f).then(onMutate)} />}
+                {newField && <FieldForm onCancel={() => setNewField(false)} onSubmit={(f) => saveField(f)} onAcknowledge={() => ledger.discardKey("field:create")} />}
               </th>
             )}
           </tr>
@@ -566,7 +746,7 @@ export function Grid({
           {canEdit && (
             <tr className="h-8">
               <td colSpan={winFields.length + 3} className="sticky left-0 border px-4">
-                <button className="text-[18px] leading-none text-subtle hover:text-foreground" aria-label="新增一行" onClick={() => baseApi.addRecord(baseId).then(onMutate)}>
+                <button className="text-[18px] leading-none text-subtle hover:text-foreground" aria-label="新增一行" onClick={() => void addRecord()} disabled={ledger.blocked("record:create")}>
                   +
                 </button>
               </td>
@@ -609,6 +789,7 @@ export function Grid({
           </tr>
         </tfoot>
       </table>
+    </div>
     </div>
   );
 }

@@ -92,14 +92,41 @@ type BaseStore interface {
 	AddField(ctx context.Context, f Field) (Field, error)
 	UpdateField(ctx context.Context, f Field) (Field, error)
 	DeleteField(ctx context.Context, baseID, fieldID int64) error
+	// MutateFieldGuarded atomically checks the captured schema, permission,
+	// locked view dependencies, cell conversion and associated reload events.
+	MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, change FieldMutation) (FieldMutationResult, error)
+	// ReorderFieldsGuarded compares the full current field order before
+	// changing positions, and commits the reload event with the change.
+	ReorderFieldsGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, expected, desired []int64) error
 	Records(ctx context.Context, baseID int64) ([]Record, error)
 	AddRecord(ctx context.Context, r Record) (Record, error)
 	// SetCells merges cells into a record (JSON null deletes a cell).
 	SetCells(ctx context.Context, baseID, recordID int64, cells map[string]json.RawMessage) (Record, error)
+	// CompareDateCells atomically authorizes, compares and changes one or two
+	// date fields. Missing cells and JSON null represent the same empty value.
+	CompareDateCells(ctx context.Context, guard BaseWriteGuard, baseID, recordID int64, expected, cells map[string]json.RawMessage) (Record, bool, error)
+	// MutateRecordGuarded applies the record and any reciprocal link updates
+	// together with session/permission checks and durable events. Validate runs
+	// under the same lock against a fresh schema and must not perform I/O.
+	MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, mutation BaseRecordMutation, validate BaseRecordValidator) (Record, []int64, error)
+	// SubmitPublicForm validates and inserts a form response and its event under
+	// the same schema/view lock. The validator must not call the Store or do I/O.
+	SubmitPublicForm(ctx context.Context, baseID, viewID int64, tokenHash []byte, validate PublicFormValidator) (Record, error)
+	// ReadPublicForm returns only a live Base's current form and fields from a
+	// single consistent observation; it never revives a deleted form or Base.
+	ReadPublicForm(ctx context.Context, baseID, viewID int64, tokenHash []byte) (View, []Field, error)
+	// SetPublicFormConfig compares the manager's view/schema snapshot and
+	// updates the public form configuration and event atomically.
+	SetPublicFormConfig(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64, expectedConfig json.RawMessage, expectedFields []Field, build PublicFormConfigBuilder) (View, error)
+	SetPublicFormToken(ctx context.Context, guard BaseWriteGuard, baseID, viewID, expectedRevision int64, tokenHash []byte, snapshot *PublicFormPublishSnapshot) (int64, error)
+	PublicFormPublished(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64) (bool, int64, error)
+	LookupPublicForm(ctx context.Context, tokenHash []byte) (int64, int64, error)
 	// MoveRecord repositions a record (kanban drag within a column).
 	MoveRecord(ctx context.Context, baseID, recordID int64, position float64) (Record, error)
 	// AddRecordsBulk inserts many records in one batch (CSV import).
 	AddRecordsBulk(ctx context.Context, baseID int64, records []Record) error
+	// ImportBaseCSV checks authorization and publishes schema, rows and event atomically.
+	ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, baseID int64, build BaseImportBuilder) (int, error)
 	DeleteRecord(ctx context.Context, baseID, recordID int64) error
 	// MapFieldCells rewrites every stored cell of fieldID through fn; fn
 	// returning nil deletes the cell. Used when a field changes type.
@@ -122,6 +149,14 @@ type BaseStore interface {
 	AddView(ctx context.Context, v View) (View, error)
 	UpdateView(ctx context.Context, v View) (View, error)
 	DeleteView(ctx context.Context, baseID, viewID int64) error
+	AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v View) (View, error)
+	UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, before, after View) (View, error)
+	// View mutations use the current session and authorization inside the same
+	// critical section as the mutation; reorder requires the exact current set.
+	DuplicateView(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64, name string) (View, error)
+	RenameViewGuarded(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64, expectedName, name string) (View, error)
+	ReorderViews(ctx context.Context, guard BaseWriteGuard, baseID int64, expected, ids []int64) ([]View, error)
+	DeleteViewGuarded(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64) error
 	// QueryRecords returns the base's records filtered and ordered by a
 	// view config, executed server-side (SQL on Postgres, in memory elsewhere).
 	QueryRecords(ctx context.Context, baseID int64, fields []Field, cfg btquery.Config, limit int) ([]Record, error)
@@ -129,4 +164,10 @@ type BaseStore interface {
 	// by the caller's filter and sort. Constraints cannot be relaxed by an OR
 	// in the caller's view configuration.
 	QueryRecordsConstrained(ctx context.Context, baseID int64, fields []Field, mandatory []btquery.Config, cfg btquery.Config, limit int) ([]Record, error)
+	// RecordConstrained reads a single exact record only if it matches every
+	// mandatory access predicate, without truncating at the list's 10k limit.
+	RecordConstrained(ctx context.Context, baseID, recordID int64, fields []Field, mandatory []btquery.Config) (Record, error)
+	// VisibleRecordIDs returns only IDs in the supplied set that match every
+	// mandatory access predicate. It is not limited to the first list page.
+	VisibleRecordIDs(ctx context.Context, baseID int64, ids []int64, fields []Field, mandatory []btquery.Config) ([]int64, error)
 }

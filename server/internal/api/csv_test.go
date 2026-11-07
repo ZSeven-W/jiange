@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -33,7 +34,7 @@ func newLegacyCSVTestServer(t *testing.T, st store.Store) (*httptest.Server, *ht
 	return ts, &http.Client{Jar: jar}
 }
 
-func TestCSVImportTemporarilyDisabledWithoutMutation(t *testing.T) {
+func TestCSVImportProductionAtomic(t *testing.T) {
 	st := store.NewMemory()
 	ts, client := newTestServer(t, st, nil)
 	res := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "csv-disabled@x.com", "name": "C", "password": "password123"})
@@ -54,16 +55,17 @@ func TestCSVImportTemporarilyDisabledWithoutMutation(t *testing.T) {
 	}
 	res = post(t, client, ts.URL+"/api/bases/"+itoa(b.ID)+"/import", map[string]any{"csv": "任务\n新的任务", "header": true})
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusServiceUnavailable {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("import status: %d", res.StatusCode)
 	}
 	var result struct {
-		Error string `json:"error"`
+		Imported int `json:"imported"`
+		Fields   int `json:"fields"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Error != "import_temporarily_unavailable" {
+	if result.Imported != 1 || result.Fields != 1 {
 		t.Fatalf("error: %+v", result)
 	}
 	afterFields, err := st.Fields(context.Background(), b.ID)
@@ -74,8 +76,176 @@ func TestCSVImportTemporarilyDisabledWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(beforeFields, afterFields) || !reflect.DeepEqual(beforeRecords, afterRecords) {
-		t.Fatal("disabled import mutated base")
+	if len(afterFields) != len(beforeFields)+1 || len(afterRecords) != len(beforeRecords)+1 {
+		t.Fatalf("import fields %d -> %d, records %d -> %d", len(beforeFields), len(afterFields), len(beforeRecords), len(afterRecords))
+	}
+}
+
+func TestCSVProductionReportsBadRowsAndRejectsAmbiguousColumns(t *testing.T) {
+	st := store.NewMemory()
+	ts, client := newTestServer(t, st, nil)
+	res := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "csv-plan@x.com", "name": "C", "password": "password123"})
+	res.Body.Close()
+	res = post(t, client, ts.URL+"/api/bases", nil)
+	var b store.DocMeta
+	if err := json.NewDecoder(res.Body).Decode(&b); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	endpoint := ts.URL + "/api/bases/" + itoa(b.ID) + "/import"
+	res = post(t, client, endpoint, map[string]any{"csv": "\ufeff任务,工时,完成\n有效,3,true\n坏行,无效,false\n太多,1,true,额外", "header": true, "types": []string{"text", "number", "checkbox"}})
+	defer res.Body.Close()
+	var result struct {
+		Imported int           `json:"imported"`
+		Errors   []csvRowError `json:"errors"`
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", res.StatusCode)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 || len(result.Errors) != 2 || result.Errors[0].Row != 3 || result.Errors[1].Row != 4 {
+		t.Fatalf("result: %+v", result)
+	}
+	fields, _ := st.Fields(context.Background(), b.ID)
+	records, _ := st.Records(context.Background(), b.ID)
+	head, _ := st.BtHead(context.Background(), b.ID)
+	for _, request := range []map[string]any{
+		{"csv": "重复,重复\nA,B", "header": true},
+		{"csv": "未知\nA", "header": true, "types": []string{"not-a-field"}},
+		{"csv": "关联\n1", "header": true, "types": []string{"link"}},
+	} {
+		resp := post(t, client, endpoint, request)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid import status %d", resp.StatusCode)
+		}
+	}
+	afterFields, _ := st.Fields(context.Background(), b.ID)
+	afterRecords, _ := st.Records(context.Background(), b.ID)
+	afterHead, _ := st.BtHead(context.Background(), b.ID)
+	if len(fields) != len(afterFields) || len(records) != len(afterRecords) || head != afterHead {
+		t.Fatal("invalid import changed data")
+	}
+}
+
+func TestCSVImportPreservesTextWhitespace(t *testing.T) {
+	fields := []store.Field{{ID: 7, Name: "文本", Type: "text"}, {ID: 8, Name: "数值", Type: "number"}}
+	plan, errs, err := csvImportPlan([][]string{{"文本", "数值"}, {"  项目  ", " 12 "}, {" ", ""}}, true, nil, fields)
+	if err != nil || len(errs) != 0 || len(plan.Rows) != 2 {
+		t.Fatalf("plan=%+v errs=%+v err=%v", plan, errs, err)
+	}
+	if string(plan.Rows[0][0]) != `"  项目  "` || string(plan.Rows[0][1]) != `12` || string(plan.Rows[1][0]) != `" "` {
+		t.Fatalf("whitespace changed: %+v", plan.Rows)
+	}
+}
+
+func TestCSVImportPreservesNumericTextAndEmptyRows(t *testing.T) {
+	for _, value := range []string{"00123", "1.0", "1e3", "9007199254740993"} {
+		if got := inferType([]string{value}); got != "text" {
+			t.Errorf("inferType(%q)=%q, want text", value, got)
+		}
+	}
+	if got := inferType([]string{"123", "3.5"}); got != "number" {
+		t.Fatalf("canonical numbers inferred as %q", got)
+	}
+	plan, errs, err := csvImportPlan([][]string{{"编号", "内容"}, {"00123", ""}, {"", ""}, {"", "末行"}}, true, nil, nil)
+	if err != nil || len(errs) != 0 || len(plan.Rows) != 3 || plan.Columns[0].New.Type != "text" {
+		t.Fatalf("plan=%+v errs=%+v err=%v", plan, errs, err)
+	}
+	if string(plan.Rows[0][0]) != `"00123"` || len(plan.Rows[1]) != 0 {
+		t.Fatalf("rows changed: %+v", plan.Rows)
+	}
+	spacePlan, _, err := csvImportPlan([][]string{{"编码"}, {" 123 "}}, true, nil, nil)
+	if err != nil || spacePlan.Columns[0].New.Type != "text" || string(spacePlan.Rows[0][0]) != `" 123 "` {
+		t.Fatalf("spaced text changed: %+v err=%v", spacePlan, err)
+	}
+}
+
+func TestCSVExportImportPreservesSingleColumnBlankAndMultilineRows(t *testing.T) {
+	st := store.NewMemory()
+	ts, client := newTestServer(t, st, nil)
+	res := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "csv-roundtrip@x.com", "name": "C", "password": "password123"})
+	res.Body.Close()
+	create := func() store.DocMeta {
+		resp := post(t, client, ts.URL+"/api/bases", nil)
+		defer resp.Body.Close()
+		var b store.DocMeta
+		if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	source, target := create(), create()
+	fields, err := st.Fields(context.Background(), source.ID)
+	if err != nil || len(fields) != 1 {
+		t.Fatalf("fields=%v err=%v", fields, err)
+	}
+	key := strconv.FormatInt(fields[0].ID, 10)
+	for _, value := range []string{"开头", "", "末尾", "第一行\n\n第二行", "含\"引号"} {
+		cells := map[string]json.RawMessage{}
+		if value != "" {
+			raw, _ := json.Marshal(value)
+			cells[key] = raw
+		}
+		if _, err := st.AddRecord(context.Background(), store.Record{BaseID: source.ID, Cells: cells}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, err := client.Get(ts.URL + "/api/bases/" + itoa(source.ID) + "/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("export status=%d err=%v", resp.StatusCode, err)
+	}
+	resp = post(t, client, ts.URL+"/api/bases/"+itoa(target.ID)+"/import", map[string]any{"csv": string(data), "header": true})
+	defer resp.Body.Close()
+	var result struct {
+		Imported int           `json:"imported"`
+		Errors   []csvRowError `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("import status=%d err=%v", resp.StatusCode, err)
+	}
+	if result.Imported != 10 || len(result.Errors) != 0 {
+		t.Fatalf("import result=%+v CSV=%q", result, data)
+	}
+	sourceRows, _ := st.Records(context.Background(), source.ID)
+	targetRows, _ := st.Records(context.Background(), target.ID)
+	targetFields, _ := st.Fields(context.Background(), target.ID)
+	targetKey := strconv.FormatInt(targetFields[0].ID, 10)
+	if len(targetRows) != 5+len(sourceRows) {
+		t.Fatalf("source=%d target=%d", len(sourceRows), len(targetRows))
+	}
+	for i, row := range sourceRows {
+		var a, b string
+		_ = json.Unmarshal(row.Cells[key], &a)
+		_ = json.Unmarshal(targetRows[5+i].Cells[targetKey], &b)
+		if a != b {
+			t.Fatalf("row %d: %q != %q", i, a, b)
+		}
+	}
+}
+
+func TestCSVBlankLinePreservationHonorsQuotedFieldsAndCRLF(t *testing.T) {
+	for _, useCRLF := range []bool{false, true} {
+		want := [][]string{{"标题", "说明"}, {"", ""}, {"中文", "前\n\n后"}, {"含\"引号", ""}, {"", "尾"}}
+		var out bytes.Buffer
+		writer := csv.NewWriter(&out)
+		writer.UseCRLF = useCRLF
+		if err := writer.WriteAll(want); err != nil {
+			t.Fatal(err)
+		}
+		r := csv.NewReader(strings.NewReader(preserveCSVBlankLines(out.String())))
+		r.FieldsPerRecord = -1
+		got, err := r.ReadAll()
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("CRLF=%v got=%q want=%q err=%v", useCRLF, got, want, err)
+		}
 	}
 }
 

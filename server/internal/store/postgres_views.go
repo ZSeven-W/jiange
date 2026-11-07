@@ -28,20 +28,30 @@ func (p *Postgres) AddView(ctx context.Context, v View) (View, error) {
 	if v.Config == nil {
 		v.Config = []byte("{}")
 	}
-	err := p.Pool.QueryRow(ctx, `INSERT INTO bt_views (base_id, type, name, config, pos)
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := lockBaseNode(ctx, tx, v.BaseID); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO bt_views (base_id, type, name, config, pos)
 		VALUES ($1,$2,$3,$4, CASE WHEN $5::float8 = 0 THEN COALESCE((SELECT max(pos) FROM bt_views WHERE base_id=$1), 0) + 1 ELSE $5 END)
 		RETURNING id, pos`, v.BaseID, v.Type, v.Name, v.Config, v.Pos).Scan(&v.ID, &v.Pos)
+	})
 	return v, err
 }
 
 func (p *Postgres) UpdateView(ctx context.Context, v View) (View, error) {
-	err := p.Pool.QueryRow(ctx, `UPDATE bt_views SET type = CASE WHEN $3 = '' THEN type ELSE $3 END,
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := lockBaseNode(ctx, tx, v.BaseID); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `UPDATE bt_views SET type = CASE WHEN $3 = '' THEN type ELSE $3 END,
 		name = CASE WHEN $4 = '' THEN name ELSE $4 END,
 		config = CASE WHEN $5::jsonb IS NULL THEN config ELSE $5::jsonb END,
 		pos = CASE WHEN $6::float8 = 0 THEN pos ELSE $6 END
 		WHERE id=$1 AND base_id=$2 RETURNING type, name, config, pos`,
-		v.ID, v.BaseID, v.Type, v.Name, rawJSON(v.Config), v.Pos).
-		Scan(&v.Type, &v.Name, &v.Config, &v.Pos)
+			v.ID, v.BaseID, v.Type, v.Name, rawJSON(v.Config), v.Pos).
+			Scan(&v.Type, &v.Name, &v.Config, &v.Pos)
+	})
 	return v, notFound(err)
 }
 
@@ -54,11 +64,27 @@ func rawJSON(b []byte) any {
 }
 
 func (p *Postgres) DeleteView(ctx context.Context, base, id int64) error {
-	t, err := p.Pool.Exec(ctx, `DELETE FROM bt_views WHERE id=$1 AND base_id=$2`, id, base)
-	if err == nil && t.RowsAffected() == 0 {
-		err = ErrNotFound
-	}
-	return err
+	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := lockBaseNode(ctx, tx, base); err != nil {
+			return err
+		}
+		var count int
+		var found bool
+		if err := tx.QueryRow(ctx, `SELECT count(*), COALESCE(bool_or(id=$2), false) FROM bt_views WHERE base_id=$1`, base, id).Scan(&count, &found); err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if count <= 1 {
+			return ErrConflict
+		}
+		t, err := tx.Exec(ctx, `DELETE FROM bt_views WHERE id=$1 AND base_id=$2`, id, base)
+		if err == nil && t.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return err
+	})
 }
 
 // QueryRecords compiles the view config into jsonb SQL and runs it in one

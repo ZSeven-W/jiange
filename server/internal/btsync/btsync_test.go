@@ -107,7 +107,7 @@ func (e *btEnv) event(body string) int64 {
 	return seq
 }
 
-func TestBtSyncFanoutAndConvergence(t *testing.T) {
+func TestBtSyncFanoutSendsInvalidationOnly(t *testing.T) {
 	e := newHubEnv(t)
 
 	a := dial(t, e.srv.URL, e.base, nil)
@@ -128,12 +128,12 @@ func TestBtSyncFanoutAndConvergence(t *testing.T) {
 			t.Fatalf("%s: seq mismatch: %v", name, ev)
 		}
 		body, ok := ev["body"].(map[string]any)
-		if !ok || body["kind"] != "cells" {
+		if !ok || body["kind"] != "reload" || len(body) != 1 {
 			t.Fatalf("%s: bad body: %v", name, ev)
 		}
 	}
 
-	// concurrent writes to the same cell: both clients converge on the later seq
+	// Later changes retain their sequence but do not expose cell values.
 	seq2 := e.event(`{"kind":"cells","rid":7,"cells":{"1":"后写"}}`)
 	for name, c := range map[string]*btClient{"a": a, "b": b} {
 		m := c.next("events")
@@ -142,8 +142,8 @@ func TestBtSyncFanoutAndConvergence(t *testing.T) {
 			t.Fatalf("%s: expected seq %d, got %v", name, seq2, last)
 		}
 		body, _ := last["body"].(map[string]any)
-		if body["cells"].(map[string]any)["1"] != "后写" {
-			t.Fatalf("%s: last write should win: %v", name, body)
+		if body["kind"] != "reload" || len(body) != 1 {
+			t.Fatalf("%s: expected only a reload hint: %v", name, body)
 		}
 	}
 }
@@ -171,5 +171,47 @@ func TestBtSyncReconnectReplay(t *testing.T) {
 	m2 := c2.next("events")
 	if len(m2["events"].([]any)) != 2 {
 		t.Fatalf("fresh replay: %v", m2)
+	}
+}
+
+func TestBtSyncMemorySeparatesBaseEventReplayAndFanout(t *testing.T) {
+	e := newHubEnv(t)
+	ctx := context.Background()
+	other, otherWS, err := e.st.CreateUser(ctx, "other-base@example.test", "Other", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.st.CreateBase(ctx, otherWS.ID, other.ID, nil, "private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An event on another user's base must not advance this base's head.
+	if _, err := e.st.AppendBtEvent(ctx, second.ID, []byte(`{"kind":"secret","value":"other-user"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if head, err := e.st.BtHead(ctx, e.base); err != nil || head != 0 {
+		t.Fatalf("empty base head=%d err=%v", head, err)
+	}
+	first := e.event(`{"kind":"record","op":"add","record":{"id":1}}`)
+	if _, err := e.st.AppendBtEvent(ctx, second.ID, []byte(`{"kind":"secret","value":"second"}`)); err != nil {
+		t.Fatal(err)
+	}
+	last := e.event(`{"kind":"record","op":"del","rid":1}`)
+	zero := int64(0)
+	c := dial(t, e.srv.URL, e.base, &zero)
+	defer c.close()
+	replayed := c.next("events")["events"].([]any)
+	if len(replayed) != 2 || int64(replayed[0].(map[string]any)["seq"].(float64)) != first || int64(replayed[1].(map[string]any)["seq"].(float64)) != last {
+		t.Fatalf("replay exposed unrelated base or wrong ordering: %v", replayed)
+	}
+	// Notification for this base after another base changes must not replay the
+	// other user's event to this subscriber, even with globally assigned IDs.
+	if _, err := e.st.AppendBtEvent(ctx, second.ID, []byte(`{"kind":"secret","value":"live"}`)); err != nil {
+		t.Fatal(err)
+	}
+	seq := e.event(`{"kind":"record","op":"add","record":{"id":2}}`)
+	got := c.next("events")["events"].([]any)
+	if len(got) != 1 || int64(got[0].(map[string]any)["seq"].(float64)) != seq {
+		t.Fatalf("fanout exposed unrelated base: %v", got)
 	}
 }

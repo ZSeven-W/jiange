@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTSV, fromText, parseTSV, planPaste, rangeText, toText } from "./tsv";
+import { formatTSV, fromText, parseTSV, planPaste, rangeText, skippedPasteMessage, toText } from "./tsv";
 import type { BaseRecord, Field, User } from "@/lib/api";
 
 const fields: Field[] = [
@@ -73,6 +73,20 @@ describe("planPaste", () => {
       { rid: 11, cells: { 3: 5 } },
       { rid: 12, cells: { 3: 6 } },
     ]);
+    expect(plan.skipped).toEqual([{ row: 1, column: 2, reason: "invalid" }, { row: 2, column: 2, reason: "invalid" }]);
+  });
+  it("reports invalid dates and values beyond available columns while preserving valid cells", () => {
+    const dateFields: Field[] = [{ id: 1, name: "名称", type: "text", position: 1 }, { id: 2, name: "日期", type: "date", position: 2 }];
+    const plan = planPaste(recs, dateFields, 0, 0, "任务\t2026-02-31\t超出列");
+    expect(plan.patches).toEqual([{ rid: 11, cells: { 1: "任务" } }]);
+    expect(plan.skipped).toEqual([{ row: 1, column: 2, reason: "invalid" }, { row: 1, column: 3, reason: "outside_fields" }]);
+    expect(skippedPasteMessage(plan.skipped)).toContain("第 1 行第 2 列、第 1 行第 3 列");
+  });
+  it("reports all rejected cells without creating rows", () => {
+    const plan = planPaste(recs, [fields[2]], 0, 0, "错误数字\t超出列");
+    expect(plan.patches).toEqual([]);
+    expect(plan.addRows).toEqual([]);
+    expect(plan.skipped).toHaveLength(2);
   });
 });
 

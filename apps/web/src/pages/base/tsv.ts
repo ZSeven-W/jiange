@@ -58,7 +58,15 @@ export function toText(field: Field, v: Cell | undefined): string {
 
 /** Plain text → cell value; undefined means "cannot paste into this field" (skip). */
 export function fromText(field: Field, text: string): Cell | null | undefined {
-  return REGISTRY[field.type].parse(text, field);
+  const value = REGISTRY[field.type].parse(text, field);
+  if (field.type !== "date" || value === null || value === undefined) return value;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+  const date = new Date(0);
+  date.setUTCHours(12, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? value : undefined;
 }
 
 export interface PastePatch {
@@ -71,13 +79,21 @@ export interface PastePlan {
   patches: PastePatch[];
   /** how many new rows to create before applying the tail patches */
   addRows: { cells: Record<string, Cell | null> }[];
+  /** One-based coordinates in the pasted TSV, without including cell contents. */
+  skipped: { row: number; column: number; reason: "outside_fields" | "invalid" }[];
+  /** Existing target IDs used to recheck authorization for the retained input. */
+  scope: { recordIds: number[]; fieldIds: number[] };
 }
 
 /** Compute the mutations for pasting TSV at selection anchor (ri, fi).
  * Cells that cannot be represented in their field are skipped. */
 export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi: number, text: string): PastePlan {
   const grid = parseTSV(text);
-  const plan: PastePlan = { patches: [], addRows: [] };
+  const width = grid.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+  const plan: PastePlan = {
+    patches: [], addRows: [], skipped: [],
+    scope: { recordIds: records.slice(ri, ri + grid.length).map((record) => record.id), fieldIds: fields.slice(fi, fi + width).map((field) => field.id) },
+  };
   if (grid.length === 0) return plan;
   const perRecord = new Map<number, Record<string, Cell | null>>();
   for (let dr = 0; dr < grid.length; dr++) {
@@ -85,9 +101,9 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
     const cells: Record<string, Cell | null> = {};
     for (let dc = 0; dc < row.length; dc++) {
       const f = fields[fi + dc];
-      if (!f) continue;
-      const v = REGISTRY[f.type].parse(row[dc], f);
-      if (v === undefined) continue;
+      if (!f) { plan.skipped.push({ row: dr + 1, column: dc + 1, reason: "outside_fields" }); continue; }
+      const v = fromText(f, row[dc]);
+      if (v === undefined) { plan.skipped.push({ row: dr + 1, column: dc + 1, reason: "invalid" }); continue; }
       cells[f.id] = v;
     }
     if (Object.keys(cells).length === 0) continue;
@@ -100,6 +116,11 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
   }
   for (const [rid, cells] of perRecord) plan.patches.push({ rid, cells });
   return plan;
+}
+
+export function skippedPasteMessage(skipped: PastePlan["skipped"]): string {
+  const positions = skipped.slice(0, 5).map(({ row, column }) => `第 ${row} 行第 ${column} 列`).join("、");
+  return `有 ${skipped.length} 个单元格因格式不支持或超出字段范围未写入（${positions}${skipped.length > 5 ? "等" : ""}）。`;
 }
 
 /** TSV for a cell rectangle (indices into the visible grid). */

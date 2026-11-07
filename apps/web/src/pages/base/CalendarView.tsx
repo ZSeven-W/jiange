@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
-import { baseApi, type BaseRecord, type Field, type User } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, baseApi, type BaseRecord, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { displayValue } from "./registry";
+import { refreshWrites, useWriteLedger } from "./writeSafety";
 
 const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 export type CalendarScale = "day" | "week" | "month";
@@ -98,6 +99,16 @@ export function CalendarView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const { ledger } = useWriteLedger(baseId);
+  const scope = useRef({ baseId, generation: 0, mounted: true });
+  if (scope.current.baseId !== baseId) scope.current = { baseId, generation: scope.current.generation + 1, mounted: true };
+  useEffect(() => {
+    scope.current.mounted = true;
+    return () => { scope.current.mounted = false; };
+  }, []);
+  // Capture the date at drag start; a newer render must not silently replace it.
+  const dragRef = useRef<{ baseId: number; recordId: number; fieldId: number; expected: string | null } | null>(null);
+  useEffect(() => { dragRef.current = null; busyRef.current = false; setBusy(false); setError(null); }, [baseId]);
   const { byDay, unscheduled } = useMemo(() => groupCalendarRecords(records, dateField?.id), [records, dateField?.id]);
   const days = useMemo(() => calendarDays(cursor, scale), [cursor, scale]);
   const today = calendarKey(todayCalendar());
@@ -106,27 +117,46 @@ export function CalendarView({
 
   const label = (record: BaseRecord) => title ? String(displayValue(record, title, members) ?? "") || "未命名" : "未命名";
   const move = async (day: string, rid: number) => {
-    if (!canEdit || busyRef.current || !calendarDate(day)) return;
+    if (!canEdit || busyRef.current || ledger.blocked("batch") || !calendarDate(day)) return;
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag || drag.baseId !== baseId || drag.recordId !== rid || drag.fieldId !== dateField.id) return;
     const record = records.find((r) => r.id === rid);
-    if (!record || record.cells[dateField.id] === day) return;
+    if (!record) { setError("记录已发生变化，请刷新后重试。"); onMutate(); return; }
+    if ((record.cells[dateField.id] ?? null) !== drag.expected) { setError("日期已被修改，请检查后重新拖动。"); onMutate(); return; }
+    if (drag.expected === day) return;
+    const op = ledger.begin(`记录 #${rid} · ${dateField.name}`, day, `cell:${rid}:${dateField.id}`, undefined, false, true);
+    if (op === null) return;
+    const requestedBase = baseId, generation = scope.current.generation;
+    const stillCurrent = () => scope.current.mounted && scope.current.baseId === requestedBase && scope.current.generation === generation;
     busyRef.current = true; setBusy(true); setError(null);
-    try { await baseApi.setCells(baseId, rid, { [dateField.id]: day }); onMutate(); }
-    catch { setError("无法确认日期是否更新，请检查记录后重试。"); onMutate(); }
-    finally { busyRef.current = false; setBusy(false); }
+    try { await baseApi.compareCells(requestedBase, rid, { [dateField.id]: drag.expected }, { [dateField.id]: day }); ledger.complete(op); }
+    catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.code === "conflict") { ledger.complete(op); if (stillCurrent()) setError("日期已被修改，请检查后重新拖动。"); }
+      else { ledger.fail(op, "无法确认日期是否更新，请刷新并核对记录后再操作。"); if (stillCurrent()) setError("无法确认日期是否更新，请检查记录后重试。"); }
+    }
+    finally { if (stillCurrent()) { busyRef.current = false; setBusy(false); } refreshWrites(onMutate); }
   };
   const add = async (day: string) => {
-    if (!canEdit || busyRef.current || !calendarDate(day)) return;
+    if (!canEdit || busyRef.current || ledger.blocked("batch") || !calendarDate(day)) return;
+    const op = ledger.begin("日历新增记录", day, "record:create");
+    if (op === null) return;
+    const requestedBase = baseId, generation = scope.current.generation;
+    const stillCurrent = () => scope.current.mounted && scope.current.baseId === requestedBase && scope.current.generation === generation;
     busyRef.current = true; setBusy(true); setError(null);
-    try { await baseApi.addRecord(baseId, { [dateField.id]: day }); onMutate(); }
-    catch { setError("无法确认日程是否创建，请检查记录后重试。"); onMutate(); }
-    finally { busyRef.current = false; setBusy(false); }
+    try { await baseApi.addRecord(requestedBase, { [dateField.id]: day }); ledger.complete(op); }
+    catch { ledger.fail(op, "无法确认日程是否创建，请刷新并核对记录，勿直接重复新增。"); if (stillCurrent()) setError("无法确认日程是否创建，请检查记录后重试。"); }
+    finally { if (stillCurrent()) { busyRef.current = false; setBusy(false); } refreshWrites(onMutate); }
   };
   const event = (record: BaseRecord) => {
     const name = label(record);
-    return <button key={record.id} type="button" aria-disabled={!onOpen || undefined} tabIndex={onOpen ? 0 : -1} draggable={canEdit && !busy} onClick={() => onOpen?.(record)} onDragStart={(e) => {
-      if (!canEdit || busy) { e.preventDefault(); return; }
+    return <button key={record.id} type="button" aria-disabled={!onOpen || undefined} tabIndex={onOpen ? 0 : -1} draggable={canEdit && !busy && !ledger.blocked("batch") && !ledger.blocked(`cell:${record.id}:${dateField.id}`)} onClick={() => onOpen?.(record)} onDragStart={(e) => {
+      if (!canEdit || busy || ledger.blocked("batch") || ledger.blocked(`cell:${record.id}:${dateField.id}`)) { e.preventDefault(); return; }
+      const raw = record.cells[dateField.id];
+      if (raw != null && !calendarDate(raw)) { e.preventDefault(); setError("记录日期无效，请先在详情中修正。"); return; }
+      dragRef.current = { baseId, recordId: record.id, fieldId: dateField.id, expected: raw == null ? null : raw as string };
       e.dataTransfer.setData("text/rid", String(record.id)); e.dataTransfer.effectAllowed = "move";
-    }} className={cn("block w-full truncate rounded bg-[#edf2ff] px-2 py-1 text-left text-[12px] text-primary", onOpen && "hover:bg-[#e1eaff]", canEdit && "cursor-grab")} title={name} data-event={record.id}>{name}</button>;
+    }} onDragEnd={() => { dragRef.current = null; }} className={cn("block w-full truncate rounded bg-[#edf2ff] px-2 py-1 text-left text-[12px] text-primary", onOpen && "hover:bg-[#e1eaff]", canEdit && "cursor-grab")} title={name} data-event={record.id}>{name}</button>;
   };
   const range = scale === "month" ? `${cursor.getUTCFullYear()} 年 ${cursor.getUTCMonth() + 1} 月` : scale === "day" ? `${cursor.getUTCFullYear()} 年 ${cursor.getUTCMonth() + 1} 月 ${cursor.getUTCDate()} 日` : `${days[0].getUTCFullYear()}/${days[0].getUTCMonth() + 1}/${days[0].getUTCDate()} – ${days[6].getUTCFullYear()}/${days[6].getUTCMonth() + 1}/${days[6].getUTCDate()}`;
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-calendar>
@@ -151,7 +181,7 @@ export function CalendarView({
               return <div key={key} className={cn("min-h-28 border-b border-r p-2", scale === "month" && day.getUTCMonth() !== cursor.getUTCMonth() && "bg-sidebar/30", isToday && "bg-accent/30")} data-day={key}
                 onDragOver={(e) => { if (canEdit && !busy) e.preventDefault(); }} onDrop={(e) => { if (!canEdit || busy) return; e.preventDefault(); const rid = Number(e.dataTransfer.getData("text/rid")); if (Number.isSafeInteger(rid) && rid > 0) void move(key, rid); }}>
                 <div className={cn("mb-1 inline-grid size-6 place-items-center rounded-full text-[12px]", isToday ? "bg-primary font-medium text-white" : "text-subtle")}>{day.getUTCDate()}</div>
-                <div className="space-y-1">{list.map(event)}{canEdit && <button type="button" disabled={busy} className="w-full rounded px-1 text-left text-[12px] text-subtle hover:bg-hover disabled:opacity-50" aria-label={`${key} 新增记录`} onClick={() => void add(key)}>＋</button>}</div>
+                <div className="space-y-1">{list.map(event)}{canEdit && <button type="button" disabled={busy || ledger.blocked("batch") || ledger.blocked("record:create")} className="w-full rounded px-1 text-left text-[12px] text-subtle hover:bg-hover disabled:opacity-50" aria-label={`${key} 新增记录`} onClick={() => void add(key)}>＋</button>}</div>
               </div>;
             })}
           </div>

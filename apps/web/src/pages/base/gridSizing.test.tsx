@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BaseRecord, Field } from "@/lib/api";
 import { Grid } from "./Grid";
 
@@ -14,7 +15,7 @@ describe("virtualized row sizing", () => {
       1: ["甲", "乙", "丙"], 2: ["事项一", "事项二"],
       3: [{ id: 5, name: "报告.pdf", mime: "application/pdf", size: 10 }, { id: 6, name: "笔记.txt", mime: "text/plain", size: 10 }],
     } }];
-    const html = renderToStaticMarkup(<Grid baseId={1} canEdit={false} fields={fields} records={records} members={[]} onMutate={() => {}} />);
+    const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} canEdit={false} fields={fields} records={records} members={[]} onMutate={() => {}} /></QueryClientProvider>);
     expect((html.match(/data-grid-cell-content/g) ?? [])).toHaveLength(3);
     expect((html.match(/h-\[31px\]/g) ?? [])).toHaveLength(3);
     expect(html).toContain("甲");

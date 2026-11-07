@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyBtEvent, startRestrictedPolling, type BaseData, type BtEvent } from "./sync";
+import { applyBtEvent, createSnapshotRefresher, startRestrictedPolling, type BaseData, type BtEvent } from "./sync";
 import type { BaseRecord, Field } from "@/lib/api";
 
 const data = (): BaseData => ({
@@ -13,6 +13,47 @@ const data = (): BaseData => ({
     { id: 12, baseId: 1, position: 2, cells: { 1: "分享" } },
   ],
   head: 5,
+});
+
+describe("authorized snapshot invalidation", () => {
+  it("performs a second fetch when another event arrives during the first", async () => {
+    const resolvers: Array<() => void> = [];
+    const refresh = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)));
+    const snapshots = createSnapshotRefresher(refresh);
+    const first = snapshots.request();
+    const second = snapshots.request();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    resolvers.shift()!();
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    resolvers.shift()!();
+    await Promise.all([first, second]);
+    snapshots.stop();
+    await snapshots.request();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates a failed refresh and allows a later retry", async () => {
+    const refresh = vi.fn().mockRejectedValueOnce(new Error("denied")).mockResolvedValueOnce(undefined);
+    const snapshots = createSnapshotRefresher(refresh);
+    await expect(snapshots.request()).rejects.toThrow("denied");
+    await snapshots.request();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not lose an invalidation between completion and promise cleanup", async () => {
+    let finish!: () => void;
+    const refresh = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; })).mockResolvedValue(undefined);
+    const snapshots = createSnapshotRefresher(refresh);
+    const first = snapshots.request();
+    finish();
+    queueMicrotask(() => { void snapshots.request(); });
+    await first;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    snapshots.stop();
+  });
 });
 
 describe("restricted base polling", () => {

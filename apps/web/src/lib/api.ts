@@ -117,6 +117,11 @@ export interface FilterRule {
   v?: string | number | boolean;
 }
 export interface ViewConfig {
+  /** Form-specific fields. An explicit selection is required before sharing. */
+  title?: string;
+  desc?: string;
+  fields?: number[];
+  required?: number[];
   filters?: { conj: "and" | "or"; rules: FilterRule[] };
   sorts?: { f: number; asc: boolean }[];
   group?: number;
@@ -146,9 +151,12 @@ export const baseApi = {
     request<{ expansions?: { reverse?: { sourceBase: number; fieldId: number; from: Record<string, number[]>; titles: Record<string, string> }[] } }>("GET", `/api/bases/${id}`).then((r) => r.expansions?.reverse ?? []),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
+  reorderFields: (id: number, expectedFieldIds: number[], desiredFieldIds: number[]) => request<void>("POST", `/api/bases/${id}/fields/reorder`, { expectedFieldIds, desiredFieldIds }),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),
   addRecord: (id: number, cells: Record<string, Cell> = {}) => request<BaseRecord>("POST", `/api/bases/${id}/records`, { cells }),
   setCells: (id: number, rid: number, cells: Record<string, Cell | number[] | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
+  compareCells: (id: number, rid: number, expected: Record<string, Cell | null>, cells: Record<string, Cell | null>) =>
+    request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}/compare-cells`, { expected, cells }),
   moveRecord: (id: number, rid: number, position: number) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { move: true, position }),
   deleteRecord: (id: number, rid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`),
   automations: (id: number) => request<{ automations: Automation[] }>("GET", `/api/bases/${id}/automations`).then((r) => r.automations),
@@ -157,6 +165,9 @@ export const baseApi = {
   deleteAutomation: (id: number, aid: number) => request<void>("DELETE", `/api/bases/${id}/automations/${aid}`),
   addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
   patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
+  renameView: (id: number, vid: number, expectedName: string, name: string) => request<View>("POST", `/api/bases/${id}/views/${vid}/rename`, { expectedName, name }),
+  duplicateView: (id: number, vid: number) => request<View>("POST", `/api/bases/${id}/views/${vid}/duplicate`, {}),
+  reorderViews: (id: number, expectedViewIds: number[], viewIds: number[]) => request<{ views: View[] }>("POST", `/api/bases/${id}/views/reorder`, { expectedViewIds, viewIds }),
   deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
   query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }, signal?: AbortSignal) =>
     request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q, signal),
