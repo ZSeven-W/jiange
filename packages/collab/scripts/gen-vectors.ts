@@ -17,11 +17,13 @@ writeFileSync(resolve(dir, "state.json"), JSON.stringify(state, null, 1) + "\n")
 const batch = encodeOps(scenarios[0].ops);
 const messages = [
   { dir: "c2s", msg: { type: "hello", docId: 42, clientId: 7, lastSeq: 300 }, hex: toHex(encodeClientMsg({ type: "hello", docId: 42, clientId: 7, lastSeq: 300 })) },
+  { dir: "c2s", msg: { type: "hello", docId: 42, clientId: 7, lastSeq: 300, historyEpoch: 2 }, hex: toHex(encodeClientMsg({ type: "hello", docId: 42, clientId: 7, lastSeq: 300, historyEpoch: 2 })) },
   { dir: "c2s", msg: { type: "ops", batchHex: toHex(batch) }, hex: toHex(encodeClientMsg({ type: "ops", batch })) },
   { dir: "c2s", msg: { type: "ack", seq: 129 }, hex: toHex(encodeClientMsg({ type: "ack", seq: 129 })) },
   { dir: "c2s", msg: { type: "aware", state: '{"name":"飞"}' }, hex: toHex(encodeClientMsg({ type: "aware", state: '{"name":"飞"}' })) },
   { dir: "s2c", msg: { type: "welcome", clientId: 7, headSeq: 9, snapshot: null }, hex: toHex(encodeServerMsg({ type: "welcome", clientId: 7, headSeq: 9, snapshot: null })) },
   { dir: "s2c", msg: { type: "welcome", clientId: 7, headSeq: 9, snapSeq: 5, stateHex: state[0].hex }, hex: toHex(encodeServerMsg({ type: "welcome", clientId: 7, headSeq: 9, snapshot: { seq: 5, state: Uint8Array.from(Buffer.from(state[0].hex, "hex")) } })) },
+  { dir: "s2c", msg: { type: "welcome", clientId: 7, headSeq: 9, snapshot: null, historyEpoch: 3 }, hex: toHex(encodeServerMsg({ type: "welcome", clientId: 7, headSeq: 9, snapshot: null, historyEpoch: 3 })) },
   { dir: "s2c", msg: { type: "ops", firstSeq: 10, batchHex: toHex(batch) }, hex: toHex(encodeServerMsg({ type: "ops", firstSeq: 10, batch })) },
   { dir: "s2c", msg: { type: "ack", firstSeq: 11, count: 3 }, hex: toHex(encodeServerMsg({ type: "ack", firstSeq: 11, count: 3 })) },
   { dir: "s2c", msg: { type: "aware", clientId: 3, state: "" }, hex: toHex(encodeServerMsg({ type: "aware", clientId: 3, state: "" })) },

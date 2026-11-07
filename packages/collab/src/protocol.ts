@@ -15,12 +15,18 @@ export const MSG = {
 
 export type ClientMsg =
   | { type: "hello"; docId: number; clientId: number; lastSeq: number }
+  // v2 hello carries the cached history epoch as one trailing uvar; an old
+  // server rejects the byte and the client falls back to v1 for the session.
+  | { type: "hello"; docId: number; clientId: number; lastSeq: number; historyEpoch: number }
   | { type: "ops"; batch: Uint8Array }
   | { type: "ack"; seq: number }
   | { type: "aware"; state: string };
 
 export type ServerMsg =
   | { type: "welcome"; clientId: number; headSeq: number; snapshot: { seq: number; state: Uint8Array } | null }
+  // v2 welcome appends the history epoch: a change means the log rewound
+  // (restore/PITR) and every cached seq is meaningless — take the snapshot.
+  | { type: "welcome"; clientId: number; headSeq: number; snapshot: { seq: number; state: Uint8Array } | null; historyEpoch: number }
   | { type: "ops"; firstSeq: number; batch: Uint8Array }
   | { type: "ack"; firstSeq: number; count: number }
   | { type: "aware"; clientId: number; state: string }
@@ -42,7 +48,9 @@ export function encodeClientMsg(m: ClientMsg): Uint8Array {
   const w = new Writer();
   switch (m.type) {
     case "hello":
-      w.u8(MSG.hello); w.uvar(m.docId); w.uvar(m.clientId); w.uvar(m.lastSeq); break;
+      w.u8(MSG.hello); w.uvar(m.docId); w.uvar(m.clientId); w.uvar(m.lastSeq);
+      if ("historyEpoch" in m) w.uvar(m.historyEpoch); // v2 only: old servers reject the trailing byte
+      break;
     case "ops":
       w.u8(MSG.ops); bytes(w, m.batch); break;
     case "ack":
@@ -58,7 +66,10 @@ export function decodeClientMsg(b: Uint8Array): ClientMsg {
   const t = r.u8();
   let m: ClientMsg;
   switch (t) {
-    case MSG.hello: m = { type: "hello", docId: r.uvar(), clientId: r.uvar(), lastSeq: r.uvar() }; break;
+    case MSG.hello:
+      m = { type: "hello", docId: r.uvar(), clientId: r.uvar(), lastSeq: r.uvar() };
+      if (!r.done) m = { ...m, historyEpoch: r.uvar() }; // v2 server → v2 client
+      break;
     case MSG.ops: m = { type: "ops", batch: readBytes(r) }; break;
     case MSG.ack: m = { type: "ack", seq: r.uvar() }; break;
     case MSG.aware: m = { type: "aware", state: r.str() }; break;
@@ -74,6 +85,7 @@ export function encodeServerMsg(m: ServerMsg): Uint8Array {
     case "welcome":
       w.u8(MSG.welcome); w.uvar(m.clientId); w.uvar(m.headSeq);
       if (m.snapshot) { w.u8(1); w.uvar(m.snapshot.seq); bytes(w, m.snapshot.state); } else w.u8(0);
+      if ("historyEpoch" in m) w.uvar(m.historyEpoch); // v2 only: v1 clients reject the trailing byte
       break;
     case "ops":
       w.u8(MSG.sops); w.uvar(m.firstSeq); bytes(w, m.batch); break;
@@ -95,7 +107,13 @@ export function decodeServerMsg(b: Uint8Array): ServerMsg {
     case MSG.welcome: {
       const clientId = r.uvar(), headSeq = r.uvar();
       const has = r.u8();
-      m = { type: "welcome", clientId, headSeq, snapshot: has ? { seq: r.uvar(), state: readBytes(r) } : null };
+      const snapshot = has ? { seq: r.uvar(), state: readBytes(r) } : null;
+      if (!r.done) {
+        // v2 welcome from a v2-aware server; old servers send exactly v1 bytes.
+        m = { type: "welcome", clientId, headSeq, snapshot, historyEpoch: r.uvar() };
+      } else {
+        m = { type: "welcome", clientId, headSeq, snapshot };
+      }
       break;
     }
     case MSG.sops: m = { type: "ops", firstSeq: r.uvar(), batch: readBytes(r) }; break;
