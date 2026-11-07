@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
@@ -48,7 +48,7 @@ import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } fro
 import { clipboardBlocks } from "./clipboardPayload";
 import type { SlashInsertion } from "./slashInsert";
 import { commentSelection } from "./commentAnchor";
-import { isSearchableBlockType, type FindMatch } from "./findReplace";
+import { searchableLocations, type FindMatch } from "./findReplace";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -115,7 +115,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
-  const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]> } | null>(null);
+  const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]>; findRanges?: { start: number; end: number; active: boolean }[] } | null>(null);
   const blockedComposition = useRef<Sel | null>(null);
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), []);
@@ -189,11 +189,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const findRanges = useMemo(() => {
     const ranges = new Map<string, { start: number; end: number; active: boolean }[]>();
     if (!doc) return ranges;
-    const body = new Set(bodyBlocks(doc).map(idKey));
+    const locations = new Map(searchableLocations(doc).map(({ block, parent }) => [idKey(block), parent]));
     const cached = new Map<string, { ids: OpId[]; positions: Map<string, number>; chars: ReturnType<Doc["richChars"]> }>();
     for (const match of findMatches) {
       const key = idKey(match.block);
-      if (match.doc !== doc || !match.ids.length || !body.has(key) || !doc.hasBlock(match.block) || !isSearchableBlockType(doc.blockInfo(match.block).type)) continue;
+      const parent = locations.get(key);
+      if (match.doc !== doc || !match.ids.length || !parent || !eqId(parent, match.parent)) continue;
       let state = cached.get(key);
       if (!state) {
         const ids = doc.visibleIds(match.block);
@@ -210,6 +211,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     return ranges;
   }, [doc, sync.version, findMatches, activeFindMatch]);
+  const findRangesRef = useRef(findRanges);
+  findRangesRef.current = findRanges;
 
   // keep the caret anchored across remote ops
   const saved = useRef<{
@@ -598,7 +601,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       // Keep selected characters intact until composition actually commits.
       const anchor = captureCompositionSelection(d, s);
       if (!anchor) { event.preventDefault(); blockedComposition.current = s; setColumnNotice("输入位置无效，请重新选择文字。"); return; }
-      composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b) };
+      composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b), findRanges: findRangesRef.current.get(idKey(s.a.b)) ?? [] };
     };
     const onCompEnd = (e: CompositionEvent) => {
       if (blockedComposition.current) {
@@ -1140,7 +1143,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 props={info.props}
                 number={numbers.get(k)}
                 spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
-                findRanges={findRanges.get(k)}
+                findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
                 anchors={anchorFlags(doc, b, comments)}
                 activeThread={activeThread}
                 onAnchorClick={(cid) => onActivateThread?.(cid)}
@@ -1154,13 +1157,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   publish();
                 }}
                 onInsertAfter={!readOnly ? () => onInsertAfter(b) : undefined}
+                alwaysShowInsert={!readOnly && blocks.length === 1 && info.type === "paragraph" && doc.richChars(b).length === 0}
                 touchActive={touchActiveBlock === k || (!touchActiveBlock && blocks.length === 1)}
                 onPreviewImage={onPreviewImage}
                 onMathSource={readOnly ? undefined : editMathSource}
                 onDiagramSource={readOnly ? undefined : editDiagramSource}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
-                  return { id: idKey(ch), type: ci.type, props: ci.props, spans: composing.current?.snapshot && eqId(composing.current.sel.a.b, ch) ? composing.current.snapshot : doc.richChars(ch) };
+                  const key = idKey(ch);
+                  const composingHere = composing.current?.snapshot && eqId(composing.current.sel.a.b, ch);
+                  return { id: key, type: ci.type, props: ci.props, spans: composingHere ? composing.current!.snapshot! : doc.richChars(ch), findRanges: composingHere ? composing.current!.findRanges : findRanges.get(key) };
                 })}
                 columnRemount={remount}
                 syncVersion={sync.version}
@@ -1314,7 +1320,7 @@ const BLOCK_CLASS: Record<string, string> = {
 
 interface BlockProps {
   /** columns 容器：渲染其子块（每栏一个） */
-  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[] }[];
+  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
   columnRemount?: Record<string, number>;
   syncVersion: number;
   syncStatus: SyncDoc["status"];
@@ -1328,6 +1334,8 @@ interface BlockProps {
   onTableEdit?: (r: number, c: number, value: string) => void;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
+  /** The insertion affordance is visible on an otherwise blank document. */
+  alwaysShowInsert?: boolean;
   touchActive?: boolean;
   onPreviewImage?: (src: string, alt: string) => void;
   /** 公式块：请求编辑源码 */
@@ -1346,7 +1354,7 @@ interface BlockProps {
   canCopy?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const threadIds = new Set<number>();
@@ -1373,6 +1381,21 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     const marks = { ...run.marks };
     delete marks.bg;
     return <mark data-find-match data-find-active={run.highlight === 2 ? "true" : undefined} className={cn("rounded-[2px] text-inherit", run.highlight === 2 ? "bg-[#ffb74d]" : "bg-[#ffe69b]")}><Run text={run.text} marks={marks} /></mark>;
+  };
+  const renderColumnText = (ch: NonNullable<BlockProps["childBlocks"]>[number]) => {
+    const flags = new Array<0 | 1 | 2>(ch.spans.length).fill(0);
+    for (const range of ch.findRanges ?? []) {
+      for (let i = Math.max(0, range.start); i < Math.min(ch.spans.length, range.end); i++) flags[i] = range.active ? 2 : 1;
+    }
+    const columnRuns: typeof runs = [];
+    for (let i = 0; i < ch.spans.length; i++) {
+      const c = ch.spans[i], last = columnRuns[columnRuns.length - 1];
+      // Keep the existing per-character formula projection until the editor's
+      // DOM-to-model mapping and deletion semantics support atomic formulas.
+      if (last && !c.marks.math && sameMarks(last.marks, c.marks) && last.highlight === flags[i]) last.text += c.ch;
+      else columnRuns.push({ text: c.ch, marks: c.marks, anchor: null, highlight: flags[i] });
+    }
+    return columnRuns.map((run, i) => <Fragment key={i}>{renderRun(run)}</Fragment>);
   };
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
@@ -1404,7 +1427,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 top-[2px] hidden items-center sm:-left-9 group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
+      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
         {onInsertAfter && (
           <button
             className="relative grid size-7 place-items-center rounded-md border bg-surface text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
@@ -1435,9 +1458,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             {(childBlocks ?? []).map((ch) => (
               <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none">
-                  {ch.spans.map((c, i) => (
-                    <Run key={i} text={c.ch} marks={c.marks} />
-                  ))}
+                  {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
                 </div>
                 {onDeleteColumn && <button

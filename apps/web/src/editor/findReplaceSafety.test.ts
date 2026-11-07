@@ -34,6 +34,20 @@ describe("find replacement preflight", () => {
     expect(doc.text(block)).toBe("待删除");
   });
 
+  it("preflights column replacements against the cloned document without changing the original", () => {
+    const doc = new Doc(1);
+    const init = new Tx(doc);
+    const columns = init.create("columns", null, ROOT);
+    const left = init.create("paragraph", null, columns);
+    init.insert(left, 0, "😀目标");
+    const matches = findMatches(doc, "目标");
+    const before = doc.encodeState();
+    const result = preflightFindReplace(doc, matches, "完成");
+    expect(result.ok && result.frameBytes > 0).toBe(true);
+    expect(doc.encodeState()).toEqual(before);
+    expect(doc.text(left)).toBe("😀目标");
+  });
+
   it("refuses oversized UTF-8, excessive code points and repeated long inputs before editing", () => {
     const { doc, block } = setup("x ".repeat(100));
     const matches = findMatches(doc, "x");
