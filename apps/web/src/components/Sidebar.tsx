@@ -11,7 +11,12 @@ import { DocColorIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
 
-export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
+export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => {
+  if (d.kind === "base") return `#/base/${d.id}`;
+  if (d.kind === "folder") return `#/drive/${d.id}`;
+  // 未知资源类型不得伪装成文档：路由层会兜底显示"不支持的类型"
+  return `#/doc/${d.id}`;
+};
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
 
 export function renameErrorMessage(error: unknown): string {
@@ -182,6 +187,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
+        <NavItem icon={<FolderIcon />} label="云盘" active={route.page === "drive"} onClick={() => go("#/drive")} />
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
@@ -454,4 +460,4 @@ export function DarkToggle() {
   );
 }
 
-import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, LogOut, Moon, Star, Sun, Table2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Star, Sun, Table2, Trash2 } from "lucide-react";
