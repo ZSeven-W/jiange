@@ -19,16 +19,22 @@ import { DocPage } from "./DocPage";
 const me: Me = { user: { id: 1, email: "one@example.test", name: "测试", createdAt: "2026-01-01" }, workspaces: [] };
 const metadata: DocMeta = { id: 7, workspaceId: 1, parentId: null, title: "保密标题", creatorId: 1, creatorName: "测试", icon: "", createdAt: "2026-01-01", updatedAt: "2026-01-01", role: "edit" };
 
-function renderWith(error: unknown, withCache = true, account = me) {
+function renderWith(error: unknown, withCache = true, account = me, doc = metadata) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
   const key = docMetaKey(7, 1);
-  if (withCache) qc.setQueryData(key, metadata);
-  const query = qc.getQueryCache().build(qc, { queryKey: key, queryFn: async () => metadata });
+  if (withCache) qc.setQueryData(key, doc);
+  const query = qc.getQueryCache().build(qc, { queryKey: key, queryFn: async () => doc });
   if (error) query.setState({ status: "error", error: error as Error });
   return renderToStaticMarkup(<QueryClientProvider client={qc}><DocPage id={7} me={account} /></QueryClientProvider>);
 }
 
 describe("document access errors", () => {
+  it("keeps the document read-only for a viewer allowed to comment", () => {
+    const html = renderWith(null, true, me, { ...metadata, role: "view", commentMinRole: "view", permissionsRevision: 1 });
+    expect(html).toContain("只读正文");
+    expect(html).not.toContain("可编辑正文");
+    expect(html).toContain("只读");
+  });
   it("retains cached document as read-only for a temporary failure", () => {
     state.unacked = 0;
     const html = renderWith(new TypeError("network"));

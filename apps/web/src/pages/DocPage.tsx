@@ -27,7 +27,7 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, type CommentTarget } from "./commentAccess";
+import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
 import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
 import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
@@ -368,11 +368,15 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
-  // Reading mode disables document changes, not commenting by editors.
-  // The server currently requires edit permission for comment mutations.
-  const canComment = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  // Commenting and editing are separate capabilities: a viewer may comment
+  // without ever gaining permission to modify the document.
+  const canEditRole = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  const canComment = metadataVerified && canWriteComments(meta.data);
+  // Keep the composer mounted while policy is being revalidated so the local
+  // draft and selection survive, but do not submit using stale permissions.
+  const canSubmitComment = permissionsVerified && canComment;
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
-  const canEditContent = canComment && !readingMode && !sync.blocked;
+  const canEditContent = canEditRole && !readingMode && !sync.blocked;
   canEditRef.current = canEditContent;
   const findDoc = sync.client.doc;
   const currentFindResult = findOpen && findDoc && findQuery && findResult?.doc === findDoc && findResult.query === findQuery && findResult.version === sync.version ? findResult : null;
@@ -577,7 +581,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onExport={downloadAllowed ? exportMd : undefined}
           onImport={canEditContent ? importMd : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
-          readOnly={!canComment}
+          readOnly={!canEditRole}
           allowContentCopy={contentCopyAllowed}
           allowDocumentPrint={downloadAllowed}
           metadataVerified={metadataVerified}
@@ -654,7 +658,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setActiveThread(cid);
                   if (cid !== null) setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 }}
-                onComment={canComment && commentsAvailable && commentStorageReady ? (anchor) => {
+                onComment={canSubmitComment && commentsAvailable && commentStorageReady ? (anchor) => {
                   setDraft(anchor);
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
@@ -743,6 +747,12 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           meId={me.user.id}
           session={commentSession}
           onAccessDenied={revalidateCommentAccess}
+          onPolicyDenied={() => {
+            revalidateCurrentCommentPolicy(commentIdentity.current, { doc: id, user: me.user.id, session: commentSession }, () => {
+              freezeCommentDrafts();
+              void meta.refetch();
+            });
+          }}
           recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentQuoteAllowed)) : []}
           onDismissRecovery={() => {
             const doc = id, user = me.user.id, session = commentSession;
@@ -772,6 +782,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           }}
           onComposerSuspended={freezeCommentDrafts}
           canEdit={canComment && commentStorageReady}
+          canSubmit={canSubmitComment}
           canManage={meta.data?.role === "manage"}
           allowCopyQuote={contentCopyAllowed}
           allowPrintQuote={downloadAllowed}

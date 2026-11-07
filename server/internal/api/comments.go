@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"unicode/utf8"
@@ -55,7 +56,7 @@ func snippet(body string) string {
 }
 
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.need(w, r, store.RoleEdit)
+	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
 		return
 	}
@@ -70,13 +71,17 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	c.DocID = d.ID
 	c.UserID = u.ID
-	c, err := s.Store.AddComment(r.Context(), c)
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.Store.AddCommentGuarded(r.Context(), guard, c)
 	if err != nil {
-		s.fail(w, r, err)
+		s.commentMutationError(w, r, err)
 		return
 	}
 	s.notifyComment(r, d.ID, u, &c, in.ParentID)
-	httpx.JSON(w, http.StatusCreated, c)
+	s.commentResultAfterMutation(w, r, guard, d.ID, http.StatusCreated, c)
 }
 
 // notifyComment fans notifications out to the mentioned users and, for a
@@ -116,6 +121,10 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
 	cs, err := s.Store.Comments(r.Context(), d.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -124,6 +133,11 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	if cs == nil {
 		cs = []store.Comment{}
 	}
+	if err := s.checkCommentReadAccess(r.Context(), guard, d.ID); err != nil {
+		s.commentMutationError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"comments": cs})
 }
 
@@ -133,7 +147,7 @@ type commentPatch struct {
 }
 
 func (s *Server) patchComment(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.need(w, r, store.RoleEdit)
+	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
 		return
 	}
@@ -141,117 +155,166 @@ func (s *Server) patchComment(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	cs, err := s.Store.Comments(r.Context(), d.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	u, _ := UserFrom(r.Context())
-	var cur *store.Comment
-	for i := range cs {
-		if cs[i].ID == pathID(r, "cid") {
-			cur = &cs[i]
-			break
-		}
-	}
-	if cur == nil {
-		httpx.Error(w, http.StatusNotFound, "not_found", "comment not found")
-		return
-	}
-	if in.Body != nil && cur.UserID != u.ID {
-		httpx.Error(w, http.StatusForbidden, "forbidden", "只能编辑自己的评论")
-		return
-	}
 	if in.Body != nil {
 		if utf8.RuneCountInString(*in.Body) == 0 || utf8.RuneCountInString(*in.Body) > 2000 {
 			httpx.Error(w, http.StatusBadRequest, "invalid_body", "评论需要 1-2000 字")
 			return
 		}
-		cur.Body = *in.Body
 	}
-	if in.Resolved != nil && *in.Resolved != cur.Resolved {
-		cur.Resolved = *in.Resolved
-		if *in.Resolved {
-			// notify thread participants (author + mentioned) except the resolver
-			commentID := cur.ID
-			recipients := map[int64]bool{}
-			if cur.UserID != u.ID {
-				recipients[cur.UserID] = true
-			}
-			for _, uid := range cur.Mentions {
-				if uid != u.ID {
-					recipients[uid] = true
-				}
-			}
-			items := make([]store.Notification, 0, len(recipients))
-			for uid := range recipients {
-				items = append(items, store.Notification{
-					UserID: uid, DocID: d.ID, ActorID: u.ID, ActorName: u.Name,
-					CommentID: &commentID, Kind: "resolve", Preview: snippet(cur.Body),
-				})
-			}
-			if len(items) > 0 {
-				_ = s.Store.AddNotifications(r.Context(), items)
-			}
-		}
-	}
-	c, err := s.Store.UpdateComment(r.Context(), *cur)
-	if errors.Is(err, store.ErrNotFound) {
-		httpx.Error(w, http.StatusNotFound, "not_found", "comment not found")
-		return
-	} else if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, c)
-}
-
-func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.need(w, r, store.RoleEdit)
+	guard, ok := s.viewGuard(w, r)
 	if !ok {
 		return
 	}
 	u, _ := UserFrom(r.Context())
-	cs, err := s.Store.Comments(r.Context(), d.ID)
+	cur, newlyResolved, err := s.Store.PatchCommentGuarded(r.Context(), guard, d.ID, pathID(r, "cid"), in.Body, in.Resolved)
 	if err != nil {
-		s.fail(w, r, err)
+		s.commentMutationError(w, r, err)
 		return
 	}
-	for _, c := range cs {
-		if c.ID == pathID(r, "cid") {
-			if c.UserID != u.ID && d.Role != store.RoleManage {
-				httpx.Error(w, http.StatusForbidden, "forbidden", "只能删除自己的评论")
-				return
+	if newlyResolved {
+		// notify thread participants (author + mentioned) except the resolver
+		commentID := cur.ID
+		recipients := map[int64]bool{}
+		if cur.UserID != u.ID {
+			recipients[cur.UserID] = true
+		}
+		for _, uid := range cur.Mentions {
+			if uid != u.ID {
+				recipients[uid] = true
 			}
-			if err := s.Store.DeleteComment(r.Context(), d.ID, c.ID); err != nil {
-				s.fail(w, r, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
+		}
+		items := make([]store.Notification, 0, len(recipients))
+		for uid := range recipients {
+			items = append(items, store.Notification{
+				UserID: uid, DocID: d.ID, ActorID: u.ID, ActorName: u.Name,
+				CommentID: &commentID, Kind: "resolve", Preview: snippet(cur.Body),
+			})
+		}
+		if len(items) > 0 {
+			_ = s.Store.AddNotifications(r.Context(), items)
 		}
 	}
-	httpx.Error(w, http.StatusNotFound, "not_found", "comment not found")
+	s.commentResultAfterMutation(w, r, guard, d.ID, http.StatusOK, cur)
+}
+
+func (s *Server) checkCommentReadAccess(ctx context.Context, guard store.RestoreGuard, docID int64) error {
+	doc, err := s.Store.GetDoc(ctx, guard.UserID, docID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && store.RoleRank(doc.Role) < store.RoleRank(store.RoleView) {
+		return store.ErrForbidden
+	}
+	if err != nil {
+		return err
+	}
+	u, err := s.Store.SessionUser(ctx, guard.SessionHash, s.now())
+	if errors.Is(err, store.ErrNotFound) || err == nil && u.ID != guard.UserID {
+		return store.ErrUnauthenticated
+	}
+	return err
+}
+
+// An authorized mutation may have committed just before its caller lost
+// access. Avoid both leaking the comment and falsely reporting a failed write.
+func (s *Server) commentResultAfterMutation(w http.ResponseWriter, r *http.Request, guard store.RestoreGuard, docID int64, status int, c store.Comment) {
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.checkCommentReadAccess(r.Context(), guard, docID); err != nil {
+		w.Header().Set("X-Comment-Refresh-Required", "true")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	httpx.JSON(w, status, c)
+}
+
+func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.need(w, r, store.RoleView)
+	if !ok {
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Store.DeleteCommentGuarded(r.Context(), guard, d.ID, pathID(r, "cid")); err != nil {
+		s.commentMutationError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) commentMutationError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrCommentPermissionDenied):
+		httpx.Error(w, http.StatusForbidden, "comment_permission_denied", "当前没有评论权限")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有评论权限")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "评论或文档不存在")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "comment_conflict", "文档或评论已变化，请重试")
+	default:
+		s.fail(w, r, err)
+	}
 }
 
 // ---- notification center ----
 
 func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
 	items, err := s.Store.Notifications(r.Context(), u.ID, 50)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if items == nil {
-		items = []store.Notification{}
+	// Recheck document access after collecting previews. This narrows the
+	// interval in which a concurrent revoke could expose an already-read
+	// notification; it cannot make the network send itself atomic with revoke.
+	allowed := map[int64]bool{}
+	checked := map[int64]bool{}
+	visible := make([]store.Notification, 0, len(items))
+	for _, item := range items {
+		if !checked[item.DocID] {
+			checked[item.DocID] = true
+			meta, e := s.Store.GetDocSystem(r.Context(), item.DocID)
+			if e != nil && !errors.Is(e, store.ErrNotFound) {
+				s.fail(w, r, e)
+				return
+			}
+			if e == nil && meta.Kind != "doc" {
+				allowed[item.DocID] = true
+			} else if e == nil {
+				current, e := s.Store.GetDoc(r.Context(), u.ID, item.DocID)
+				if e != nil && !errors.Is(e, store.ErrNotFound) {
+					s.fail(w, r, e)
+					return
+				}
+				allowed[item.DocID] = e == nil && store.RoleRank(current.Role) >= store.RoleRank(store.RoleView)
+			}
+		}
+		if allowed[item.DocID] {
+			visible = append(visible, item)
+		}
 	}
 	unread, err := s.Store.UnreadCount(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"notifications": items, "unread": unread})
+	current, err := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+	if errors.Is(err, store.ErrNotFound) || err == nil && current.ID != u.ID {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, http.StatusOK, map[string]any{"notifications": visible, "unread": unread})
 }
 
 func (s *Server) markNotificationsRead(w http.ResponseWriter, r *http.Request) {

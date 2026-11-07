@@ -25,6 +25,7 @@ type DocMeta struct {
 	// CopyProtected remains a conservative compatibility projection.
 	CopyMinRole         string `json:"copyMinRole,omitempty"`
 	DownloadMinRole     string `json:"downloadMinRole,omitempty"`
+	CommentMinRole      string `json:"commentMinRole,omitempty"`
 	PermissionsRevision int64  `json:"permissionsRevision"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`

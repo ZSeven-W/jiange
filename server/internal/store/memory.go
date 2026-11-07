@@ -14,20 +14,21 @@ type session struct {
 
 // Memory is a thread-safe in-memory Store for tests and local experiments.
 type Memory struct {
-	mu            sync.Mutex
-	users         []User
-	workspaces    []Workspace
-	members       map[int64][]int64 // user -> workspace ids
-	sessions      map[string]session
-	d             memDocs
-	sh            memShare
-	b             memBase
-	comments      []Comment
-	notifications []Notification
-	favorites     map[int64][]int64
-	recent        map[[2]int64]time.Time // (user, doc) -> last visit
-	links         map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
-	automations   []Automation
+	mu              sync.Mutex
+	users           []User
+	workspaces      []Workspace
+	members         map[int64][]int64 // user -> workspace ids
+	sessions        map[string]session
+	d               memDocs
+	sh              memShare
+	b               memBase
+	comments        []Comment
+	commentSequence int64
+	notifications   []Notification
+	favorites       map[int64][]int64
+	recent          map[[2]int64]time.Time // (user, doc) -> last visit
+	links           map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
+	automations     []Automation
 }
 
 func NewMemory() *Memory {

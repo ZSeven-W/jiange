@@ -16,9 +16,27 @@ describe("share permission settings", () => {
     expect(html).toContain("权限设置");
     expect(html).toContain("谁可以复制内容");
     expect(html).toContain("谁可以创建副本、打印和下载");
+    expect(html).toContain("谁可以评论");
     expect(html).toContain("disabled");
     expect(html).toContain("正在验证权限设置");
     expect(html).toContain("可编辑的用户");
+  });
+
+  it("uses the two Feishu comment roles and disables the setting on an older server", async () => {
+    const current = { ...doc, commentMinRole: "view" as const, permissionsRevision: 5 };
+    const parsed = contentPermissions(current)!;
+    const html = renderToStaticMarkup(<SharePermissions permissions={parsed} busy={false} loading={false} enabled error="" onBack={() => {}} onChange={() => {}} />);
+    const comment = html.match(/<select id="permission-commentMinRole"[^>]*>(.*?)<\/select>/)?.[1];
+    expect(comment).toContain('value="view" selected=""');
+    expect(comment).toContain('value="edit"');
+    expect(comment).not.toContain('value="manage"');
+    const write = vi.fn(async () => undefined);
+    await changeContentPermission(parsed, "commentMinRole", "edit", async () => current, write, () => true);
+    expect(write).toHaveBeenCalledWith({ commentMinRole: "edit" }, 5);
+    await expect(changeContentPermission(parsed, "commentMinRole", "manage", async () => current, write, () => true)).rejects.toThrow("不支持");
+    const legacy = renderToStaticMarkup(<SharePermissions permissions={permissions} busy={false} loading={false} enabled error="" onBack={() => {}} onChange={() => {}} />);
+    expect(legacy).toMatch(/<select id="permission-commentMinRole"[^>]*disabled=""/);
+    await expect(changeContentPermission(permissions, "commentMinRole", "view", async () => doc, write, () => true)).rejects.toThrow("不支持");
   });
 
   it("keeps a focusable back control while a setting update is pending", () => {

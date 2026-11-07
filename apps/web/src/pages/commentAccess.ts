@@ -5,6 +5,17 @@ let nextSession = 0;
 export type CommentTarget = { doc: number; user: number; session: number };
 export type SavedCommentDraft = { text: string; draft: { block: string; startChar: string; endChar: string; quote: string } | null; parentId?: number };
 
+/** A read role is sufficient only when a verified server policy allows it.
+ * Servers predating this policy only allow edit/manage, so missing policy is
+ * interpreted conservatively. Anonymous public links never grant comments. */
+export function canWriteComments(meta: { role?: string; commentMinRole?: unknown; permissionsRevision?: number } | undefined): boolean {
+  if (!meta || (meta.role !== "view" && meta.role !== "edit" && meta.role !== "manage")) return false;
+  if (meta.commentMinRole === undefined) return meta.role === "edit" || meta.role === "manage";
+  if (!Number.isSafeInteger(meta.permissionsRevision) || meta.permissionsRevision! < 0) return false;
+  if (meta.commentMinRole !== "view" && meta.commentMinRole !== "edit") return false;
+  return meta.commentMinRole === "view" || meta.role === "edit" || meta.role === "manage";
+}
+
 /** Own comment text may be recovered, but protected document quotes may not be copied. */
 export function redactCommentDraftQuote(value: SavedCommentDraft, allowQuote: boolean): SavedCommentDraft {
   return { ...value, draft: value.draft ? { ...value.draft, quote: allowQuote ? value.draft.quote : "" } : null };
@@ -66,6 +77,13 @@ export class CommentDraftJournal {
 
 export function matchesCommentTarget(target: CommentTarget | null, doc: number, user: number, session: number): boolean {
   return target?.doc === doc && target.user === user && target.session === session;
+}
+
+/** Ignore a late policy response from an earlier document, account or session. */
+export function revalidateCurrentCommentPolicy(current: CommentTarget | null, target: CommentTarget, revalidate: () => void): boolean {
+  if (!matchesCommentTarget(current, target.doc, target.user, target.session)) return false;
+  revalidate();
+  return true;
 }
 
 /** At most one automatic revalidation until a fresh session succeeds. */

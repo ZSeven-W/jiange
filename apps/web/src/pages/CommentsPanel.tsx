@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { commentsApi, type Comment, type User } from "@/lib/api";
+import { ApiError, commentsApi, type Comment, type User } from "@/lib/api";
 import { scrollToCommentThread } from "@/editor/commentAnchor";
 import { commentListKey, commentMembersKey, type SavedCommentDraft } from "./commentAccess";
 import { isDocAccessDenied } from "./docMetaState";
@@ -20,9 +20,29 @@ export function sameCommentAnchor(a: CommentAnchor | null, b: CommentAnchor | nu
 
 /** Authorization failures invalidate the whole visible comments session. */
 export function notifyCommentAccessError(error: unknown, onAccessDenied: () => void): boolean {
+  // A user can retain read access to the document and its comments while a
+  // newer policy removes their permission to add or change comments.
+  if (error instanceof ApiError && error.code === "comment_permission_denied") return false;
   if (!isDocAccessDenied(error)) return false;
   onAccessDenied();
   return true;
+}
+
+export function classifyCommentMutationError(error: unknown): "policy" | "access" | "rejected" | "uncertain" {
+  if (error instanceof ApiError && error.code === "comment_permission_denied") return "policy";
+  if (isDocAccessDenied(error)) return "access";
+  // An explicit client error is a rejection; network failures and server
+  // errors can occur after commit, so never claim the mutation failed.
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) return "rejected";
+  return "uncertain";
+}
+
+/** A refresh can fail while offline; its request is not proof of a refresh. */
+export function reconcileUncertainComment(refresh: () => Promise<unknown>, keepDraft: boolean): string {
+  try { void refresh().catch(() => {}); } catch { /* Keep the original draft even if refresh cannot start. */ }
+  return keepDraft
+    ? "发送结果未确认，正在尝试刷新评论；草稿已保留，请联网核对后再决定是否重试。"
+    : "操作结果未确认，正在尝试刷新评论；请联网核对后再决定是否重试。";
 }
 
 /** A new selection can arrive after the drawer and composer are already mounted. */
@@ -42,6 +62,7 @@ export function CommentsPanel({
   meId,
   session,
   canEdit,
+  canSubmit = true,
   canManage,
   allowCopyQuote = true,
   allowPrintQuote = true,
@@ -51,6 +72,7 @@ export function CommentsPanel({
   onActivate,
   onClose,
   onAccessDenied,
+  onPolicyDenied,
   recovery,
   onDismissRecovery,
   onSnapshot,
@@ -60,6 +82,7 @@ export function CommentsPanel({
   meId: number;
   session: number;
   canEdit: boolean;
+  canSubmit?: boolean;
   canManage: boolean;
   allowCopyQuote?: boolean;
   allowPrintQuote?: boolean;
@@ -69,6 +92,7 @@ export function CommentsPanel({
   onActivate: (id: number | null) => void;
   onClose: () => void;
   onAccessDenied: (draft?: CommentRecovery) => void;
+  onPolicyDenied?: () => void;
   recovery?: CommentRecovery[];
   onDismissRecovery: () => void;
   onSnapshot: (draft: CommentRecovery) => void;
@@ -86,7 +110,7 @@ export function CommentsPanel({
   const [actionPending, setActionPending] = useState(false);
   const actionPendingRef = useRef(false);
   const runAction = async (action: () => Promise<unknown>) => {
-    if (actionPendingRef.current) return;
+    if (actionPendingRef.current || !canSubmit) return;
     actionPendingRef.current = true;
     setActionPending(true);
     setActionError("");
@@ -94,7 +118,11 @@ export function CommentsPanel({
       await action();
       void invalidate();
     } catch (error) {
-      if (!notifyCommentAccessError(error, onAccessDenied)) setActionError("操作失败，请检查权限或网络后重试。");
+      const result = classifyCommentMutationError(error);
+      if (result === "access") onAccessDenied();
+      else if (result === "policy") { onPolicyDenied?.(); setActionError("评论权限已变化，请查看最新权限。"); }
+      else if (result === "uncertain") setActionError(reconcileUncertainComment(invalidate, false));
+      else setActionError("操作未被接受，请检查后重试。");
     } finally {
       actionPendingRef.current = false;
       setActionPending(false);
@@ -135,7 +163,7 @@ export function CommentsPanel({
           </div>)}
           <button type="button" className="mt-1 text-primary" onClick={onDismissRecovery}>已复制，清除恢复记录</button>
         </div>}
-        {canEdit && <Composer id={id} meId={meId} members={visibleMembers} draft={draft} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
+        {canEdit && <Composer id={id} meId={meId} members={visibleMembers} draft={draft} canSubmit={canSubmit} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
         {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
         {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
         {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{canEdit ? "还没有评论，可以在上方添加" : "还没有评论"}</p>}
@@ -156,6 +184,7 @@ export function CommentsPanel({
                   <>
                     <button
                       className="hover:text-primary"
+                      disabled={!canSubmit}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (replyTo !== null) onComposerSuspended();
@@ -166,7 +195,7 @@ export function CommentsPanel({
                     </button>
                     <button
                       className="hover:text-primary"
-                      disabled={actionPending}
+                      disabled={actionPending || !canSubmit}
                       onClick={(e) => {
                         e.stopPropagation();
                         void runAction(() => commentsApi.update(id, t.id, { resolved: !t.resolved }));
@@ -175,7 +204,7 @@ export function CommentsPanel({
                       {t.resolved ? "重新打开" : "解决"}
                     </button>
                     {(t.userId === meId || canManage) && (
-                      <button disabled={actionPending} className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>
+                      <button disabled={actionPending || !canSubmit} className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>
                         删除
                       </button>
                     )}
@@ -189,7 +218,7 @@ export function CommentsPanel({
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
                   {rp.userName}
                   {canEdit && (rp.userId === meId || canManage) && (
-                    <button disabled={actionPending} className="ml-auto hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>
+                    <button disabled={actionPending || !canSubmit} className="ml-auto hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>
                       删除
                     </button>
                   )}
@@ -198,7 +227,7 @@ export function CommentsPanel({
             ))}
             {replyTo === t.id && canEdit && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                <Composer id={id} meId={meId} members={visibleMembers} draft={null} parentId={t.id} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
+                <Composer id={id} meId={meId} members={visibleMembers} draft={null} parentId={t.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
               </div>
             )}
           </div>
@@ -235,10 +264,13 @@ function Composer({
   meId,
   members,
   draft,
+  canSubmit,
   allowCopyQuote = true,
   allowPrintQuote = true,
   parentId,
   onAccessDenied,
+  onPolicyDenied,
+  onUncertain,
   onSnapshot,
   onDone,
   onCancel,
@@ -247,10 +279,13 @@ function Composer({
   meId: number;
   members: User[];
   draft: CommentAnchor | null;
+  canSubmit: boolean;
   allowCopyQuote?: boolean;
   allowPrintQuote?: boolean;
   parentId?: number;
   onAccessDenied: (draft?: CommentRecovery) => void;
+  onPolicyDenied?: () => void;
+  onUncertain: () => Promise<unknown>;
   onSnapshot: (draft: CommentRecovery) => void;
   onDone: (draft: CommentAnchor | null) => void;
   onCancel?: () => void;
@@ -278,7 +313,7 @@ function Composer({
 
   const post = async () => {
     const body = text.trim();
-    if (!body || postingRef.current || originChanged) return;
+    if (!body || postingRef.current || originChanged || !canSubmit) return;
     postingRef.current = true;
     setPosting(true);
     setError("");
@@ -291,7 +326,11 @@ function Composer({
       onSnapshot({ text: "", draft: textOrigin, parentId });
       onDone(draft);
     } catch (error) {
-      if (!notifyCommentAccessError(error, () => onAccessDenied({ text, draft: textOrigin, parentId }))) setError("发送失败，请检查权限或网络后重试。");
+      const result = classifyCommentMutationError(error);
+      if (result === "access") onAccessDenied({ text, draft: textOrigin, parentId });
+      else if (result === "policy") { onPolicyDenied?.(); setError("评论权限已变化，草稿已保留。"); }
+      else if (result === "uncertain") setError(reconcileUncertainComment(onUncertain, true));
+      else setError("评论未被接受，草稿已保留，请检查后重试。");
     } finally {
       postingRef.current = false;
       setPosting(false);
@@ -301,6 +340,7 @@ function Composer({
     <div ref={composerRef} tabIndex={-1} className="mb-3 rounded-lg border p-2 focus-within:border-primary" data-comment-composer>
       {draft?.quote && !parentId && <div className="mb-1.5 truncate border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{draft.quote}</div>}
       {posting && <p role="status" className="mb-1 text-[12px] text-muted-foreground">上一条评论正在发送，请稍候。</p>}
+      {!canSubmit && <p role="status" className="mb-1 text-[12px] text-muted-foreground">正在验证评论权限，草稿仍可编辑。</p>}
       {originChanged && <p role="alert" className="mb-1 text-[12px] text-muted-foreground">未发送的文字属于之前的选区。 <button type="button" className="text-primary underline" onClick={() => { setTextOrigin(draft); onSnapshot({ text, draft, parentId }); }}>用于当前选区</button></p>}
       <textarea
         ref={ref}
@@ -342,7 +382,7 @@ function Composer({
               取消
             </button>
           )}
-          <button className="h-6 rounded bg-primary px-2.5 text-[12px] text-white disabled:opacity-50" disabled={!text.trim() || posting || originChanged} onClick={() => void post()} data-comment-send>
+          <button className="h-6 rounded bg-primary px-2.5 text-[12px] text-white disabled:opacity-50" disabled={!text.trim() || posting || originChanged || !canSubmit} onClick={() => void post()} data-comment-send>
             发送
           </button>
         </div>

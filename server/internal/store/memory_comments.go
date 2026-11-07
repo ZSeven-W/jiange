@@ -9,7 +9,7 @@ import (
 func (m *Memory) AddComment(_ context.Context, c Comment) (Comment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c.ID = int64(len(m.comments)) + 1
+	c.ID = m.nextCommentIDLocked()
 	if c.UserName == "" {
 		if u := m.userByID(c.UserID); u != nil {
 			c.UserName = u.Name
@@ -50,21 +50,7 @@ func (m *Memory) UpdateComment(_ context.Context, c Comment) (Comment, error) {
 func (m *Memory) DeleteComment(_ context.Context, doc, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// remove the comment and its replies
-	out := m.comments[:0]
-	removed := false
-	for _, c := range m.comments {
-		if c.DocID == doc && (c.ID == id || (c.ParentID != nil && *c.ParentID == id)) {
-			removed = true
-			continue
-		}
-		out = append(out, c)
-	}
-	m.comments = out
-	if !removed {
-		return ErrNotFound
-	}
-	return nil
+	return m.removeCommentTreeLocked(doc, id)
 }
 
 func (m *Memory) CommentAuthor(_ context.Context, doc, id int64) (int64, error) {
@@ -82,6 +68,9 @@ func (m *Memory) AddNotifications(_ context.Context, items []Notification) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, n := range items {
+		if !m.notificationVisibleLocked(n) {
+			continue
+		}
 		n.ID = int64(len(m.notifications)) + 1
 		n.CreatedAt = time.Now()
 		if n.DocTitle == "" {
@@ -99,12 +88,52 @@ func (m *Memory) AddNotifications(_ context.Context, items []Notification) error
 	return nil
 }
 
+// notificationVisibleLocked keeps document comment previews behind the same
+// access boundary as the document, including after sharing is revoked. Base
+// notifications have their own access model and retain their existing path.
+func (m *Memory) notificationVisibleLocked(n Notification) bool {
+	// A negative comment ID is a tombstone left by recursive comment deletion;
+	// retain notification IDs while hiding it for every node kind.
+	if n.CommentID != nil && *n.CommentID < 0 {
+		return false
+	}
+	d := m.doc(n.DocID)
+	if d == nil {
+		return false
+	}
+	if d.meta.Kind != "doc" {
+		return true
+	}
+	if d.deleted || RoleRank(m.roleLocked(n.UserID, d)) < RoleRank(RoleView) {
+		return false
+	}
+	if n.CommentID != nil {
+		for _, c := range m.comments {
+			if c.ID == *n.CommentID && c.DocID == n.DocID {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 func (m *Memory) Notifications(_ context.Context, userID int64, limit int) ([]Notification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := []Notification{}
 	for _, n := range m.notifications {
-		if n.UserID == userID {
+		if n.UserID == userID && m.notificationVisibleLocked(n) {
+			if n.CommentID != nil {
+				if d := m.doc(n.DocID); d != nil && d.meta.Kind == "doc" {
+					for _, c := range m.comments {
+						if c.ID == *n.CommentID && c.DocID == n.DocID {
+							n.Preview = notificationPreview(c.Body)
+							break
+						}
+					}
+				}
+			}
 			out = append(out, n)
 		}
 	}
@@ -120,7 +149,7 @@ func (m *Memory) UnreadCount(_ context.Context, userID int64) (int64, error) {
 	defer m.mu.Unlock()
 	var n int64
 	for _, x := range m.notifications {
-		if x.UserID == userID && !x.Read {
+		if x.UserID == userID && !x.Read && m.notificationVisibleLocked(x) {
 			n++
 		}
 	}
