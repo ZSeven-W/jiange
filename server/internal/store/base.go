@@ -22,6 +22,9 @@ type Field struct {
 	// Formula is the expression for type=formula fields (see btformula).
 	Formula  string  `json:"formula,omitempty"`
 	Position float64 `json:"position"`
+	// IsPrimary is the durable identity of the record's main field. It is not
+	// inferred from the first visible field, which may change by view or access.
+	IsPrimary bool `json:"isPrimary"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.
@@ -170,4 +173,9 @@ type BaseStore interface {
 	// VisibleRecordIDs returns only IDs in the supplied set that match every
 	// mandatory access predicate. It is not limited to the first list page.
 	VisibleRecordIDs(ctx context.Context, baseID int64, ids []int64, fields []Field, mandatory []btquery.Config) ([]int64, error)
+	RecordsConstrainedByIDs(ctx context.Context, baseID int64, ids []int64, fields []Field, mandatory []btquery.Config) ([]Record, error)
+	LinksToRecords(ctx context.Context, fieldID int64, toRecords []int64) (map[int64][]int64, error)
+	LinksForRecordsConstrained(ctx context.Context, fieldID int64, fromRecords []int64, targetBaseID int64, fields []Field, mandatory []btquery.Config) (map[int64][]int64, error)
+	LinksToRecordsConstrained(ctx context.Context, fieldID int64, toRecords []int64, sourceBaseID int64, fields []Field, mandatory []btquery.Config) (map[int64][]int64, error)
+	VisibleMemberNames(ctx context.Context, workspaceID int64, ids []int64) (map[int64]string, error)
 }

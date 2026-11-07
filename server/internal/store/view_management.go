@@ -52,6 +52,38 @@ func guardedViewValid(role string, v View, fields []Field) error {
 	return nil
 }
 
+// Preserve already-hidden legacy configurations (especially locked permission
+// views) without exposing their data, but do not permit new hidden-primary
+// configurations. Existing users can explicitly unhide the primary field.
+func primaryVisibilityValid(before *View, after View, fields []Field) error {
+	var primaryID int64
+	for _, field := range fields {
+		if field.IsPrimary {
+			primaryID = field.ID
+			break
+		}
+	}
+	if primaryID == 0 {
+		return nil
+	}
+	hidden := func(view View) bool {
+		var cfg btquery.Config
+		if len(view.Config) == 0 || string(view.Config) == "null" || json.Unmarshal(view.Config, &cfg) != nil {
+			return false
+		}
+		for _, id := range cfg.Hidden {
+			if id == primaryID {
+				return true
+			}
+		}
+		return false
+	}
+	if hidden(after) && (before == nil || !hidden(*before)) {
+		return ErrPrimaryField
+	}
+	return nil
+}
+
 func (m *Memory) viewFieldsLocked(baseID int64) []Field {
 	var fields []Field
 	for _, f := range m.b.fields {
@@ -148,6 +180,9 @@ func (m *Memory) AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v Vie
 	if err = guardedViewValid(role, v, m.viewFieldsLocked(v.BaseID)); err != nil {
 		return View{}, err
 	}
+	if err = primaryVisibilityValid(nil, v, m.viewFieldsLocked(v.BaseID)); err != nil {
+		return View{}, err
+	}
 	if err = ctx.Err(); err != nil {
 		return View{}, err
 	}
@@ -181,6 +216,9 @@ func (m *Memory) UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, be
 		return View{}, ErrConflict
 	}
 	if err = guardedViewValid(role, after, m.viewFieldsLocked(before.BaseID)); err != nil {
+		return View{}, err
+	}
+	if err = primaryVisibilityValid(&before, after, m.viewFieldsLocked(before.BaseID)); err != nil {
 		return View{}, err
 	}
 	for i, v := range m.b.views {
@@ -418,6 +456,9 @@ func (p *Postgres) AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v V
 		if err = guardedViewValid(role, v, fields); err != nil {
 			return err
 		}
+		if err = primaryVisibilityValid(nil, v, fields); err != nil {
+			return err
+		}
 		result = v
 		err = tx.QueryRow(ctx, `INSERT INTO bt_views (base_id,type,name,config,pos)
 			VALUES ($1,$2,$3,$4,CASE WHEN $5::float8=0 THEN COALESCE((SELECT max(pos) FROM bt_views WHERE base_id=$1),0)+1 ELSE $5 END)
@@ -453,6 +494,9 @@ func (p *Postgres) UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, 
 			return err
 		}
 		if err = guardedViewValid(role, after, fields); err != nil {
+			return err
+		}
+		if err = primaryVisibilityValid(&before, after, fields); err != nil {
 			return err
 		}
 		views, err := pgViewsLocked(ctx, tx, before.BaseID)

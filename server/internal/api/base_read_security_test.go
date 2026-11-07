@@ -252,6 +252,18 @@ func TestBaseReadRechecksRoleAfterQuery(t *testing.T) {
 
 type failingConstrainedStore struct{ store.Store }
 
+type failingSnapshotReader struct{ store.BaseSnapshotReader }
+
+func (s failingSnapshotReader) QueryRecordsConstrained(context.Context, int64, []store.Field, []btquery.Config, btquery.Config, int) ([]store.Record, error) {
+	return nil, errors.New("injected snapshot query error")
+}
+
+func (s failingConstrainedStore) WithBaseReadSnapshot(ctx context.Context, uid, id int64, fn func(store.BaseSnapshotReader) error) error {
+	return s.Store.WithBaseReadSnapshot(ctx, uid, id, func(reader store.BaseSnapshotReader) error {
+		return fn(failingSnapshotReader{reader})
+	})
+}
+
 func (s failingConstrainedStore) QueryRecordsConstrained(context.Context, int64, []store.Field, []btquery.Config, btquery.Config, int) ([]store.Record, error) {
 	return nil, errors.New("injected query error")
 }

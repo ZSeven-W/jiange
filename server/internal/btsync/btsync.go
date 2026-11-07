@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	catchUpChunk = 500
-	outBuffer    = 512
+	catchUpChunk   = 500
+	catchUpBatches = 8
+	outBuffer      = 512
+	storeTimeout   = 5 * time.Second
+	replayTimeout  = 15 * time.Second
 )
 
 type Hub struct {
@@ -30,9 +33,23 @@ type Hub struct {
 	// OriginPatterns are extra allowed browser origins (host[:port]).
 	OriginPatterns []string
 	PingInterval   time.Duration
+	// StoreTimeout bounds head/replay queries so a stalled store cannot keep a
+	// room or request blocked indefinitely. Zero uses the default.
+	StoreTimeout time.Duration
+	// ReplayTimeout bounds the whole replay, including waiting for the room.
+	ReplayTimeout time.Duration
 
-	mu    sync.Mutex
-	rooms map[int64]*room
+	mu           sync.Mutex
+	rooms        map[int64]*room
+	initializing map[int64]*roomInit
+}
+
+type roomInit struct {
+	done     chan struct{}
+	head     int64
+	err      error
+	waiters  int
+	finished bool
 }
 
 func (h *Hub) log() *slog.Logger {
@@ -42,22 +59,73 @@ func (h *Hub) log() *slog.Logger {
 	return h.Log
 }
 
-func (h *Hub) room(id int64) *room {
+func (h *Hub) room(ctx context.Context, id int64) (*room, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.rooms == nil {
 		h.rooms = map[int64]*room{}
 	}
 	r := h.rooms[id]
+	if r != nil {
+		r.refs++
+		h.mu.Unlock()
+		return r, nil
+	}
+	if h.initializing == nil {
+		h.initializing = map[int64]*roomInit{}
+	}
+	pending := h.initializing[id]
+	if pending == nil {
+		pending = &roomInit{done: make(chan struct{})}
+		h.initializing[id] = pending
+		go h.initializeHead(id, pending)
+	}
+	pending.waiters++
+	h.mu.Unlock()
+	select {
+	case <-ctx.Done():
+	case <-pending.done:
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pending.waiters--
+	if pending.finished && pending.waiters == 0 && h.initializing[id] == pending {
+		delete(h.initializing, id)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if pending.err != nil {
+		return nil, pending.err
+	}
+	// Another waiter may already have created the room. Conversely, all
+	// waiters may have canceled; in that case no idle room is created.
+	r = h.rooms[id]
 	if r == nil {
-		r = &room{hub: h, id: id, conns: map[*conn]struct{}{}, stop: make(chan struct{})}
-		// history before the room existed is only fetched per-client on replay
-		r.head, _ = h.Store.BtHead(context.Background(), id)
+		r = &room{hub: h, id: id, head: pending.head, conns: map[*conn]struct{}{}, stop: make(chan struct{}), wake: make(chan struct{}, 1)}
 		h.rooms[id] = r
 		go r.sweepLoop()
 	}
 	r.refs++
-	return r
+	return r, nil
+}
+
+func (h *Hub) initializeHead(id int64, pending *roomInit) {
+	// Share one bounded query across simultaneous connections. Its lifetime is
+	// independent of any single caller, so one disconnect cannot cancel it for
+	// every other client; it never creates a room unless a waiter claims it.
+	ctx, cancel := context.WithTimeout(context.Background(), h.storeTimeout())
+	head, err := h.Store.BtHead(ctx, id)
+	cancel()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pending.head, pending.err, pending.finished = head, err, true
+	if pending.waiters == 0 && h.initializing[id] == pending {
+		delete(h.initializing, id)
+	}
+	close(pending.done)
 }
 
 func (h *Hub) release(r *room) {
@@ -76,7 +144,12 @@ func (h *Hub) Notify(baseID int64) {
 	r := h.rooms[baseID]
 	h.mu.Unlock()
 	if r != nil {
-		r.catchUp()
+		// Coalesce notifications without making the mutating HTTP request wait
+		// on a slow store. The periodic sweep remains the missed-wakeup fallback.
+		select {
+		case r.wake <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -103,9 +176,16 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64, checks
 	}
 	c := &conn{out: make(chan []byte, outBuffer), cancel: cancel}
 	go c.writeLoop(ctx, ws, check, cancel)
-	room := h.room(baseID)
+	room, err := h.room(ctx, baseID)
+	if err != nil {
+		h.log().Error("bt room head", "base", baseID, "err", err)
+		ws.Close(websocket.StatusInternalError, "unable to load Base state")
+		return
+	}
 	defer h.release(room)
-	room.join(c)
+	if !room.join(ctx, c) {
+		return
+	}
 	defer room.remove(c)
 	go func() {
 		// read loop: client messages are just hello replays
@@ -124,7 +204,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64, checks
 					cancel()
 					return
 				}
-				room.replay(c, msg.LastSeq)
+				room.replay(ctx, c, msg.LastSeq)
 			}
 		}
 	}()
@@ -158,11 +238,26 @@ func (h *Hub) pingInterval() time.Duration {
 	return 20 * time.Second
 }
 
+func (h *Hub) storeTimeout() time.Duration {
+	if h.StoreTimeout > 0 {
+		return h.StoreTimeout
+	}
+	return storeTimeout
+}
+
+func (h *Hub) replayTimeout() time.Duration {
+	if h.ReplayTimeout > 0 {
+		return h.ReplayTimeout
+	}
+	return replayTimeout
+}
+
 type room struct {
 	hub   *Hub
 	id    int64
 	refs  int // guarded by hub.mu
 	stop  chan struct{}
+	wake  chan struct{}
 	mu    sync.Mutex
 	head  int64
 	conns map[*conn]struct{}
@@ -170,11 +265,28 @@ type room struct {
 
 // join registers a connection and tells it the room's current head. The
 // client answers with its own lastSeq; replay fills the gap.
-func (r *room) join(c *conn) {
-	r.mu.Lock()
+func (r *room) join(ctx context.Context, c *conn) bool {
+	ctx, stop := context.WithTimeout(ctx, r.hub.replayTimeout())
+	defer stop()
+	if !lockRoom(ctx, &r.mu) {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return false
+	}
 	defer r.mu.Unlock()
+	if ctx.Err() != nil {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return false
+	}
 	r.conns[c] = struct{}{}
-	c.send(mustJSON(map[string]any{"t": "hello", "head": r.head}))
+	if !c.send(mustJSON(map[string]any{"t": "hello", "head": r.head})) {
+		delete(r.conns, c)
+		return false
+	}
+	return true
 }
 
 func (r *room) remove(c *conn) {
@@ -185,19 +297,42 @@ func (r *room) remove(c *conn) {
 
 // replay sends everything after lastSeq to one connection. Serialized
 // against catchUp by the room lock, so events arrive in seq order.
-func (r *room) replay(c *conn, lastSeq int64) {
-	r.mu.Lock()
+func (r *room) replay(ctx context.Context, c *conn, lastSeq int64) {
+	ctx, stop := context.WithTimeout(ctx, r.hub.replayTimeout())
+	defer stop()
+	if !lockRoom(ctx, &r.mu) {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return
+	}
 	defer r.mu.Unlock()
+	if ctx.Err() != nil {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		return
+	}
 	if lastSeq > r.head {
 		lastSeq = r.head
 	}
 	for from := lastSeq; from < r.head; {
-		events, err := r.hub.Store.BtEventsAfter(context.Background(), r.id, from, catchUpChunk)
+		queryCtx, cancel := context.WithTimeout(ctx, r.hub.storeTimeout())
+		events, err := r.hub.Store.BtEventsAfter(queryCtx, r.id, from, catchUpChunk)
+		cancel()
 		if err != nil {
 			r.hub.log().Error("bt replay", "base", r.id, "err", err)
+			// A partial replay cannot establish a safe checkpoint. Reconnect
+			// forces the client to fetch a fresh authorized snapshot.
+			if c.cancel != nil {
+				c.cancel()
+			}
 			return
 		}
 		if len(events) == 0 {
+			if c.cancel != nil {
+				c.cancel()
+			}
 			return
 		}
 		if !c.send(invalidationFrame(events)) {
@@ -207,12 +342,35 @@ func (r *room) replay(c *conn, lastSeq int64) {
 	}
 }
 
+// A disconnected client must not remain queued behind a long replay or
+// catch-up while keeping its goroutine alive. TryLock is only polled when the
+// room is contended; the context bounds both queueing and storage work.
+func lockRoom(ctx context.Context, mu *sync.Mutex) bool {
+	if mu.TryLock() {
+		return true
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if mu.TryLock() {
+				return true
+			}
+		}
+	}
+}
+
 // catchUp streams newly persisted events to every connection.
 func (r *room) catchUp() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for {
-		events, err := r.hub.Store.BtEventsAfter(context.Background(), r.id, r.head, catchUpChunk)
+	ctx, cancel := context.WithTimeout(context.Background(), r.hub.storeTimeout())
+	defer cancel()
+	for batch := 0; batch < catchUpBatches; batch++ {
+		events, err := r.hub.Store.BtEventsAfter(ctx, r.id, r.head, catchUpChunk)
 		if err != nil {
 			r.hub.log().Error("bt catch up", "base", r.id, "err", err)
 			return
@@ -228,6 +386,12 @@ func (r *room) catchUp() {
 		if len(events) < catchUpChunk {
 			return
 		}
+	}
+	// Yield the room lock after a bounded amount of work. If writes continue
+	// faster than one sweep, arrange another pass without starving join/replay.
+	select {
+	case r.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -256,6 +420,8 @@ func (r *room) sweepLoop() {
 		select {
 		case <-r.stop:
 			return
+		case <-r.wake:
+			r.catchUp()
 		case <-t.C:
 			r.catchUp()
 		}

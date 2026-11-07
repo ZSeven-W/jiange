@@ -87,6 +87,8 @@ export interface Field {
   id: number;
   name: string;
   type: FieldType;
+  /** Stable record-title field; it is not inferred from visible column order. */
+  isPrimary?: boolean;
   description?: string;
   options?: string[];
   /** preset palette index per option (-1/absent = auto) */

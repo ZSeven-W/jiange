@@ -205,6 +205,8 @@ func (s *Server) viewMutationError(w http.ResponseWriter, r *http.Request, err e
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限无法修改视图")
 	case errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not_found", "视图不存在")
+	case errors.Is(err, store.ErrPrimaryField):
+		httpx.Error(w, http.StatusConflict, "primary_field", "主字段不能删除、移动或隐藏")
 	case errors.Is(err, store.ErrConflict):
 		httpx.Error(w, http.StatusConflict, "view_conflict", "视图列表已变化，或不能删除最后一个视图；请刷新后重试")
 	default:

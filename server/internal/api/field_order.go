@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -30,6 +31,10 @@ func (s *Server) reorderFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.ReorderFieldsGuarded(r.Context(), guard, b.ID, in.ExpectedFieldIDs, in.DesiredFieldIDs); err != nil {
+		if errors.Is(err, store.ErrPrimaryField) {
+			httpx.Error(w, http.StatusConflict, "primary_field", "主字段不能删除、移动或隐藏")
+			return
+		}
 		s.viewMutationError(w, r, err)
 		return
 	}

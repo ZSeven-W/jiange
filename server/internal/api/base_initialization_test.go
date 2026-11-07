@@ -96,7 +96,7 @@ func TestCreateBaseDefaultsAndParentAuthorization(t *testing.T) {
 	if err := json.NewDecoder(get.Body).Decode(&full); err != nil {
 		t.Fatal(err)
 	}
-	if len(full.Fields) != 1 || full.Fields[0].Name != "文本" || full.Fields[0].Type != "text" || len(full.Views) != 1 || full.Views[0].Name != "表格" || len(full.Records) != 5 {
+	if len(full.Fields) != 1 || full.Fields[0].Name != "文本" || full.Fields[0].Type != "text" || !full.Fields[0].IsPrimary || len(full.Views) != 1 || full.Views[0].Name != "表格" || len(full.Records) != 5 {
 		t.Fatalf("defaults: %+v", full)
 	}
 }

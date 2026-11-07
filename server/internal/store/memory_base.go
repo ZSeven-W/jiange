@@ -59,7 +59,7 @@ func (m *Memory) CreateInitializedBase(ctx context.Context, ws, creator int64, p
 		meta: DocMeta{ID: baseID, Kind: "base", WorkspaceID: ws, ParentID: parentID, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now},
 		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
 	}
-	field := Field{BaseID: baseID, Name: "文本", Type: "text", Position: 1}
+	field := Field{BaseID: baseID, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
 	view := View{BaseID: baseID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
 	records := make([]Record, 5)
 	for i := range records {
@@ -100,6 +100,15 @@ func (m *Memory) Fields(_ context.Context, base int64) ([]Field, error) {
 func (m *Memory) AddField(_ context.Context, f Field) (Field, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	f.IsPrimary = true
+	for _, existing := range m.b.fields {
+		if existing.BaseID == f.BaseID {
+			f.IsPrimary = false
+			if existing.IsPrimary && f.Position != 0 && f.Position <= existing.Position {
+				return Field{}, ErrPrimaryField
+			}
+		}
+	}
 	f.ID = m.id()
 	if f.Position == 0 {
 		f.Position = float64(f.ID)
@@ -113,6 +122,17 @@ func (m *Memory) UpdateField(_ context.Context, f Field) (Field, error) {
 	defer m.mu.Unlock()
 	for i, x := range m.b.fields {
 		if x.ID == f.ID && x.BaseID == f.BaseID {
+			if x.IsPrimary && f.Position != x.Position {
+				return Field{}, ErrPrimaryField
+			}
+			f.IsPrimary = x.IsPrimary
+			if !f.IsPrimary && f.Position != x.Position {
+				for _, primary := range m.b.fields {
+					if primary.BaseID == f.BaseID && primary.IsPrimary && fieldBefore(x, primary) != fieldBefore(f, primary) {
+						return Field{}, ErrPrimaryField
+					}
+				}
+			}
 			m.b.fields[i] = f
 			return f, nil
 		}
@@ -123,6 +143,11 @@ func (m *Memory) UpdateField(_ context.Context, f Field) (Field, error) {
 func (m *Memory) DeleteField(_ context.Context, base, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, field := range m.b.fields {
+		if field.BaseID == base && field.ID == id && field.IsPrimary {
+			return ErrPrimaryField
+		}
+	}
 	n := len(m.b.fields)
 	m.b.fields = slices.DeleteFunc(m.b.fields, func(f Field) bool { return f.ID == id && f.BaseID == base })
 	if n == len(m.b.fields) {

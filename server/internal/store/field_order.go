@@ -26,6 +26,9 @@ func fieldOrderPlan(fields []Field, expected, desired []int64) ([]Field, bool, e
 			return nil, false, ErrConflict
 		}
 		byID[field.ID] = field
+		if field.IsPrimary && desired[i] != field.ID {
+			return nil, false, ErrPrimaryField
+		}
 	}
 	ordered := make([]Field, 0, len(fields))
 	changed := false

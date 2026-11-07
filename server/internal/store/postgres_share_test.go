@@ -116,6 +116,9 @@ func TestPostgresShares(t *testing.T) {
 	if err != nil || b.Kind != "base" {
 		t.Fatalf("base: %+v %v", b, err)
 	}
+	if _, err = pg.AddField(ctx, store.Field{BaseID: b.ID, Name: "标题", Type: "text"}); err != nil {
+		t.Fatal(err)
+	}
 	fd, _ := pg.AddField(ctx, store.Field{BaseID: b.ID, Name: "状态", Type: "select", Options: []string{"a"}})
 	key := strconv.FormatInt(fd.ID, 10)
 	rec, err := pg.AddRecord(ctx, store.Record{BaseID: b.ID, Cells: map[string]json.RawMessage{key: json.RawMessage(`"a"`), "x": json.RawMessage(`1`)}})

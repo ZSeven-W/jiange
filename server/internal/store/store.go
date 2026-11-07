@@ -11,6 +11,7 @@ import (
 var (
 	ErrNotFound        = errors.New("store: not found")
 	ErrConflict        = errors.New("store: conflict")
+	ErrPrimaryField    = errors.New("store: primary field cannot be removed, moved or hidden")
 	ErrForbidden       = errors.New("store: forbidden")
 	ErrUnauthenticated = errors.New("store: session expired")
 	ErrCopyProtected   = errors.New("store: copying prohibited")
@@ -35,6 +36,7 @@ type Store interface {
 	CommentStore
 	AutomationStore
 	RecentStore
+	BaseSnapshotStore
 	// CreateUser creates the user and a personal workspace atomically.
 	CreateUser(ctx context.Context, email, name, passwordHash string) (User, Workspace, error)
 	UserByEmail(ctx context.Context, email string) (User, error)

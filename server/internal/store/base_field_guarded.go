@@ -71,6 +71,10 @@ func fieldChangesCells(before, after Field) bool {
 	return (after.Type == "select" || after.Type == "multi_select") && !slices.Equal(before.Options, after.Options)
 }
 
+func fieldBefore(a, b Field) bool {
+	return a.Position < b.Position || a.Position == b.Position && a.ID < b.ID
+}
+
 func fieldMutationTargets(change FieldMutation) ([]int64, error) {
 	if change.BaseID <= 0 || change.Before == nil && change.After == nil {
 		return nil, ErrConflict
@@ -109,9 +113,27 @@ func validFieldChange(change FieldMutation, fields []Field, views []View) error 
 		if !found {
 			return ErrConflict
 		}
+		if change.Before.IsPrimary && (change.After == nil || !change.After.IsPrimary || change.Before.Position != change.After.Position) {
+			return ErrPrimaryField
+		}
 	}
 	if change.After != nil {
 		f := *change.After
+		if (change.Before == nil && f.IsPrimary) || (change.Before != nil && f.IsPrimary != change.Before.IsPrimary) {
+			return ErrConflict
+		}
+		// A secondary field cannot cross the primary. A legacy primary may be
+		// later in the order; preserve its existing slot without reordering data.
+		if !f.IsPrimary && (change.Before != nil || f.Position != 0) && (change.Before == nil || f.Position != change.Before.Position) {
+			for _, primary := range fields {
+				if !primary.IsPrimary {
+					continue
+				}
+				if change.Before == nil && f.Position <= primary.Position || change.Before != nil && fieldBefore(*change.Before, primary) != fieldBefore(f, primary) {
+					return ErrPrimaryField
+				}
+			}
+		}
 		if f.Name == "" || !utf8.ValidString(f.Name) || utf8.RuneCountInString(f.Name) > 100 || !FieldTypes[f.Type] || math.IsNaN(f.Position) || math.IsInf(f.Position, 0) {
 			return ErrConflict
 		}
@@ -323,6 +345,7 @@ func (m *Memory) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, c
 	switch {
 	case change.Before == nil:
 		f := *change.After
+		f.IsPrimary = len(fields) == 0
 		f.ID = m.id()
 		if f.Position == 0 {
 			f.Position = float64(f.ID)
@@ -332,7 +355,7 @@ func (m *Memory) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, c
 			if name == "" {
 				name = "未命名多维表格"
 			}
-			companion := Field{ID: m.id(), BaseID: target, Name: name, Type: "link"}
+			companion := Field{ID: m.id(), BaseID: target, Name: name, Type: "link", IsPrimary: len(memoryFieldsForBase(m.b.fields, target)) == 0}
 			companion.Position = float64(companion.ID)
 			companion.Options = []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}
 			f.Options = []string{strconv.FormatInt(target, 10), strconv.FormatInt(companion.ID, 10)}
@@ -455,7 +478,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 		switch {
 		case change.Before == nil:
 			f := *change.After
-			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1 ELSE $8 END) RETURNING `+fieldCols, change.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position))
+			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position,is_primary) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1 ELSE $8 END,$9) RETURNING `+fieldCols, change.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, len(fields) == 0))
 			if err != nil {
 				return err
 			}
@@ -468,7 +491,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 				if name == "" {
 					name = "未命名多维表格"
 				}
-				companion, err := scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,position) VALUES ($1,$2,'link',$3,COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1) RETURNING `+fieldCols, target, name, opts(Field{Options: []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}})))
+				companion, err := scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,position,is_primary) VALUES ($1,$2,'link',$3,COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1,NOT EXISTS (SELECT 1 FROM base_fields WHERE base_id=$1)) RETURNING `+fieldCols, target, name, opts(Field{Options: []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}})))
 				if err != nil {
 					return err
 				}

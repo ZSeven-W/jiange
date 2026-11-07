@@ -2,7 +2,7 @@ import { useState } from "react";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellView, Tag } from "./cells";
-import { displayValue, REGISTRY } from "./registry";
+import { displayValue, recordTitle, recordTitleField, REGISTRY } from "./registry";
 
 export interface KanbanColumn {
   /** option value; "" is the ungrouped bucket */
@@ -57,7 +57,7 @@ export function Kanban({
       </div>
     );
   }
-  const title = fields.find((f) => f.type === "text") ?? fields[0];
+  const title = recordTitleField(fields);
   const extra = fields.filter((f) => f.id !== field.id && f.id !== title?.id && !REGISTRY[f.type].readonly).slice(0, 2);
   const cols = groupRecords(records, field);
 
@@ -142,7 +142,7 @@ export function Kanban({
                 )}
                 data-card={rec.id}
               >
-                <div className="truncate font-medium">{String(displayValue(rec, title, members) ?? "") || "未命名"}</div>
+                <div className="truncate font-medium">{recordTitle(rec, fields, members) || "未命名"}</div>
                 {extra.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-muted-foreground">
                     {extra.map((f) => (
