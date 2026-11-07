@@ -119,7 +119,7 @@ func TestJoinNeverSendsRowsPastWelcomeHead(t *testing.T) {
 	s := &replayStore{snapshotStore: &snapshotStore{rows: append(rows, extra)}, head: 2}
 	r := replayRoom(s, doc, 2, 0)
 	c := &conn{clientID: 7, out: make(chan []byte, 10)}
-	if err := r.join(context.Background(), c, 0); err != nil {
+	if err := r.join(context.Background(), c, 0, false, 1); err != nil {
 		t.Fatal(err)
 	}
 	welcome, err := collab.DecodeServerMsg(<-c.out)
@@ -144,7 +144,7 @@ func TestJoinRejectsMissingHistory(t *testing.T) {
 	s := &replayStore{snapshotStore: &snapshotStore{rows: rows[:1]}, head: 2}
 	r := replayRoom(s, doc, 2, 0)
 	c := &conn{clientID: 7, out: make(chan []byte, 10)}
-	if err := r.join(context.Background(), c, 0); err == nil {
+	if err := r.join(context.Background(), c, 0, false, 1); err == nil {
 		t.Fatal("expected missing log error")
 	}
 	if _, ok := r.conns[c]; ok {
@@ -165,7 +165,7 @@ func TestJoinWithFutureSnapshotUsesCurrentRoomState(t *testing.T) {
 	s := &replayStore{snapshotStore: &snapshotStore{rows: rows, latestSeq: 3, latestState: future.EncodeState()}, head: 2}
 	r := replayRoom(s, doc, 2, 1)
 	c := &conn{clientID: 7, out: make(chan []byte, 10)}
-	if err := r.join(context.Background(), c, 0); err != nil {
+	if err := r.join(context.Background(), c, 0, false, 1); err != nil {
 		t.Fatal(err)
 	}
 	welcome, err := collab.DecodeServerMsg(<-c.out)

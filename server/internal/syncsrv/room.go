@@ -146,7 +146,9 @@ func (r *room) sendErr(c *conn, code, msg string) {
 	r.mu.Unlock()
 }
 
-func (r *room) join(ctx context.Context, c *conn, lastSeq int64) error {
+// join sends the welcome (v2 with the history epoch to epoch-aware clients)
+// and replays the log after lastSeq.
+func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.load(ctx); err != nil {
@@ -158,12 +160,19 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64) error {
 		r.reset()
 		return err
 	}
+	welcome := func(head, snapSeq uint64, state []byte) {
+		if v2 {
+			c.send(collab.EncodeWelcomeV2(c.clientID, head, snapSeq, state, epoch))
+		} else {
+			c.send(collab.EncodeWelcome(c.clientID, head, snapSeq, state))
+		}
+	}
 	target := r.head
 	from := lastSeq
 	switch {
 	case lastSeq > target:
 		// replica is ahead of us (e.g. restored database): resync from current state
-		c.send(collab.EncodeWelcome(c.clientID, uint64(target), uint64(target), r.doc.EncodeState()))
+		welcome(uint64(target), uint64(target), r.doc.EncodeState())
 		from = target
 	case r.snapSeq > 0 && lastSeq < r.snapSeq:
 		seq, state, err := r.hub.Store.LatestSnapshot(ctx, r.id)
@@ -177,10 +186,10 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64) error {
 		} else if _, err := collab.DecodeState(state); err != nil {
 			return fmt.Errorf("snapshot %d@%d: %w", r.id, seq, err)
 		}
-		c.send(collab.EncodeWelcome(c.clientID, uint64(target), uint64(seq), state))
+		welcome(uint64(target), uint64(seq), state)
 		from = seq
 	default:
-		c.send(collab.EncodeWelcome(c.clientID, uint64(target), 0, nil))
+		welcome(uint64(target), 0, nil)
 	}
 	for from < target {
 		rows, err := r.hub.Store.OpsAfter(ctx, r.id, from, int(min(target-from, catchUpChunk)))

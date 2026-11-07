@@ -199,7 +199,22 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 		}
 	}
 	c.room = c.hub.room(doc)
-	return c.room.join(ctx, c, int64(m.LastSeq))
+	epoch, _, err := st.HeadVersion(ctx, doc)
+	if err != nil {
+		epoch = 1 // a brand-new doc still reports generation 1
+	}
+	return c.room.join(ctx, c, int64(helloLastSeq(m.HasEpoch, m.HistoryEpoch, uint64(epoch), m.LastSeq)), m.HasEpoch, uint64(epoch))
+}
+
+// helloLastSeq decides how far the server may replay for a v2 client: seqs
+// cached under a different history generation are meaningless (restore/PITR),
+// so the client is reset to a full snapshot resync; its pending drafts retry
+// by operation identity.
+func helloLastSeq(clientHasEpoch bool, clientEpoch, serverEpoch, lastSeq uint64) uint64 {
+	if clientHasEpoch && clientEpoch != serverEpoch {
+		return 0
+	}
+	return lastSeq
 }
 
 // currentRole is checked on every incoming frame and immediately before each

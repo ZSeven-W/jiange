@@ -194,6 +194,11 @@ type DocStore interface {
 	AppendRestoreOps(ctx context.Context, guard RestoreGuard, docID, expectedHead int64, ops []RawOp) (seqs []int64, err error)
 	OpsAfter(ctx context.Context, docID, after int64, limit int) ([]SeqOp, error)
 	Head(ctx context.Context, docID int64) (int64, error)
+	// HeadVersion returns the history epoch and head; the epoch is an
+	// independent log generation (rollback/restore detection).
+	HeadVersion(ctx context.Context, docID int64) (epoch, head int64, err error)
+	// BumpHistoryEpoch starts a new log generation (restore tooling).
+	BumpHistoryEpoch(ctx context.Context, docID int64) error
 	LatestSnapshot(ctx context.Context, docID int64) (seq int64, state []byte, err error) // ErrNotFound if none
 	ReadTitleSnapshot(ctx context.Context, docID int64) (TitleSnapshot, error)
 	SaveSnapshot(ctx context.Context, docID, seq int64, state []byte) error
