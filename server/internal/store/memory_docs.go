@@ -13,13 +13,14 @@ type memClient struct {
 }
 
 type memDoc struct {
-	meta     DocMeta
-	deleted  bool
-	ops      []SeqOp
-	ids      map[[2]int64]bool
-	snaps    map[int64][]byte
-	versions map[int64]memVersion
-	opAt     []time.Time // arrival time per op (auto-version sweep)
+	iconRevision int64
+	meta         DocMeta
+	deleted      bool
+	ops          []SeqOp
+	ids          map[[2]int64]bool
+	snaps        map[int64][]byte
+	versions     map[int64]memVersion
+	opAt         []time.Time // arrival time per op (auto-version sweep)
 }
 
 type memVersion struct {

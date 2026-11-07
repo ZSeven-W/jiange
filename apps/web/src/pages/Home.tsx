@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
+import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { go } from "@/lib/route";
 import { docTitle, hrefOf } from "@/components/Sidebar";
 import { Avatar } from "@/components/brand";
@@ -141,8 +142,8 @@ function NewDocGlyph() {
     <path fill="#fff" d="M18 20a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 1 1.5 0v4.5A.75.75 0 0 1 18 20" />
   </svg>;
 }
-function FileBadge({ kind }: { kind: "doc" | "base" }) {
-  return kind === "doc" ? <DocColorIcon className="size-5 shrink-0" /> : <span className="grid size-5 shrink-0 place-items-center rounded-[4px] bg-[#6756d9] text-white"><Table2 size={13} strokeWidth={2}/></span>;
+function FileBadge({ kind, icon }: { kind: "doc" | "base"; icon?: string }) {
+  return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <span className="grid size-5 shrink-0 place-items-center rounded-[4px] bg-[#6756d9] text-white"><Table2 size={13} strokeWidth={2}/></span>;
 }
 function UploadGlyph() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="17" r="6" fill="#ED6D0C"/><path fill="#FF811A" fillRule="evenodd" d="M11.07 21H6a6 6 0 0 1-.94-11.927 7.001 7.001 0 0 1 13.877-.02A8 8 0 0 0 11.07 21" clipRule="evenodd"/><path fill="#fff" d="m19.488 16.68-.816-.816v3.977a.701.701 0 1 1-1.403 0v-3.917l-.756.757a.701.701 0 1 1-.992-.992l1.983-1.984a.7.7 0 0 1 .992 0l1.984 1.984a.701.701 0 0 1-.992.992"/></svg>;
@@ -159,7 +160,7 @@ function dateLabel(value: string) {
 }
 function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?: string; workspaceName?: string }) {
   return <button onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} group h-14 w-full items-center gap-3 border-b px-2 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
-    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind === "base" ? "base" : "doc"} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
+    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind === "base" ? "base" : "doc"} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
     <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || "未知"} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>

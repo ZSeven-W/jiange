@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { docsApi } from "@/lib/api";
 import { BaseIcon, DocIcon, docTitle } from "@/components/Sidebar";
+import { DocumentGlyph } from "@/components/DocumentGlyph";
 
 export function Trash() {
   const qc = useQueryClient();
@@ -20,7 +21,7 @@ export function Trash() {
         <div className="overflow-hidden border-t">
           {(trash.data ?? []).map((d) => (
             <div key={d.id} className="flex min-h-[52px] items-center gap-3 border-b px-2 py-2 hover:bg-hover/60">
-              <span className="text-primary">{d.kind === "base" ? <BaseIcon /> : <DocIcon />}</span>
+              <span className="text-primary">{d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />}</span>
               <span className="min-w-0 flex-1 truncate text-[13px]">{docTitle(d)}</span>
               {d.kind === "base" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle" data-base-tag>多维表格</span>}
               <span className="hidden text-xs text-subtle sm:block">修改于 {new Date(d.updatedAt).toLocaleString("zh-CN", { hour12: false })}</span>

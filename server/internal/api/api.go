@@ -59,6 +59,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
 	for pat, h := range map[string]http.HandlerFunc{
 		"GET /api/docs/{id}/shares":                         s.getShares,
+		"GET /api/docs/{id}/icon":                           s.getDocIcon,
+		"PUT /api/docs/{id}/icon":                           s.putDocIcon,
 		"PUT /api/docs/{id}/shares":                         s.putShare,
 		"PUT /api/docs/{id}/link":                           s.putLink,
 		"POST /api/share/{token}":                           s.joinLink,

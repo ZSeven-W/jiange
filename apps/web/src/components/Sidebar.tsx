@@ -8,6 +8,7 @@ import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
 import { DocColorIcon } from "./FeishuIcons";
+import { DocumentGlyph } from "./DocumentGlyph";
 
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
@@ -132,6 +133,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             depth={depth}
             label={docTitle(d)}
             base={d.kind === "base"}
+            icon={d.icon}
             muted={!d.title.trim()}
             active={activeId === d.id}
             expandable={has}
@@ -174,7 +176,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
     refetchIntervalInBackground: false,
   });
   const searchState = sidebarSearchState(kw, debouncedSearch, searchQ);
-  const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites });
+  const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
   const shown = kw ? searchState.docs : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
@@ -198,7 +200,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       </nav>
       {!kw && <div className="mt-6 px-3">
         <div className="px-2 pb-1 text-xs font-medium text-subtle">收藏文档</div>
-        {(favorites.data ?? []).slice(0, 4).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+        {(favorites.data ?? []).slice(0, 4).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
         {favorites.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">暂无收藏</p>}
       </div>}
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
@@ -224,7 +226,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         {kw
           ? (searchState.status === "loading" && <p role="status" className="px-2 py-1.5 text-xs text-subtle">搜索中…</p>)
           : renderTree(null, 0)}
-        {kw && shown.map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+        {kw && shown.map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
         {searchState.status === "error" && <div role="alert" className="px-2 py-1.5 text-xs text-destructive">{searchQ.error instanceof ApiError && searchQ.error.code === "search_incomplete" ? "搜索未完成，请稍后重试" : "搜索失败，请检查网络后重试"} <button type="button" onClick={() => void searchQ.refetch()} className="ml-1 text-primary underline">重试</button></div>}
         {searchState.status === "empty" && <p className="px-2 py-1.5 text-xs text-subtle">没有匹配的文档</p>}
         {!kw.trim() && docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">文档加载失败，请稍后重试</p>}
@@ -233,7 +235,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocIcon />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
+              <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
@@ -271,6 +273,7 @@ function TreeRow({
   onClick,
   onAdd,
   base,
+  icon,
   starred,
   onStar,
   onRename,
@@ -278,6 +281,7 @@ function TreeRow({
   onDelete,
 }: {
   base?: boolean;
+  icon?: string;
   depth: number;
   label: string;
   muted: boolean;
@@ -329,7 +333,7 @@ function TreeRow({
         title={label}
         className="flex h-9 min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-primary/50"
       >
-        {base ? <span aria-hidden className="grid size-[18px] shrink-0 place-items-center rounded-[4px] bg-[#7159d8] text-white"><BaseIcon size={12} /></span> : <DocColorIcon className="size-[18px] shrink-0" />}
+        {base ? <span aria-hidden className="grid size-[18px] shrink-0 place-items-center rounded-[4px] bg-[#7159d8] text-white"><BaseIcon size={12} /></span> : <DocumentGlyph icon={icon} fallback={<DocColorIcon className="size-[18px] shrink-0" />} />}
         <span className="min-w-0 truncate">{label}</span>
       </button>
       <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">

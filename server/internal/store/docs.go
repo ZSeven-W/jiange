@@ -94,7 +94,7 @@ type DocCopy struct {
 	FileIDs                       []int64
 	// Guard is required by authenticated request handlers. A nil guard is
 	// reserved for trusted internal callers, such as direct store operations.
-	Guard                         *RestoreGuard
+	Guard *RestoreGuard
 }
 
 type DocCopyBuilder func(map[int64]int64) ([]RawOp, error)
@@ -118,6 +118,10 @@ func (g RestoreGuard) currentTime() time.Time {
 type DocStore interface {
 	ShareStore
 	BaseStore
+	// DocIconGuarded reads a document icon after revalidating the caller.
+	DocIconGuarded(ctx context.Context, guard RestoreGuard, docID int64) (DocIcon, error)
+	// SetDocIconGuarded checks edit access and the expected icon revision in the same write transaction.
+	SetDocIconGuarded(ctx context.Context, guard RestoreGuard, docID int64, icon string, expectedRevision int64) (DocIcon, error)
 	// CreateDoc creates a doc node; initial ops get seqs 1..n.
 	CreateDoc(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string, initial []RawOp) (DocMeta, error)
 	// CopyDoc atomically creates the document, its file references and all ops.

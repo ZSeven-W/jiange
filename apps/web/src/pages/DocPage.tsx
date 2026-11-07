@@ -24,6 +24,9 @@ import { cn } from "@/lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
+import { DocumentIconEditor } from "@/components/DocumentIconEditor";
+import { DocumentGlyph } from "@/components/DocumentGlyph";
+import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
@@ -80,6 +83,14 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   }, [id, me.user.id, meta.refetch]);
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const metadataVerified = metadataState === "ready";
+  // Identity guard for late icon updates. A metadata poll in flight is not
+  // an authorization failure: icon writes perform their own fresh role check.
+  const iconIdentity = useRef({ id, user: me.user.id, mounted: true, denied: false });
+  iconIdentity.current.denied = metadataState === "denied";
+  useLayoutEffect(() => {
+    iconIdentity.current = { id, user: me.user.id, mounted: true, denied: metadataState === "denied" };
+    return () => { iconIdentity.current.mounted = false; };
+  }, [id, me.user.id]);
   useEffect(() => {
     // If the first foreground check failed, a later successful polling retry
     // can restore access without needing another visibility transition.
@@ -619,7 +630,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div className="min-h-0 flex-1 overflow-y-auto">
           <article className={cn("mx-auto w-full max-w-[960px] px-7 pt-12 sm:px-16 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
-            <div data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}><CollabText
+            <div data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}><DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
+              const key = docMetaKey(id, me.user.id);
+              await publishDocumentIcon(qc, key, icon, () => {
+                const current = iconIdentity.current;
+                return current.mounted && current.id === id && current.user === me.user.id && !current.denied;
+              });
+            }}><CollabText
               sync={sync}
               block={TITLE}
               me={presence}
@@ -629,7 +646,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
               className="text-[32px] font-semibold leading-[1.3] tracking-tight [&_textarea]:font-semibold [&_textarea]:leading-[1.3]"
-            /></div>
+            /></DocumentIconEditor></div>
             <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
               {meta.data && (
                 <>
@@ -885,7 +902,7 @@ function TopBar({
           {workspace}
         </a>
         <span className="hidden shrink-0 text-primary sm:block">
-          {meta?.kind === "base" ? <BaseIcon /> : <DocIcon />}
+          {meta?.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={meta?.icon} fallback={<DocIcon />} />}
         </span>
         {ancestors.map((a) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
