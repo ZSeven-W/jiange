@@ -202,7 +202,17 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 			return err
 		}
 		for i, op := range ops {
+			duplicate, err := checkOperationIdentity(ctx, tx, result.ID, op)
+			if err != nil {
+				return err
+			}
+			if duplicate {
+				return ErrOpIdentityConflict
+			}
 			if _, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id,seq,client_id,clock,op) VALUES ($1,$2,$3,$4,$5)`, result.ID, i+1, op.ClientID, op.Clock, op.Bytes); err != nil {
+				return err
+			}
+			if err := insertOperationRange(ctx, tx, result.ID, int64(i+1), op); err != nil {
 				return err
 			}
 		}

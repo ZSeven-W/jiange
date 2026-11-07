@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "cases": [
+    {"name":"duplicate-root-key","snapshot":"{\"version\":1,\"ops\":[],\"ver\\u0073ion\":1}"},
+    {"name":"duplicate-id-key","snapshot":"{\"version\":1,\"ops\":[{\"kind\":\"axis-insert\",\"id\":{\"client\":1,\"cl\\u0069ent\":2,\"clock\":1},\"axis\":\"row\",\"after\":null}]}"},
+    {"name":"duplicate-char-hides-unpaired-surrogate","snapshot":"{\"version\":1,\"ops\":[{\"kind\":\"text-insert\",\"id\":{\"client\":1,\"clock\":1},\"row\":{\"client\":1,\"clock\":2},\"column\":{\"client\":1,\"clock\":3},\"after\":null,\"char\":\"\\ud800\",\"char\":\"x\"}]}"},
+    {"name":"unpaired-high-surrogate","snapshot":"{\"version\":1,\"ops\":[{\"kind\":\"text-insert\",\"id\":{\"client\":1,\"clock\":1},\"row\":{\"client\":1,\"clock\":2},\"column\":{\"client\":1,\"clock\":3},\"after\":null,\"char\":\"\\ud800\"}]}"},
+    {"name":"unpaired-low-surrogate","snapshot":"{\"version\":1,\"ops\":[],\"\\udc00\":true}"},
+    {"name":"missing-after","snapshot":"{\"version\":1,\"ops\":[{\"kind\":\"axis-insert\",\"id\":{\"client\":1,\"clock\":1},\"axis\":\"row\"}]}"},
+    {"name":"unknown-field","snapshot":"{\"version\":1,\"ops\":[],\"future\":true}"}
+  ]
+}

@@ -7,7 +7,7 @@ import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
-import { ChevronRight, Lock } from "lucide-react";
+import { ChevronRight, Expand, Lock, Pencil } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
@@ -215,10 +215,10 @@ export function Grid({
   };
 
   const startEdit = (ri: number, fi: number, seed?: string) => {
-    if (!canEdit) return;
+    if (!canEdit || !detailAccessReady || !selectionAccessReady) return;
     const f = fields[fi];
     const r = records[ri];
-    if (!f || !r || ledger.blocked("batch") || ledger.blocked(`cell:${r.id}:${f.id}`) || REGISTRY[f.type].readonly || f.type === "checkbox" || f.type === "link" || f.type === "lookup") return;
+    if (!f || !r || !(authorizedRecords ?? records).some((record) => record.id === r.id) || ledger.blocked("batch") || ledger.blocked(`cell:${r.id}:${f.id}`) || REGISTRY[f.type].readonly || f.type === "checkbox" || f.type === "link" || f.type === "lookup") return;
     setSelection({ ar: ri, af: fi, rr: ri, rf: fi });
     const authored = isAuthoredCellType(f.type);
     setEdit({ rid: r.id, fid: f.id, draft: seed ?? displayValue(r, f, members) ?? null, dirty: seed !== undefined, authorization: ledger.capture(`cell:${r.id}:${f.id}`, authored), authored });
@@ -526,18 +526,20 @@ export function Grid({
 
   const renderRow = (rec: BaseRecord, i: number) => (
             <tr key={rec.id} className="group h-8">
-              <td className="sticky left-0 z-10 w-14 border bg-surface px-2.5 text-[12px] text-subtle">
-                <span className="group-hover:hidden">{i + 1}</span>
-                <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
-                  <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
-                    ⤢
+              <td className="sticky left-0 z-10 w-14 border bg-surface px-2.5 text-[12px] text-subtle [@media(hover:none)]:px-1">
+                <div className="flex h-[31px] items-center justify-between">
+                <span className="group-hover:hidden [@media(hover:none)]:inline">{i + 1}</span>
+                <span className="hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex">
+                  <button type="button" className="grid size-6 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:size-8" aria-label={`展开记录 ${i + 1}`} title="展开记录" onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
+                    <Expand size={14} strokeWidth={1.7} />
                   </button>
                   {canEdit && (
-                    <button className="text-subtle hover:text-destructive" title="删除记录" onClick={() => void deleteRecord(rec)}>
+                    <button type="button" className="text-subtle hover:text-destructive [@media(hover:none)]:hidden" title="删除记录" onClick={() => void deleteRecord(rec)}>
                       ✕
                     </button>
                   )}
                 </span>
+                </div>
               </td>
               {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {winFields.map((f, wj) => {
@@ -548,12 +550,13 @@ export function Grid({
                   <td
                     key={f.id}
                     className={cn(
-                      "border px-2.5",
+                      "relative border px-2.5",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
                     )}
                     onClick={(e) => {
+                      if (editing) return;
                       setEdit(null);
                       const active = readSelection();
                       setSelection(e.shiftKey && active ? { ar: active.ar, af: active.af, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
@@ -583,6 +586,7 @@ export function Grid({
                         onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
                         onEdit={() => startEdit(i, j)}
                       />
+                      {canEdit && detailAccessReady && selectionAccessReady && isCursor(i, j) && !ro && f.type !== "checkbox" && f.type !== "link" && f.type !== "lookup" && !ledger.blocked("batch") && !ledger.blocked(`cell:${rec.id}:${f.id}`) && <button type="button" data-touch-edit className="absolute right-0 top-0 hidden size-8 touch-manipulation items-center justify-center rounded bg-surface text-primary shadow-sm [@media(hover:none)]:inline-flex" aria-label={`编辑记录 ${i + 1} 的${f.name}`} onClick={(event) => { event.stopPropagation(); startEdit(i, j); }}><Pencil size={14} strokeWidth={1.7} /></button>}
                     </div>}
                   </td>
                 );

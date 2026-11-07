@@ -15,14 +15,16 @@
 
 ## 交接前先读：工作区不是干净状态
 
-- 最近一次已提交的本地 HEAD 为 `2be856a`（封面与全局搜索）。此前还有 `a58f243` 图标与评论通知事务、`417810a` 评论权限、`07f8288` 分项复制/下载权限与表格输入。**已提交不等于已上线，也不证明与飞书完全一致。**
-- 用户暂停时有多名代理被中断。当前有未提交且可能不完整的评论幂等、协同身份/重试、云盘文件夹、普通表格存储、画布模型、文档表格 CRDT 原型，以及较早的多维表格改动。先运行 `git status --short`、`git diff` 与 `git diff --cached` 重新核对；不要假设本清单仍是最新状态。
+- 最近一次已完成验证的业务提交为 `2be856a`（封面与全局搜索）。此前还有 `a58f243` 图标与评论通知事务、`417810a` 评论权限、`07f8288` 分项复制/下载权限与表格输入。**已提交不等于已上线，也不证明与飞书完全一致。**
+- 用户暂停时有多名代理被中断；按用户要求，评论幂等、协同身份/重试、云盘文件夹、普通表格存储、画布模型、文档表格 CRDT 原型及较早的多维表格改动会以 WIP 形式保存，但仍可能不完整。先运行 `git log`、`git status --short`、`git diff` 与 `git diff --cached` 重新核对；不要假设本清单仍是最新状态。
 - 主要实验位置：`apps/web/src/pages/commentAttempt*`、`CommentAttemptRecovery.tsx` 与 `server/internal/{api,store}/comment_attempt*`；`server/collab/transaction*`、`server/internal/store/*doc_identity*`、`server/internal/syncsrv/` 的未提交改动；`server/internal/store/drive_folder*`；`server/internal/sheetstore/`、`server/canvasmodel/`；`packages/collab/src/tableExperimental.ts`、`server/tableexperimental/`。这些只是交接线索，**未经最终独立审查和干净快照测试，不可视为可上线能力**。
 - 不要执行 `git reset --hard`、`git clean`、覆盖式 checkout、整仓格式化，或擅自 stash/丢弃这些更改。`server/internal/api/api.go`、`server/internal/store/docs.go`、`memory.go`、`memory_docs.go`、`memory_copy.go`、`postgres_docs.go`、`postgres_copy.go` 等同时承载多项工作；应按语义审查和挑选补丁，**不要整文件暂存混入其他任务**。
-- `server/internal/migrate` 会嵌入 `sql/*.sql` 并在服务启动时执行。当前未跟踪的 `0025/0026/0028/0033/0034` 等可能被意外执行；先核对迁移编号、顺序及冲突。不要把脏工作区编译出的服务指向现有或生产数据库。只在明确隔离的临时 PostgreSQL 上验证；相关 Go 集成测试可能重建 schema。
-- 用户要求截图保存在项目当前目录；根目录已有中文 JPEG 截图和 `.DS_Store`，均应保留。`.gitignore` 本身已有未提交改动，`docs/` 被忽略；不要为了提交而修改它，新建报告可单独 `git add -f`。
+- `server/internal/migrate` 会嵌入 `sql/*.sql` 并在服务启动时执行。WIP 中的 `0025/0026/0028/0033/0034` 等尚未完成上线验收，启动时可能被执行；先核对迁移编号、顺序及冲突。不要把 WIP 编译出的服务指向现有或生产数据库。只在明确隔离的临时 PostgreSQL 上验证；相关 Go 集成测试可能重建 schema。
+- 用户要求保留截图；核对时截图位于 `output/ui-review-20261106/`，`.DS_Store` 和截图均应保留。`.gitignore` 中 `docs/` 与 `output/` 被忽略；不要为了提交而擅自修改它，新建报告可单独 `git add -f`。实际路径和忽略规则应以接手时的工作区为准。
 - 提交默认为**本地 commit**，不要 push，除非用户明确要求。每个切片仅提交本次确认属于该切片的文件；不向外部人员发送消息。
 - 本文件已替换旧版路线图；旧版中的范围、状态、测试数字和自动 push 要求已过时，如需追溯可查看 Git 历史。遇冲突以用户当前要求、本文件和实际仓库为准。
+
+交接 WIP 的一次隔离快照验证：前端 519 项通过、1 项失败（`base/gridSizing.test.tsx` 期望 3 个固定高度单元格、实际为 4）；协同模块 158 项通过；TypeScript 与生产构建通过；Go 全量测试在一次性 PostgreSQL 下通过。`sheetstore` 和 `canvasmodel` 当时没有测试文件。上述结果只对应当次快照，不代表未完成实验可部署，也不替代后续真实浏览器、并发或迁移验收。
 
 ## 建议执行顺序与共同门禁
 

@@ -108,6 +108,9 @@ type BaseStore interface {
 	// CompareDateCells atomically authorizes, compares and changes one or two
 	// date fields. Missing cells and JSON null represent the same empty value.
 	CompareDateCells(ctx context.Context, guard BaseWriteGuard, baseID, recordID int64, expected, cells map[string]json.RawMessage) (Record, bool, error)
+	// MoveKanbanCard atomically checks the observed placement and changes both
+	// the grouping value and position with its event in one transaction.
+	MoveKanbanCard(ctx context.Context, guard BaseWriteGuard, baseID, recordID int64, move KanbanMove) (Record, bool, error)
 	// MutateRecordGuarded applies the record and any reciprocal link updates
 	// together with session/permission checks and durable events. Validate runs
 	// under the same lock against a fresh schema and must not perform I/O.

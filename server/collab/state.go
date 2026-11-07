@@ -15,17 +15,85 @@ var ErrNotReady = errors.New("collab: op dependencies missing")
 // ErrDuplicate is returned by TryApply for an op that is already integrated.
 var ErrDuplicate = errors.New("collab: duplicate op")
 
+// ErrIdentityOverlap means an op would reuse an ID already occupied by a
+// different op or by a character of a multi-character insertion.
+var ErrIdentityOverlap = errors.New("collab: operation identity overlap")
+
 // TryApply integrates op only if it is immediately applicable. Unlike Apply it
 // never buffers; the server uses it to validate client ops.
 func (d *Doc) TryApply(op Op) error {
+	if err := d.validateTryApply(op); err != nil {
+		return err
+	}
+	d.integrate(&op)
+	return nil
+}
+
+// validateTryApply does not modify the replica. Keep it shared with the
+// transactional path so both enforce identical identity and dependency rules.
+func (d *Doc) validateTryApply(op Op) error {
 	if d.seen[op.ID] || d.isStructuralDup(&op) {
 		return ErrDuplicate
+	}
+	d.ensureOccupied()
+	span := op.Span()
+	if span == 0 {
+		span = 1
+	}
+	const maxClock = uint64(1<<53 - 1)
+	if op.ID.Clock > maxClock || span-1 > maxClock-op.ID.Clock {
+		return ErrIdentityOverlap
+	}
+	for i := uint64(0); i < span; i++ {
+		id := OpID{op.ID.Client, op.ID.Clock + i}
+		if d.seen[id] {
+			return ErrIdentityOverlap
+		}
+		if id != Root && d.occupied[id] != 0 {
+			return ErrIdentityOverlap
+		}
 	}
 	if !d.ready(&op) {
 		return ErrNotReady
 	}
-	d.integrate(&op)
 	return nil
+}
+
+// Counts accommodate legacy/corrupt states with the same retained ID in more
+// than one place; removing one occurrence must not hide another. Building the
+// index is lazy so ordinary snapshot decoding and read-only views pay no cost.
+func (d *Doc) ensureOccupied() {
+	if d.occupied != nil {
+		return
+	}
+	d.occupied = make(map[OpID]uint32)
+	for id, b := range d.blocks {
+		if id != Root {
+			d.occupied[id]++
+		}
+		for cid := range b.chars {
+			if cid != Root {
+				d.occupied[cid]++
+			}
+		}
+	}
+}
+
+func (d *Doc) occupy(id OpID) {
+	if d.occupied != nil && id != Root {
+		d.occupied[id]++
+	}
+}
+
+func (d *Doc) unoccupy(id OpID) {
+	if d.occupied == nil || id == Root {
+		return
+	}
+	if d.occupied[id] <= 1 {
+		delete(d.occupied, id)
+	} else {
+		d.occupied[id]--
+	}
 }
 
 func (d *Doc) isStructuralDup(op *Op) bool {
@@ -313,6 +381,9 @@ func (d *Doc) Compact() int {
 		}
 		if b.deleted {
 			removed += len(b.chars) - 1
+			for cid := range b.chars {
+				d.unoccupy(cid)
+			}
 			t := b.props["type"]
 			b.props = map[string]propReg{"type": t}
 			b.root.left, b.root.right = nil, nil
@@ -339,6 +410,7 @@ func (d *Doc) Compact() int {
 					p.right = removeNode(p.right, n)
 				}
 				delete(b.chars, cid)
+				d.unoccupy(cid)
 				removed++
 				changed = true
 			}

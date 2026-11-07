@@ -5,7 +5,7 @@ import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
-import { Check, ChevronRight, Search } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { popupPosition } from "./popupPosition";
 
 /** Shared form for creating and editing a field. */
@@ -169,29 +169,59 @@ export function FieldForm({
 /** Header dropdown: edit field / delete field. */
 export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    const place = () => {
+      const rect = trigger.current?.getBoundingClientRect();
+      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 160, 112));
     };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    const close = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (!ref.current?.contains(target) && !menu.current?.contains(target)) setOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    place();
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [open]);
   return (
     <div ref={ref} className="relative">
       <button
-        className="hidden rounded px-0.5 text-subtle hover:bg-hover hover:text-foreground group-hover/th:inline"
-        onClick={() => setOpen((v) => !v)}
+        ref={trigger}
+        type="button"
+        className="inline-flex size-8 touch-manipulation items-center justify-center rounded text-subtle opacity-0 hover:bg-hover hover:text-foreground group-hover/th:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         aria-label={`字段菜单 ${field.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
         data-field-menu
       >
-        ▾
+        <ChevronDown size={15} strokeWidth={1.7} />
       </button>
-      {open && (
-        <div className="absolute left-0 top-6 z-20 w-32 rounded-lg border bg-surface py-1 text-[13px] font-normal shadow-lg" data-field-menu-pop>
+      {open && position && createPortal(
+        <div ref={menu} role="menu" style={position} className="fixed z-[101] overflow-y-auto rounded-lg border bg-surface py-1 text-[13px] font-normal shadow-lg" data-field-menu-pop onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); setOpen(false); trigger.current?.focus(); } }} onPaste={(e) => e.stopPropagation()}>
           <button
-            className="block w-full px-3 py-1.5 text-left hover:bg-hover"
+            type="button"
+            role="menuitem"
+            className="block min-h-10 w-full px-3 py-1.5 text-left hover:bg-hover"
             onClick={() => {
               setOpen(false);
               onEdit();
@@ -200,7 +230,9 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
             编辑字段
           </button>
           {!field.isPrimary && <button
-            className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover"
+            type="button"
+            role="menuitem"
+            className="block min-h-10 w-full px-3 py-1.5 text-left text-destructive hover:bg-hover"
             onClick={async () => {
               setOpen(false);
               if (await ask(`删除字段「${field.name}」？`, "字段及其所有值将被删除。")) onDelete();
@@ -208,7 +240,7 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
           >
             删除字段
           </button>}
-        </div>
+        </div>, document.body
       )}
     </div>
   );

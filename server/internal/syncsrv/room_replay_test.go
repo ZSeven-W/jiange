@@ -30,6 +30,14 @@ func (s *replayStore) AppendOps(context.Context, int64, []store.RawOp) ([]int64,
 	return s.appendSeqs, nil
 }
 
+func (s *replayStore) ExistingOpIDs(_ context.Context, _ int64, ops []store.RawOp) ([]bool, error) {
+	return make([]bool, len(ops)), nil
+}
+
+func (s *replayStore) AppendOpsAtHead(ctx context.Context, id, _ int64, ops []store.RawOp) ([]int64, error) {
+	return s.AppendOps(ctx, id, ops)
+}
+
 func replayFixture(t *testing.T) ([]store.SeqOp, *collab.Doc) {
 	t.Helper()
 	rows := snapshotRows(t)

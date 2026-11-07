@@ -173,6 +173,13 @@ type DocStore interface {
 	// AppendOps assigns consecutive seqs to ops not already stored (by
 	// client/clock identity). seqs[i] is 0 for duplicates.
 	AppendOps(ctx context.Context, docID int64, ops []RawOp) (seqs []int64, err error)
+	// ExistingOpIDs checks operation start IDs in the durable log. It is a
+	// read-only hint: a subsequent write must use AppendOpsAtHead to fence
+	// concurrent changes between this lookup and that write.
+	ExistingOpIDs(ctx context.Context, docID int64, ops []RawOp) ([]bool, error)
+	// AppendOpsAtHead performs the ordinary append only if the locked head
+	// still equals expectedHead; otherwise it returns ErrConflict.
+	AppendOpsAtHead(ctx context.Context, docID, expectedHead int64, ops []RawOp) ([]int64, error)
 	// AppendRestoreOps atomically verifies the current edit grant and head before
 	// appending a restore plan derived from that exact head. It returns
 	// ErrConflict when concurrent edits invalidate the plan, or ErrForbidden

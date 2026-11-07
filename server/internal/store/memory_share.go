@@ -7,10 +7,11 @@ import (
 )
 
 type memShare struct {
-	shares map[int64]map[int64]string // doc -> user -> role
-	joins  map[int64]map[int64]bool   // doc -> users who joined its current link
-	links  map[int64]Link
-	files  []FileMeta
+	shares          map[int64]map[int64]string // doc -> user -> role
+	joins           map[int64]map[int64]bool   // doc -> users who joined its current link
+	links           map[int64]Link
+	files           []FileMeta
+	commentAttempts map[commentAttemptKey]commentAttemptReceipt
 }
 
 // roleLocked computes uid's role on doc d; caller holds m.mu.

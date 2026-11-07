@@ -31,8 +31,11 @@ import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
-import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
+import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, mustRedactCommentAttemptQuote, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
 import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
+import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
+import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./commentAttemptApi";
+import { CommentAttemptRecovery } from "./CommentAttemptRecovery";
 import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -198,6 +201,37 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   // user's existing draft anchor while they are typing. A failed or denied
   // verification still redacts it before any later persistence.
   commentQuoteAllowedRef.current = mayRetainCommentQuote(meta.data, metadataVerified, commentsAvailable);
+  const commentAttempts = useMemo(() => {
+    try { return typeof window === "undefined" ? null : new CommentAttemptStore(browserCommentAttemptEnvironment(), id, me.user.id); }
+    catch { return null; }
+  }, [id, me.user.id]);
+  // Once access has been checked, protected document quotes may not remain in
+  // our durable submission journal. The attempt ID is kept and may only be
+  // queried, not replayed with a modified payload.
+  const redactAttemptQuotes = mustRedactCommentAttemptQuote(meta.data, metadataVerified, metadataState === "denied", commentAccessDenied);
+  useEffect(() => {
+    if (!commentAttempts || !redactAttemptQuotes) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const redact = async () => {
+      // Metadata requests can be made with a newly switched account's cookie
+      // in another tab. Never destroy the old account's immutable request based
+      // on that unbound result; verify the original account with the server.
+      let denied = false;
+      try { denied = !(await requireCommentAttempts(id, me.user.id)).canCopyQuote; }
+      catch (error) { denied = error instanceof CommentAttemptDocumentDenied; }
+      if (!active || !denied) return;
+      void commentAttempts.redactQuotes().then((complete) => {
+      if (!active) return;
+      if (!complete) {
+        setCommentStorageNotice({ doc: id, user: me.user.id, text: "部分受保护的引用记录属于其他标签或无法安全更新，原记录已保留。" });
+        timer = setTimeout(redact, 2000);
+      } else setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.text === "部分受保护的引用记录属于其他标签或无法安全更新，原记录已保留。" ? null : previous);
+      }).catch(() => { if (active) timer = setTimeout(redact, 2000); });
+    };
+    void redact();
+    return () => { active = false; if (timer) clearTimeout(timer); };
+  }, [commentAttempts, redactAttemptQuotes, id, me.user.id]);
   const commentStorageReady = commentDraftStorageReady(commentStoragePrepared, { doc: id, user: me.user.id, session: commentSession }, commentStorageGeneration.current, commentsAvailable);
   const persistCommentDrafts = useCallback(() => {
     const active = commentStorage.current;
@@ -539,6 +573,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     return <div className="grid flex-1 place-items-center px-6" role="alert">
       <div className="max-w-md text-center text-[14px] text-muted-foreground">
         <p>{metadataState === "denied" ? "文档不存在或无权访问。" : "暂时无法连接服务器，请稍后重试。"}</p>
+        <CommentAttemptRecovery store={commentAttempts} userId={me.user.id} />
         {hasPending && <p className="mt-3">未同步的修改仍保留在本地，尚未保存到云端。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
         {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，关闭页面后可能无法恢复。</p>}
         {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
@@ -607,7 +642,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
-        {metadataVerified && commentAccessDenied && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button></p>}
+        {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
         {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
         {commentsAvailable && commentStorageDamaged?.doc === id && commentStorageDamaged.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageDamaged.count} 条本机草稿数据损坏，原始数据已保留。 {commentDraftExportAllowed && <button type="button" className="text-primary underline" onClick={() => {
           if (!commentDraftExportAllowedRef.current || !matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
@@ -801,7 +836,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onComposerSuspended={freezeCommentDrafts}
           canEdit={canComment && commentStorageReady}
           canSubmit={canSubmitComment}
+          canCheckAttempt={permissionsVerified && commentsAvailable}
           canManage={meta.data?.role === "manage"}
+          attemptStore={commentAttempts}
           allowCopyQuote={contentCopyAllowed}
           allowPrintQuote={downloadAllowed}
           draft={draft}

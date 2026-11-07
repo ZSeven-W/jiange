@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "concurrent-unicode-and-distinct-cells",
+      "ops": [
+        {"kind":"text-insert","id":{"client":2,"clock":4},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":2,"clock":3},"char":"字"},
+        {"kind":"text-insert","id":{"client":1,"clock":4},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":1,"clock":3},"char":"乙"},
+        {"kind":"text-insert","id":{"client":3,"clock":1},"row":{"client":1,"clock":1},"column":{"client":2,"clock":2},"after":null,"char":"右"},
+        {"kind":"text-insert","id":{"client":3,"clock":2},"row":{"client":2,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"下"},
+        {"kind":"axis-insert","id":{"client":2,"clock":1},"axis":"row","after":{"client":1,"clock":1}},
+        {"kind":"axis-insert","id":{"client":2,"clock":2},"axis":"column","after":{"client":1,"clock":2}},
+        {"kind":"text-insert","id":{"client":2,"clock":3},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"🙂"},
+        {"kind":"text-insert","id":{"client":1,"clock":3},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"甲"},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null}
+      ],
+      "expected": {"grid":[["🙂字甲乙","右"],["下",""]],"pending":0,"rejected":[]}
+    },
+    {
+      "name": "tombstone-anchors-and-late-edits",
+      "ops": [
+        {"kind":"text-insert","id":{"client":4,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":2,"clock":3},"char":"迟"},
+        {"kind":"axis-delete","id":{"client":3,"clock":2},"axis":"row","target":{"client":1,"clock":1}},
+        {"kind":"text-delete","id":{"client":3,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":3}},
+        {"kind":"text-insert","id":{"client":2,"clock":3},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":1,"clock":3},"char":"Z"},
+        {"kind":"text-insert","id":{"client":1,"clock":3},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"A"},
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"axis-insert","id":{"client":2,"clock":1},"axis":"row","after":{"client":1,"clock":1}},
+        {"kind":"axis-insert","id":{"client":2,"clock":2},"axis":"column","after":{"client":1,"clock":2}},
+        {"kind":"axis-delete","id":{"client":3,"clock":3},"axis":"column","target":{"client":1,"clock":2}},
+        {"kind":"text-insert","id":{"client":4,"clock":2},"row":{"client":2,"clock":1},"column":{"client":2,"clock":2},"after":null,"char":"新"}
+      ],
+      "expected": {"grid":[["新"]],"pending":0,"rejected":[],"hiddenCells":[{"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"text":"Z迟"}]}
+    },
+    {
+      "name": "pending-and-wrong-cell-anchor",
+      "ops": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":3},"axis":"column","after":{"client":1,"clock":2}},
+        {"kind":"text-insert","id":{"client":2,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"A"},
+        {"kind":"text-insert","id":{"client":2,"clock":2},"row":{"client":1,"clock":1},"column":{"client":1,"clock":3},"after":{"client":2,"clock":1},"char":"X"},
+        {"kind":"text-insert","id":{"client":3,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":3},"after":{"client":9,"clock":1},"char":"?"}
+      ],
+      "expected": {"grid":[["A",""]],"pending":1,"rejected":[{"id":{"client":2,"clock":2},"reason":"character dependency belongs to another cell"}]}
+    }
+  ]
+}

@@ -4,6 +4,8 @@ import { ApiError, commentsApi, type Comment, type User } from "@/lib/api";
 import { scrollToCommentThread } from "@/editor/commentAnchor";
 import { commentListKey, commentMembersKey, type SavedCommentDraft } from "./commentAccess";
 import { isDocAccessDenied } from "./docMetaState";
+import { CommentAttemptStore, matchesUnresolvedDraft, type CommentAttempt } from "./commentAttempts";
+import { CommentAttemptAccountChanged, CommentAttemptDocumentDenied, CommentAttemptsUnavailable, commentAttemptPayload, queryCommentAttempt, requireCommentAttempts, sendCommentAttempt } from "./commentAttemptApi";
 
 export interface CommentAnchor {
   block: string;
@@ -63,6 +65,7 @@ export function CommentsPanel({
   session,
   canEdit,
   canSubmit = true,
+  canCheckAttempt = canSubmit,
   canManage,
   allowCopyQuote = true,
   allowPrintQuote = true,
@@ -77,12 +80,14 @@ export function CommentsPanel({
   onDismissRecovery,
   onSnapshot,
   onComposerSuspended,
+  attemptStore = null,
 }: {
   id: number;
   meId: number;
   session: number;
   canEdit: boolean;
   canSubmit?: boolean;
+  canCheckAttempt?: boolean;
   canManage: boolean;
   allowCopyQuote?: boolean;
   allowPrintQuote?: boolean;
@@ -97,6 +102,7 @@ export function CommentsPanel({
   onDismissRecovery: () => void;
   onSnapshot: (draft: CommentRecovery) => void;
   onComposerSuspended: () => void;
+  attemptStore?: CommentAttemptStore | null;
 }) {
   const qc = useQueryClient();
   const key = commentListKey(id, meId, session);
@@ -109,6 +115,61 @@ export function CommentsPanel({
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState(false);
   const actionPendingRef = useRef(false);
+  const [attempts, setAttempts] = useState<CommentAttempt[]>([]);
+  const [attemptNotice, setAttemptNotice] = useState("");
+  const [retryingAttempt, setRetryingAttempt] = useState<string | null>(null);
+  const attemptPolicy = useRef({ canSubmit, canCheckAttempt, allowCopyQuote });
+  attemptPolicy.current = { canSubmit, canCheckAttempt, allowCopyQuote };
+  const attemptScope = useRef({ doc: id, user: meId, session, mounted: false });
+  attemptScope.current = { ...attemptScope.current, doc: id, user: meId, session };
+  const currentAttemptScope = () => attemptScope.current.mounted && attemptScope.current.doc === id && attemptScope.current.user === meId && attemptScope.current.session === session;
+  const refreshAttempts = () => {
+    if (!currentAttemptScope()) return;
+    try {
+      const result = attemptStore?.list();
+      setAttempts(result?.attempts ?? []);
+      if (result?.damaged) setAttemptNotice("部分本机评论提交记录损坏，原始数据已保留，请勿重复发送。");
+    } catch { setAttemptNotice("无法读取本机评论提交记录，原始数据已保留。"); }
+  };
+  useLayoutEffect(() => {
+    attemptScope.current.mounted = true;
+    refreshAttempts();
+    const onStorage = () => refreshAttempts();
+    const unsubscribe = attemptStore?.subscribe(onStorage);
+    window.addEventListener("storage", onStorage);
+    return () => { attemptScope.current.mounted = false; unsubscribe?.(); window.removeEventListener("storage", onStorage); };
+  }, [attemptStore, id, meId, session]);
+  const retryAttempt = async (attempt: CommentAttempt) => {
+    if (!attemptStore || !canCheckAttempt || retryingAttempt) return;
+    setRetryingAttempt(attempt.mutationId);
+    setAttemptNotice("");
+    try {
+      const capability = await requireCommentAttempts(id, meId);
+      if (!currentAttemptScope() || !attemptPolicy.current.canCheckAttempt) return;
+      const result = await attemptStore.run(attempt, async (stored) => {
+        if (!currentAttemptScope() || !attemptPolicy.current.canCheckAttempt) throw new Error("评论权限尚未验证");
+        const queryOnly = !attemptPolicy.current.canSubmit || !!stored.redacted || !!stored.payload.quote && (!attemptPolicy.current.allowCopyQuote || !capability.canCopyQuote);
+        if (!queryOnly) return sendCommentAttempt(stored);
+        const receipt = await queryCommentAttempt(stored);
+        if (receipt.state === "unknown") throw new Error("尚未观察到提交结果");
+        return receipt;
+      });
+      if (!currentAttemptScope()) return;
+      setAttemptNotice(result.cleaned
+        ? result.value.state === "deleted" ? "该评论之前已发送并被删除，不会重复创建。" : "已确认评论发送。"
+        : "评论已确认，但无法安全清除其他标签页的本机记录；记录已保留。" );
+      refreshAttempts();
+      void invalidate();
+    } catch (error) {
+      if (!currentAttemptScope()) return;
+      if (error instanceof CommentAttemptAccountChanged) { setAttemptNotice("账号已变化，原账号的提交记录已保留，请切回原账号后核对。"); return; }
+      if (error instanceof CommentAttemptDocumentDenied) { onAccessDenied(); return; }
+      const kind = classifyCommentMutationError(error);
+      if (kind === "access") onAccessDenied();
+      else if (kind === "policy") onPolicyDenied?.();
+      setAttemptNotice("结果仍未确认，本机记录已保留；请联网并重新验证权限后继续核对，不要重复发送。");
+    } finally { if (currentAttemptScope()) setRetryingAttempt(null); }
+  };
   const runAction = async (action: () => Promise<unknown>) => {
     if (actionPendingRef.current || !canSubmit) return;
     actionPendingRef.current = true;
@@ -154,6 +215,14 @@ export function CommentsPanel({
         </button>
       </header>
       <div ref={listRef} className="flex-1 overflow-y-auto p-3" data-comment-list>
+        {attemptNotice && <p role="status" className="mb-3 rounded border p-2 text-[12px] text-muted-foreground">{attemptNotice}</p>}
+        {attempts.map((attempt) => <div key={attempt.mutationId} className="mb-3 rounded-lg border p-2 text-[12px] text-muted-foreground" data-comment-attempt>
+          <p>这条评论的发送结果尚未确认，重试会使用原来的请求。</p>
+          {attempt.payload.parentId && <p>回复所属评论 #{attempt.payload.parentId}</p>}
+          <p className="mt-1 whitespace-pre-wrap text-foreground">{attempt.payload.body}</p>
+          {(attempt.redacted || attempt.payload.quote && !allowCopyQuote) && <p className="mt-1">原引用受保护，此记录只能查询提交状态，不会以不同内容重发。</p>}
+          <button type="button" className="mt-1 text-primary disabled:opacity-50" disabled={!canCheckAttempt || !!retryingAttempt} onClick={() => void retryAttempt(attempt)}>{retryingAttempt === attempt.mutationId ? "正在确认…" : !canSubmit || attempt.redacted || attempt.payload.quote && !allowCopyQuote ? "查询发送状态" : "重试并确认"}</button>
+        </div>)}
         {!!recovery?.length && <div className="mb-3 rounded-lg border p-2 text-[12px] text-muted-foreground" role="status">
           <p>上次未发送的评论已保留，请复制后重新选择位置。</p>
           {recovery.map((item, index) => <div key={index}>
@@ -163,7 +232,7 @@ export function CommentsPanel({
           </div>)}
           <button type="button" className="mt-1 text-primary" onClick={onDismissRecovery}>已复制，清除恢复记录</button>
         </div>}
-        {canEdit && <Composer id={id} meId={meId} members={visibleMembers} draft={draft} canSubmit={canSubmit} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
+        {canEdit && <Composer key={`${id}:${meId}:${session}:root`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={draft} canSubmit={canSubmit} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
         {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
         {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
         {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{canEdit ? "还没有评论，可以在上方添加" : "还没有评论"}</p>}
@@ -227,7 +296,7 @@ export function CommentsPanel({
             ))}
             {replyTo === t.id && canEdit && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                <Composer id={id} meId={meId} members={visibleMembers} draft={null} parentId={t.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
+                <Composer key={`${id}:${meId}:${session}:${t.id}`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={null} parentId={t.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
               </div>
             )}
           </div>
@@ -262,6 +331,11 @@ function CommentBody({ c, members }: { c: Comment; members: User[] }) {
 function Composer({
   id,
   meId,
+  session,
+  attemptStore,
+  attempts,
+  refreshAttempts,
+  onAttemptNotice,
   members,
   draft,
   canSubmit,
@@ -277,6 +351,11 @@ function Composer({
 }: {
   id: number;
   meId: number;
+  session: number;
+  attemptStore: CommentAttemptStore | null;
+  attempts: CommentAttempt[];
+  refreshAttempts: () => void;
+  onAttemptNotice: (message: string) => void;
   members: User[];
   draft: CommentAnchor | null;
   canSubmit: boolean;
@@ -295,6 +374,12 @@ function Composer({
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState("");
   const postingRef = useRef(false);
+  const active = useRef(false);
+  const canSubmitRef = useRef(canSubmit);
+  const allowCopyQuoteRef = useRef(allowCopyQuote);
+  canSubmitRef.current = canSubmit;
+  allowCopyQuoteRef.current = allowCopyQuote;
+  useLayoutEffect(() => { active.current = true; return () => { active.current = false; }; }, [id, meId, session, parentId]);
   const ref = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -314,26 +399,55 @@ function Composer({
   const post = async () => {
     const body = text.trim();
     if (!body || postingRef.current || originChanged || !canSubmit) return;
+    if (!attemptStore) { setError("无法安全保存本机提交记录，草稿已保留。"); return; }
     postingRef.current = true;
     setPosting(true);
     setError("");
     const mentioned = members.filter((m) => body.includes("@" + m.name)).map((m) => m.id);
+    let prepared = false;
     try {
-      if (parentId) await commentsApi.create(id, { parentId, body, mentions: mentioned });
-      else await commentsApi.create(id, { body, mentions: mentioned, ...(draft ?? {}) });
+      const payload = commentAttemptPayload(body, mentioned, parentId, textOrigin, allowCopyQuote);
+      const records = attemptStore.list();
+      if (records.damaged) throw new Error("部分提交记录损坏，请勿重复发送。");
+      if (records.attempts.some((attempt) => matchesUnresolvedDraft(attempt, payload)) || attempts.some((attempt) => matchesUnresolvedDraft(attempt, payload))) {
+        throw new Error("这条评论已有未确认的发送记录，请使用上方的重试入口。");
+      }
+      const capability = await requireCommentAttempts(id, meId);
+      // The document, account, or policy may have changed during discovery.
+      if (!active.current || !canSubmitRef.current) return;
+      const attempt = attemptStore.prepare(commentAttemptPayload(body, mentioned, parentId, textOrigin, allowCopyQuoteRef.current && capability.canCopyQuote));
+      prepared = true;
+      // Once persistence succeeds the original input lives in its own
+      // immutable record. Subsequent editing creates a separate new draft.
       setText("");
       setTextOrigin(draft);
       onSnapshot({ text: "", draft: textOrigin, parentId });
+      refreshAttempts();
+      const result = await attemptStore.run(attempt, async (stored) => {
+        if (!active.current || !canSubmitRef.current) throw new Error("评论权限尚未验证");
+        if (stored.payload.quote && (!allowCopyQuoteRef.current || !capability.canCopyQuote)) throw new Error("原引用权限已变化");
+        return sendCommentAttempt(stored);
+      });
+      if (!active.current) return;
+      refreshAttempts();
+      if (!result.cleaned) onAttemptNotice("评论已确认，但本机记录暂无法安全清除，已保留供核对。");
+      else if (result.value.state === "deleted") onAttemptNotice("这条评论之前已发送并被删除，不会重复创建。");
       onDone(draft);
     } catch (error) {
+      if (!active.current) return;
+      if (error instanceof CommentAttemptAccountChanged) { setError("账号已变化，原账号的草稿与提交记录已保留。"); return; }
+      if (error instanceof CommentAttemptDocumentDenied) { onAccessDenied(prepared ? undefined : { text, draft: textOrigin, parentId }); return; }
+      if (error instanceof CommentAttemptsUnavailable) { setError(`${error.message} 草稿已保留。`); return; }
       const result = classifyCommentMutationError(error);
-      if (result === "access") onAccessDenied({ text, draft: textOrigin, parentId });
+      if (result === "access") onAccessDenied(prepared ? undefined : { text, draft: textOrigin, parentId });
       else if (result === "policy") { onPolicyDenied?.(); setError("评论权限已变化，草稿已保留。"); }
+      else if (prepared) { refreshAttempts(); setError("发送结果未确认，本机已保留原请求，请使用上方记录重试。"); void onUncertain().catch(() => {}); }
+      else if (error instanceof Error && (error.message.includes("未确认的发送记录") || error.message.includes("提交记录损坏") || error.message.includes("评论包含") || error.message.includes("评论需要") || error.message.includes("最多提及") || error.message.includes("评论引用"))) setError(error.message);
       else if (result === "uncertain") setError(reconcileUncertainComment(onUncertain, true));
       else setError("评论未被接受，草稿已保留，请检查后重试。");
     } finally {
       postingRef.current = false;
-      setPosting(false);
+      if (active.current) setPosting(false);
     }
   };
   return (

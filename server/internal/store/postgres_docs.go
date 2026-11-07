@@ -54,8 +54,18 @@ func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int
 			return e
 		}
 		for i, op := range initial {
+			duplicate, e := checkOperationIdentity(ctx, tx, d.ID, op)
+			if e != nil {
+				return e
+			}
+			if duplicate {
+				return ErrOpIdentityConflict
+			}
 			if _, e = tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1, $2, $3, $4, $5)`,
 				d.ID, i+1, op.ClientID, op.Clock, op.Bytes); e != nil {
+				return e
+			}
+			if e = insertOperationRange(ctx, tx, d.ID, int64(i+1), op); e != nil {
 				return e
 			}
 		}
@@ -153,7 +163,25 @@ func (p *Postgres) Horizon(ctx context.Context, doc int64, since time.Time) (h i
 	return
 }
 
-func (p *Postgres) AppendOps(ctx context.Context, doc int64, ops []RawOp) (seqs []int64, err error) {
+func (p *Postgres) ExistingOpIDs(ctx context.Context, doc int64, ops []RawOp) ([]bool, error) {
+	out := make([]bool, len(ops))
+	for i, op := range ops {
+		if err := p.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM doc_ops WHERE doc_id=$1 AND client_id=$2 AND clock=$3)`, doc, op.ClientID, op.Clock).Scan(&out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (p *Postgres) AppendOps(ctx context.Context, doc int64, ops []RawOp) ([]int64, error) {
+	return p.appendOps(ctx, doc, nil, ops)
+}
+
+func (p *Postgres) AppendOpsAtHead(ctx context.Context, doc, expectedHead int64, ops []RawOp) ([]int64, error) {
+	return p.appendOps(ctx, doc, &expectedHead, ops)
+}
+
+func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64, ops []RawOp) (seqs []int64, err error) {
 	seqs = make([]int64, len(ops))
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var head int64
@@ -163,17 +191,33 @@ func (p *Postgres) AppendOps(ctx context.Context, doc int64, ops []RawOp) (seqs 
 			}
 			return err
 		}
+		if expectedHead != nil && head != *expectedHead {
+			return ErrConflict
+		}
 		start := head
 		for i, op := range ops {
+			duplicate, err := checkOperationIdentity(ctx, tx, doc, op)
+			if err != nil {
+				return err
+			}
+			if duplicate {
+				continue
+			}
 			tag, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1,$2,$3,$4,$5)
 				ON CONFLICT (doc_id, client_id, clock) DO NOTHING`, doc, head+1, op.ClientID, op.Clock, op.Bytes)
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() == 1 {
-				head++
-				seqs[i] = head
+			if tag.RowsAffected() != 1 {
+				// The identity was checked under the head lock; an unexpected
+				// uniqueness collision must never be treated as an exact retry.
+				return ErrOpIdentityConflict
 			}
+			head++
+			if err := insertOperationRange(ctx, tx, doc, head, op); err != nil {
+				return err
+			}
+			seqs[i] = head
 		}
 		if head == start {
 			return nil
@@ -230,6 +274,13 @@ func (p *Postgres) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc
 			return ErrUnauthenticated
 		}
 		for i, op := range ops {
+			duplicate, err := checkOperationIdentity(ctx, tx, doc, op)
+			if errors.Is(err, ErrOpIdentityConflict) || duplicate {
+				return ErrConflict
+			}
+			if err != nil {
+				return err
+			}
 			tag, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1,$2,$3,$4,$5)
 				ON CONFLICT (doc_id, client_id, clock) DO NOTHING`, doc, head+1, op.ClientID, op.Clock, op.Bytes)
 			if err != nil {
@@ -239,6 +290,9 @@ func (p *Postgres) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc
 				return ErrConflict
 			}
 			head++
+			if err := insertOperationRange(ctx, tx, doc, head, op); err != nil {
+				return err
+			}
 			seqs[i] = head
 		}
 		if len(ops) == 0 {

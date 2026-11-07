@@ -7,6 +7,19 @@ import (
 )
 
 var ErrCommentPermissionDenied = errors.New("comment permission denied")
+var ErrCommentAttemptMismatch = errors.New("comment attempt payload mismatch")
+var ErrCommentAttemptAccountChanged = errors.New("comment attempt account changed")
+
+// CommentAttemptResult is a durable receipt for one immutable client request.
+// Comment is absent after the original comment (or a parent) was deleted.
+type CommentAttemptResult struct {
+	MutationID string   `json:"mutationId"`
+	DocID      int64    `json:"docId"`
+	UserID     int64    `json:"userId"`
+	CommentID  int64    `json:"commentId"`
+	State      string   `json:"state"`
+	Comment    *Comment `json:"comment,omitempty"`
+}
 
 // Comment is a doc comment (or a reply; ParentID set). The range is anchored
 // to character op-ids so it survives concurrent edits; Quote keeps the text
@@ -47,6 +60,9 @@ type Notification struct {
 
 type CommentStore interface {
 	AddCommentGuarded(ctx context.Context, guard RestoreGuard, c Comment) (Comment, error)
+	AddCommentAttemptGuarded(ctx context.Context, guard RestoreGuard, mutationID string, c Comment) (CommentAttemptResult, error)
+	GetCommentAttemptGuarded(ctx context.Context, guard RestoreGuard, expectedUserID, docID int64, mutationID string) (CommentAttemptResult, error)
+	CommentAttemptCapabilityGuarded(ctx context.Context, guard RestoreGuard, expectedUserID, docID int64) (bool, error)
 	PatchCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64, body *string, resolved *bool) (Comment, bool, error)
 	DeleteCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64) error
 	AddComment(ctx context.Context, c Comment) (Comment, error)

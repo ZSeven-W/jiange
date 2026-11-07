@@ -52,7 +52,9 @@ func (m *Memory) checkCommentLocked(ctx context.Context, guard RestoreGuard, doc
 		minimum = RoleEdit
 	}
 	if !commentRoleAllowed(role, minimum) {
-		return time.Time{}, ErrCommentPermissionDenied
+		// The session and view permission are still valid. A retry may inspect
+		// an existing receipt, but must not create a new comment.
+		return session.expires, ErrCommentPermissionDenied
 	}
 	return session.expires, nil
 }
@@ -85,9 +87,6 @@ func lockCommentAccess(ctx context.Context, tx pgx.Tx, guard RestoreGuard, docID
 	if kind != "doc" {
 		minimum = RoleEdit
 	}
-	if !commentRoleAllowed(role, minimum) {
-		return time.Time{}, ErrCommentPermissionDenied
-	}
 	var invalid bool
 	err = tx.QueryRow(ctx, `WITH RECURSIVE a AS (
         SELECT id,parent_id,workspace_id,deleted_at,ARRAY[id] AS seen FROM nodes WHERE id=$1
@@ -100,6 +99,9 @@ func lockCommentAccess(ctx context.Context, tx pgx.Tx, guard RestoreGuard, docID
 	}
 	if invalid {
 		return time.Time{}, ErrForbidden
+	}
+	if !commentRoleAllowed(role, minimum) {
+		return expiry, ErrCommentPermissionDenied
 	}
 	return expiry, nil
 }

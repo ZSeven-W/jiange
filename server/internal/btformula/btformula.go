@@ -6,7 +6,9 @@
 package btformula
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -38,10 +40,10 @@ func Validate(src string, names []string) error {
 	}
 	known := map[string]bool{}
 	for _, n := range names {
-		known[strings.ToLower(n)] = true
+		known[jsLower(n)] = true
 	}
 	for _, r := range refs {
-		if !known[strings.ToLower(r)] {
+		if !known[jsLower(r)] {
 			return errf("#NAME?", "未知字段 "+r)
 		}
 	}
@@ -97,6 +99,14 @@ func tokenize(src string) ([]tok, error) {
 			for j < len(src) && (src[j] >= '0' && src[j] <= '9' || src[j] == '.') {
 				j++
 			}
+			// The frontend tokenizes the whole run and applies Number(...).
+			// Reject malformed runs such as "." and "1..2" instead of
+			// persisting an expression the editor cannot parse. A syntactically
+			// valid literal can overflow to Infinity in JavaScript, so range
+			// overflow alone is not a syntax error here.
+			if _, err := strconv.ParseFloat(src[i:j], 64); err != nil && !errors.Is(err, strconv.ErrRange) {
+				return nil, errf("#NUM?", "无效的数字")
+			}
 			toks = append(toks, tok{"num", src[i:j]})
 			i = j
 			continue
@@ -116,7 +126,7 @@ func tokenize(src string) ([]tok, error) {
 			if end < 0 {
 				return nil, errf("#SYNTAX", "未闭合的引用")
 			}
-			toks = append(toks, tok{"ref", strings.TrimSpace(src[i+1 : i+end])})
+			toks = append(toks, tok{"ref", trimJS(src[i+1 : i+end])})
 			i += end + 1
 			continue
 		case unicode.IsLetter(r) || r == '_':
