@@ -278,8 +278,14 @@ func (s *Server) restoreDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, d := range trash {
 		if d.ID == id {
-			if err := s.Store.Restore(r.Context(), id); err != nil {
-				s.fail(w, r, err)
+			// Route through the guarded drive restore: the fence triggers
+			// reject legacy undeletes on folder-involving subtrees, and this
+			// also covers pre-drive rows (no trash batch).
+			g, ok := s.driveGuard(w, r)
+			if !ok {
+				return
+			}
+			if driveWriteErr(w, s.Store.RestoreDriveNode(r.Context(), g, id, d.DriveRevision), "restore") {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)

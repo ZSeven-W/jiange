@@ -144,7 +144,7 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		v := *parent
 		pp = &v
 	}
-	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now}, driveRevision: 1}
+	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -211,6 +211,7 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	}
 	d.meta.ParentID = cloneDriveParent(parent)
 	d.driveRevision++
+	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
 	return nil
 }
@@ -247,6 +248,8 @@ func (m *Memory) TrashDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 			item.deleted = true
 			item.driveTrashBatch = batch
 			item.driveRevision++
+			item.meta.DriveRevision = item.driveRevision
+			item.meta.TrashBatchID = batch
 		}
 	}
 	return nil
@@ -259,7 +262,9 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 		return err
 	}
 	d := m.doc(id)
-	if d == nil || !d.deleted || d.driveTrashBatch == 0 || d.driveRevision != expected {
+	// driveTrashBatch == 0 marks a legacy (pre-drive) deletion; the loops
+	// below then restore the subtree's still-deleted legacy rows.
+	if d == nil || !d.deleted || d.driveRevision != expected {
 		return ErrConflict
 	}
 	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
@@ -288,6 +293,8 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 			item.deleted = false
 			item.driveTrashBatch = 0
 			item.driveRevision++
+			item.meta.DriveRevision = item.driveRevision
+			item.meta.TrashBatchID = 0
 		}
 	}
 	return nil
@@ -556,9 +563,8 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 				return ErrForbidden
 			}
 		} else {
-			if batch == nil {
-				return ErrConflict
-			}
+			// batch == nil marks a legacy (pre-drive) deletion: those subtrees
+			// carry no batch, so restore still-deleted legacy rows below.
 			var memberRole string
 			e = tx.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, ws, g.UserID).Scan(&memberRole)
 			if errors.Is(e, pgx.ErrNoRows) {
@@ -596,7 +602,11 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 			if e != nil { return e }
 			return drivePGEnd(ctx, g, exp)
 		}
-		_, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) UPDATE nodes SET deleted_at=NULL,trash_batch_id=NULL,drive_revision=drive_revision+1 WHERE id IN (SELECT id FROM t) AND trash_batch_id=$2`, id, *batch)
+		if batch != nil {
+			_, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) UPDATE nodes SET deleted_at=NULL,trash_batch_id=NULL,drive_revision=drive_revision+1 WHERE id IN (SELECT id FROM t) AND trash_batch_id=$2`, id, *batch)
+		} else {
+			_, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) UPDATE nodes SET deleted_at=NULL,drive_revision=drive_revision+1 WHERE id IN (SELECT id FROM t) AND deleted_at IS NOT NULL AND trash_batch_id IS NULL`, id)
+		}
 		if e != nil { return e }
 		return drivePGEnd(ctx, g, exp)
 	})

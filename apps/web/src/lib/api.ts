@@ -64,6 +64,10 @@ export interface DocMeta {
   /** Missing on older servers, which only permit editors to comment. */
   commentMinRole?: "view" | "edit";
   permissionsRevision?: number;
+  /** Versioned-drive optimistic concurrency (move/trash/restore); 0 on nodes never touched by the drive API. */
+  driveRevision?: number;
+  /** Groups the subtree of one guarded trash operation; 0 for legacy deletions. */
+  trashBatchId?: number;
 }
 /** A document returned by the per-user recent-visit history. */
 export interface RecentDoc extends DocMeta {
@@ -295,6 +299,8 @@ export const driveApi = {
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
   restore: (id: number, expected: number) => request<void>("POST", `/api/drive/restore/${id}`, { expected }),
+  // 回收站列表走既有 /api/trash（条目已带 driveRevision/trashBatchId，供乐观并发还原）
+  trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {

@@ -29,6 +29,13 @@ type DocMeta struct {
 	PermissionsRevision int64  `json:"permissionsRevision"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
+	// DriveRevision is the optimistic-concurrency version of directory
+	// mutations (move/trash/restore); nodes never touched by the versioned
+	// drive API stay at 0.
+	DriveRevision int64 `json:"driveRevision"`
+	// TrashBatchID groups the subtree of one guarded trash operation; 0 when
+	// the node was deleted by the legacy unversioned endpoint.
+	TrashBatchID int64 `json:"trashBatchId,omitempty"`
 }
 
 func documentActionAllowed(meta DocMeta, role, threshold string) bool {

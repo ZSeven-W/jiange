@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
+import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { go, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { ask, askText } from "@/components/ui/ask";
@@ -162,7 +162,13 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
               navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hrefOf(d)}`).catch(() => {});
             }}
             onDelete={async () => {
-              if (await ask(`删除「${docTitle(d)}」？`, "可在回收站还原。")) docsApi.trash(d.id).then(() => qc.invalidateQueries({ queryKey: ["docs"] }));
+              // 走版本化云盘删除：folder 子树会被 fence 拒绝旧式语句
+              if (await ask(`删除「${docTitle(d)}」？`, "可在回收站还原。"))
+                driveApi.trash(d.id, d.driveRevision ?? 0).then(() => {
+                  qc.invalidateQueries({ queryKey: ["docs"] });
+                  qc.invalidateQueries({ queryKey: ["drive"] });
+                  qc.invalidateQueries({ queryKey: ["trash"] });
+                });
             }}
           />
           {has && isOpen && renderTree(d.id, depth + 1)}
