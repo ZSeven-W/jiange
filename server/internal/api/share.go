@@ -262,7 +262,38 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "view": doc.View()})
+	cover, err := s.Store.DocCoverSystem(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Cover retrieval may have waited on storage. Refresh the document policy
+	// afterwards so a policy change during that wait is not sent as stale.
+	d, err = s.Store.GetDocSystem(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Cover retrieval may itself block; do not return its metadata or the
+	// snapshot after the anonymous link is revoked during that read.
+	currentID, currentRole, err = s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) || err == nil && (currentID != id || currentRole != "anon") {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "cover": cover, "view": doc.View()})
 }
 
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {

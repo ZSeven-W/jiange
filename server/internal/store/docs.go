@@ -95,6 +95,9 @@ type DocCopy struct {
 	// Guard is required by authenticated request handlers. A nil guard is
 	// reserved for trusted internal callers, such as direct store operations.
 	Guard *RestoreGuard
+	// Cover is the preflight source cover; the transaction rechecks its revision
+	// and remaps any attachment into the newly created document.
+	Cover *DocCover
 }
 
 type DocCopyBuilder func(map[int64]int64) ([]RawOp, error)
@@ -118,6 +121,9 @@ func (g RestoreGuard) currentTime() time.Time {
 type DocStore interface {
 	ShareStore
 	BaseStore
+	DocCoverGuarded(ctx context.Context, guard RestoreGuard, docID int64) (DocCover, error)
+	SetDocCoverGuarded(ctx context.Context, guard RestoreGuard, docID int64, cover DocCover, expectedRevision int64) (DocCover, error)
+	DocCoverSystem(ctx context.Context, docID int64) (DocCover, error)
 	// DocIconGuarded reads a document icon after revalidating the caller.
 	DocIconGuarded(ctx context.Context, guard RestoreGuard, docID int64) (DocIcon, error)
 	// SetDocIconGuarded checks edit access and the expected icon revision in the same write transaction.

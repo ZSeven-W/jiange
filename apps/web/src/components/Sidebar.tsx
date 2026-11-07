@@ -9,6 +9,7 @@ import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
 import { DocColorIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
+import { GlobalSearch } from "./GlobalSearch";
 
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => (d.kind === "base" ? `#/base/${d.id}` : `#/doc/${d.id}`);
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
@@ -20,19 +21,6 @@ export function renameErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 409) return "文档已发生变化，请刷新后重新命名。";
   // A disconnected client cannot know whether the server committed the write.
   return "无法确认重命名是否完成，请刷新后查看。";
-}
-
-type SearchResultState<T> = { status: "idle" | "loading" | "error" | "empty"; docs: T[] } | { status: "ready"; docs: T[] };
-
-// Cached results are not authorization evidence: hide them until this request succeeds.
-export function sidebarSearchState<T>(keyword: string, debounced: string, query: {
-  isFetching: boolean; isPending: boolean; isError: boolean; data?: T[]; fetchStatus: string;
-}): SearchResultState<T> {
-  if (!keyword) return { status: "idle", docs: [] };
-  if (keyword !== debounced || query.isFetching) return { status: "loading", docs: [] };
-  if (query.isError || query.fetchStatus === "paused") return { status: "error", docs: [] };
-  if (query.isPending) return { status: "loading", docs: [] };
-  return query.data?.length ? { status: "ready", docs: query.data } : { status: "empty", docs: [] };
 }
 
 export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
@@ -47,17 +35,28 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
     queryFn: docsApi.shared,
     refetchInterval: 30000,
   });
-  const [q, setQ] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const kw = q.trim();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchTrigger = useRef<HTMLInputElement>(null);
+  const skipSearchFocus = useRef(false);
   useEffect(() => {
-    if (!kw) {
-      setDebouncedSearch("");
-      return;
-    }
-    const timer = window.setTimeout(() => setDebouncedSearch(kw), 250);
-    return () => window.clearTimeout(timer);
-  }, [kw]);
+    const key = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "j") {
+        event.preventDefault(); setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+  const closeSearch = (restoreFocus: boolean) => {
+    setSearchOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => {
+      skipSearchFocus.current = true;
+      searchTrigger.current?.focus();
+      // Focus events run synchronously. If the sidebar is hidden, focus can
+      // fail entirely; never leave the next real focus suppressed.
+      skipSearchFocus.current = false;
+    });
+  };
   const [menu, setMenu] = useState(false);
   const accountMenu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -165,19 +164,8 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </div>
       );
     });
-  const searchQ = useQuery({
-    queryKey: ["search", me.user.id, debouncedSearch],
-    queryFn: ({ signal }) => extrasApi.search(debouncedSearch, signal),
-    enabled: !!kw && kw === debouncedSearch,
-    gcTime: 0,
-    retry: false,
-    refetchOnWindowFocus: "always",
-    refetchInterval: 15000,
-    refetchIntervalInBackground: false,
-  });
-  const searchState = sidebarSearchState(kw, debouncedSearch, searchQ);
   const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
-  const shown = kw ? searchState.docs : [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
+  const shown = [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
   return (
     <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
@@ -185,11 +173,12 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <div className="flex h-8 items-center px-2"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" /><span className="ml-2 text-[14px] font-semibold tracking-[-0.01em]">Jiange 云文档</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
           <SearchIcon />
-          <input type="search" aria-label="搜索标题和正文" value={q} onChange={(e) => {
-            const next = e.target.value;
-            if (next.trim() !== kw) void qc.cancelQueries({ queryKey: ["search", me.user.id] });
-            setQ(next);
-          }} placeholder="搜索标题和正文" className="w-full min-w-0 bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
+          <input ref={searchTrigger} type="search" readOnly aria-label="搜索标题和正文" onFocus={() => {
+            if (skipSearchFocus.current) { skipSearchFocus.current = false; return; }
+            setSearchOpen(true);
+          }} onClick={() => setSearchOpen(true)} onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSearchOpen(true); }
+          }} placeholder="搜索标题和正文" className="w-full min-w-0 cursor-pointer bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
@@ -198,11 +187,11 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
-      {!kw && <div className="mt-6 px-3">
+      <div className="mt-6 px-3">
         <div className="px-2 pb-1 text-xs font-medium text-subtle">收藏文档</div>
         {(favorites.data ?? []).slice(0, 4).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
         {favorites.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">暂无收藏</p>}
-      </div>}
+      </div>
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
         <span>我的文档库</span>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
@@ -222,16 +211,10 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             <input readOnly value={rename.variables.title} className="mt-1 block h-8 w-full rounded border bg-surface px-2 text-foreground" />
           </label>}
         </div>}
-        {kw && <p className="px-2 py-1.5 text-xs text-subtle">搜索有权访问的文档</p>}
-        {kw
-          ? (searchState.status === "loading" && <p role="status" className="px-2 py-1.5 text-xs text-subtle">搜索中…</p>)
-          : renderTree(null, 0)}
-        {kw && shown.map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} muted={!d.title.trim()} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
-        {searchState.status === "error" && <div role="alert" className="px-2 py-1.5 text-xs text-destructive">{searchQ.error instanceof ApiError && searchQ.error.code === "search_incomplete" ? "搜索未完成，请稍后重试" : "搜索失败，请检查网络后重试"} <button type="button" onClick={() => void searchQ.refetch()} className="ml-1 text-primary underline">重试</button></div>}
-        {searchState.status === "empty" && <p className="px-2 py-1.5 text-xs text-subtle">没有匹配的文档</p>}
-        {!kw.trim() && docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">文档加载失败，请稍后重试</p>}
-        {!kw.trim() && docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">还没有文档</p>}
-        {!q.trim() && (shared.data?.length ?? 0) > 0 && (
+        {renderTree(null, 0)}
+        {docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">文档加载失败，请稍后重试</p>}
+        {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">还没有文档</p>}
+        {(shared.data?.length ?? 0) > 0 && (
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
             {shared.data!.map((d) => (
@@ -258,6 +241,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           </button>
         </div>
       </div>
+      {searchOpen && <GlobalSearch userId={me.user.id} onClose={closeSearch} />}
     </aside>
   );
 }

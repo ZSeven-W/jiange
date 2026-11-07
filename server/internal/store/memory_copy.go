@@ -26,6 +26,12 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	if source.meta.Kind != "doc" {
 		return DocMeta{}, ErrConflict
 	}
+	if c.Guard != nil && c.Cover == nil && memoryCover(source.cover).Kind != "none" {
+		return DocMeta{}, ErrConflict
+	}
+	if c.Cover != nil && memoryCover(source.cover) != *c.Cover {
+		return DocMeta{}, ErrConflict
+	}
 	if !DocumentDownloadAllowed(source.meta, m.roleLocked(c.UserID, source)) {
 		return DocMeta{}, ErrCopyProtected
 	}
@@ -82,6 +88,17 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	d := &memDoc{
 		meta: DocMeta{ID: newID, Kind: "doc", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView},
 		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
+	}
+	if c.Cover != nil && c.Cover.Kind != "none" {
+		d.cover = *c.Cover
+		d.cover.Revision = 1
+		if d.cover.Kind == "file" {
+			mapped, ok := mapping[d.cover.FileID]
+			if !ok {
+				return DocMeta{}, ErrConflict
+			}
+			d.cover.FileID = mapped
+		}
 	}
 	for i, op := range ops {
 		if d.ids[[2]int64{op.ClientID, op.Clock}] {

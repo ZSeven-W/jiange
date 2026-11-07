@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
+import { PublicDocumentCover } from "@/components/DocumentCover";
 import { fetchPublicDoc, initialPublicDocState, publicDocumentPermissions, updatePublicDocState, type PublicIssue } from "./publicDocState";
 
 /** Explain a failed public link without discarding its token on sign-in. */
@@ -14,6 +15,7 @@ export function PublicDocMessage({ issue, token, onRetry }: { issue: PublicIssue
 export function PublicDoc({ token }: { token: string }) {
   const [state, setState] = useState(() => initialPublicDocState(token));
   const [verification, setVerification] = useState<{ token: string; inFlight: boolean }>({ token, inFlight: true });
+  const [coverRecovery, setCoverRecovery] = useState<{ token: string; count: number }>({ token, count: 0 });
   const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
     let active = true, inFlight = false;
@@ -29,6 +31,7 @@ export function PublicDoc({ token }: { token: string }) {
       window.clearTimeout(timeout);
       if (active) {
         setState((previous) => updatePublicDocState(previous, token, result));
+        if ("snapshot" in result) setCoverRecovery((previous) => ({ token, count: previous.token === token ? previous.count + 1 : 1 }));
         setVerification({ token, inFlight: document.visibilityState === "hidden" });
       }
       inFlight = false;
@@ -67,6 +70,7 @@ export function PublicDoc({ token }: { token: string }) {
         </a>
         <span className="ml-3 rounded bg-accent px-2 py-0.5 text-[12px] font-medium text-accent-foreground">只读分享</span>
       </header>
+      {snap && <PublicDocumentCover value={snap.cover} token={token} recovery={coverRecovery.token === token ? coverRecovery.count : 0} allowCopy={permissions.copy} allowPrint={permissions.download}/>}
       <div className="mx-auto max-w-[820px] px-10 pb-40 pt-16" data-document-print-restricted={!permissions.download ? "true" : undefined}>
         {issue && !snap && <PublicDocMessage issue={issue} token={token} onRetry={() => refreshRef.current()} />}
         {!snap && !issue && <p className="py-24 text-center text-[13px] text-subtle">正在加载文档…</p>}

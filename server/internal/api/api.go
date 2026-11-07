@@ -61,6 +61,9 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/docs/{id}/shares":                         s.getShares,
 		"GET /api/docs/{id}/icon":                           s.getDocIcon,
 		"PUT /api/docs/{id}/icon":                           s.putDocIcon,
+		"GET /api/docs/{id}/cover":                          s.getDocCover,
+		"PUT /api/docs/{id}/cover":                          s.putDocCover,
+		"GET /api/docs/{id}/cover/image":                    s.getDocCoverImage,
 		"PUT /api/docs/{id}/shares":                         s.putShare,
 		"PUT /api/docs/{id}/link":                           s.putLink,
 		"POST /api/share/{token}":                           s.joinLink,
@@ -118,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(pat, s.requireUser(h))
 	}
 	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
+	mux.Handle("GET /api/public/{token}/cover/image", http.HandlerFunc(s.getPublicCoverImage))
 	mux.Handle("GET /api/public/{token}/files/{id}", http.HandlerFunc(s.getPublicFile))
 	// public form endpoints (anonymous visitors)
 	mux.Handle("GET /api/forms/{id}/{vid}", http.HandlerFunc(s.legacyPublicForm))

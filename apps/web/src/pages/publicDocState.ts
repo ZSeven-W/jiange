@@ -8,6 +8,8 @@ export interface PublicSnapshot {
   copyMinRole?: string;
   downloadMinRole?: string;
   permissionsRevision?: number;
+  /** Validated by the cover renderer; unknown/legacy servers may omit it. */
+  cover?: unknown;
   view: DocView;
 }
 

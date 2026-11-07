@@ -123,6 +123,15 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		if kind != "doc" {
 			return ErrConflict
 		}
+		if c.Cover != nil || c.Guard != nil {
+			current, e := scanCover(tx.QueryRow(ctx, `SELECT cover_kind,cover_asset,cover_file_id,cover_position,cover_revision FROM nodes WHERE id=$1`, c.SourceID))
+			if e != nil {
+				return e
+			}
+			if c.Cover == nil && current.Kind != "none" || c.Cover != nil && current != *c.Cover {
+				return ErrConflict
+			}
+		}
 		// lockCopySource holds the source node through commit, so the download
 		// threshold cannot change between this read and publishing the copy.
 		var downloadMinRole string
@@ -171,6 +180,19 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 				return err
 			}
 			mapping[oldID] = newID
+		}
+		if c.Cover != nil && c.Cover.Kind != "none" {
+			var fileID *int64
+			if c.Cover.Kind == "file" {
+				mapped, ok := mapping[c.Cover.FileID]
+				if !ok {
+					return ErrConflict
+				}
+				fileID = &mapped
+			}
+			if _, err := tx.Exec(ctx, `UPDATE nodes SET cover_kind=$2,cover_asset=$3,cover_file_id=$4,cover_position=$5,cover_revision=cover_revision+1 WHERE id=$1`, result.ID, c.Cover.Kind, c.Cover.Asset, fileID, c.Cover.Position); err != nil {
+				return err
+			}
 		}
 		ops, err := build(mapping)
 		if err != nil {
