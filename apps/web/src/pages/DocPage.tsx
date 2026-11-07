@@ -666,7 +666,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article className={cn("mx-auto w-full max-w-[960px] px-7 sm:px-16", hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full max-w-[960px] px-7 sm:px-16", hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -972,7 +972,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onComments={onComments} onFind={onFind} wordCount={wordCount} />
+        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1041,6 +1041,7 @@ function DocMenu({
   onOutline,
   onComments,
   onFind,
+  onPrint,
   wordCount,
 }: {
   meta?: DocMeta;
@@ -1049,6 +1050,7 @@ function DocMenu({
   onExport?: () => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
+  onPrint: () => void;
   onComments: () => void;
   onFind: () => void;
   wordCount: number;
@@ -1123,6 +1125,11 @@ function DocMenu({
           {onExport && (
             <button className={item} onClick={() => { close(); onExport(); }}>
               导出 Markdown
+            </button>
+          )}
+          {onPrint && (
+            <button className={item} onClick={() => { close(); onPrint(); }} data-export-pdf>
+              导出 PDF（打印）
             </button>
           )}
           {canCopyDocument(meta) && (

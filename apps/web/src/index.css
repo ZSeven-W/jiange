@@ -117,3 +117,46 @@
   [data-document-print-restricted="true"] { display: none !important; }
   body:has([data-document-print-restricted="true"]) aside:not([data-comments-panel]) { display: none !important; }
 }
+
+/* 导出 PDF：打印当前文档（⋯ 菜单触发 window.print()）。隐藏侧栏/顶栏/
+   面板/覆盖层，正文转为白底黑字单栏，媒体块不跨页截断。 */
+@media print {
+  body:has([data-print-doc]) {
+    background: #fff !important;
+  }
+  body:has([data-print-doc]) aside,
+  body:has([data-print-doc]) header,
+  body:has([data-print-doc]) [data-comments-panel],
+  body:has([data-print-doc]) [data-version-panel],
+  body:has([data-print-doc]) [data-outline-panel],
+  body:has([data-print-doc]) [data-attachment-preview],
+  body:has([data-print-doc]) [data-ask],
+  body:has([data-print-doc]) [data-slash-menu],
+  body:has([data-print-doc]) [data-format-toolbar] {
+    display: none !important;
+  }
+  body:has([data-print-doc]) [data-print-doc] {
+    display: block !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  /* 块内装饰（悬停手柄/角标）不打印 */
+  [data-print-doc] [data-block] > span,
+  [data-print-doc] [data-comment-bubble],
+  [data-print-doc] [data-insert-after] {
+    display: none !important;
+  }
+  /* 媒体与图表块避免跨页截断 */
+  [data-print-doc] [data-math],
+  [data-print-doc] [data-diagram],
+  [data-print-doc] [data-video],
+  [data-print-doc] figure {
+    break-inside: avoid;
+  }
+  [data-print-doc] svg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+}
