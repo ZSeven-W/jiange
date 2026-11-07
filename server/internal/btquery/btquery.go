@@ -7,6 +7,7 @@ package btquery
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,9 +58,9 @@ var ops = map[string]bool{
 
 // Validate checks a config against the base's fields.
 func Validate(fields []FieldSpec, cfg Config) error {
-	byID := map[int64]struct{}{}
+	byID := map[int64]FieldSpec{}
 	for _, f := range fields {
-		byID[f.ID] = struct{}{}
+		byID[f.ID] = f
 	}
 	if cfg.Filters != nil && len(cfg.Filters.Rules) > 0 {
 		if cfg.Filters.Conj != "and" && cfg.Filters.Conj != "or" {
@@ -71,6 +72,16 @@ func Validate(fields []FieldSpec, cfg Config) error {
 			}
 			if _, ok := byID[r.F]; !ok {
 				return fmt.Errorf("unknown field %d", r.F)
+			}
+			f := byID[r.F]
+			if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+				switch r.Op {
+				case "is", "is_not", "gt", "gte", "lt", "lte":
+					value, ok := toFloat(r.V)
+					if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+						return fmt.Errorf("field %d requires a finite number", r.F)
+					}
+				}
 			}
 		}
 	}
@@ -87,6 +98,64 @@ func Validate(fields []FieldSpec, cfg Config) error {
 	if cfg.Group != nil {
 		if _, ok := byID[*cfg.Group]; !ok {
 			return fmt.Errorf("unknown field %d", *cfg.Group)
+		}
+	}
+	return nil
+}
+
+// ValidateLocked rejects policies whose field/operator semantics are not yet
+// equivalent between PostgreSQL and Memory. Such a policy must never silently
+// become a weaker row restriction on either backend.
+func ValidateLocked(fields []FieldSpec, cfg Config) error {
+	if err := Validate(fields, cfg); err != nil {
+		return err
+	}
+	byID := make(map[int64]FieldSpec, len(fields))
+	for _, f := range fields {
+		byID[f.ID] = f
+	}
+	if cfg.Filters == nil {
+		return nil
+	}
+	for _, rule := range cfg.Filters.Rules {
+		field := byID[rule.F]
+		if rule.Op == "empty" || rule.Op == "not_empty" {
+			switch field.Type {
+			case "text", "select", "date", "url", "phone", "email", "number", "rating", "person", "checkbox", "multi_select", "attachment":
+				continue
+			}
+			return fmt.Errorf("locked filter on %s is not supported", field.Type)
+		}
+		switch field.Type {
+		case "text", "select", "date", "url", "phone", "email":
+			if rule.Op == "checked" || rule.Op == "unchecked" {
+				return fmt.Errorf("operator %s is not supported for %s in a locked filter", rule.Op, field.Type)
+			}
+			if _, ok := rule.V.(string); !ok {
+				return fmt.Errorf("locked filter value for %s must be text", field.Type)
+			}
+		case "number", "rating", "person":
+			switch rule.Op {
+			case "is", "is_not", "gt", "gte", "lt", "lte":
+			default:
+				return fmt.Errorf("operator %s is not supported for %s in a locked filter", rule.Op, field.Type)
+			}
+			value, ok := toFloat(rule.V)
+			if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("locked filter value for %s must be finite number", field.Type)
+			}
+		case "checkbox":
+			switch rule.Op {
+			case "checked", "unchecked":
+			case "is", "is_not":
+				if _, ok := rule.V.(bool); !ok {
+					return fmt.Errorf("locked checkbox filter value must be boolean")
+				}
+			default:
+				return fmt.Errorf("operator %s is not supported for checkbox in a locked filter", rule.Op)
+			}
+		default:
+			return fmt.Errorf("locked filter on %s is not supported", field.Type)
 		}
 	}
 	return nil
@@ -133,35 +202,89 @@ func Compile(fields []FieldSpec, cfg Config, seedArgs ...any) (where string, arg
 
 func key(f FieldSpec) string { return strconv.FormatInt(f.ID, 10) }
 
+func stringField(t string) bool {
+	switch t {
+	case "text", "select", "date", "url", "phone", "email":
+		return true
+	}
+	return false
+}
+
 // ruleSQL builds one predicate; value-taking rules call next(v) for a bind placeholder.
 func ruleSQL(f FieldSpec, r Rule, next func(any) string) string {
 	cell := "(cells ->> '" + key(f) + "')" // key() is a validated decimal int64
 	exists := "(cells ? '" + key(f) + "')"
+	validString := "jsonb_typeof(cells -> '" + key(f) + "') = 'string'"
+	validBool := "jsonb_typeof(cells -> '" + key(f) + "') = 'boolean'"
 	switch r.Op {
 	case "contains":
-		return fmt.Sprintf("%s LIKE '%%' || %s || '%%'", cell, next(r.V))
+		// strpos treats percent, underscore and backslash literally, matching
+		// the in-memory evaluator. LIKE would treat them as wildcards and can
+		// widen a mandatory locked-view filter.
+		pred := fmt.Sprintf("strpos(%s, %s) > 0", cell, next(toString(r.V)))
+		if stringField(f.Type) {
+			return "(" + validString + " AND " + pred + ")"
+		}
+		return pred
 	case "not_contains":
-		return fmt.Sprintf("(NOT %s LIKE '%%' || %s || '%%')", cell, next(r.V))
+		pred := fmt.Sprintf("strpos(%s, %s) = 0", cell, next(toString(r.V)))
+		if stringField(f.Type) {
+			pred = "(" + validString + " AND " + pred + ")"
+		}
+		return fmt.Sprintf("(%s IS NULL OR %s)", cell, pred)
 	case "is":
-		return fmt.Sprintf("%s = %s", cell, next(r.V))
+		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+			value, _ := toFloat(r.V)
+			return fmt.Sprintf("(jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 = (%s)::float8)", key(f), cell, next(value))
+		}
+		arg := next(toString(r.V))
+		pred := fmt.Sprintf("%s = %s", cell, arg)
+		if stringField(f.Type) {
+			// Equality must have the same byte-exact semantics as Go strings,
+			// independent of the database's locale/collation.
+			pred = fmt.Sprintf("(%s COLLATE \"C\") = (%s COLLATE \"C\")", cell, arg)
+			return "(" + validString + " AND " + pred + ")"
+		}
+		if f.Type == "checkbox" {
+			return "(" + validBool + " AND " + pred + ")"
+		}
+		return pred
 	case "is_not":
-		return fmt.Sprintf("%s <> %s", cell, next(r.V))
+		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+			value, _ := toFloat(r.V)
+			return fmt.Sprintf("(%s IS NULL OR (jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 <> (%s)::float8))", cell, key(f), cell, next(value))
+		}
+		arg := next(toString(r.V))
+		pred := fmt.Sprintf("%s <> %s", cell, arg)
+		if stringField(f.Type) {
+			pred = fmt.Sprintf("(%s COLLATE \"C\") <> (%s COLLATE \"C\")", cell, arg)
+			pred = "(" + validString + " AND " + pred + ")"
+		}
+		if f.Type == "checkbox" {
+			pred = "(" + validBool + " AND " + pred + ")"
+		}
+		return fmt.Sprintf("(%s IS NULL OR %s)", cell, pred)
 	case "empty":
-		return fmt.Sprintf("(NOT %s OR %s IN ('', 'null', '[]'))", exists, cell)
+		return fmt.Sprintf("(NOT %s OR COALESCE(%s, '') IN ('', 'null', '[]'))", exists, cell)
 	case "not_empty":
-		return fmt.Sprintf("(%s AND %s NOT IN ('', 'null', '[]'))", exists, cell)
+		return fmt.Sprintf("(%s AND COALESCE(%s, '') NOT IN ('', 'null', '[]'))", exists, cell)
 	case "checked":
-		return cell + " = 'true'"
+		return "(" + validBool + " AND " + cell + " = 'true')"
 	case "unchecked":
-		return fmt.Sprintf("(%s = 'false' OR NOT %s)", cell, exists)
+		return fmt.Sprintf("(%s IS NULL OR (%s AND %s = 'false'))", cell, validBool, cell)
 	case "gt", "gte", "lt", "lte":
 		op := map[string]string{"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[r.Op]
-		if f.Type == "number" {
+		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
 			// compare numerically only when the cell really is a json number
+			value, _ := toFloat(r.V)
 			return fmt.Sprintf("(jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 %s (%s)::float8)",
-				key(f), cell, op, next(r.V))
+				key(f), cell, op, next(value))
 		}
-		return fmt.Sprintf("%s %s %s", cell, op, next(r.V))
+		pred := fmt.Sprintf("(%s COLLATE \"C\") %s (%s COLLATE \"C\")", cell, op, next(toString(r.V)))
+		if stringField(f.Type) {
+			return "(" + validString + " AND " + pred + ")"
+		}
+		return pred
 	}
 	return ""
 }
@@ -210,8 +333,12 @@ func Match(fields []FieldSpec, cfg Config, cells map[string]json.RawMessage) boo
 		return true
 	}
 	result := cfg.Filters.Conj != "or"
+	byID := make(map[int64]FieldSpec, len(fields))
+	for _, f := range fields {
+		byID[f.ID] = f
+	}
 	for _, r := range cfg.Filters.Rules {
-		m := matchRule(r, cells[strconv.FormatInt(r.F, 10)])
+		m := matchRule(byID[r.F], r, cells[strconv.FormatInt(r.F, 10)])
 		if cfg.Filters.Conj == "or" {
 			result = result || m
 		} else {
@@ -221,15 +348,28 @@ func Match(fields []FieldSpec, cfg Config, cells map[string]json.RawMessage) boo
 	return result
 }
 
-func matchRule(r Rule, raw json.RawMessage) bool {
+func matchRule(field FieldSpec, r Rule, raw json.RawMessage) bool {
 	var v any
 	ok := len(raw) > 0
 	if ok {
 		ok = json.Unmarshal(raw, &v) == nil
+		if v == nil {
+			ok = false
+		}
 	}
 	s := ""
 	if ok {
 		s = toString(v)
+	}
+	if ok && stringField(field.Type) {
+		if _, valid := v.(string); !valid && r.Op != "empty" && r.Op != "not_empty" {
+			return false
+		}
+	}
+	if ok && field.Type == "checkbox" {
+		if _, valid := v.(bool); !valid && r.Op != "empty" && r.Op != "not_empty" {
+			return false
+		}
 	}
 	switch r.Op {
 	case "empty":
@@ -241,19 +381,34 @@ func matchRule(r Rule, raw json.RawMessage) bool {
 	case "not_contains":
 		return !ok || !strings.Contains(s, toString(r.V))
 	case "is":
+		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+			a, aok := v.(float64)
+			b, bok := toFloat(r.V)
+			return ok && aok && bok && a == b
+		}
 		return ok && s == toString(r.V)
 	case "is_not":
+		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+			if !ok {
+				return true
+			}
+			a, aok := v.(float64)
+			b, bok := toFloat(r.V)
+			return aok && bok && a != b
+		}
 		return !ok || s != toString(r.V)
 	case "checked":
 		return ok && v == true
 	case "unchecked":
-		return !ok || v != true
+		return !ok || v == false
 	case "gt", "gte", "lt", "lte":
 		if !ok {
 			return false
 		}
-		if a, aok := toFloat(v); aok {
-			if b, bok := toFloat(r.V); bok {
+		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+			a, aok := v.(float64)
+			b, bok := toFloat(r.V)
+			if aok && bok {
 				switch r.Op {
 				case "gt":
 					return a > b
@@ -265,6 +420,7 @@ func matchRule(r Rule, raw json.RawMessage) bool {
 					return a <= b
 				}
 			}
+			return false
 		}
 		switch r.Op {
 		case "gt":

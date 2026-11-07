@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, REGISTRY } from "./registry";
@@ -21,11 +21,21 @@ export function Tag({ colorIndex, bg, fg, value }: { colorIndex: number; bg?: st
   );
 }
 
+/** Grid rows have a fixed height; keep the first value whole and expose the rest. */
+function CompactValues({ labels, first, action }: { labels: string[]; first?: ReactNode; action?: ReactNode }) {
+  return <span className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden whitespace-nowrap" title={labels.join("、")}>
+    {first && <span className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap">{first}</span>}
+    {labels.length > 1 && <span className="shrink-0 rounded bg-sidebar px-1 text-[12px] text-subtle" aria-label={`还有 ${labels.length - 1} 项`}>+{labels.length - 1}</span>}
+    {action}
+  </span>;
+}
+
 export function CellView({
   field,
   record,
   members,
   canEdit,
+  compact = false,
   onToggle,
   onEdit,
 }: {
@@ -33,6 +43,7 @@ export function CellView({
   record: BaseRecord;
   members: User[];
   canEdit: boolean;
+  compact?: boolean;
   onToggle?: (v: boolean | null) => void;
   onEdit?: () => void;
 }) {
@@ -58,6 +69,10 @@ export function CellView({
       return null;
     }
     case "multi_select":
+      if (compact && isStringArray(v) && v.length) {
+        const [bg, fg] = optionColor(field, v[0]);
+        return <CompactValues labels={v} first={<Tag colorIndex={-2} bg={bg} fg={fg} value={v[0]} />} />;
+      }
       return (
         <span className="flex flex-wrap gap-1 overflow-hidden">
           {isStringArray(v)
@@ -77,6 +92,7 @@ export function CellView({
       return <span className="block truncate text-[13px] text-muted-foreground">{formatTime(typeof v === "string" ? v : undefined)}</span>;
     case "link": {
       const titles = displayValue(record, field, members);
+      if (compact && isStringArray(titles) && titles.length) return <CompactValues labels={titles} first={<span className="rounded bg-[#E1EAFF] px-1.5 py-0.5 text-[12px] font-medium text-primary">{titles[0]}</span>} />;
       if (isStringArray(titles) && titles.length)
         return (
           <span className="flex flex-wrap gap-1 overflow-hidden">
@@ -95,6 +111,7 @@ export function CellView({
       return null;
     }
     case "attachment":
+      if (compact && isAttachmentArray(v) && v.length) return <CompactValues labels={v.map((a) => a.name)} first={<a href={`/api/files/${v[0].id}`} target="_blank" rel="noreferrer" className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-primary hover:underline"><Paperclip size={11} strokeWidth={1.7} className="inline align-[-1px]" /> {v[0].name}</a>} action={canEdit && onEdit ? <button className="shrink-0 rounded px-1 text-[12px] text-subtle hover:bg-hover hover:text-foreground" onClick={(e) => { e.stopPropagation(); onEdit(); }}>+ 上传</button> : undefined} />;
       return (
         <span className="flex flex-wrap gap-1 overflow-hidden">
           {isAttachmentArray(v)

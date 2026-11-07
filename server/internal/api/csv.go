@@ -19,12 +19,27 @@ type csvRowError struct {
 	Err string `json:"err"`
 }
 
-// importCSV creates/updates fields from the header row (types inferred or
-// given) and inserts every valid row; invalid rows are skipped and reported.
-// POST /api/bases/{id}/import {csv, header, types?}
+// importCSV is temporarily disabled: the legacy importer performs several
+// independent writes after checking permissions. A concurrent view lock or
+// revocation can otherwise allow writes that the caller is no longer allowed
+// to make. Restore this endpoint only after import and authorization/config
+// changes use the same transactional guard.
 func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.needBase(w, r, store.RoleEdit); !ok {
+		return
+	}
+	httpx.Error(w, http.StatusServiceUnavailable, "import_temporarily_unavailable", "导入暂不可用，请稍后重试")
+}
+
+// importCSVLegacy is kept only as a reference for a future transactional
+// implementation. It must not be registered as an HTTP handler.
+func (s *Server) importCSVLegacy(w http.ResponseWriter, r *http.Request) {
 	b, ok := s.needBase(w, r, store.RoleEdit)
 	if !ok {
+		return
+	}
+	if s.baseChannelAccess(r.Context(), r, b.ID, store.RoleEdit) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导入")
 		return
 	}
 	var in struct {
@@ -48,6 +63,10 @@ func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _ := UserFrom(r.Context())
 	ctx := r.Context()
+	if s.baseChannelAccess(ctx, r, b.ID, store.RoleEdit) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导入")
+		return
+	}
 
 	// resolve columns → fields (reuse an existing field with the same name)
 	headers := rows[0]
@@ -227,8 +246,13 @@ func inferType(values []string) string {
 
 // exportCSV streams every record as CSV. GET /api/bases/{id}/export
 func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	b, ok := s.needBase(w, r, store.RoleView)
 	if !ok {
+		return
+	}
+	if s.baseExportAccess(r.Context(), r, b.ID) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导出")
 		return
 	}
 	fields, err := s.Store.Fields(r.Context(), b.ID)
@@ -256,6 +280,12 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		_ = wr.Write(row)
 	}
 	wr.Flush()
+	// The export may have taken long enough for access or view restrictions to
+	// change. Do not write headers or buffered data until the final check.
+	if s.baseExportAccess(r.Context(), r, b.ID) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导出")
+		return
+	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=base-%d.csv", b.ID))
 	_, _ = w.Write(buf.Bytes())

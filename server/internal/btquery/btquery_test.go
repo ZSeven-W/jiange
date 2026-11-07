@@ -28,7 +28,7 @@ func TestCompileBindsValuesAndRejectsUnknownFields(t *testing.T) {
 	if strings.Contains(where, "DROP TABLE") || strings.Contains(where, ";") {
 		t.Fatalf("value leaked into SQL: %s", where)
 	}
-	if len(args) != 2 || args[0] != "'; DROP TABLE users; --" || args[1] != 5 {
+	if len(args) != 2 || args[0] != "'; DROP TABLE users; --" || args[1] != float64(5) {
 		t.Fatalf("args: %v", args)
 	}
 	if !strings.Contains(where, "$1") || !strings.Contains(where, "$2") {

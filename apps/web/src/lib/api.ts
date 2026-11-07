@@ -134,10 +134,12 @@ export interface View {
 }
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
-  get: (id: number) =>
-    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown> }>(
+  get: (id: number, signal?: AbortSignal) =>
+    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean }>(
       "GET",
       `/api/bases/${id}`,
+      undefined,
+      signal,
     ),
   /** 双向关联：反向引用列表 */
   reverse: (id: number) =>
@@ -156,8 +158,8 @@ export const baseApi = {
   addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
   patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
   deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
-  query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }) =>
-    request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q),
+  query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }, signal?: AbortSignal) =>
+    request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q, signal),
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
 };

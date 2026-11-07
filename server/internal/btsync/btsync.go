@@ -89,7 +89,7 @@ func (h *Hub) Rooms() int {
 
 // Serve upgrades an authenticated request for one base and blocks until the
 // connection ends. Messages from the client are only hello {lastSeq}.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64) {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64, checks ...func(context.Context) error) {
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.OriginPatterns})
 	if err != nil {
 		return
@@ -97,8 +97,12 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64) {
 	ws.SetReadLimit(1 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var check func(context.Context) error
+	if len(checks) > 0 {
+		check = checks[0]
+	}
 	c := &conn{out: make(chan []byte, outBuffer)}
-	go c.writeLoop(ctx, ws)
+	go c.writeLoop(ctx, ws, check, cancel)
 	room := h.room(baseID)
 	defer h.release(room)
 	room.join(c)
@@ -116,6 +120,10 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64) {
 				LastSeq int64  `json:"lastSeq"`
 			}
 			if json.Unmarshal(data, &msg) == nil && msg.T == "hello" {
+				if check != nil && check(ctx) != nil {
+					cancel()
+					return
+				}
 				room.replay(c, msg.LastSeq)
 			}
 		}
@@ -128,6 +136,10 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, baseID int64) {
 			case <-ctx.Done():
 				return
 			case <-ping.C:
+				if check != nil && check(ctx) != nil {
+					cancel()
+					return
+				}
 				if err := ws.Ping(ctx); err != nil {
 					cancel()
 					return
@@ -244,13 +256,20 @@ func (c *conn) send(b []byte) {
 	}
 }
 
-func (c *conn) writeLoop(ctx context.Context, ws *websocket.Conn) {
+func (c *conn) writeLoop(ctx context.Context, ws *websocket.Conn, check func(context.Context) error, cancel context.CancelFunc) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case b := <-c.out:
+			// Re-evaluate access immediately before every replay or live frame.
+			// The payload can include the complete row, including hidden fields.
+			if check != nil && check(ctx) != nil {
+				cancel()
+				return
+			}
 			if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
+				cancel()
 				return
 			}
 		}

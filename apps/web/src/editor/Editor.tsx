@@ -45,10 +45,10 @@ import { AddIcon } from "@/components/FeishuIcons";
 import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
-import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
+import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
 import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
-import type { SlashInsertion } from "./slashInsert";
+import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
 import { validEditorSelection } from "./selectionSafety";
@@ -118,7 +118,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
-  const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]>; findRanges?: { start: number; end: number; active: boolean }[] } | null>(null);
+  const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]>; findRanges?: { start: number; end: number; active: boolean }[]; slashQuery?: SlashQuery } | null>(null);
   const blockedComposition = useRef<Sel | null>(null);
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), []);
@@ -163,9 +163,17 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     fromButton?: boolean;
     insertAfter?: OpId;
     buttonQuery?: string;
+    query?: SlashQuery;
+    buttonContext?: { doc: Doc; parent: OpId; type: string };
   } | null>(null);
   const slashRef = useRef(slash);
   slashRef.current = slash;
+  // Keep callbacks observing the latest menu even before React renders.
+  const changeSlash = useCallback((next: typeof slash | ((current: typeof slash) => typeof slash)) => {
+    const value = typeof next === "function" ? next(slashRef.current) : next;
+    slashRef.current = value;
+    setSlash(value);
+  }, []);
   const menuComposition = useRef<OpId | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingUpload = useRef<{ captured: SlashInsertion; client: SyncDoc["client"]; type: string; parent: OpId; cursor: Pos | null; boundaryIds?: OpId[] } | null>(null);
@@ -350,7 +358,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const emptyParagraph = d.blockInfo(b).type === "paragraph" && len(d, b) === 0;
       const at = { b, o: emptyParagraph ? 0 : len(d, b) };
       sel.current = { a: at, f: at };
-      setSlash({ at, index: 0, kind: "/", fromButton: true, insertAfter: emptyParagraph ? undefined : b, buttonQuery: "" });
+      const info = d.blockInfo(b);
+      changeSlash({ at, index: 0, kind: "/", fromButton: true, insertAfter: emptyParagraph ? undefined : b, buttonQuery: "", buttonContext: { doc: d, parent: info.parent, type: info.type } });
       force((x) => x + 1);
       um.seal();
     },
@@ -422,14 +431,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     publish();
     updateOverlays();
     // slash menu closes when the caret leaves its query
-    setSlash((m) => {
+    changeSlash((m) => {
       if (!m) return m;
       const d = sync.client.doc;
       if (!d || !eqId(m.at.b, f.b) || !collapsed(sel.current!)) return null;
       if (m.fromButton) return f.o === m.at.o ? m : null;
-      if (f.o <= m.at.o) return null;
-      const q = [...d.text(f.b)].slice(m.at.o, f.o).join("");
-      return q.startsWith(m.kind) && !/\s/.test(q) && q.length <= 16 ? m : null;
+      const q = m.query && resolveSlashQuery(d, m.query);
+      if (!q || f.o !== q.end || /\s/.test(q.text) || [...q.text].length > 16) return null;
+      return q.start === m.at.o ? m : { ...m, at: { b: f.b, o: q.start } };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publish, um, sync.client]);
@@ -519,12 +528,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         if (e.inputType === "insertText" || e.inputType === "insertReplacementText") {
           e.preventDefault();
           const value = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
-          setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + value).slice(0, 32), index: 0 } : m);
+          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + value).slice(0, 32), index: 0 } : m);
           return;
         }
         if (e.inputType.startsWith("delete")) {
           e.preventDefault();
-          setSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
+          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
           return;
         }
       }
@@ -533,6 +542,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const s = sel.current,
         d = sync.client.doc;
       if (!s || !d || !validEditorSelection(d, s)) return;
+      const active = slashRef.current;
+      const oldQuery = active && !active.fromButton ? active.query : undefined;
+      const oldRange = oldQuery && resolveSlashQuery(d, oldQuery);
+      const tracking = !!oldRange && collapsed(s) && eqId(s.f.b, oldQuery!.block) && s.f.o === oldRange.end;
+      if (active && !active.fromButton && !tracking) changeSlash(null);
+      if (active && !active.fromButton && e.inputType !== "insertText" && e.inputType !== "insertReplacementText" && !e.inputType.startsWith("delete")) changeSlash(null);
+      const finishDelete = () => {
+        if (!tracking || !oldQuery || slashRef.current?.query !== oldQuery) return;
+        const end = sel.current?.f;
+        const query = end && updateSlashQuery(oldQuery, end, "delete");
+        changeSlash(query ? { ...active!, query, at: { b: query.block, o: resolveSlashQuery(d, query)!.start }, index: 0 } : null);
+      };
       switch (e.inputType) {
         case "insertText":
         case "insertReplacementText": {
@@ -540,8 +561,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           if (!t) return;
           insertText(t);
           const end = sel.current?.f;
-          if ((t === "/" || t === "@") && end && !isColumnText(d, end.b)) setSlash({ at: { b: end.b, o: Math.max(0, end.o - 1) }, index: 0, kind: t });
-          else setSlash((cur) => (cur ? { ...cur, index: 0 } : cur)); // 过滤词变化 → 高亮回到第一项
+          if ((t === "/" || t === "@") && end && !isColumnText(d, end.b)) {
+            const at = { b: end.b, o: Math.max(0, end.o - 1) };
+            const query = captureSlashQuery(d, at, end, t);
+            changeSlash(query ? { at, query, index: 0, kind: t } : null);
+          } else if (tracking && oldQuery && end && slashRef.current?.query === oldQuery) {
+            const query = updateSlashQuery(oldQuery, end, "append");
+            changeSlash(query ? { ...active!, query, at: { b: query.block, o: resolveSlashQuery(d, query)!.start }, index: 0 } : null);
+          }
           return;
         }
         case "insertLineBreak":
@@ -568,7 +595,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           if (!e.inputType.startsWith("delete")) return;
       }
       // deletions
-      if (!collapsed(s)) return run((tx, s2) => deleteRange(tx, s2), "delete");
+      if (!collapsed(s)) { run((tx, s2) => deleteRange(tx, s2), "delete"); finishDelete(); return; }
       const ranges = e.getTargetRanges();
       if (ranges.length) {
         const r = ranges[0];
@@ -576,13 +603,13 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           f = domToPos(el, r.endContainer, r.endOffset);
         if (a && f && !validEditorSelection(d, { a, f })) { setColumnNotice("编辑位置已变化，请重新选择位置。"); return; }
         if (a && f && !(eqId(a.b, f.b) && a.o === f.o)) {
-          if (eqId(a.b, f.b)) return run((tx) => deleteRange(tx, { a, f }), "delete");
+          if (eqId(a.b, f.b)) { run((tx) => deleteRange(tx, { a, f }), "delete"); finishDelete(); return; }
         }
       }
       const back = e.inputType.includes("Backward");
       const p = s.a;
-      if (back && p.o === 0) return run((tx) => joinBackward(tx, p.b));
-      if (!back && p.o === len(d, p.b)) return run((tx) => joinForward(tx, p.b));
+      if (back && p.o === 0) { run((tx) => joinBackward(tx, p.b)); finishDelete(); return; }
+      if (!back && p.o === len(d, p.b)) { run((tx) => joinForward(tx, p.b)); finishDelete(); return; }
       const step = e.inputType.includes("Word") ? wordLen(d.text(p.b), p.o, back) : 1;
       run(
         (tx) =>
@@ -592,6 +619,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           }),
         "delete",
       );
+      finishDelete();
     };
     const onCompStart = (event: CompositionEvent) => {
       if (readOnlyRef.current) return;
@@ -614,7 +642,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       // Keep selected characters intact until composition actually commits.
       const anchor = captureCompositionSelection(d, s);
       if (!anchor) { event.preventDefault(); blockedComposition.current = s; setColumnNotice("输入位置无效，请重新选择文字。"); return; }
-      composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b), findRanges: findRangesRef.current.get(idKey(s.a.b)) ?? [] };
+      const menu = slashRef.current;
+      const range = menu?.query && resolveSlashQuery(d, menu.query);
+      const slashQuery = menu?.query && range && collapsed(s) && eqId(s.f.b, menu.query.block) && s.f.o === range.end ? menu.query : undefined;
+      if (menu && !menu.fromButton && !slashQuery) changeSlash(null);
+      composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b), findRanges: findRangesRef.current.get(idKey(s.a.b)) ?? [], slashQuery };
     };
     const onCompEnd = (e: CompositionEvent) => {
       if (blockedComposition.current) {
@@ -645,7 +677,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const block = menuComposition.current;
         menuComposition.current = null;
         setRemount((m) => ({ ...m, [idKey(block)]: (m[idKey(block)] ?? 0) + 1 }));
-        if (e.data) setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + e.data).slice(0, 32), index: 0 } : m);
+        if (e.data) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + e.data).slice(0, 32), index: 0 } : m);
         return;
       }
       if (!c) return;
@@ -668,7 +700,17 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         ...m,
         [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1,
       }));
-      if (e.data) insertText(e.data, "ime");
+      const menu = slashRef.current;
+      const range = c.slashQuery && currentDoc && resolveSlashQuery(currentDoc, c.slashQuery);
+      const track = !!range && menu?.query === c.slashQuery && !!at && eqId(at.b, c.slashQuery!.block) && at.o === range.end;
+      if (menu && !menu.fromButton && !track) changeSlash(null);
+      if (e.data) {
+        insertText(e.data, "ime");
+        if (track && c.slashQuery && sel.current?.f) {
+          const query = updateSlashQuery(c.slashQuery, sel.current.f, "append");
+          changeSlash(query ? { ...menu!, query, at: { b: query.block, o: resolveSlashQuery(currentDoc!, query)!.start }, index: 0 } : null);
+        }
+      }
       else force((x) => x + 1);
     };
     el.addEventListener("beforeinput", onBeforeInput);
@@ -683,7 +725,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   const slashItems = useMemo(() => {
     if (!slash || !doc || !sel.current || !doc.hasBlock(slash.at.b)) return [];
-    const q = slash.fromButton ? (slash.buttonQuery ?? "") : [...doc.text(slash.at.b)].slice(slash.at.o + 1, sel.current.f.o).join("");
+    const resolved = slash.query && resolveSlashQuery(doc, slash.query);
+    if (!slash.fromButton && !resolved) return [];
+    const q = slash.fromButton ? (slash.buttonQuery ?? "") : [...resolved!.text].slice(1).join("");
     if (slash.kind === "@") {
       const ql = q.toLowerCase();
       const docItems = docs
@@ -712,7 +756,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     return filterItems(q).filter((it) => upload || (it.id !== "image" && it.id !== "file"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slash, doc, sync.version, sel.current, docs]);
+  }, [slash, doc, sync.version, sel.current, docs, people]);
+
+  useEffect(() => {
+    const menu = slashRef.current;
+    if (!menu || menu.fromButton) return;
+    const current = sync.client.doc;
+    const range = current && menu.query && resolveSlashQuery(current, menu.query);
+    if (!range) changeSlash(null);
+    else if (menu.at.o !== range.start) changeSlash({ ...menu, at: { b: menu.at.b, o: range.start } });
+  }, [sync.version, sync.client, changeSlash]);
 
   /** Upload first; remove the captured command only after a successful insert. */
   const insertFiles = async (files: File[], context: { captured: SlashInsertion; client: SyncDoc["client"]; type: string; parent: OpId; cursor: Pos | null; boundaryIds?: OpId[] }) => {
@@ -760,22 +813,26 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   const applySlash = async (it: MenuItem) => {
     if (readOnlyRef.current) return;
-    const m = slash;
-    setSlash(null);
+    const m = slashRef.current;
+    changeSlash(null);
     if (!m) return;
     // A remote mark change can turn a previously typed command into a formula
     // while its menu is open. Never remove part of that formula as a command.
-    const original = sync.client.doc, current = sel.current;
+    const original = sync.client.doc;
+    const checked = original && m.query && resolveSlashQuery(original, m.query);
     if (!m.fromButton) {
-      if (!original || !current || !eqId(m.at.b, current.f.b) || !original.hasBlock(m.at.b) || m.at.o < 0 || m.at.o >= current.f.o) {
+      if (!original || !m.query || !checked) {
         setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
         return;
       }
-      const chars = original.richChars(m.at.b), a = m.at.o, b = current.f.o;
-      if (chars[a]?.ch !== m.kind || chars.slice(a, b).some((char) => !!char.marks.math)) {
+    } else {
+      const context = m.buttonContext;
+      if (!original || !context || context.doc !== original || !original.hasBlock(m.at.b)) {
         setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
         return;
       }
+      const info = original.blockInfo(m.at.b);
+      if (info.type !== context.type || !eqId(info.parent, context.parent)) { setColumnNotice("命令位置已发生变化，原文已保留，请重试。"); return; }
     }
     const targetBlock = (tx: Tx): OpId | null => {
       const anchor = m.insertAfter ?? m.at.b;
@@ -793,14 +850,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       return anchor;
     };
     if (it.id.startsWith("doc:")) {
-      run((tx, s) => {
-        tx.delete(m.at.b, m.at.o, s.f.o);
-        const n = tx.insert(m.at.b, m.at.o, it.label);
-        tx.format(m.at.b, m.at.o, m.at.o + n, "link", `#/doc/${it.id.slice(4)}`);
-        tx.insert(m.at.b, m.at.o + n, " ");
-        tx.format(m.at.b, m.at.o + n, m.at.o + n + 1, "link", null);
-        return { b: m.at.b, o: m.at.o + n + 1 };
+      let applied = false;
+      run((tx) => {
+        const start = m.query ? consumeSlashQuery(tx, m.query) : null;
+        if (start === null) return;
+        const n = tx.insert(m.at.b, start, it.label);
+        tx.format(m.at.b, start, start + n, "link", `#/doc/${it.id.slice(4)}`);
+        tx.insert(m.at.b, start + n, " ");
+        tx.format(m.at.b, start + n, start + n + 1, "link", null);
+        applied = true;
+        return { b: m.at.b, o: start + n + 1 };
       });
+      if (!applied) setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
       um.seal();
       return;
     }
@@ -808,19 +869,25 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const rest = it.id.slice(5);
       const uid = Number(rest.split(":")[0]);
       const name = decodeURIComponent(rest.split(":").slice(1).join(":"));
-      run((tx, s) => {
-        tx.delete(m.at.b, m.at.o, s.f.o);
-        const n = tx.insert(m.at.b, m.at.o, `@${name} `);
-        tx.format(m.at.b, m.at.o, m.at.o + n - 1, "mention", String(uid));
-        return { b: m.at.b, o: m.at.o + n };
+      let applied = false;
+      run((tx) => {
+        const start = m.query ? consumeSlashQuery(tx, m.query) : null;
+        if (start === null) return;
+        const n = tx.insert(m.at.b, start, `@${name} `);
+        tx.format(m.at.b, start, start + n - 1, "mention", String(uid));
+        applied = true;
+        return { b: m.at.b, o: start + n };
       });
+      if (!applied) setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
       um.seal();
-      onMentionPerson?.(uid, name);
+      if (applied) onMentionPerson?.(uid, name);
       return;
     }
     if (it.id === "image" || it.id === "file") {
       const originalDoc = sync.client.doc;
-      const captured = originalDoc && captureSlashInsertion(originalDoc, m.at, sel.current, !!m.fromButton, m.insertAfter);
+      const at = checked ? { b: m.at.b, o: checked.start } : m.at;
+      const end = checked ? { b: m.at.b, o: checked.end } : null;
+      const captured = originalDoc && captureSlashInsertion(originalDoc, at, end ? { a: end, f: end } : null, !!m.fromButton, m.insertAfter);
       if (captured && fileInput.current) {
         const info = originalDoc!.blockInfo(captured.anchor);
         pendingUpload.current = { captured, client: sync.client, type: info.type, parent: info.parent, cursor: sel.current ? { ...sel.current.f } : null };
@@ -831,7 +898,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     if (it.id === "math" || it.id === "diagram" || it.id === "video" || it.id === "bookmark") {
       const originalDoc = sync.client.doc;
-      const captured = originalDoc && captureSlashInsertion(originalDoc, m.at, sel.current, !!m.fromButton, m.insertAfter);
+      const at = checked ? { b: m.at.b, o: checked.start } : m.at;
+      const end = checked ? { b: m.at.b, o: checked.end } : null;
+      const captured = originalDoc && captureSlashInsertion(originalDoc, at, end ? { a: end, f: end } : null, !!m.fromButton, m.insertAfter);
       if (!originalDoc || !captured) return;
       const input = it.id === "math"
         ? await askText("公式（LaTeX）", "例如 \\frac{a}{b} 或 x^2 + y^2 = z^2")
@@ -865,11 +934,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       um.seal();
       return;
     }
-    run((tx, s) => {
+    let applied = false;
+    run((tx) => {
+      // Validate before creating a block, so a stale query cannot leave partial
+      // mutations behind.
+      if (!m.fromButton && (!m.query || !resolveSlashQuery(tx.doc, m.query))) return;
       const b = targetBlock(tx);
       if (!b) return;
-      if (!m.fromButton) tx.delete(m.at.b, m.at.o, s.f.o);
-      const offset = m.fromButton ? 0 : m.at.o;
+      const offset = m.query ? consumeSlashQuery(tx, m.query) : 0;
+      if (offset === null) return;
+      applied = true;
       if (it.id === "divider") {
         const info = tx.doc.blockInfo(b);
         if (len(tx.doc, b) === 0) {
@@ -909,6 +983,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
       return { b, o: offset };
     }, undefined, it.id === "columns");
+    if (!applied) setColumnNotice("命令内容或编辑位置已变化，原文已保留，请重试。");
     um.seal();
   };
 
@@ -917,10 +992,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     if (e.nativeEvent.isComposing || composing.current) return;
     readSel();
     const mod = e.metaKey || e.ctrlKey;
-    if (slash && e.key === "Escape") { e.preventDefault(); setSlash(null); return; }
+    if (slash && e.key === "Escape") { e.preventDefault(); changeSlash(null); return; }
     if (slash?.fromButton && (e.key === "Backspace" || e.key === "Delete")) {
       e.preventDefault();
-      if (e.key === "Backspace") setSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
+      if (e.key === "Backspace") changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), index: 0 } : m);
       return;
     }
     if (slash?.fromButton && e.key === "Tab") {
@@ -933,10 +1008,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const n = slashItems.length;
-        setSlash({
-          ...slash,
-          index: (slash.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n,
-        });
+        changeSlash((current) => current ? { ...current, index: (current.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n } : null);
         return;
       }
       if (e.key === "Enter") {
@@ -1047,11 +1119,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const raw = e.clipboardData.getData(CLIP_MIME);
     if (slashRef.current?.fromButton) {
       if (files.length) { setColumnNotice("请先选择图片或附件命令，再选择文件。"); return; }
-      if (plain) setSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), index: 0 } : m);
+      if (plain) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), index: 0 } : m);
       else setColumnNotice("插入菜单中只能粘贴文字，请先选择命令或关闭菜单。");
       return;
     }
     const currentDoc = sync.client.doc;
+    const active = slashRef.current, selection = sel.current;
+    const oldQuery = active?.query;
+    const oldRange = currentDoc && oldQuery && resolveSlashQuery(currentDoc, oldQuery);
+    const tracking = !!oldRange && !!selection && collapsed(selection) && eqId(selection.f.b, oldQuery!.block) && selection.f.o === oldRange.end;
+    if (active && !tracking) changeSlash(null);
     if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
       if (files.length) { setColumnNotice("暂不支持在分栏中粘贴图片或附件，请先将文件插入正文。"); return; }
       const clip = columnClipboardBlocks(raw, plain);
@@ -1064,6 +1141,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       return;
     }
     if (files.length) {
+      if (active) changeSlash(null);
       if (!upload || !sel.current) { setColumnNotice("当前无法上传附件，原内容已保留。"); return; }
       const d = sync.client.doc, selection = sel.current;
       if (!d || !collapsed(selection) || !d.hasBlock(selection.f.b)) { setColumnNotice("请先将光标移至段首或段尾再插入附件。"); return; }
@@ -1080,6 +1158,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (isSourceBlock(tx.doc, at.b)) at = { b: tx.create("paragraph", at.b, tx.doc.blockInfo(at.b).parent), o: 0 };
       return pasteBlocks(tx, at, clip);
     });
+    if (tracking && oldQuery && slashRef.current?.query === oldQuery && sel.current?.f) {
+      const query = updateSlashQuery(oldQuery, sel.current.f, "append");
+      changeSlash(query ? { ...active!, query, at: { b: query.block, o: resolveSlashQuery(currentDoc!, query)!.start }, index: 0 } : null);
+    }
     um.seal();
   };
 
@@ -1126,10 +1208,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   const tb = sel.current && doc && validEditorSelection(doc, sel.current) && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
   const curType = sel.current && doc?.hasBlock(sel.current.f.b) ? doc.blockInfo(sel.current.f.b).type : "paragraph";
-  const slashPos = slash && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slash.at) : null;
+  const slashRange = slash?.query && doc ? resolveSlashQuery(doc, slash.query) : null;
+  const slashAt = slashRange && slash ? { b: slash.at.b, o: slashRange.start } : slash?.at;
+  const slashPos = slash && (slash.fromButton || slashRange) && slashAt && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slashAt) : null;
   const base = wrap.current?.getBoundingClientRect();
   useEffect(() => {
-    if (readOnly) { setSlash(null); setToolbar(null); setDrag(null); pendingUpload.current = null; }
+    if (readOnly) { changeSlash(null); setToolbar(null); setDrag(null); pendingUpload.current = null; }
   }, [readOnly]);
 
   return (
@@ -1316,7 +1400,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           items={slashItems}
           index={Math.min(slash.index, Math.max(0, slashItems.length - 1))}
           onPick={applySlash}
-          onHover={(i) => setSlash({ ...slash, index: i })}
+          onHover={(i) => changeSlash((current) => current ? { ...current, index: i } : null)}
         />
       )}
     </div>

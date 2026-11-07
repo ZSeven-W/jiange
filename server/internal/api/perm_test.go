@@ -87,7 +87,7 @@ func TestLockedViewRowColumnPerms(t *testing.T) {
 	}
 	r = cGet(t, c, u)
 	json.NewDecoder(r.Body).Decode(&own)
-	if len(own.Records) != 5 || len(own.Fields) != 3 { // 3 个默认空行 + 2 条数据；标题 + 密级 + 内容
+	if len(own.Records) != 7 || len(own.Fields) != 3 { // 5 个默认空行 + 2 条数据；文本 + 密级 + 内容
 		t.Fatalf("owner view: %d fields %d records", len(own.Fields), len(own.Records))
 	}
 
@@ -97,10 +97,10 @@ func TestLockedViewRowColumnPerms(t *testing.T) {
 	if res.StatusCode != 403 {
 		t.Fatalf("hidden write: %d", res.StatusCode)
 	}
-	// guest 写可见字段 → 200
+	// 受限视图下写入暂时整体禁止，避免绕过行级限制。
 	res = send(t, guest, "PATCH", u+"/records/"+strconv.FormatInt(own.Records[0].ID, 10),
 		map[string]any{"cells": map[string]any{sk: "公开（改）"}})
-	if res.StatusCode != 200 {
-		t.Fatalf("visible write: %d", res.StatusCode)
+	if res.StatusCode != 403 {
+		t.Fatalf("restricted write: %d", res.StatusCode)
 	}
 }

@@ -33,7 +33,6 @@ export function Kanban({
   members,
   groupFieldId,
   onMutate,
-  onPickGroup,
 }: {
   baseId: number;
   canEdit: boolean;
@@ -42,7 +41,6 @@ export function Kanban({
   members: User[];
   groupFieldId?: number;
   onMutate: () => void;
-  onPickGroup: () => void;
 }) {
   const groupFields = fields.filter((f) => f.type === "select");
   const [drag, setDrag] = useState<{ rid: number } | null>(null);
@@ -54,11 +52,7 @@ export function Kanban({
       <div className="grid flex-1 place-items-center text-[14px] text-muted-foreground">
         <div className="space-y-2 text-center">
           <p>看板需要一个单选字段来分列</p>
-          {canEdit && (
-            <button className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover" onClick={onPickGroup}>
-              先添加一个单选字段
-            </button>
-          )}
+          {canEdit && <p className="text-[13px] text-subtle">请先在表格视图中添加一个单选字段</p>}
         </div>
       </div>
     );

@@ -214,6 +214,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.Kind == "base" && s.baseChannelAccess(r.Context(), r, d.ID, store.RoleEdit) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持上传附件")
+		return
+	}
 	if s.Blobs == nil {
 		httpx.Error(w, http.StatusServiceUnavailable, "no_storage", "attachments are not configured")
 		return
@@ -229,6 +233,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(f, maxUpload+1))
 	if err != nil || len(body) > maxUpload {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "too_large", "文件不能超过 20MB")
+		return
+	}
+	if d.Kind == "base" && s.baseChannelAccess(r.Context(), r, d.ID, store.RoleEdit) != nil {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持上传附件")
 		return
 	}
 	mime := hdr.Header.Get("Content-Type")
@@ -271,6 +279,12 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 	authorize := func() (bool, error) {
 		meta, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID)
 		if err != nil {
+			return false, store.ErrNotFound
+		}
+		if meta.Kind == "base" && s.baseChannelAccess(r.Context(), r, f.DocID, store.RoleView) != nil {
+			// A file ID alone cannot establish that the caller can see the row
+			// and field which contain it. Until references are projected by
+			// access policy, do not serve files to restricted Base viewers.
 			return false, store.ErrNotFound
 		}
 		requireRaster := meta.CopyProtected && meta.Role != store.RoleManage

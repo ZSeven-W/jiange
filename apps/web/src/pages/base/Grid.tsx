@@ -85,7 +85,7 @@ export function Grid({
     };
   }, []);
 
-  const width = (f: Field) => widths[f.id] ?? REGISTRY[f.type].width;
+  const width = (f: Field) => widths[f.id] ?? (f.id === fields[0]?.id && f.type === "text" ? 280 : REGISTRY[f.type].width);
   const saveWidth = (fid: number, w: number) => {
     setWidths((prev) => {
       const next = { ...prev, [fid]: w };
@@ -108,9 +108,10 @@ export function Grid({
     if (!el) return;
     // with virtualization the cell may not be mounted: first bring the target
     // into the scroll window, then let scrollIntoView fine-tune
-    const targetTop = r * 36;
-    if (targetTop < el.scrollTop) el.scrollTop = targetTop;
-    else if (targetTop + 36 > el.scrollTop + el.clientHeight) el.scrollTop = targetTop + 36 - el.clientHeight;
+    const headerHeight = el.querySelector("thead")?.getBoundingClientRect().height ?? 36;
+    const targetTop = headerHeight + r * 32;
+    if (targetTop < el.scrollTop + headerHeight) el.scrollTop = Math.max(0, targetTop - headerHeight);
+    else if (targetTop + 32 > el.scrollTop + el.clientHeight) el.scrollTop = targetTop + 32 - el.clientHeight;
     const rec = records[r];
     const fld = fields[f];
     if (!rec || !fld) return;
@@ -340,7 +341,7 @@ export function Grid({
   const idxOf = new Map(records.map((r, i) => [r.id, i]));
 
   // --- virtualization: render only the visible window (plus overscan) ---
-  const ROW_H = 36; // h-9
+  const ROW_H = 32; // h-8
   const OVERSCAN = 6;
   const r0 = Math.max(0, Math.floor(vp.top / ROW_H) - OVERSCAN);
   const r1 = Math.min(rows, Math.ceil((vp.top + vp.h) / ROW_H) + OVERSCAN);
@@ -357,8 +358,8 @@ export function Grid({
   const winFields = fields.slice(c0, c1);
 
   const renderRow = (rec: BaseRecord, i: number) => (
-            <tr key={rec.id} className="group h-9">
-              <td className="sticky left-0 z-10 w-14 border bg-sidebar/60 px-2.5 text-[12px] text-subtle">
+            <tr key={rec.id} className="group h-8">
+              <td className="sticky left-0 z-10 w-14 border bg-surface px-2.5 text-[12px] text-subtle">
                 <span className="group-hover:hidden">{i + 1}</span>
                 <span className="hidden items-center justify-center gap-0.5 group-hover:flex">
                   <button className="text-subtle hover:text-primary" title="展开记录" onClick={() => setDetail(rec)} data-expand={rec.id}>
@@ -402,16 +403,17 @@ export function Grid({
                         onCommit={(v, dir) => setCell(rec, f, v, dir)}
                         onCancel={() => setEdit(null)}
                       />
-                    ) : (
+                    ) : <div className="flex h-[31px] min-w-0 items-center overflow-hidden" data-grid-cell-content>
                       <CellView
                         field={f}
                         record={rec}
                         members={members}
+                        compact
                         canEdit={canEdit && !ro}
                         onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
                         onEdit={() => startEdit(i, j)}
                       />
-                    )}
+                    </div>}
                   </td>
                 );
               })}
@@ -453,15 +455,15 @@ export function Grid({
         style={{ width: 56 + totalW + (canEdit ? 44 : 0) }}
       >
         <thead>
-          <tr className="h-9 bg-sidebar text-left text-[13px] text-muted-foreground">
-            <th className="sticky left-0 top-0 z-20 w-14 border px-2.5 font-normal" />
+          <tr className="h-9 bg-surface text-left text-[13px] text-muted-foreground">
+            <th className="sticky left-0 top-0 z-40 w-14 border bg-surface px-2.5 font-normal" />
             {leadW > 0 && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
             {winFields.map((f, wi) => {
               const i = c0 + wi;
               return (
               <th
                 key={f.id}
-                className={cn("group/th sticky top-0 z-10 border bg-sidebar px-2.5 font-medium", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
+                className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
                 style={{ width: width(f), minWidth: width(f) }}
                 draggable
                 data-th={f.id}
@@ -479,11 +481,8 @@ export function Grid({
                 onDrop={(e) => dropOn(e, drag.at ?? i)}
                 onDragEnd={() => setDrag({ fid: 0, at: null })}
               >
-                {editField?.id === f.id ? (
-                  <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => baseApi.patchField(baseId, f.id, patch).then(onMutate)} />
-                ) : (
                   <div className="flex items-center gap-1">
-                    <span className="mr-0.5 cursor-grab text-subtle" title="拖拽排序" data-drag-handle>
+                    <span className="mr-0.5 hidden cursor-grab text-subtle group-hover/th:inline" title="拖拽排序" data-drag-handle>
                       ⠿
                     </span>
                     <span className="mr-1.5 text-subtle"><TypeGlyph t={f.type} /></span>
@@ -494,7 +493,7 @@ export function Grid({
                       </span>
                     )}
                   </div>
-                )}
+                {editField?.id === f.id && <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => baseApi.patchField(baseId, f.id, patch).then(onMutate)} />}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
               );
@@ -502,7 +501,7 @@ export function Grid({
             {tailW > 0 && <th style={{ width: tailW }} className="border p-0" aria-hidden />}
             {canEdit && (
               <th
-                className="sticky top-0 z-10 relative w-11 border bg-sidebar text-center font-normal"
+                className="sticky top-0 z-30 relative w-11 border bg-surface text-center font-normal"
                 onDragOver={(e) => {
                   e.preventDefault();
                   if (drag.at !== fields.length) setDrag((d) => ({ ...d, at: fields.length }));
@@ -565,10 +564,10 @@ export function Grid({
               );
             })}
           {canEdit && (
-            <tr className="h-9">
+            <tr className="h-8">
               <td colSpan={winFields.length + 3} className="sticky left-0 border px-4">
-                <button className="text-[13px] text-subtle hover:text-foreground" onClick={() => baseApi.addRecord(baseId).then(onMutate)}>
-                  + 新增一行
+                <button className="text-[18px] leading-none text-subtle hover:text-foreground" aria-label="新增一行" onClick={() => baseApi.addRecord(baseId).then(onMutate)}>
+                  +
                 </button>
               </td>
             </tr>

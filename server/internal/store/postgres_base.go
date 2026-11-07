@@ -15,6 +15,73 @@ func (p *Postgres) CreateBase(ctx context.Context, ws, creator int64, parent *in
 		VALUES ($1, $2, 'base', 'V', $3, $4) RETURNING `+docCols+creatorName, ws, parent, title, creator))
 }
 
+// CreateInitializedBase inserts the directory entry and default content in
+// one transaction. Locks make the membership and parent checks authoritative
+// through commit even if another request revokes access or removes the parent.
+func (p *Postgres) CreateInitializedBase(ctx context.Context, ws, creator int64, parent *int64, title string) (result DocMeta, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var member int64
+		if err := tx.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, ws, creator).Scan(&member); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrForbidden
+			}
+			return err
+		}
+		if parent != nil {
+			// Lock the full parent chain, so trashing any ancestor cannot race
+			// publication of a child under a deeper descendant.
+			role, _, _, err := lockCopySource(ctx, tx, *parent, creator)
+			if errors.Is(err, ErrNotFound) || err == nil && RoleRank(role) < RoleRank(RoleView) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			var parentWS int64
+			if err := tx.QueryRow(ctx, `SELECT workspace_id FROM nodes WHERE id=$1 AND deleted_at IS NULL`, *parent).Scan(&parentWS); err != nil {
+				return notFound(err)
+			}
+			if parentWS != ws {
+				return ErrNotFound
+			}
+			var invalidAncestor bool
+			err = tx.QueryRow(ctx, `WITH RECURSIVE a AS (
+				SELECT id,parent_id,workspace_id,deleted_at,ARRAY[id] AS seen FROM nodes WHERE id=$1
+				UNION ALL SELECT n.id,n.parent_id,n.workspace_id,n.deleted_at,a.seen||n.id
+				FROM nodes n JOIN a ON n.id=a.parent_id WHERE NOT n.id=ANY(a.seen)
+			) SELECT EXISTS(SELECT 1 FROM a WHERE deleted_at IS NOT NULL OR workspace_id<>$2)`, *parent, ws).Scan(&invalidAncestor)
+			if err != nil {
+				return err
+			}
+			if invalidAncestor {
+				return ErrNotFound
+			}
+		}
+		var err error
+		result, err = scanDoc(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
+			VALUES ($1,$2,'base','V',$3,$4) RETURNING `+docCols+creatorName, ws, parent, title, creator))
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO base_fields (base_id,name,type,position) VALUES ($1,'文本','text',1)`, result.ID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO bt_views (base_id,type,name,config,pos) VALUES ($1,'grid','表格','{}'::jsonb,1)`, result.ID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO base_records (base_id,cells,position,creator_id)
+			SELECT $1,'{}'::jsonb, n, $2 FROM generate_series(1,5) AS n`, result.ID, creator)
+		return err
+	})
+	if err != nil {
+		if retryableRestoreConflict(err) {
+			return DocMeta{}, ErrConflict
+		}
+		return DocMeta{}, err
+	}
+	return result, nil
+}
+
 func notFound(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { applyBtEvent, type BaseData, type BtEvent } from "./sync";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyBtEvent, startRestrictedPolling, type BaseData, type BtEvent } from "./sync";
 import type { BaseRecord, Field } from "@/lib/api";
 
 const data = (): BaseData => ({
@@ -13,6 +13,56 @@ const data = (): BaseData => ({
     { id: 12, baseId: 1, position: 2, cells: { 1: "分享" } },
   ],
   head: 5,
+});
+
+describe("restricted base polling", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("polls only in the foreground and coalesces wakeups while a request is running", async () => {
+    vi.useFakeTimers();
+    let visible = false;
+    let wake = () => {};
+    let resolve!: () => void;
+    const refresh = vi.fn(() => new Promise<void>((done) => { resolve = done; }));
+    const stop = startRestrictedPolling(refresh, {
+      visible: () => visible,
+      listen: (fn) => { wake = fn; return () => { wake = () => {}; }; },
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id),
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).not.toHaveBeenCalled();
+    visible = true;
+    wake(); wake();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    resolve();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    stop();
+    resolve();
+    await vi.advanceTimersByTimeAsync(30_000);
+    wake();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reschedule a failed refresh after it is stopped", async () => {
+    vi.useFakeTimers();
+    let reject!: (reason: unknown) => void;
+    const refresh = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const stop = startRestrictedPolling(refresh, {
+      visible: () => true,
+      listen: () => () => {},
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id),
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    stop();
+    reject(new Error("access denied"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
 });
 
 const ev = (seq: number, body: BtEvent["body"]): BtEvent => ({ seq, body });

@@ -59,7 +59,7 @@ func TestBaseCRUD(t *testing.T) {
 	}
 	r2, _ := c.Get(u)
 	json.NewDecoder(r2.Body).Decode(&full)
-	if len(full.Fields) != 2 || len(full.Records) != 4 {
+	if len(full.Fields) != 2 || len(full.Records) != 6 {
 		t.Fatalf("get: %d fields %d records", len(full.Fields), len(full.Records))
 	}
 	if res := send(t, c, "DELETE", u+"/fields/"+fk, nil); res.StatusCode != 204 {
@@ -278,6 +278,8 @@ func TestMoveRecord(t *testing.T) {
 	var b store.DocMeta
 	json.NewDecoder(post(t, c, ts.URL+"/api/bases", nil).Body).Decode(&b)
 	u := ts.URL + "/api/bases/" + strconv.FormatInt(b.ID, 10)
+	var initial struct{ Records []store.Record }
+	json.NewDecoder(cGet(t, c, u).Body).Decode(&initial)
 	var ids []int64
 	for range 4 {
 		var rec store.Record
@@ -298,8 +300,14 @@ func TestMoveRecord(t *testing.T) {
 	for _, rec := range full.Records {
 		got = append(got, rec.ID)
 	}
-	// memory store positions equal ids: seed rows 3..5, ours 6..9, moved 9 → 1.5
-	want := []int64{ids[3], ids[0] - 3, ids[0] - 2, ids[0] - 1, ids[0], ids[1], ids[2]}
+	want := []int64{ids[3]}
+	for _, r := range initial.Records {
+		want = append(want, r.ID)
+	}
+	want = append(want, ids[:3]...)
+	if len(got) != len(want) {
+		t.Fatalf("order after move: %v (want %v)", got, want)
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order after move: %v (want %v)", got, want)

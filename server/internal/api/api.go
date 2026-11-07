@@ -119,7 +119,16 @@ func (s *Server) Handler() http.Handler {
 			if !ok {
 				return
 			}
-			s.BtHub.Serve(w, r, b.ID)
+			check := func(ctx context.Context) error {
+				return s.baseChannelAccess(ctx, r, b.ID, store.RoleView)
+			}
+			// Events carry raw records, so restricted users must not connect until
+			// per-recipient event projection is implemented.
+			if err := check(r.Context()); err != nil {
+				httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持实时同步")
+				return
+			}
+			s.BtHub.Serve(w, r, b.ID, check)
 		})))
 	}
 	if s.Hub != nil {

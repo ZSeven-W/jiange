@@ -1,6 +1,7 @@
 import { baseApi, type BaseRecord, type Field, type User } from "@/lib/api";
 import { CellView } from "./cells";
 import { displayValue, isAttachmentArray, REGISTRY } from "./registry";
+import { Image as ImageIcon } from "lucide-react";
 
 /** Gallery (画册) view: card grid; first image attachment is the cover. */
 export function Gallery({
@@ -39,9 +40,9 @@ export function Gallery({
           const cover = coverOf(r);
           const t = String(displayValue(r, title, members) ?? "") || "未命名";
           return (
-            <div key={r.id} className="group cursor-pointer overflow-hidden rounded-xl border bg-surface shadow-sm transition-shadow hover:shadow-md" onClick={() => onOpen(r)} data-card={r.id}>
+            <div key={r.id} className="group cursor-pointer overflow-hidden rounded-lg border bg-surface transition-shadow hover:shadow-md" onClick={() => onOpen(r)} data-card={r.id}>
               <div className="grid h-32 place-items-center bg-sidebar text-[26px] font-semibold text-subtle" style={cover ? { padding: 0 } : undefined}>
-                {cover ? <img src={cover.url} alt={cover.name} className="size-full object-cover" /> : t.slice(0, 1)}
+                {cover ? <img src={cover.url} alt={cover.name} className="size-full object-cover" /> : <ImageIcon size={24} strokeWidth={1.3} className="text-subtle/60" />}
               </div>
               <div className="space-y-1 p-2.5 text-[13px]">
                 <div className="truncate font-medium">{t}</div>

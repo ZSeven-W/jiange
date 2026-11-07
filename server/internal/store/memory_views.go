@@ -99,6 +99,48 @@ func (m *Memory) QueryRecords(_ context.Context, base int64, fields []Field, cfg
 	return out, nil
 }
 
+func (m *Memory) QueryRecordsConstrained(ctx context.Context, base int64, fields []Field, mandatory []btquery.Config, cfg btquery.Config, limit int) ([]Record, error) {
+	specs := Specs(fields)
+	for _, c := range mandatory {
+		if err := btquery.ValidateLocked(specs, c); err != nil {
+			return nil, err
+		}
+	}
+	if err := btquery.Validate(specs, cfg); err != nil {
+		return nil, err
+	}
+	recs, err := m.Records(ctx, base)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	out := []Record{}
+	for _, i := range btquery.SortIndexes(specs, cfg, len(recs), func(i int) map[string]json.RawMessage { return recs[i].Cells }) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !btquery.Match(specs, cfg, recs[i].Cells) {
+			continue
+		}
+		allowed := true
+		for _, c := range mandatory {
+			if !btquery.Match(specs, c, recs[i].Cells) {
+				allowed = false
+				break
+			}
+		}
+		if allowed {
+			out = append(out, recs[i])
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // BtQueryAll is an empty (unfiltered) query config.
 func BtQueryAll() btquery.Config { return btquery.Config{} }
 
