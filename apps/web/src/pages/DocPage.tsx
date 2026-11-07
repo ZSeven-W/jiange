@@ -775,7 +775,16 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       {preview && <ImagePreview src={preview.src} alt={preview.alt} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
-      {history && <VersionPanel id={id} canEdit={canEditContent} allowCopy={contentCopyAllowed} disableFileDownloads={!downloadAllowed} onClose={() => setHistory(false)} />}
+      {history && (
+        <VersionPanel
+          id={id}
+          canEdit={canEditContent}
+          allowCopy={contentCopyAllowed}
+          disableFileDownloads={!downloadAllowed}
+          currentView={sync.client.doc?.view()}
+          onClose={() => setHistory(false)}
+        />
+      )}
       {meta.data?.copyProtected && (
         <div
           className="pointer-events-none fixed inset-0 z-50 select-none overflow-hidden"
