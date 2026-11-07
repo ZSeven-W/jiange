@@ -208,6 +208,17 @@ export function useBaseSync(baseId: number, options: { ready: boolean; restricte
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data);
+          if (m.t === "hello") {
+            // The room can have advanced since the HTTP snapshot, or its head
+            // can have moved backwards after recovery. Neither value is a
+            // per-Base sequence, so a mismatch is an invalidation rather than
+            // evidence that we may apply event payloads. Keep periodic polling
+            // for equal heads and for servers using the legacy global clock.
+            const snapshotHead = qc.getQueryData<BaseData>(key)?.head;
+            if (!Number.isSafeInteger(m.head) || m.head < 0 || !Number.isSafeInteger(snapshotHead) || m.head !== snapshotHead) {
+              void snapshots.request().catch(() => {});
+            }
+          }
           if (m.t === "events" && Array.isArray(m.events) && m.events.length) void snapshots.request().catch(() => {});
         } catch {
           /* ignore malformed frames */
