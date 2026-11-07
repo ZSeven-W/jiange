@@ -277,8 +277,8 @@ export const docsApi = {
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
-  share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
-  setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"]>("PUT", `/api/docs/${id}/link`, { role }),
+  share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
+  setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
   upload: async (id: number, f: File): Promise<FileMeta> => {
@@ -302,6 +302,6 @@ export const docsApi = {
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
-  setCopyProtected: (id: number, on: boolean) => request<DocMeta>("PATCH", `/api/docs/${id}`, { copyProtected: on }),
+  setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
 };

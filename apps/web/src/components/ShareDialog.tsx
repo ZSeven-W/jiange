@@ -7,6 +7,7 @@ import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIco
 import { Check, QrCode, X } from "lucide-react";
 import { ShareQRCode, verifiedShareUrl } from "@/components/shareLink";
 import { invitationConflict, inviteCandidates } from "@/components/shareInvite";
+import { changeCopyProtection, copyProtectionError, SharePermissions } from "@/components/sharePermissions";
 
 export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭" };
 
@@ -20,15 +21,22 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIndex, setSuggestIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
-  const [linkError, setLinkError] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [settingsError, setSettingsError] = useState("");
   const busyRef = useRef(false);
+  const mountedRef = useRef(false);
   const listId = useId();
   const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsBackRef = useRef<HTMLButtonElement>(null);
+  const restoreSettingsFocus = useRef(false);
   const initialFocusDone = useRef(false);
   useEffect(() => { if (!info.data || initialFocusDone.current) return; initialFocusDone.current = true; if (typeof window.matchMedia === "function" && window.matchMedia("(min-width: 640px)").matches) emailRef.current?.focus(); }, [info.data]);
   useLayoutEffect(() => {
@@ -58,32 +66,43 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
     return () => { window.removeEventListener("keydown", close); anchorRef?.current?.focus(); };
   }, [anchorRef]);
   const manage = !info.isError && info.data?.role === "manage";
+  const settingsKey = ["share-settings", meta.id];
+  const settings = useQuery({ queryKey: settingsKey, queryFn: () => docsApi.get(meta.id), enabled: meta.kind !== "base" && showSettings && manage && !info.isFetching, refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000, retry: false, gcTime: 0 });
+  const settingsContext = useRef({ id: meta.id, canManage: false });
+  settingsContext.current = { id: meta.id, canManage: !!manage && !info.isFetching && showSettings };
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const memberKey = ["share-member-suggestions", meta.id];
   const directory = useQuery({ queryKey: memberKey, queryFn: () => commentsApi.members(meta.id), enabled: manage && !info.isFetching && suggestOpen && !!email.trim(), refetchOnMount: "always", refetchOnWindowFocus: true, gcTime: 0 });
-  useEffect(() => () => { qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); qc.removeQueries({ queryKey: ["shares", meta.id], exact: true }); }, [qc, meta.id]);
+  useEffect(() => () => { qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); qc.removeQueries({ queryKey: ["share-settings", meta.id], exact: true }); qc.removeQueries({ queryKey: ["shares", meta.id], exact: true }); }, [qc, meta.id]);
   useEffect(() => { if (!manage) qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); }, [manage, qc, meta.id]);
   const candidates = !directory.isFetching && !directory.isError && manage && !info.isFetching && suggestOpen && email.trim()
     ? inviteCandidates(email, directory.data ?? [], info.data!, meta.creatorId) : [];
   const selectCandidate = (address: string) => { setEmail(address); setSuggestOpen(false); setSuggestIndex(-1); emailRef.current?.focus(); };
   // Serialize all changes from this dialog. Mutation responses are not written
   // into the query cache: only a fresh read may repopulate the link and roles.
-  const update = async (task: () => Promise<void>, kind: "invite" | "link") => {
+  const update = async (task: () => Promise<void>, kind: "invite" | "link" | "settings") => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setShowQr(false);
     setCopyError(false);
     setErr("");
-    setLinkError(false);
+    setLinkError("");
+    setSettingsError("");
     try {
       await qc.cancelQueries({ queryKey: key });
       await task();
     } catch (e) {
-      if (kind === "link") setLinkError(true);
-      else setErr(e instanceof Error ? e.message : "更新协作者失败");
+      if (kind === "link") setLinkError(e instanceof TypeError ? "网络连接中断，更新结果可能尚未确认，请查看最新设置。" : "更新链接权限失败，请重试。");
+      else if (kind === "settings") setSettingsError(copyProtectionError(e));
+      else setErr(e instanceof TypeError ? "网络连接中断，更新结果可能尚未确认，请查看协作者列表。" : e instanceof Error ? e.message : "更新协作者失败");
     } finally {
       await qc.cancelQueries({ queryKey: key });
       await qc.invalidateQueries({ queryKey: key });
+      if (kind === "settings") {
+        await qc.invalidateQueries({ queryKey: ["doc", meta.id] });
+        await qc.invalidateQueries({ queryKey: settingsKey });
+      }
       busyRef.current = false;
       setBusy(false);
     }
@@ -94,10 +113,10 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
     const [current, users] = await Promise.all([docsApi.shares(meta.id), commentsApi.members(meta.id)]);
     if (current.role !== "manage") throw new Error("你已没有管理权限，请刷新后重试。");
     const conflict = invitationConflict(address, current, users, meta.creatorId);
-    if (conflict) throw new Error(conflict === "owner" ? "该用户是文档所有者。" : "该用户已是协作者，请在权限设置中修改权限。");
+    if (conflict) throw new Error(conflict === "owner" ? "该用户是文档所有者。" : "该用户已是协作者，请在协作者列表中修改权限。");
     try { await docsApi.share(meta.id, address, role, true); }
     catch (e) {
-      if (e instanceof ApiError && e.code === "already_shared") throw new Error("该用户已是协作者或文档所有者，请在权限设置中查看。");
+      if (e instanceof ApiError && e.code === "already_shared") throw new Error("该用户已是协作者或文档所有者，请在协作者列表中查看。");
       throw e;
     }
     setEmail("");
@@ -107,12 +126,52 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   const url = verifiedShareUrl(info.data, location.origin, !info.isFetching && !info.isError && !busy);
   const linkTitle = linkRole === "none" ? "仅指定协作者" : linkRole === "anon" ? "互联网上任何人" : "已登录用户";
   const linkDescription = linkRole === "none" ? "仅邀请的协作者可访问" : linkRole === "anon" ? "获得链接的人可阅读" : `获得链接的登录用户${ROLE_LABEL[linkRole] ?? "可访问"}`;
+  const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage";
+  const settingsMessage = settingsError || (info.isError || settings.isError ? "无法验证权限设置，请返回后重试。" : settings.data && settings.data.role !== "manage" ? "你已没有管理权限。" : !manage && !info.isFetching ? "你已没有管理权限。" : "");
+  useLayoutEffect(() => {
+    if (!showSettings) {
+      if (restoreSettingsFocus.current) {
+        restoreSettingsFocus.current = false;
+        (settingsButtonRef.current ?? emailRef.current ?? anchorRef?.current)?.focus();
+      }
+      return;
+    }
+    const keepFocus = () => {
+      const active = document.activeElement;
+      if (!dialogRef.current?.contains(active) || (active instanceof HTMLElement && active.matches(":disabled"))) settingsBackRef.current?.focus();
+    };
+    keepFocus();
+    document.addEventListener("focusin", keepFocus);
+    return () => document.removeEventListener("focusin", keepFocus);
+  }, [showSettings, busy, settingsReady, anchorRef]);
   return (
-    <div className="fixed inset-0 z-40" onMouseDown={onClose}>
-      <section role="dialog" aria-labelledby="share-title" data-share-dialog onMouseDown={(event) => event.stopPropagation()} style={position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : { right: 16, top: 54, width: "min(480px, calc(100vw - 32px))" }} className="fixed max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border bg-surface text-[14px] shadow-[0_8px_24px_rgba(31,35,41,0.16)]">
+    <div className={`fixed inset-0 z-40 ${showSettings && meta.kind !== "base" ? "bg-black/30" : ""}`} onMouseDown={onClose}>
+      <section ref={dialogRef} role="dialog" aria-modal={showSettings && meta.kind !== "base" ? true : undefined} aria-labelledby="share-title" data-share-dialog onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
+        if (!showSettings || meta.kind === "base" || event.key !== "Tab") return;
+        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)"));
+        if (!focusable.length) { event.preventDefault(); return; }
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }} style={showSettings && meta.kind !== "base" ? { left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(500px, calc(100vw - 32px))", maxHeight: "calc(100dvh - 32px)" } : position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : { right: 16, top: 54, width: "min(480px, calc(100vw - 32px))" }} className="fixed flex max-h-[calc(100vh-2rem)] flex-col overflow-y-auto rounded-lg border bg-surface text-[14px] shadow-[0_8px_24px_rgba(31,35,41,0.16)]">
+        {showSettings && meta.kind !== "base" ? <SharePermissions
+          protectedCopy={!!settings.data?.copyProtected}
+          busy={busy}
+          loading={info.isFetching || settings.isFetching || (manage && !settings.data && !settings.isError)}
+          enabled={!!settingsReady}
+          error={settingsMessage}
+          backRef={settingsBackRef}
+          onBack={() => { restoreSettingsFocus.current = true; setShowSettings(false); setSettingsError(""); }}
+          onChange={(next) => {
+            if (!settingsReady || !settings.data) return;
+            const expected = !!settings.data.copyProtected;
+            const id = meta.id;
+            void update(() => changeCopyProtection(expected, next, () => docsApi.get(id), (value, expectedValue) => docsApi.setCopyProtected(id, value, expectedValue), () => mountedRef.current && settingsContext.current.id === id && settingsContext.current.canManage), "settings");
+          }}
+        /> : <>
         <header className="flex h-[45px] items-center justify-between px-4">
           <h2 id="share-title" className="flex items-center gap-1 text-[16px] font-semibold">分享{meta.kind === "base" ? "多维表格" : "文档"}<HelpIcon className="size-[13px] text-muted-foreground" /></h2>
-          <div className="flex items-center gap-1"><button type="button" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover" title="查看协作者及权限"><SettingIcon className="size-[14px]" />权限设置</button><button type="button" onClick={onClose} aria-label="关闭分享" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover sm:sr-only sm:focus:not-sr-only"><X size={15}/></button></div>
+          <div className="flex items-center gap-1">{meta.kind === "base" ? <button type="button" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover" title="查看协作者及权限"><SettingIcon className="size-[14px]" />权限设置</button> : manage && <button ref={settingsButtonRef} type="button" aria-disabled={busy || info.isFetching} onClick={() => { if (busy || info.isFetching) return; setSettingsError(""); setShowSettings(true); }} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover aria-disabled:opacity-50"><SettingIcon className="size-[14px]" />权限设置</button>}<button type="button" onClick={onClose} aria-label="关闭分享" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover sm:sr-only sm:focus:not-sr-only"><X size={15}/></button></div>
         </header>
         {info.isPending && <p className="px-4 py-2 text-[13px] text-subtle">正在加载分享设置…</p>}
         {info.isError && <p role="alert" className="px-4 py-2 text-[13px] text-destructive">加载分享设置失败，请关闭后重试。</p>}
@@ -144,7 +203,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
               <span className="min-w-0 flex-1"><span className="block truncate leading-5">{linkTitle}</span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
               {manage ? <RoleSelect label="链接分享权限" disabled={busy || info.isFetching} value={linkRole} onChange={(r) => { void update(async () => { await docsApi.setLink(meta.id, r as "none" | "anon" | "view" | "edit"); }, "link"); }} options={meta.kind === "base" ? ["none", "view", "edit"] : ["none", "anon", "view", "edit"]} /> : <span className="text-[13px] text-muted-foreground">{ROLE_LABEL[linkRole]}</span>}
             </div>
-            {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">更新链接权限失败，请重试。</p>}
+            {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
           </div>
           <footer className="flex min-h-[66px] items-center gap-2 bg-sidebar px-4 py-3">
             <button type="button" disabled={!url || linkRole === "none"} title={!url || linkRole === "none" ? "开启链接分享后可复制链接" : "复制链接"} className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={async () => { try { if (!navigator.clipboard) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(url); setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopyError(true); } }}>{copied ? <Check size={14}/> : <LinkIcon className="size-[14px]"/>}{copied ? "已复制" : "复制链接"}</button>
@@ -153,6 +212,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
           </footer>
           {showQr && url && <div className="flex flex-col items-center gap-1 bg-sidebar px-4 pb-4 text-center"><ShareQRCode url={url}/><p className="text-[12px] text-muted-foreground">扫码打开分享链接</p></div>}
           {copyError && url && <p role="alert" className="bg-sidebar px-4 pb-3 text-[12px] text-destructive">复制失败，请手动选择链接。</p>}
+        </>}
         </>}
       </section>
     </div>

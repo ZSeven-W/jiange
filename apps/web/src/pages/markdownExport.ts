@@ -1,3 +1,5 @@
+import { markdownTableRows } from "@/lib/markdown";
+
 type ExportBlock = {
   type: string;
   props: Record<string, string>;
@@ -7,18 +9,27 @@ type ExportBlock = {
 const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo"]);
 const SPECIAL_BLOCKS = new Set(["code", "math", "diagram", "divider"]);
 const MARKS = new Set(["bold", "italic", "strike", "code", "link"]);
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /** Describe losses in the current Markdown serializer without exposing document content. */
 export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] {
   const losses = new Set<string>();
   for (const block of view.blocks) {
     const text = block.spans.map((span) => span.text).join("");
+    // Blob converts lone UTF-16 surrogate code units to U+FFFD when encoding.
+    const rows = block.type === "table" ? markdownTableRows(block.props.tableData) : null;
+    if (UNPAIRED_SURROGATE.test(text) || Object.values(block.props).some((value) => UNPAIRED_SURROGATE.test(value)) || block.spans.some((span) => Object.values(span.marks).some((value) => UNPAIRED_SURROGATE.test(value))) || rows?.some((row) => row.some((cell) => UNPAIRED_SURROGATE.test(cell)))) {
+      losses.add("存在无效的 Unicode 字符，导出时可能被替换");
+    }
     if (block.type === "title") {
       if (text.trim()) losses.add("文档标题只用于文件名，不包含在正文中");
       continue;
     }
     if (block.type === "columns") losses.add("分栏布局会被展开");
-    else if (block.type === "table") losses.add("表格单元格内容不会导出");
+    else if (block.type === "table") {
+      if (!rows) losses.add("表格数据格式异常，原始数据会作为代码块导出，无法还原为表格");
+      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && value)) losses.add("表格的额外内容或设置无法完整保留");
+    }
     else if (block.type === "image" || block.type === "file") {
       losses.add("图片和附件不会打包，重新导入也无法还原原文件块");
       if (!block.props.url) losses.add("部分图片或附件没有可导出的链接");

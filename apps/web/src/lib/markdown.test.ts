@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, serializeInline, toMarkdown, type MdSpan } from "./markdown";
+import { parseInline, parseMarkdown, serializeInline, toMarkdown, viewToMarkdown, type MdSpan } from "./markdown";
 
 const SAMPLE = `# 发布计划
 
@@ -139,5 +139,67 @@ describe("markdown blocks", () => {
     const texts = ["", " x ", " \n x + y \n ", "x\n"];
     const blocks = texts.map(text => ({ type: "math", text, props: {}, spans: [] }));
     expect(parseMarkdown(toMarkdown(blocks))).toEqual(blocks);
+  });
+
+  it("exports and reimports table cells without losing punctuation, whitespace, or literal HTML", () => {
+    const rows = [
+      ["名称", "内容", "备注"],
+      ["管道 | 反斜线 \\" , " *literal* [link] `code` ", "<br> &lt; &amp;"],
+      ["行一\n行二", "\t制表\r回车", "😀"],
+      ["", "  ", "结尾\\|"],
+      ["\u00a0", "\u3000全角空格\u3000", "\v\f\ufeff边界\ufeff\f\v"],
+    ];
+    const view = { blocks: [{ type: "table", props: { tableData: JSON.stringify(rows) }, spans: [] }] };
+    const markdown = viewToMarkdown(view);
+    expect(markdown).toContain("| 名称 | 内容 | 备注 |");
+    expect(markdown).toContain("| --- | --- | --- |");
+    const [table] = parseMarkdown(markdown);
+    expect(table.type).toBe("table");
+    expect(JSON.parse(table.props.tableData)).toEqual(rows);
+    expect(toMarkdown(parseMarkdown(markdown))).toBe(markdown);
+  });
+
+  it("imports standard tables while retaining literal cell source and neighboring paragraphs", () => {
+    const markdown = "前文\n\n| 项目 | 负责人 |\n| :--- | ---: |\n| 界面 \\| 验证 | **小简** |\n\n后文 | 不属于表格\n";
+    const blocks = parseMarkdown(markdown);
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "table", "paragraph"]);
+    expect(JSON.parse(blocks[1].props.tableData)).toEqual([["项目", "负责人"], ["界面 | 验证", "**小简**"]]);
+    const out = toMarkdown(blocks);
+    expect(parseMarkdown(out).map((block) => block.type)).toEqual(["paragraph", "table", "paragraph"]);
+    expect(parseMarkdown(out)[2].text).toBe("后文 | 不属于表格");
+  });
+
+  it("keeps extra input cells as a following paragraph rather than discarding them", () => {
+    const blocks = parseMarkdown("| a | b |\n| --- | --- |\n| c | d | e |\n");
+    expect(blocks.map((block) => block.type)).toEqual(["table", "paragraph"]);
+    expect(blocks[1].text).toContain("e");
+  });
+
+  it("does not turn ordinary neighboring text or fenced code into a table", () => {
+    const texts = ["a | b", "--- | ---", "data | test"];
+    const blocks = texts.map((text) => ({ type: "paragraph", text, props: {}, spans: [{ text, marks: {} }] }));
+    expect(parseMarkdown(toMarkdown(blocks))).toEqual(blocks);
+    const code = parseMarkdown("```x|y\n--- | ---\n```\n");
+    expect(code).toEqual([{ type: "code", text: "--- | ---", props: { lang: "x|y" }, spans: [] }]);
+    const heading = parseMarkdown("# a | b\n--- | ---\n");
+    expect(heading.map((block) => block.type)).toEqual(["h1", "paragraph"]);
+  });
+
+  it("round-trips single-column and single-row tables", () => {
+    for (const rows of [[["列一"], ["一 | 二"], [""]], [["唯一单元格"]]]) {
+      const block = { type: "table", text: "", props: { tableData: JSON.stringify(rows) }, spans: [] };
+      expect(parseMarkdown(toMarkdown([block]))).toEqual([block]);
+    }
+  });
+
+  it("distinguishes escaped literal tags and entities from Markdown line breaks", () => {
+    const [table] = parseMarkdown("| 值 |\n| --- |\n| \\<br> \\&amp; &#x1f600; <br>换行 |\n");
+    expect(JSON.parse(table.props.tableData)).toEqual([["值"], ["<br> &amp; 😀 \n换行"]]);
+  });
+
+  it("retains malformed table source in an explicitly non-table code block", () => {
+    const source = '{"bad":"保留"}';
+    const markdown = toMarkdown([{ type: "table", text: "", props: { tableData: source }, spans: [] }]);
+    expect(parseMarkdown(markdown)[0]).toMatchObject({ type: "code", text: source, props: { lang: "json" } });
   });
 });

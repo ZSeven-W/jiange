@@ -176,7 +176,7 @@ export function serializeInline(spans: MdSpan[]): string {
 }
 
 function escapeInline(t: string): string {
-  return t.replace(/[\\`*_\[\]<>~!#$]/g, "\\$&");
+  return t.replace(/[\\`*_\[\]<>~!#$|]/g, "\\$&");
 }
 
 /** Escape a plain-text line so it cannot re-parse as a block/inline marker. */
@@ -190,6 +190,74 @@ function codeFence(text: string): string {
   let longest = 2;
   for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   return "`".repeat(longest + 1);
+}
+
+/** A table is editable only as a rectangular grid of strings in the editor. */
+export function markdownTableRows(data: string | undefined): string[][] | null {
+  if (data === undefined || data === "") return [["列 1", "列 2", "列 3"], ["", "", ""]];
+  try {
+    const rows: unknown = JSON.parse(data);
+    if (!Array.isArray(rows) || !rows.length || !Array.isArray(rows[0]) || !rows[0].length) return null;
+    const width = rows[0].length;
+    if (rows.some((row) => !Array.isArray(row) || row.length !== width || row.some((cell: unknown) => typeof cell !== "string"))) return null;
+    return rows as string[][];
+  } catch { return null; }
+}
+
+// Escape text rather than emit Markdown marks: table cells in the document
+// model are plain strings, including characters that look like Markdown.
+function tableCellToMarkdown(cell: string): string {
+  return cell.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\\/g, "\\\\").replace(/([|`*_\[\]!~])/g, "\\$1")
+    .replace(/\r/g, "&#13;").replace(/\n/g, "<br>").replace(/\t/g, "&#9;")
+    .replace(/^\s+|\s+$/gu, (whitespace) => Array.from(whitespace, (character) => `&#${character.codePointAt(0)};`).join(""));
+}
+
+function tableCellFromMarkdown(cell: string): string {
+  // Decode once, so a literal "&lt;" serialized as "&amp;lt;" stays literal.
+  const entities: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
+  const input = cell.trim();
+  let result = "";
+  for (let i = 0; i < input.length;) {
+    if (input[i] === "\\" && i + 1 < input.length && ESCAPABLE.test(input[i + 1])) {
+      result += input[i + 1]; i += 2; continue;
+    }
+    const match = (input[i] === "<" || input[i] === "&")
+      ? input.slice(i).match(/^(?:<br\s*\/?\s*>|&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/i)?.[0] : undefined;
+    if (!match) { result += input[i++]; continue; }
+    if (/^<br/i.test(match)) result += "\n";
+    else if (match.startsWith("&#")) {
+      const hex = /^&#x/i.test(match);
+      const codepoint = Number.parseInt(match.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
+      result += codepoint >= 0 && codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff)
+        ? String.fromCodePoint(codepoint) : match;
+    } else result += entities[match.toLowerCase()] ?? match;
+    i += match.length;
+  }
+  return result;
+}
+
+/** Split only on unescaped pipe characters. Keep escapes for later decoding. */
+function tableRow(line: string): string[] | null {
+  const trimmed = line.trim();
+  let cell = "", hasPipe = false;
+  const cells: string[] = [];
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "\\" && i + 1 < trimmed.length) { cell += ch + trimmed[++i]; continue; }
+    if (ch === "|") { hasPipe = true; cells.push(cell); cell = ""; }
+    else cell += ch;
+  }
+  cells.push(cell);
+  if (!hasPipe) return null;
+  if (trimmed.startsWith("|")) cells.shift();
+  if (trimmed.endsWith("|") && cells.at(-1) === "") cells.pop();
+  return cells;
+}
+
+function tableAsMarkdown(rows: string[][]): string[] {
+  const row = (cells: string[]) => `| ${cells.map(tableCellToMarkdown).join(" | ")} |`;
+  return [row(rows[0]), row(rows[0].map(() => "---")), ...rows.slice(1).map(row)];
 }
 
 // ---------- block parsing ----------
@@ -282,6 +350,25 @@ export function parseMarkdown(md: string): MdBlock[] {
       i++;
       continue;
     }
+    // GFM-style table: recognize only after higher-priority block syntax, so
+    // a fenced code block or heading containing a pipe is not swallowed.
+    // Do not consume cells that exceed the header width.
+    const header = tableRow(line);
+    const divider = i + 1 < lines.length ? tableRow(lines[i + 1]) : null;
+    if (header?.length && divider && divider.length === header.length && divider.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))) {
+      const rows = [header.map(tableCellFromMarkdown)];
+      i += 2;
+      while (i < lines.length) {
+        const row = tableRow(lines[i]);
+        if (!row || row.length > header.length) break;
+        const values = row.map(tableCellFromMarkdown);
+        while (values.length < header.length) values.push("");
+        rows.push(values);
+        i++;
+      }
+      blocks.push({ type: "table", text: "", props: { tableData: JSON.stringify(rows) }, spans: [] });
+      continue;
+    }
     const spans = parseInline(line);
     blocks.push({ type: "paragraph", text: spans.map(s => s.text).join(""), props: {}, spans });
     i++;
@@ -335,6 +422,18 @@ export function toMarkdown(blocks: MdBlock[]): string {
         orderedNo = 0;
         out.push("---");
         break;
+      case "table": {
+        orderedNo = 0;
+        const rows = markdownTableRows(b.props.tableData);
+        if (rows) out.push("", ...tableAsMarkdown(rows), "");
+        else {
+          // Preserve malformed/legacy source instead of silently discarding it.
+          const source = b.props.tableData ?? "";
+          const fence = codeFence(source);
+          out.push(fence + "json", source, fence);
+        }
+        break;
+      }
       case "image":
         orderedNo = 0;
         out.push(`![${b.props.name ?? "图片"}](${b.props.url ?? ""})`);

@@ -18,18 +18,37 @@ describe("Markdown export loss preflight", () => {
     const losses = markdownExportLosses({ blocks: [
       block("title", "私密标题"),
       block("columns"),
-      block("table", "", { tableData: '[["私密单元格"]]' }),
+      block("table", "", { tableData: '{"私密单元格":true}' }),
       block("image", "", { fileId: "123" }),
       block("file", "", { url: "https://example.com/private" }),
       block("bookmark", "", { url: "https://example.com/private" }),
     ] });
     expect(losses.join("；")).toContain("文档标题");
     expect(losses.join("；")).toContain("分栏");
-    expect(losses.join("；")).toContain("表格单元格");
+    expect(losses.join("；")).toContain("表格数据格式异常");
     expect(losses.join("；")).toContain("没有可导出的链接");
     expect(losses.join("；")).toContain("图片和附件");
     expect(losses.join("；")).toContain("网页卡片或视频");
     expect(losses.join("；")).not.toMatch(/私密|example\.com/);
+  });
+
+  it("allows rectangular plain-text tables while warning about unsupported table data", () => {
+    expect(markdownExportLosses({ blocks: [block("table", "", { tableData: JSON.stringify([["标题", "状态"], ["研发", "进行中"]]) })] })).toEqual([]);
+    for (const data of ['[["a"],["b","c"]]', '[["a", 1]]', '[]', 'not-json']) {
+      expect(markdownExportLosses({ blocks: [block("table", "", { tableData: data })] }).join("；")).toContain("表格数据格式异常");
+    }
+    expect(markdownExportLosses({ blocks: [block("table", "附加文字", { tableData: '[["a"]]', style: "custom" })] }).join("；")).toContain("表格的额外内容或设置");
+  });
+
+  it("warns when UTF-8 export would replace lone surrogates in cells, text, or links", () => {
+    for (const item of [
+      block("table", "", { tableData: JSON.stringify([["\ud800"]]) }),
+      block("paragraph", "\udc00"),
+      block("paragraph", "链接", {}, { link: "https://example.com/\ud800" }),
+    ]) {
+      expect(markdownExportLosses({ blocks: [item] }).join("；")).toContain("无效的 Unicode 字符");
+    }
+    expect(markdownExportLosses({ blocks: [block("paragraph", "😀"), block("table", "", { tableData: JSON.stringify([["😀"]]) })] })).toEqual([]);
   });
 
   it("warns for unsupported styles, empty blocks, and multi-line text", () => {

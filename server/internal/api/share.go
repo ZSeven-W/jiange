@@ -86,20 +86,60 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_role", "role must be view, edit or manage")
 		return
 	}
-	if in.CreateOnly {
-		err = s.Store.AddShare(r.Context(), d.ID, u.ID, in.Role)
-	} else {
-		err = s.Store.SetShare(r.Context(), d.ID, u.ID, in.Role)
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
 	}
-	if errors.Is(err, store.ErrConflict) && in.CreateOnly {
+	err = s.Store.SetShareGuarded(r.Context(), guard, d.ID, u.ID, in.Role, in.CreateOnly)
+	if errors.Is(err, store.ErrShareExists) {
 		httpx.Error(w, http.StatusConflict, "already_shared", "该用户已经是协作者")
 		return
 	}
 	if err != nil {
-		s.fail(w, r, err)
+		s.shareMutationError(w, r, err)
 		return
 	}
-	s.getShares(w, r)
+	// A committed update may also have removed the caller's access, or a
+	// concurrent revocation may prevent the follow-up read. Report the write
+	// as successful even when a fresh, authorized result is unavailable.
+	s.shareResultAfterMutation(w, r, guard, d.ID)
+}
+
+func (s *Server) shareResultAfterMutation(w http.ResponseWriter, r *http.Request, guard store.RestoreGuard, docID int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	empty := func() {
+		w.Header().Set("X-Share-Refresh-Required", "true")
+		w.WriteHeader(http.StatusNoContent)
+	}
+	d, err := s.Store.GetDoc(r.Context(), guard.UserID, docID)
+	if err != nil || store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
+		empty()
+		return
+	}
+	shares, err := s.Store.ListShares(r.Context(), docID)
+	if err != nil {
+		empty()
+		return
+	}
+	link, err := s.Store.GetLink(r.Context(), docID)
+	if err != nil {
+		empty()
+		return
+	}
+	d, err = s.Store.GetDoc(r.Context(), guard.UserID, docID)
+	if err != nil || store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
+		empty()
+		return
+	}
+	user, err := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+	if err != nil || user.ID != guard.UserID {
+		empty()
+		return
+	}
+	if d.Role != store.RoleManage || link.Role == "none" {
+		link.Token = ""
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"members": shares, "link": link, "role": d.Role})
 }
 
 func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
@@ -127,12 +167,39 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	l, err := s.Store.ChangeLinkRole(r.Context(), d.ID, in.Role, candidate)
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	l, err := s.Store.ChangeLinkRoleGuarded(r.Context(), guard, d.ID, in.Role, candidate)
 	if err != nil {
-		s.fail(w, r, err)
+		s.shareMutationError(w, r, err)
+		return
+	}
+	// The mutation is already committed. A concurrent logout or permission
+	// revocation must not turn it into a failure or expose a bearer token.
+	w.Header().Set("Cache-Control", "no-store")
+	current, docErr := s.Store.GetDoc(r.Context(), guard.UserID, d.ID)
+	user, sessionErr := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+	if docErr != nil || current.Role != store.RoleManage || sessionErr != nil || user.ID != guard.UserID {
+		w.Header().Set("X-Share-Refresh-Required", "true")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, l)
+}
+
+func (s *Server) shareMutationError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrForbidden), errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有管理权限")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "share_conflict", "分享设置已变化，请重试")
+	default:
+		s.fail(w, r, err)
+	}
 }
 
 // getPublic serves a read-only document snapshot to anyone holding the link
