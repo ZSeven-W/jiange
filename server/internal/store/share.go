@@ -2,8 +2,13 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
+
+// ErrShareExists distinguishes an existing direct grant from a transient
+// transaction conflict. It remains an ErrConflict for older callers.
+var ErrShareExists = fmt.Errorf("%w: share already exists", ErrConflict)
 
 // Roles, weakest first. "" means no access.
 const (
@@ -39,6 +44,16 @@ type Link struct {
 	Token string `json:"token,omitempty"`
 }
 
+// ManagedDocPatch is applied atomically when changing copy protection. Move
+// distinguishes moving to the root (ParentID nil) from leaving the tree alone.
+type ManagedDocPatch struct {
+	Title                 *string
+	Move                  bool
+	ParentID              *int64
+	CopyProtected         bool
+	ExpectedCopyProtected *bool
+}
+
 // FileMeta is an attachment stored in the blob store under ObjectKey.
 type FileMeta struct {
 	ID         int64     `json:"id"`
@@ -60,11 +75,16 @@ type ShareStore interface {
 	SetShare(ctx context.Context, docID, userID int64, role string) error
 	// AddShare creates a grant only if no direct grant already exists.
 	AddShare(ctx context.Context, docID, userID int64, role string) error
+	// Guarded sharing checks session and current inherited management access in
+	// the same transaction as the write. createOnly never updates a grant.
+	SetShareGuarded(ctx context.Context, guard RestoreGuard, docID, userID int64, role string, createOnly bool) error
+	PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard, docID int64, patch ManagedDocPatch) error
 	GetLink(ctx context.Context, docID int64) (Link, error)
 	SetLink(ctx context.Context, docID int64, l Link) error
 	// ChangeLinkRole atomically changes a setting and rotates the token when a
 	// disabled link is enabled. candidate is a freshly generated secret.
 	ChangeLinkRole(ctx context.Context, docID int64, role, candidate string) (Link, error)
+	ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string) (Link, error)
 	// DocByToken resolves a share link to its doc and role (ErrNotFound if off).
 	DocByToken(ctx context.Context, token string) (docID int64, role string, err error)
 	// JoinLink records that this user presented the currently valid token.

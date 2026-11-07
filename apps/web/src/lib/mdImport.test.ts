@@ -48,4 +48,19 @@ describe("Markdown import", () => {
     const comparable = (doc: Doc) => doc.view().blocks.map(({ type, spans, props }) => ({ type, spans, props }));
     expect(comparable(target)).toEqual(comparable(source));
   });
+
+  it("round-trips the actual collaborative table prop and remains undoable", () => {
+    const source = new Doc(1);
+    const rows = [["事项", "备注"], ["研发 | 测试", "  😀\n下一行  "]];
+    new Tx(source).create("table", null, ROOT, { tableData: JSON.stringify(rows) });
+    const target = new Doc(2);
+    const tx = appendMarkdownOps(target, viewToMarkdown(source.view()));
+    const [id] = bodyBlocks(target);
+    expect(target.blockInfo(id).type).toBe("table");
+    expect(JSON.parse(target.blockInfo(id).props.tableData)).toEqual(rows);
+    const undo = new UndoManager();
+    undo.record(tx, null, null);
+    expect(undo.undo(target)?.ops.length).toBeGreaterThan(0);
+    expect(bodyBlocks(target)).toHaveLength(0);
+  });
 });

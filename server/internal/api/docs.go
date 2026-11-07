@@ -19,7 +19,8 @@ type docInput struct {
 	// Move: when true, ParentID (null = root) re-parents the doc.
 	Move bool `json:"move"`
 	// CopyProtected: watermark + copy/download restrictions (manage only).
-	CopyProtected *bool `json:"copyProtected"`
+	CopyProtected         *bool `json:"copyProtected"`
+	ExpectedCopyProtected *bool `json:"expectedCopyProtected"`
 }
 
 func cleanTitle(w http.ResponseWriter, t string) (string, bool) {
@@ -128,6 +129,10 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	if in.ExpectedCopyProtected != nil && in.CopyProtected == nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_copy_protection", "expectedCopyProtected requires copyProtected")
+		return
+	}
 	// Check the permissions of the whole request before applying any changes.
 	// In particular, an editor must not be able to change the title as a side
 	// effect of a rejected request that also contains a manager-only field.
@@ -150,28 +155,56 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		}
 		title = t
 	}
-	// Move checks for cycles before changing the parent. Do it before changing
-	// other fields so a reported cycle conflict does not change those fields.
-	if in.Move {
-		if err := s.Store.Move(r.Context(), d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
-			httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
-			return
-		} else if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		d.ParentID = in.ParentID
-	}
-	if in.Title != nil {
-		if _, err := s.Store.UpdateTitle(r.Context(), d.ID, title); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
+	// Copy protection and any accompanying title/move fields must be committed
+	// together with the current manager/session check.
 	if in.CopyProtected != nil {
-		if err := s.Store.SetCopyProtected(r.Context(), d.ID, *in.CopyProtected); err != nil {
-			s.fail(w, r, err)
+		guard, ok := s.viewGuard(w, r)
+		if !ok {
 			return
+		}
+		var cleanedTitle *string
+		if in.Title != nil {
+			cleanedTitle = &title
+		}
+		err := s.Store.PatchManagedDocGuarded(r.Context(), guard, d.ID, store.ManagedDocPatch{
+			Title: cleanedTitle, Move: in.Move, ParentID: in.ParentID, CopyProtected: *in.CopyProtected, ExpectedCopyProtected: in.ExpectedCopyProtected,
+		})
+		if err != nil {
+			s.shareMutationError(w, r, err)
+			return
+		}
+		// Moving a document may remove the caller's inherited access. Once the
+		// transaction commits, a failed refresh must not report the mutation as
+		// failed or return metadata to a now-unauthorized session.
+		w.Header().Set("Cache-Control", "no-store")
+		current, docErr := s.Store.GetDoc(r.Context(), guard.UserID, d.ID)
+		user, sessionErr := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+		if docErr != nil || store.RoleRank(current.Role) < store.RoleRank(store.RoleView) || sessionErr != nil || user.ID != guard.UserID {
+			w.Header().Set("X-Share-Refresh-Required", "true")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		current = s.sanitizeWrittenDocMeta(r.Context(), guard.UserID, current)
+		httpx.JSON(w, http.StatusOK, current)
+		return
+	} else {
+		// Move checks for cycles before changing the parent. Do it before changing
+		// other fields so a reported cycle conflict does not change those fields.
+		if in.Move {
+			if err := s.Store.Move(r.Context(), d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
+				httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
+				return
+			} else if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			d.ParentID = in.ParentID
+		}
+		if in.Title != nil {
+			if _, err := s.Store.UpdateTitle(r.Context(), d.ID, title); err != nil {
+				s.fail(w, r, err)
+				return
+			}
 		}
 	}
 	// UpdateTitle is a system-level store operation: its returned metadata is
