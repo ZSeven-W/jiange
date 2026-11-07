@@ -1,5 +1,19 @@
 # 飞书文档界面核验记录
 
+## 2026-11-07：评论权限与草稿
+
+![评论权限设置](screenshots/document-comment-permissions-desktop-20261107.jpg)
+
+![阅读者评论和回复](screenshots/document-viewer-comments-20261107.jpg)
+
+![权限收紧时保留草稿](screenshots/document-comment-draft-retained-20261107.jpg)
+
+![移动视口评论权限](screenshots/document-comment-permissions-mobile-20261107.jpg)
+
+在用户登录的飞书文档中核对了评论权限的「可阅读的用户 / 可编辑的用户」两档。隔离 PostgreSQL 与 Go 服务中，合成管理员将测试文档设为阅读者可评论；合成阅读者发送评论及回复，并验证正文仍只读。管理员改为仅编辑者可评论后，阅读者的未发送草稿保留且发送入口关闭。移动截图为 390×844 浏览器模拟视口，尚未验证真实手机和系统输入法。
+
+干净提交快照通过前端 484 项、协同模块 137 项测试、TypeScript、生产构建与隔离 PostgreSQL 下的 Go 全量测试。匿名公开评论仍未实现，正文提及仍可能先于协同操作确认发出通知；评论和通知分别提交，进程中断可能漏通知。PostgreSQL 为保护旧跨文档回复数据在删除评论时使用表级锁，性能尚需评估。
+
 ## 2026-11-07：分项角色权限
 
 ![桌面分项权限](screenshots/document-roles-desktop-20261107.jpg)

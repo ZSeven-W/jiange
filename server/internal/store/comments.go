@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrCommentPermissionDenied = errors.New("comment permission denied")
 
 // Comment is a doc comment (or a reply; ParentID set). The range is anchored
 // to character op-ids so it survives concurrent edits; Quote keeps the text
@@ -43,6 +46,9 @@ type Notification struct {
 }
 
 type CommentStore interface {
+	AddCommentGuarded(ctx context.Context, guard RestoreGuard, c Comment) (Comment, error)
+	PatchCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64, body *string, resolved *bool) (Comment, bool, error)
+	DeleteCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64) error
 	AddComment(ctx context.Context, c Comment) (Comment, error)
 	Comments(ctx context.Context, docID int64) ([]Comment, error)
 	UpdateComment(ctx context.Context, c Comment) (Comment, error)

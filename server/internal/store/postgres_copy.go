@@ -152,7 +152,7 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 			}
 		}
 		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
-			VALUES ($1,$2,'doc','V',$3,$4) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, c.Title, c.UserID))
+			VALUES ($1,$2,'doc','V',$3,$4) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, c.Title, c.UserID))
 		if err != nil {
 			return err
 		}

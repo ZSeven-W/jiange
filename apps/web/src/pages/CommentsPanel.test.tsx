@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CommentsPanel, focusCommentDraft, notifyCommentAccessError, sameCommentAnchor } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote } from "./commentAccess";
-import { ApiError, type Comment } from "@/lib/api";
+import { classifyCommentMutationError, CommentsPanel, focusCommentDraft, notifyCommentAccessError, reconcileUncertainComment, sameCommentAnchor } from "./CommentsPanel";
+import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy } from "./commentAccess";
+import { ApiError, commentsApi, type Comment } from "@/lib/api";
 
 const time = "2026-01-01T00:00:00Z";
 const thread: Comment = { id: 1, docId: 7, userId: 2, userName: "对方", block: "", startChar: "", endChar: "", quote: "被引用的内容", body: "一条评论", resolved: false, createdAt: time, updatedAt: time };
@@ -17,6 +17,75 @@ function renderPanel(canEdit: boolean, canManage: boolean) {
 }
 
 describe("comment permissions", () => {
+  it("permits authorized viewers to comment without treating malformed or anonymous policies as grants", () => {
+    expect(canWriteComments({ role: "view", commentMinRole: "view", permissionsRevision: 0 })).toBe(true);
+    expect(canWriteComments({ role: "view", commentMinRole: "edit", permissionsRevision: 1 })).toBe(false);
+    for (const role of ["edit", "manage"]) {
+      expect(canWriteComments({ role, commentMinRole: "view", permissionsRevision: 1 })).toBe(true);
+      expect(canWriteComments({ role, commentMinRole: "edit", permissionsRevision: 1 })).toBe(true);
+    }
+    expect(canWriteComments({ role: "view" })).toBe(false); // old server
+    expect(canWriteComments({ role: "edit" })).toBe(true);
+    expect(canWriteComments({ role: "anon", commentMinRole: "view", permissionsRevision: 0 })).toBe(false);
+    expect(canWriteComments({ role: "view", commentMinRole: "view" })).toBe(false);
+    expect(canWriteComments({ role: "view", commentMinRole: "manage", permissionsRevision: 1 })).toBe(false);
+  });
+
+  it("distinguishes revoked comment policy from document denial and uncertain commit", () => {
+    const denied = vi.fn();
+    const policy = new ApiError(403, "comment_permission_denied", "policy");
+    expect(classifyCommentMutationError(policy)).toBe("policy");
+    expect(notifyCommentAccessError(policy, denied)).toBe(false);
+    expect(denied).not.toHaveBeenCalled();
+    expect(classifyCommentMutationError(new ApiError(403, "forbidden", "denied"))).toBe("access");
+    expect(classifyCommentMutationError(new ApiError(400, "bad_request", "invalid"))).toBe("rejected");
+    expect(classifyCommentMutationError(new ApiError(500, "error", "server"))).toBe("uncertain");
+    expect(classifyCommentMutationError(new ApiError(408, "timeout", "proxy timeout"))).toBe("uncertain");
+    expect(classifyCommentMutationError(new ApiError(429, "rate_limited", "proxy limit"))).toBe("uncertain");
+    expect(classifyCommentMutationError(new TypeError("network"))).toBe("uncertain");
+  });
+
+  it("does not discard a draft when a successful comment response is incomplete", async () => {
+    const original = globalThis.fetch;
+    try {
+      globalThis.fetch = vi.fn(async () => new Response("{", { status: 201, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+      await expect(commentsApi.create(7, { body: "一条评论" })).rejects.toThrow("结果未确认");
+      globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(thread), { status: 201, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+      expect(await commentsApi.create(7, { body: "一条评论" })).toEqual(thread);
+      globalThis.fetch = vi.fn(async () => new Response(null, { status: 204 })) as typeof fetch;
+      expect(await commentsApi.create(7, { body: "一条评论" })).toBeUndefined();
+    } finally { globalThis.fetch = original; }
+  });
+
+  it("reports an attempted refresh without claiming success when offline", async () => {
+    const refresh = vi.fn().mockRejectedValue(new TypeError("offline"));
+    const message = reconcileUncertainComment(refresh, true);
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(message).toContain("正在尝试刷新");
+    expect(message).toContain("草稿已保留");
+    expect(message).not.toContain("已刷新");
+  });
+
+  it("ignores a late policy denial after a document, account or session change", () => {
+    const target = { doc: 7, user: 1, session: 4 }, freezeAndRevalidate = vi.fn();
+    expect(revalidateCurrentCommentPolicy({ ...target, doc: 8 }, target, freezeAndRevalidate)).toBe(false);
+    expect(revalidateCurrentCommentPolicy({ ...target, user: 2 }, target, freezeAndRevalidate)).toBe(false);
+    expect(revalidateCurrentCommentPolicy({ ...target, session: 5 }, target, freezeAndRevalidate)).toBe(false);
+    expect(freezeAndRevalidate).not.toHaveBeenCalled();
+    expect(revalidateCurrentCommentPolicy(target, target, freezeAndRevalidate)).toBe(true);
+    expect(freezeAndRevalidate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the draft composer mounted but disables submission during revalidation", () => {
+    const client = new QueryClient();
+    client.setQueryData(commentListKey(7, 1, 1), []);
+    client.setQueryData(commentMembersKey(7, 1, 1), []);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><CommentsPanel id={7} meId={1} session={1} canEdit canSubmit={false} canManage={false} draft={null} onDraftSent={() => {}} activeThread={null} onActivate={() => {}} onClose={() => {}} onAccessDenied={() => {}} onDismissRecovery={() => {}} onSnapshot={() => {}} onComposerSuspended={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("正在验证评论权限，草稿仍可编辑");
+    expect(html).toMatch(/<textarea(?![^>]*disabled)/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-comment-send/);
+  });
   it("preserves a draft anchor during revalidation without granting export", () => {
     const meta = { role: "edit", copyMinRole: "view", downloadMinRole: "view", permissionsRevision: 3 };
     const draft = { text: "正在输入", draft: { block: "1:1", startChar: "1:2", endChar: "1:3", quote: "原文" } };

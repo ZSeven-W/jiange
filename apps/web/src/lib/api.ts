@@ -61,6 +61,8 @@ export interface DocMeta {
   copyProtected?: boolean;
   copyMinRole?: Role;
   downloadMinRole?: Role;
+  /** Missing on older servers, which only permit editors to comment. */
+  commentMinRole?: "view" | "edit";
   permissionsRevision?: number;
 }
 /** A document returned by the per-user recent-visit history. */
@@ -210,8 +212,19 @@ export interface AppNotification {
 }
 export const commentsApi = {
   list: (id: number) => request<{ comments: Comment[] }>("GET", `/api/docs/${id}/comments`).then((r) => r.comments),
-  create: (id: number, c: Partial<Comment> & { body: string }) => request<Comment>("POST", `/api/docs/${id}/comments`, c),
-  update: (id: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment>("PATCH", `/api/docs/${id}/comments/${cid}`, p),
+  create: (id: number, c: Partial<Comment> & { body: string }) => request<Comment | undefined>("POST", `/api/docs/${id}/comments`, c).then((result) => {
+    // A 204 explicitly confirms the write but carries no body when access
+    // changed after commit. Invalidation will recheck access before display.
+    if (result === undefined) return undefined;
+    // A successful HTTP status with a truncated or malformed body does not
+    // prove which comment was created. Preserve the draft and let the user
+    // inspect a refreshed list rather than silently treating it as submitted.
+    if (!result || !Number.isSafeInteger(result.id) || result.id < 1 || result.docId !== id || result.body !== c.body || (result.parentId ?? null) !== (c.parentId ?? null)) {
+      throw new Error("评论响应不完整，结果未确认");
+    }
+    return result;
+  }),
+  update: (id: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment | undefined>("PATCH", `/api/docs/${id}/comments/${cid}`, p),
   remove: (id: number, cid: number) => request<void>("DELETE", `/api/docs/${id}/comments/${cid}`),
   members: (id: number) => request<{ members: User[] }>("GET", `/api/docs/${id}/members`).then((r) => r.members),
 };
@@ -306,6 +319,6 @@ export const docsApi = {
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
   setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
-  setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
+  setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
 };

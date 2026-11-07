@@ -54,6 +54,7 @@ type ManagedDocPatch struct {
 	ExpectedCopyProtected       *bool
 	CopyMinRole                 *string
 	DownloadMinRole             *string
+	CommentMinRole              *string
 	ExpectedPermissionsRevision *int64
 }
 

@@ -23,6 +23,7 @@ type docInput struct {
 	ExpectedCopyProtected       *bool   `json:"expectedCopyProtected"`
 	CopyMinRole                 *string `json:"copyMinRole"`
 	DownloadMinRole             *string `json:"downloadMinRole"`
+	CommentMinRole              *string `json:"commentMinRole"`
 	ExpectedPermissionsRevision *int64  `json:"expectedPermissionsRevision"`
 }
 
@@ -136,13 +137,17 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_copy_protection", "expectedCopyProtected requires copyProtected")
 		return
 	}
-	splitPermissions := in.CopyMinRole != nil || in.DownloadMinRole != nil
+	splitPermissions := in.CopyMinRole != nil || in.DownloadMinRole != nil || in.CommentMinRole != nil
 	if splitPermissions && (in.CopyProtected != nil || in.ExpectedCopyProtected != nil || in.ExpectedPermissionsRevision == nil || *in.ExpectedPermissionsRevision < 0) || !splitPermissions && in.ExpectedPermissionsRevision != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "permissions revision and separate roles must be supplied together")
 		return
 	}
 	if in.CopyMinRole != nil && store.RoleRank(*in.CopyMinRole) == 0 || in.DownloadMinRole != nil && store.RoleRank(*in.DownloadMinRole) == 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "role must be view, edit or manage")
+		return
+	}
+	if in.CommentMinRole != nil && *in.CommentMinRole != store.RoleView && *in.CommentMinRole != store.RoleEdit {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "comment role must be view or edit")
 		return
 	}
 	if splitPermissions && d.Kind != "doc" {
@@ -183,7 +188,7 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 			cleanedTitle = &title
 		}
 		patch := store.ManagedDocPatch{Title: cleanedTitle, Move: in.Move, ParentID: in.ParentID, ExpectedCopyProtected: in.ExpectedCopyProtected,
-			CopyMinRole: in.CopyMinRole, DownloadMinRole: in.DownloadMinRole, ExpectedPermissionsRevision: in.ExpectedPermissionsRevision}
+			CopyMinRole: in.CopyMinRole, DownloadMinRole: in.DownloadMinRole, CommentMinRole: in.CommentMinRole, ExpectedPermissionsRevision: in.ExpectedPermissionsRevision}
 		if in.CopyProtected != nil {
 			patch.CopyProtected = *in.CopyProtected
 		}

@@ -251,7 +251,7 @@ func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bo
 	if meta.PermissionsRevision >= 9007199254740991 {
 		return "", "", false, ErrConflict
 	}
-	if patch.CopyMinRole == nil && patch.DownloadMinRole == nil {
+	if patch.CopyMinRole == nil && patch.DownloadMinRole == nil && patch.CommentMinRole == nil {
 		if patch.ExpectedPermissionsRevision != nil {
 			return "", "", false, ErrConflict
 		}
@@ -282,6 +282,20 @@ func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bo
 	return copyRole, downloadRole, copyRole != RoleView || downloadRole != RoleView, nil
 }
 
+func managedCommentRole(meta DocMeta, patch ManagedDocPatch) (string, error) {
+	role := meta.CommentMinRole
+	if role == "" {
+		role = RoleEdit
+	}
+	if patch.CommentMinRole != nil {
+		role = *patch.CommentMinRole
+	}
+	if role != RoleView && role != RoleEdit {
+		return "", ErrConflict
+	}
+	return role, nil
+}
+
 func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard, docID int64, patch ManagedDocPatch) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -291,6 +305,10 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	d := m.doc(docID)
 	copyRole, downloadRole, protected, err := managedPermissions(d.meta, patch)
+	if err != nil {
+		return err
+	}
+	commentRole, err := managedCommentRole(d.meta, patch)
 	if err != nil {
 		return err
 	}
@@ -331,6 +349,7 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	d.meta.CopyProtected = protected
 	d.meta.CopyMinRole, d.meta.DownloadMinRole = copyRole, downloadRole
+	d.meta.CommentMinRole = commentRole
 	d.meta.PermissionsRevision++
 	return nil
 }
@@ -342,10 +361,14 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 			return err
 		}
 		var current DocMeta
-		if err := tx.QueryRow(ctx, `SELECT kind,copy_protected,copy_min_role,download_min_role,permissions_revision FROM nodes WHERE id=$1`, docID).Scan(&current.Kind, &current.CopyProtected, &current.CopyMinRole, &current.DownloadMinRole, &current.PermissionsRevision); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT kind,copy_protected,copy_min_role,download_min_role,comment_min_role,permissions_revision FROM nodes WHERE id=$1`, docID).Scan(&current.Kind, &current.CopyProtected, &current.CopyMinRole, &current.DownloadMinRole, &current.CommentMinRole, &current.PermissionsRevision); err != nil {
 			return err
 		}
 		copyRole, downloadRole, protected, err := managedPermissions(current, patch)
+		if err != nil {
+			return err
+		}
+		commentRole, err := managedCommentRole(current, patch)
 		if err != nil {
 			return err
 		}
@@ -394,7 +417,7 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE nodes SET copy_protected=$2,copy_min_role=$3,download_min_role=$4,permissions_revision=permissions_revision+1 WHERE id=$1`, docID, protected, copyRole, downloadRole); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE nodes SET copy_protected=$2,copy_min_role=$3,download_min_role=$4,comment_min_role=$5,permissions_revision=permissions_revision+1 WHERE id=$1`, docID, protected, copyRole, downloadRole, commentRole); err != nil {
 			return err
 		}
 		if !guard.currentTime().Before(expiry) {

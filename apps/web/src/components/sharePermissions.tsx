@@ -3,14 +3,17 @@ import { X } from "lucide-react";
 import { ArrowDownIcon, HelpIcon } from "@/components/FeishuIcons";
 import type { RefObject } from "react";
 
-export type ContentPermissionKey = "copyMinRole" | "downloadMinRole";
-export type ContentPermissions = { copyMinRole: Role; downloadMinRole: Role; permissionsRevision: number };
+export type ContentPermissionKey = "copyMinRole" | "downloadMinRole" | "commentMinRole";
+export type ContentPermissions = { copyMinRole: Role; downloadMinRole: Role; commentMinRole?: "view" | "edit"; permissionsRevision: number };
 
 /** Reject older servers and malformed metadata rather than presenting invented permissions. */
 export function contentPermissions(meta: DocMeta | undefined): ContentPermissions | undefined {
   const isRole = (value: unknown): value is Role => value === "view" || value === "edit" || value === "manage";
   if (!meta || !isRole(meta.copyMinRole) || !isRole(meta.downloadMinRole) || !Number.isSafeInteger(meta.permissionsRevision) || meta.permissionsRevision! < 0) return undefined;
-  return { copyMinRole: meta.copyMinRole, downloadMinRole: meta.downloadMinRole, permissionsRevision: meta.permissionsRevision! };
+  // Older servers expose the first two settings but cannot change comment
+  // policy. Keep those controls available while disabling the new one.
+  if (meta.commentMinRole !== undefined && meta.commentMinRole !== "view" && meta.commentMinRole !== "edit") return undefined;
+  return { copyMinRole: meta.copyMinRole, downloadMinRole: meta.downloadMinRole, ...(meta.commentMinRole !== undefined ? { commentMinRole: meta.commentMinRole } : {}), permissionsRevision: meta.permissionsRevision! };
 }
 
 /** Validate the current document, role, and revision before attempting a guarded write. */
@@ -19,7 +22,7 @@ export async function changeContentPermission(
   key: ContentPermissionKey,
   next: Role,
   read: () => Promise<DocMeta>,
-  write: (change: { copyMinRole?: Role; downloadMinRole?: Role }, expectedRevision: number) => Promise<unknown>,
+  write: (change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedRevision: number) => Promise<unknown>,
   isCurrent: () => boolean,
 ): Promise<void> {
   const current = await read();
@@ -27,10 +30,11 @@ export async function changeContentPermission(
   if (current.role !== "manage") throw new Error("你已没有管理权限，请刷新后重试。");
   const verified = contentPermissions(current);
   if (!verified) throw new Error("当前服务不支持分项权限设置，请刷新后重试。");
-  if (verified.permissionsRevision !== expected.permissionsRevision || verified.copyMinRole !== expected.copyMinRole || verified.downloadMinRole !== expected.downloadMinRole) {
+  if (verified.permissionsRevision !== expected.permissionsRevision || verified.copyMinRole !== expected.copyMinRole || verified.downloadMinRole !== expected.downloadMinRole || verified.commentMinRole !== expected.commentMinRole) {
     throw new Error("设置已被更改，请查看最新状态后重试。");
   }
-  if (next !== expected[key]) await write({ [key]: next }, expected.permissionsRevision);
+  if (key === "commentMinRole" && (expected.commentMinRole === undefined || (next !== "view" && next !== "edit"))) throw new Error("当前服务不支持该评论权限设置。");
+  if (next !== expected[key]) await write(key === "commentMinRole" ? { commentMinRole: next as "view" | "edit" } : { [key]: next }, expected.permissionsRevision);
 }
 
 export function copyProtectionError(error: unknown): string {
@@ -66,12 +70,13 @@ export function SharePermissions({
       {([
         ["copyMinRole", "谁可以复制内容"],
         ["downloadMinRole", "谁可以创建副本、打印和下载"],
+        ["commentMinRole", "谁可以评论"],
       ] as const).map(([key, label]) => <div key={key} className="mb-7 last:mb-0">
         <label htmlFor={`permission-${key}`} className="block font-medium leading-5">{label}</label>
         <span className="relative mt-2 inline-flex border-b border-border">
-          <select id={`permission-${key}`} value={permissions?.[key] ?? ""} disabled={busy || !enabled || !permissions} onChange={(event) => onChange(key, event.target.value as Role)} className="h-9 cursor-pointer appearance-none bg-transparent pr-6 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 sm:text-[14px]">
-            {!permissions && <option value="">加载中…</option>}
-            {OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          <select id={`permission-${key}`} value={permissions?.[key] ?? ""} disabled={busy || !enabled || !permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined)} onChange={(event) => onChange(key, event.target.value as Role)} className="h-9 cursor-pointer appearance-none bg-transparent pr-6 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 sm:text-[14px]">
+            {(!permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined)) && <option value="">{permissions ? "当前服务暂不支持" : "加载中…"}</option>}
+            {OPTIONS.filter((option) => key !== "commentMinRole" || option.value !== "manage").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
           <ArrowDownIcon className="pointer-events-none absolute right-1 top-4 size-2 text-muted-foreground" />
         </span>

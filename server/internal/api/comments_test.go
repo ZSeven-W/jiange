@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -99,10 +100,21 @@ func TestCommentsMentionsReplyResolve(t *testing.T) {
 		t.Fatalf("edit other's comment: %d", res.StatusCode)
 	}
 
-	// view-only users cannot comment
+	// New documents allow readers to comment by default. Managers may
+	// separately restrict comments to editors without removing read access.
 	send(t, kay, "PUT", docURL+"/shares", map[string]any{"email": "bc@x.com", "role": "view"})
-	if res := post(t, bob, docURL+"/comments", map[string]any{"body": "看看"}); res.StatusCode != 403 {
-		t.Fatalf("view role comment: %d", res.StatusCode)
+	if res := post(t, bob, docURL+"/comments", map[string]any{"body": "看看"}); res.StatusCode != 201 {
+		t.Fatalf("default view role comment: %d", res.StatusCode)
+	}
+	meta, err := st.GetDoc(context.Background(), d.CreatorID, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := send(t, kay, "PATCH", docURL, map[string]any{"commentMinRole": "edit", "expectedPermissionsRevision": meta.PermissionsRevision}); res.StatusCode != 200 {
+		t.Fatalf("restrict comment policy: %d", res.StatusCode)
+	}
+	if res := post(t, bob, docURL+"/comments", map[string]any{"body": "只读"}); res.StatusCode != 403 {
+		t.Fatalf("restricted view role comment: %d", res.StatusCode)
 	}
 
 	// deleting a thread removes its replies
@@ -112,7 +124,7 @@ func TestCommentsMentionsReplyResolve(t *testing.T) {
 	r, _ = kay.Get(docURL + "/comments")
 	var list struct{ Comments []store.Comment }
 	json.NewDecoder(r.Body).Decode(&list)
-	if len(list.Comments) != 0 {
-		t.Fatalf("thread should be gone: %+v", list.Comments)
+	if len(list.Comments) != 1 || list.Comments[0].Body != "看看" {
+		t.Fatalf("thread removal should preserve independent comment: %+v", list.Comments)
 	}
 }
