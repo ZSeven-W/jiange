@@ -104,6 +104,48 @@ describe("restricted base polling", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
+
+  it("revalidates once after a focus change during an in-flight refresh", async () => {
+    vi.useFakeTimers();
+    let wake = () => {};
+    const resolvers: Array<() => void> = [];
+    const refresh = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)));
+    const stop = startRestrictedPolling(refresh, {
+      visible: () => true,
+      listen: (fn) => { wake = fn; return () => { wake = () => {}; }; },
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id),
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    wake(); wake();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    resolvers.shift()!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    stop();
+    resolvers.shift()!();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start the queued revalidation after access refresh fails", async () => {
+    vi.useFakeTimers();
+    let wake = () => {};
+    let reject!: (reason: unknown) => void;
+    const refresh = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    startRestrictedPolling(refresh, {
+      visible: () => true,
+      listen: (fn) => { wake = fn; return () => { wake = () => {}; }; },
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id),
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    wake();
+    reject(new Error("access denied"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
 });
 
 const ev = (seq: number, body: BtEvent["body"]): BtEvent => ({ seq, body });

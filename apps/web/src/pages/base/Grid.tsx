@@ -7,7 +7,7 @@ import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Lock } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
@@ -136,7 +136,7 @@ export function Grid({
     };
   }, []);
 
-  const width = (f: Field) => widths[f.id] ?? (f.id === fields[0]?.id && f.type === "text" ? 280 : REGISTRY[f.type].width);
+  const width = (f: Field) => widths[f.id] ?? (f.isPrimary ? 280 : REGISTRY[f.type].width);
   const saveWidth = (fid: number, w: number) => {
     setWidths((prev) => {
       const next = { ...prev, [fid]: w };
@@ -641,12 +641,12 @@ export function Grid({
                 key={f.id}
                 className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
                 style={{ width: width(f), minWidth: width(f) }}
-                draggable={canEdit && !!allFields}
+                draggable={canEdit && !!allFields && !f.isPrimary}
                 data-th={f.id}
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/field", String(f.id));
                   e.dataTransfer.effectAllowed = "move";
-                  if (!canEdit || !allFields) { e.preventDefault(); return; }
+                  if (!canEdit || !allFields || f.isPrimary) { e.preventDefault(); return; }
                   setDrag({ fid: f.id, at: null, order: fields.map((field) => field.id), allOrder: allFields.map((field) => field.id) });
                 }}
                 onDragOver={(e) => {
@@ -662,9 +662,10 @@ export function Grid({
                 onDragEnd={() => setDrag({ fid: 0, at: null, order: [], allOrder: [] })}
               >
                   <div className="flex items-center gap-1">
-                    <span className="mr-0.5 hidden cursor-grab text-subtle group-hover/th:inline" title="拖拽排序" data-drag-handle>
+                    {!f.isPrimary && <span className="mr-0.5 hidden cursor-grab text-subtle group-hover/th:inline" title="拖拽排序" data-drag-handle>
                       ⠿
-                    </span>
+                    </span>}
+                    {f.isPrimary && <Lock size={13} className="shrink-0 text-subtle" aria-label="主字段" />}
                     <span className="mr-1.5 text-subtle"><TypeGlyph t={f.type} /></span>
                     <span className="truncate">{f.name}</span>
                     {canEdit && (

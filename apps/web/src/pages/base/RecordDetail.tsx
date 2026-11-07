@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
-import { displayValue, evalFormulas, REGISTRY, setFormulaCache } from "./registry";
+import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
 import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, useWriteLedger, WriteIssues, type WriteLedger } from "./writeSafety";
@@ -90,7 +90,7 @@ export function RecordDetail({
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[420px] flex-col border-l bg-surface shadow-xl" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         <span className="truncate">
-          {String(displayValue(row, fields.find((f) => f.type === "text") ?? fields[0], members) || "未命名记录")}
+          {recordTitle(row, fields, members) || "未命名记录"}
         </span>
         <span className="ml-2 text-[12px] font-normal text-subtle">#{row.id}</span>
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
@@ -197,7 +197,6 @@ function LinkEditor({
   const selected = Array.isArray(record.cells[field.id]) ? (record.cells[field.id] as unknown[]).map(Number) : [];
   const targetReady = target.isFetchedAfterMount && target.isSuccess && !target.isFetching;
   const targetData = targetReady ? target.data : undefined;
-  const tTitle = targetData?.fields.find((f) => f.type === "text") ?? targetData?.fields[0];
   const toggle = async (id: number) => {
     const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
     const op = ledger.blocked("batch") ? null : ledger.begin(`记录 #${record.id} · ${field.name}`, cellDraft(next), `cell:${record.id}:${field.id}`);
@@ -218,7 +217,7 @@ function LinkEditor({
             disabled={ledger.blocked("batch") || ledger.blocked(`cell:${record.id}:${field.id}`)}
             onChange={() => void toggle(r.id)}
           />
-          {String(displayValue(r, tTitle ?? field, members) ?? "") || `#${r.id}`}
+          {(targetData && recordTitle(r, targetData.fields, targetData.members ?? [])) || `#${r.id}`}
         </label>
       ))}
       {target.isError ? <span role="alert" className="text-[12px] text-destructive">无法加载目标表，请重试。</span> : !targetReady ? <span role="status" className="text-[12px] text-subtle">正在确认目标表访问权限…</span> : (targetData?.records ?? []).length === 0 && <span className="text-[12px] text-subtle">目标表暂无记录</span>}

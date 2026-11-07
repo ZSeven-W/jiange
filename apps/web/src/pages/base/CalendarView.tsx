@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, baseApi, type BaseRecord, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { displayValue } from "./registry";
+import { recordTitle } from "./registry";
 import { refreshWrites, useWriteLedger } from "./writeSafety";
 
 const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
@@ -93,7 +93,6 @@ export function CalendarView({
   onOpen?: (record: BaseRecord) => void;
 }) {
   const dateField = fields.find((f) => f.id === dateFieldId && f.type === "date") ?? fields.find((f) => f.type === "date");
-  const title = fields.find((f) => f.type === "text") ?? fields[0];
   const [cursor, setCursor] = useState(todayCalendar);
   const [scale, setScale] = useState<CalendarScale>("month");
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +114,7 @@ export function CalendarView({
 
   if (!dateField) return <div className="grid flex-1 place-items-center px-4 text-center text-[14px] text-muted-foreground"><p>日历需要日期字段，请先在表格视图中添加日期字段。</p></div>;
 
-  const label = (record: BaseRecord) => title ? String(displayValue(record, title, members) ?? "") || "未命名" : "未命名";
+  const label = (record: BaseRecord) => recordTitle(record, fields, members) || "未命名";
   const move = async (day: string, rid: number) => {
     if (!canEdit || busyRef.current || ledger.blocked("batch") || !calendarDate(day)) return;
     const drag = dragRef.current;

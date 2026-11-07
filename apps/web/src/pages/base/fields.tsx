@@ -199,7 +199,7 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
           >
             编辑字段
           </button>
-          <button
+          {!field.isPrimary && <button
             className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover"
             onClick={async () => {
               setOpen(false);
@@ -207,7 +207,7 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
             }}
           >
             删除字段
-          </button>
+          </button>}
         </div>
       )}
     </div>

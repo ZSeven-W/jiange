@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -80,29 +81,54 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := UserFrom(r.Context())
-	read, err := s.readBaseAllowed(r.Context(), u.ID, b.ID)
+	var read baseReadable
+	var targets []baseReadable
+	var expansions map[string]any
+	var members []store.User
+	var workspaces []store.Workspace
+	var head int64
+	snapshotCtx, cancelSnapshot := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancelSnapshot()
+	err := s.Store.WithBaseReadSnapshot(snapshotCtx, u.ID, b.ID, func(reader store.BaseSnapshotReader) error {
+		var err error
+		read, err = readBaseAllowedWith(snapshotCtx, reader, u.ID, b.ID)
+		if err != nil {
+			return err
+		}
+		head, err = reader.BtHead(snapshotCtx, b.ID)
+		if err != nil {
+			return err
+		}
+		members, err = reader.WorkspaceMembers(snapshotCtx, read.meta.WorkspaceID)
+		if err != nil {
+			return err
+		}
+		workspaces, err = reader.Workspaces(snapshotCtx, u.ID)
+		if err != nil {
+			return err
+		}
+		expansions, targets, err = expandBaseWith(snapshotCtx, reader, u.ID, &read, true)
+		return err
+	})
 	if err != nil {
-		s.fail(w, r, err)
+		switch {
+		case errors.Is(err, context.Canceled):
+			return
+		case errors.Is(err, context.DeadlineExceeded):
+			httpx.Error(w, http.StatusServiceUnavailable, "base_snapshot_timeout", "读取表格超时，请重试")
+		case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "forbidden", "访问权限已变化")
+		case errors.Is(err, store.ErrBaseSnapshotTooLarge):
+			httpx.Error(w, http.StatusRequestEntityTooLarge, "base_snapshot_too_large", "表格关联数据过多，请缩小范围后重试")
+		default:
+			s.fail(w, r, err)
+		}
 		return
 	}
-	head, err := s.Store.BtHead(r.Context(), b.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	members, err := s.Store.WorkspaceMembers(r.Context(), b.WorkspaceID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	workspaces, err := s.Store.Workspaces(r.Context(), u.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
+	snapshotMembers := slices.Clone(members)
 	isMember := false
 	for _, ws := range workspaces {
-		if ws.ID == b.WorkspaceID {
+		if ws.ID == read.meta.WorkspaceID {
 			isMember = true
 			break
 		}
@@ -133,11 +159,6 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		}
 		members = visible
 	}
-	expansions, targets, err := s.expandBase(r.Context(), u.ID, &read, true)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
 	reads := append([]baseReadable{read}, targets...)
 	if !s.finishBaseRead(w, r, reads) {
 		return
@@ -151,13 +172,22 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 	}
 	currentMember := false
 	for _, ws := range currentWorkspaces {
-		if ws.ID == b.WorkspaceID {
+		if ws.ID == read.meta.WorkspaceID {
 			currentMember = true
 			break
 		}
 	}
 	if currentMember != isMember {
 		httpx.Error(w, http.StatusConflict, "access_changed", "工作空间权限已变化，请重试")
+		return
+	}
+	currentMembers, err := s.Store.WorkspaceMembers(r.Context(), read.meta.WorkspaceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if !reflect.DeepEqual(currentMembers, snapshotMembers) {
+		httpx.Error(w, http.StatusConflict, "access_changed", "工作空间成员已变化，请重试")
 		return
 	}
 	meta, err := s.sanitizeDocMeta(r.Context(), u.ID, read.meta, nil)
@@ -506,6 +536,8 @@ func (s *Server) fieldMutationError(w http.ResponseWriter, r *http.Request, err 
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许修改字段")
 	case errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not_found", "字段不存在")
+	case errors.Is(err, store.ErrPrimaryField):
+		httpx.Error(w, http.StatusConflict, "primary_field", "主字段不能删除、移动或隐藏")
 	case errors.Is(err, store.ErrConflict):
 		httpx.Error(w, http.StatusConflict, "field_conflict", "字段、关联表或权限视图已变化或存在依赖，请检查后重试")
 	default:

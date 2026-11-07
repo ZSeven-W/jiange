@@ -5,6 +5,16 @@ import type { BaseRecord, Field } from "@/lib/api";
 import { Grid } from "./Grid";
 
 describe("virtualized row sizing", () => {
+  it("marks the primary field independently of the visible field index", () => {
+    const fields: Field[] = [
+      { id: 2, name: "主标题", type: "text", position: 2, isPrimary: true },
+      { id: 3, name: "状态", type: "text", position: 3 },
+    ];
+    const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} canEdit fields={fields} allFields={fields} records={[]} members={[]} onMutate={() => {}} /></QueryClientProvider>);
+    expect(html).toContain('aria-label="主字段"');
+    expect(html).toMatch(/draggable="false"[^>]*data-th="2"/);
+    expect(html).toMatch(/draggable="true"[^>]*data-th="3"/);
+  });
   it("keeps rich cell contents in a fixed-height display box without dropping values", () => {
     const fields: Field[] = [
       { id: 1, name: "多选", type: "multi_select", options: ["甲", "乙", "丙"], position: 1 },

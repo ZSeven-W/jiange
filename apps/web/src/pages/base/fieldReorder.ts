@@ -7,11 +7,14 @@ export function planFieldReorder(fields: readonly Field[], sourceId: number, slo
   if (expectedIds.length !== fields.length || !expectedIds.every((id, index) => fields[index]?.id === id)) return { kind: "stale" };
   const from = fields.findIndex((field) => field.id === sourceId);
   if (from < 0 || !Number.isInteger(slot) || slot < 0 || slot > fields.length || new Set(expectedIds).size !== expectedIds.length) return { kind: "invalid" };
+  if (fields[from].isPrimary) return { kind: "invalid" };
   const index = slot - (from < slot ? 1 : 0);
   if (index === from) return { kind: "noop" };
   const rest = expectedIds.filter((id) => id !== sourceId);
   if (!rest.length) return { kind: "noop" };
   rest.splice(index, 0, sourceId);
+  const primary = fields.find((field) => field.isPrimary);
+  if (primary && rest.indexOf(primary.id) !== expectedIds.indexOf(primary.id)) return { kind: "invalid" };
   return { kind: "move", desiredIds: rest };
 }
 

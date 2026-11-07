@@ -141,22 +141,43 @@ type baseReadable struct {
 	views             []store.View
 	policy            baseReadPolicy
 	records           []store.Record
+	memberIDs         []int64
+	memberNames       map[int64]string
 }
 
 func (s *Server) readBaseAllowed(ctx context.Context, uid, id int64) (baseReadable, error) {
+	return readBaseAllowedWith(ctx, s.Store, uid, id)
+}
+
+func readBaseAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id int64) (baseReadable, error) {
+	out, err := readBasePolicyWith(ctx, reader, uid, id)
+	if err != nil {
+		return out, err
+	}
+	recs, err := reader.QueryRecordsConstrained(ctx, id, out.allFields, out.policy.mandatory, btquery.Config{}, 10000)
+	if err != nil {
+		return out, err
+	}
+	out.records = stripBaseRecords(recs, out.allFields, out.policy)
+	return out, nil
+}
+
+// readBasePolicyWith obtains the permissions/schema without loading an
+// arbitrary prefix of another table. Associated records are fetched by ID.
+func readBasePolicyWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id int64) (baseReadable, error) {
 	var out baseReadable
-	meta, err := s.Store.GetDoc(ctx, uid, id)
+	meta, err := reader.GetDoc(ctx, uid, id)
 	if err != nil {
 		return out, err
 	}
 	if meta.Kind != "base" || store.RoleRank(meta.Role) < store.RoleRank(store.RoleView) {
 		return out, store.ErrNotFound
 	}
-	fields, err := s.Store.Fields(ctx, id)
+	fields, err := reader.Fields(ctx, id)
 	if err != nil {
 		return out, err
 	}
-	views, err := s.Store.Views(ctx, id)
+	views, err := reader.Views(ctx, id)
 	if err != nil {
 		return out, err
 	}
@@ -164,11 +185,7 @@ func (s *Server) readBaseAllowed(ctx context.Context, uid, id int64) (baseReadab
 	if err != nil {
 		return out, err
 	}
-	recs, err := s.Store.QueryRecordsConstrained(ctx, id, fields, policy.mandatory, btquery.Config{}, 10000)
-	if err != nil {
-		return out, err
-	}
-	return baseReadable{meta: meta, allFields: fields, fields: visibleBaseFields(fields, policy), views: views, policy: policy, records: stripBaseRecords(recs, fields, policy)}, nil
+	return baseReadable{meta: meta, allFields: fields, fields: visibleBaseFields(fields, policy), views: views, policy: policy}, nil
 }
 
 // Recheck the original session and the relevant permission configuration after
@@ -190,7 +207,7 @@ func (s *Server) recheckBaseRead(ctx context.Context, r *http.Request, snapshot 
 	if err != nil {
 		return err
 	}
-	if meta.Kind != "base" || meta.Role != snapshot.meta.Role {
+	if meta.Kind != "base" || meta.Role != snapshot.meta.Role || meta.WorkspaceID != snapshot.meta.WorkspaceID || meta.CopyProtected != snapshot.meta.CopyProtected || !reflect.DeepEqual(meta.ParentID, snapshot.meta.ParentID) {
 		return store.ErrConflict
 	}
 	fields, err := s.Store.Fields(ctx, meta.ID)
@@ -204,11 +221,92 @@ func (s *Server) recheckBaseRead(ctx context.Context, r *http.Request, snapshot 
 	if !reflect.DeepEqual(fields, snapshot.allFields) || !reflect.DeepEqual(views, snapshot.views) {
 		return store.ErrConflict
 	}
+	if len(snapshot.memberIDs) > 0 {
+		names, err := s.Store.VisibleMemberNames(ctx, snapshot.meta.WorkspaceID, snapshot.memberIDs)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(names, snapshot.memberNames) {
+			return store.ErrConflict
+		}
+	}
+	return nil
+}
+
+// A record may stop satisfying a locked-view predicate without changing the
+// view configuration. Recheck every row whose content could be returned.
+func (s *Server) recheckBaseRows(ctx context.Context, snapshot baseReadable) error {
+	if len(snapshot.records) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(snapshot.records))
+	seen := make(map[int64]bool, len(snapshot.records))
+	for _, record := range snapshot.records {
+		if !seen[record.ID] {
+			seen[record.ID] = true
+			ids = append(ids, record.ID)
+		}
+	}
+	visible, err := s.Store.VisibleRecordIDs(ctx, snapshot.meta.ID, ids, snapshot.allFields, snapshot.policy.mandatory)
+	if err != nil {
+		return err
+	}
+	if len(visible) != len(ids) {
+		return store.ErrConflict
+	}
 	return nil
 }
 
 func (s *Server) finishBaseRead(w http.ResponseWriter, r *http.Request, reads []baseReadable) bool {
+	// A Base can be reached by multiple link/lookup fields. Merge its visible
+	// IDs so current-access checks do not grow with the number of link fields.
+	merged := make([]baseReadable, 0, len(reads))
+	indexes := make(map[int64]int, len(reads))
+	seen := make(map[int64]map[int64]bool, len(reads))
+	seenMembers := make(map[int64]map[int64]bool, len(reads))
 	for _, read := range reads {
+		idx, ok := indexes[read.meta.ID]
+		if !ok {
+			idx = len(merged)
+			indexes[read.meta.ID] = idx
+			seen[read.meta.ID] = map[int64]bool{}
+			seenMembers[read.meta.ID] = map[int64]bool{}
+			copy := read
+			copy.records = nil
+			copy.memberIDs = nil
+			copy.memberNames = map[int64]string{}
+			merged = append(merged, copy)
+		} else {
+			previous := merged[idx]
+			if previous.meta.Role != read.meta.Role || previous.meta.WorkspaceID != read.meta.WorkspaceID || previous.meta.CopyProtected != read.meta.CopyProtected || !reflect.DeepEqual(previous.meta.ParentID, read.meta.ParentID) || !reflect.DeepEqual(previous.allFields, read.allFields) || !reflect.DeepEqual(previous.views, read.views) {
+				httpx.Error(w, http.StatusConflict, "access_changed", "表格权限或字段已变化，请重试")
+				return false
+			}
+		}
+		for _, record := range read.records {
+			if !seen[read.meta.ID][record.ID] {
+				seen[read.meta.ID][record.ID] = true
+				merged[idx].records = append(merged[idx].records, record)
+			}
+		}
+		for _, id := range read.memberIDs {
+			name, present := read.memberNames[id]
+			if seenMembers[read.meta.ID][id] {
+				oldName, oldPresent := merged[idx].memberNames[id]
+				if oldPresent != present || (present && oldName != name) {
+					httpx.Error(w, http.StatusConflict, "access_changed", "表格成员已变化，请重试")
+					return false
+				}
+				continue
+			}
+			seenMembers[read.meta.ID][id] = true
+			merged[idx].memberIDs = append(merged[idx].memberIDs, id)
+			if present {
+				merged[idx].memberNames[id] = name
+			}
+		}
+	}
+	for _, read := range merged {
 		if err := s.recheckBaseRead(r.Context(), r, read); err != nil {
 			if errors.Is(err, store.ErrForbidden) || errors.Is(err, store.ErrNotFound) {
 				httpx.Error(w, http.StatusForbidden, "forbidden", "访问权限已变化")
@@ -219,6 +317,14 @@ func (s *Server) finishBaseRead(w http.ResponseWriter, r *http.Request, reads []
 				return false
 			}
 			s.fail(w, r, err)
+			return false
+		}
+		if err := s.recheckBaseRows(r.Context(), read); err != nil {
+			if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
+				httpx.Error(w, http.StatusConflict, "access_changed", "表格记录权限已变化，请重试")
+			} else {
+				s.fail(w, r, err)
+			}
 			return false
 		}
 	}

@@ -33,12 +33,23 @@ func TestFieldOrderHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	var third store.Field
+	resp = post(t, client, url+"/fields", map[string]any{"name": "第三列", "type": "text"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add third field: %d", resp.StatusCode)
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&third); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
 	currentIDs := make([]int64, 0, len(initial.Fields)+1)
 	for _, field := range initial.Fields {
 		currentIDs = append(currentIDs, field.ID)
 	}
 	currentIDs = append(currentIDs, second.ID)
-	desired := append([]int64{second.ID}, currentIDs[:len(currentIDs)-1]...)
+	currentIDs = append(currentIDs, third.ID)
+	desired := append([]int64(nil), currentIDs[:len(initial.Fields)]...)
+	desired = append(desired, third.ID, second.ID)
 	if res := post(t, client, url+"/fields/reorder", map[string]any{"expectedFieldIds": currentIDs[:1], "desiredFieldIds": currentIDs[:1]}); res.StatusCode != http.StatusConflict {
 		t.Fatalf("partial order: %d", res.StatusCode)
 	}
@@ -59,7 +70,7 @@ func TestFieldOrderHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if len(current.Fields) != len(desired) || current.Fields[0].ID != second.ID || current.Fields[1].ID != currentIDs[0] {
+	if len(current.Fields) != len(desired) || current.Fields[0].ID != currentIDs[0] || current.Fields[len(initial.Fields)].ID != third.ID || current.Fields[len(initial.Fields)+1].ID != second.ID {
 		t.Fatalf("fields=%+v", current.Fields)
 	}
 }

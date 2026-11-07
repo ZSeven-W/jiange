@@ -242,8 +242,20 @@ export function setFormulaCache(rec: BaseRecord, values: Map<number, FormulaValu
   formulaCache.set(rec, values);
 }
 
-export function displayValue(rec: BaseRecord | undefined, f: Field, members: User[]): CellValue {
-  if (!rec) return undefined;
+/** The primary field is stable even when the visible field set changes. */
+export function recordTitleField(fields: readonly Field[]): Field | undefined {
+  const primary = fields.find((field) => field.isPrimary);
+  if (primary) return primary;
+  // The new server explicitly includes false for every non-primary field.
+  // If no true marker is visible, the primary is outside this projection;
+  // do not present a different visible field as its title. An old server has
+  // no marker at all and retains its legacy first-text behavior.
+  if (fields.some((field) => typeof field.isPrimary === "boolean")) return undefined;
+  return fields.find((field) => field.type === "text") ?? fields[0];
+}
+
+export function displayValue(rec: BaseRecord | undefined, f: Field | undefined, members: User[]): CellValue {
+  if (!rec || !f) return undefined;
   switch (f.type) {
     case "created_by":
       return rec.creatorId;
@@ -260,6 +272,38 @@ export function displayValue(rec: BaseRecord | undefined, f: Field, members: Use
 
 export function memberName(id: number | undefined, members: User[]): string {
   return members.find((m) => m.id === id)?.name ?? "";
+}
+
+/** Format the visible record title from the authorized primary field. */
+export function recordTitle(record: BaseRecord | undefined, fields: Field[], members: User[]): string {
+  const field = recordTitleField(fields);
+  if (!field || !record) return "";
+  let value: CellValue | null;
+  try {
+    if (field.type === "formula") {
+      // Do not calculate a misleading value when a direct or transitive
+      // dependency is absent from the caller's authorized projection.
+      const byName = new Map(fields.map((item) => [item.name.toLowerCase(), item]));
+      const checked = new Set<number>();
+      const visible = (item: Field): boolean => {
+        if (checked.has(item.id)) return true; // evalFormulas reports cycles.
+        checked.add(item.id);
+        for (const name of formulaRefs(item.formula ?? "")) {
+          const dependency = byName.get(name.toLowerCase());
+          if (!dependency || (dependency.type === "formula" && !visible(dependency))) return false;
+        }
+        return true;
+      };
+      if (!visible(field)) return "";
+      value = evalFormulas(fields, record, members).get(field.id);
+    } else value = displayValue(record, field, members);
+  }
+  catch { return "#错误"; }
+  if (value === null || value === undefined || value === "") return "";
+  if (field.type === "person" || field.type === "created_by") return memberName(typeof value === "number" ? value : undefined, members);
+  if (field.type === "created_at" || field.type === "modified_at") return formatTime(typeof value === "string" ? value : undefined);
+  if (Array.isArray(value)) return value.map((item) => typeof item === "string" ? item : typeof item === "object" && item && "name" in item ? String(item.name) : "").filter(Boolean).join(", ");
+  return String(value);
 }
 
 export function formatTime(iso: string | undefined): string {

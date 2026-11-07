@@ -595,6 +595,8 @@ function HiddenBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
               type="checkbox"
               className="accent-primary"
               checked={!hidden.has(f.id)}
+              disabled={!!f.isPrimary && !hidden.has(f.id)}
+              title={f.isPrimary ? "主字段不能隐藏" : undefined}
               onChange={(e) => {
                 const next = new Set(hidden);
                 if (e.target.checked) next.delete(f.id);

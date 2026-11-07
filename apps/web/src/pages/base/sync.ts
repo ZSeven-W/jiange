@@ -70,11 +70,13 @@ export function startRestrictedPolling(refresh: () => Promise<void>, env: {
 }, interval = 15_000): () => void {
   let stopped = false;
   let running = false;
+  let wakePending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let unlisten = () => {};
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    wakePending = false;
     if (timer !== undefined) env.clearTimer(timer);
     unlisten();
   };
@@ -88,11 +90,21 @@ export function startRestrictedPolling(refresh: () => Promise<void>, env: {
     running = true;
     void refresh().catch(() => { stop(); /* page reports the failed access check */ }).finally(() => {
       running = false;
+      if (!stopped && wakePending && env.visible()) {
+        wakePending = false;
+        tick();
+        return;
+      }
       if (timer === undefined) schedule();
     });
   };
   const wake = () => {
-    if (stopped || running || !env.visible()) return;
+    if (stopped || !env.visible()) return;
+    // A focus/visibility change can happen after the current request read its
+    // snapshot. Keep one additional revalidation rather than waiting another
+    // full polling interval and leaving permissions or records stale.
+    if (running) { wakePending = true; return; }
+    wakePending = false;
     if (timer !== undefined) env.clearTimer(timer);
     tick();
   };

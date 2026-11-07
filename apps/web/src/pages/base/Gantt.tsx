@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { calendarDate, calendarKey } from "./CalendarView";
-import { displayValue } from "./registry";
+import { recordTitle } from "./registry";
 
 const DAY = 24 * 60 * 60 * 1000;
 const DAY_WIDTH = 30;
@@ -76,7 +76,6 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
   const dateFields = fields.filter((f) => f.type === "date");
   const startField = fields.find((f) => f.id === startFieldId && f.type === "date") ?? dateFields[0];
   const endField = fields.find((f) => f.id === endFieldId && f.type === "date") ?? dateFields[1] ?? startField;
-  const title = fields.find((f) => f.type === "text") ?? fields[0];
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
@@ -100,10 +99,10 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     for (const rec of records) {
       const range = ganttRange(rec.cells[startField.id], rec.cells[endField.id], startField.id === endField.id);
       if (!range || range.end < first || range.start >= first + days) continue;
-      out.push({ rec, range, visibleStart: Math.max(range.start, first), visibleEnd: Math.min(range.end, first + days - 1), label: title ? String(displayValue(rec, title, members) ?? "") || "未命名" : "未命名" });
+      out.push({ rec, range, visibleStart: Math.max(range.start, first), visibleEnd: Math.min(range.end, first + days - 1), label: recordTitle(rec, fields, members) || "未命名" });
     }
     return out;
-  }, [records, startField, endField, first, days, title, members]);
+  }, [records, startField, endField, first, days, fields, members]);
 
   if (!startField || !endField || first === null) return <div className="grid flex-1 place-items-center px-4 text-center text-[14px] text-muted-foreground"><p>甘特需要日期字段，请先添加日期字段作为开始时间。</p></div>;
 

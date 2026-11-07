@@ -83,7 +83,7 @@ func checkFieldOrder(t *testing.T, st store.Store) {
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
-	for _, order := range [][]int64{{current[1], current[0], current[2]}, {current[2], current[1], current[0]}} {
+	for _, order := range [][]int64{{current[0], current[2], current[1]}, {current[0], current[2], current[1]}} {
 		wg.Add(1)
 		go func(order []int64) {
 			defer wg.Done()
@@ -216,8 +216,11 @@ func TestPostgresFieldOrderEventFailureRollsBack(t *testing.T) {
 	if _, err = st.AddField(ctx, store.Field{BaseID: b.ID, Name: "B", Type: "text"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = st.AddField(ctx, store.Field{BaseID: b.ID, Name: "C", Type: "text"}); err != nil {
+		t.Fatal(err)
+	}
 	before, err := st.Fields(ctx, b.ID)
-	if err != nil || len(before) != 2 {
+	if err != nil || len(before) != 3 {
 		t.Fatalf("fields=%v err=%v", before, err)
 	}
 	_, err = pool.Exec(ctx, `CREATE FUNCTION fail_field_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test failure'; END $$;
@@ -226,11 +229,11 @@ func TestPostgresFieldOrderEventFailureRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids := fieldIDs(before)
-	if err = st.ReorderFieldsGuarded(ctx, guard, b.ID, ids, []int64{ids[1], ids[0]}); err == nil {
+	if err = st.ReorderFieldsGuarded(ctx, guard, b.ID, ids, []int64{ids[0], ids[2], ids[1]}); err == nil {
 		t.Fatal("expected injected failure")
 	}
 	after, err := st.Fields(ctx, b.ID)
-	if err != nil || len(after) != 2 || after[0].ID != ids[0] || after[1].ID != ids[1] || after[0].Position != before[0].Position || after[1].Position != before[1].Position {
+	if err != nil || len(after) != 3 || after[0].ID != ids[0] || after[1].ID != ids[1] || after[2].ID != ids[2] || after[0].Position != before[0].Position || after[1].Position != before[1].Position || after[2].Position != before[2].Position {
 		t.Fatalf("partial reorder after failure: before=%v after=%v err=%v", before, after, err)
 	}
 }

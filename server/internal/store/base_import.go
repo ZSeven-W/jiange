@@ -110,6 +110,7 @@ func (m *Memory) ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, baseID
 		f := c.New
 		f.BaseID, f.ID = baseID, m.id()
 		f.Position = float64(f.ID)
+		f.IsPrimary = len(fields) == 0 && len(added) == 0
 		ids[i] = f.ID
 		added = append(added, f)
 	}
@@ -161,18 +162,20 @@ func (p *Postgres) ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, base
 			return err
 		}
 		ids := make([]int64, len(plan.Columns))
+		firstNew := len(fields) == 0
 		for i, c := range plan.Columns {
 			if c.ExistingID != 0 {
 				ids[i] = c.ExistingID
 				continue
 			}
 			f := c.New
-			err = tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1) RETURNING id`,
-				baseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula).Scan(&ids[i])
+			err = tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position,is_primary)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1,$8) RETURNING id`,
+				baseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, firstNew).Scan(&ids[i])
 			if err != nil {
 				return err
 			}
+			firstNew = false
 		}
 		var pos float64
 		if err = tx.QueryRow(ctx, `SELECT COALESCE(max(position),0) FROM base_records WHERE base_id=$1`, baseID).Scan(&pos); err != nil {

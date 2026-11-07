@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -22,9 +23,128 @@ type baseReverse struct {
 	Titles     map[int64]string  `json:"titles"`
 }
 
+// Only use fields present in the caller's authorized projection. Legacy or
+// permission-filtered projections may not contain the primary field.
+func visibleTitleField(fields, allFields []store.Field) *store.Field {
+	for _, primary := range allFields {
+		if !primary.IsPrimary {
+			continue
+		}
+		for i := range fields {
+			if fields[i].ID == primary.ID {
+				return &fields[i]
+			}
+		}
+		// A hidden primary field must not be replaced by some other visible
+		// field and presented as the record's title.
+		return nil
+	}
+	for i := range fields {
+		if fields[i].Type == "text" {
+			return &fields[i]
+		}
+	}
+	return nil
+}
+
+func visibleTitleMemberID(record store.Record, field *store.Field) (int64, bool) {
+	if field == nil {
+		return 0, false
+	}
+	if field.Type == "created_by" && record.CreatorID != nil && *record.CreatorID > 0 {
+		return *record.CreatorID, true
+	}
+	if field.Type != "person" {
+		return 0, false
+	}
+	var id int64
+	if json.Unmarshal(record.Cells[strconv.FormatInt(field.ID, 10)], &id) != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func visibleRecordTitle(record store.Record, field *store.Field, names map[int64]string) string {
+	if field == nil {
+		return ""
+	}
+	// IDs and stored formulas are not display names. Until the authorized
+	// target-member and computed-field projection is available, do not leak an
+	// internal identifier or claim a derived value is a record title.
+	switch field.Type {
+	case "person", "created_by":
+		if id, ok := visibleTitleMemberID(record, field); ok {
+			return names[id]
+		}
+		return ""
+	case "formula", "lookup", "link":
+		return ""
+	case "created_at":
+		if record.CreatedAt != nil {
+			return record.CreatedAt.Format("2006-01-02 15:04")
+		}
+		return ""
+	case "modified_at":
+		if record.UpdatedAt != nil {
+			return record.UpdatedAt.Format("2006-01-02 15:04")
+		}
+		return ""
+	}
+	raw := record.Cells[strconv.FormatInt(field.ID, 10)]
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	case bool:
+		return strconv.FormatBool(v)
+	case []any:
+		var values []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+		return strings.Join(values, ", ")
+	default:
+		return ""
+	}
+}
+
+// Only request directory names referenced by records already authorized in
+// this snapshot. The result is rechecked before the response is sent.
+func titleMemberNames(ctx context.Context, reader store.BaseSnapshotReader, table baseReadable, field *store.Field, used map[int64]bool) ([]int64, map[int64]string, error) {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, record := range table.records {
+		if !used[record.ID] {
+			continue
+		}
+		if id, ok := visibleTitleMemberID(record, field); ok && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
+	names, err := reader.VisibleMemberNames(ctx, table.meta.WorkspaceID, ids)
+	return ids, names, err
+}
+
 // expandBase only traverses visible source rows/fields and targets that the
 // same user can access. IDs and titles of restricted target rows are omitted.
 func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable, withExpansions bool) (map[string]any, []baseReadable, error) {
+	return expandBaseWith(ctx, s.Store, uid, source, withExpansions)
+}
+
+func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid int64, source *baseReadable, withExpansions bool) (map[string]any, []baseReadable, error) {
 	expansions := map[string]any{}
 	reads := []baseReadable{}
 	cache := map[int64]baseReadable{}
@@ -39,7 +159,7 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 		if cached, ok := cache[id]; ok {
 			return cached, true, nil
 		}
-		t, err := s.readBaseAllowed(ctx, uid, id)
+		t, err := readBasePolicyWith(ctx, reader, uid, id)
 		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrForbidden) {
 			unavailable[id] = true
 			return baseReadable{}, false, nil
@@ -70,10 +190,26 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 		}
 		links := map[int64][]int64{}
 		if ok && len(srcIDs) > 0 {
-			raw, err := s.Store.LinksForRecords(ctx, f.ID, srcIDs)
+			raw, err := reader.LinksForRecordsConstrained(ctx, f.ID, srcIDs, target.meta.ID, target.allFields, target.policy.mandatory)
 			if err != nil {
 				return nil, nil, err
 			}
+			var targetIDs []int64
+			seen := map[int64]bool{}
+			for _, ids := range raw {
+				for _, id := range ids {
+					if !seen[id] {
+						seen[id] = true
+						targetIDs = append(targetIDs, id)
+					}
+				}
+			}
+			targetRecords, err := reader.RecordsConstrainedByIDs(ctx, target.meta.ID, targetIDs, target.allFields, target.policy.mandatory)
+			if err != nil {
+				return nil, nil, err
+			}
+			target.records = stripBaseRecords(targetRecords, target.allFields, target.policy)
+			reads = append(reads, target)
 			allowed := map[int64]bool{}
 			for _, r := range target.records {
 				allowed[r.ID] = true
@@ -100,26 +236,28 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 			}
 		}
 		titles := map[int64]string{}
-		if ok {
-			var titleField int64
-			for _, tf := range target.fields {
-				if tf.Type == "text" {
-					titleField = tf.ID
-					break
-				}
-			}
+		if ok && withExpansions {
+			titleField := visibleTitleField(target.fields, target.allFields)
 			used := map[int64]bool{}
 			for _, tos := range links {
 				for _, to := range tos {
 					used[to] = true
 				}
 			}
+			ids, names, err := titleMemberNames(ctx, reader, target, titleField, used)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(ids) > 0 {
+				check := target
+				check.memberIDs, check.memberNames = ids, names
+				reads = append(reads, check)
+			}
 			for _, rec := range target.records {
-				if !used[rec.ID] || titleField == 0 {
+				if !used[rec.ID] || titleField == nil {
 					continue
 				}
-				var title string
-				if json.Unmarshal(rec.Cells[strconv.FormatInt(titleField, 10)], &title) == nil {
+				if title := visibleRecordTitle(rec, titleField, names); title != "" {
 					titles[rec.ID] = title
 				}
 			}
@@ -185,7 +323,7 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 	}
 	// Reverse references must be constructed from accessible source rows, not
 	// all records in a source base whose name happens to be known.
-	reverse, err := s.Store.LinkFieldsTargeting(ctx, source.meta.ID)
+	reverse, err := reader.LinkFieldsTargeting(ctx, source.meta.ID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -203,34 +341,47 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 			continue
 		}
 		var fieldVisible bool
-		var titleID int64
+		titleField := visibleTitleField(other.fields, other.allFields)
 		for _, f := range other.fields {
 			if f.ID == ref.FieldID && f.Type == "link" {
 				fieldVisible = true
-			}
-			if titleID == 0 && f.Type == "text" {
-				titleID = f.ID
 			}
 		}
 		if !fieldVisible {
 			continue
 		}
-		var ids []int64
-		for _, rec := range other.records {
-			ids = append(ids, rec.ID)
-		}
-		if len(ids) == 0 {
+		if len(srcIDs) == 0 {
 			continue
 		}
-		raw, err := s.Store.LinksForRecords(ctx, ref.FieldID, ids)
+		raw, err := reader.LinksToRecordsConstrained(ctx, ref.FieldID, srcIDs, other.meta.ID, other.allFields, other.policy.mandatory)
 		if err != nil {
 			return nil, nil, err
 		}
+		var sourceIDs []int64
+		seen := map[int64]bool{}
+		for _, ids := range raw {
+			for _, id := range ids {
+				if !seen[id] {
+					seen[id] = true
+					sourceIDs = append(sourceIDs, id)
+				}
+			}
+		}
+		otherRecords, err := reader.RecordsConstrainedByIDs(ctx, other.meta.ID, sourceIDs, other.allFields, other.policy.mandatory)
+		if err != nil {
+			return nil, nil, err
+		}
+		other.records = stripBaseRecords(otherRecords, other.allFields, other.policy)
+		reads = append(reads, other)
+		allowed := map[int64]bool{}
+		for _, record := range other.records {
+			allowed[record.ID] = true
+		}
 		from := map[int64][]int64{}
 		used := map[int64]bool{}
-		for sourceID, tos := range raw {
-			for _, to := range tos {
-				if self[to] {
+		for to, sourceIDs := range raw {
+			for _, sourceID := range sourceIDs {
+				if self[to] && allowed[sourceID] {
 					from[to] = append(from[to], sourceID)
 					used[sourceID] = true
 				}
@@ -240,12 +391,20 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 			continue
 		}
 		titles := map[int64]string{}
+		ids, names, err := titleMemberNames(ctx, reader, other, titleField, used)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(ids) > 0 {
+			check := other
+			check.memberIDs, check.memberNames = ids, names
+			reads = append(reads, check)
+		}
 		for _, rec := range other.records {
-			if !used[rec.ID] || titleID == 0 {
+			if !used[rec.ID] || titleField == nil {
 				continue
 			}
-			var title string
-			if json.Unmarshal(rec.Cells[strconv.FormatInt(titleID, 10)], &title) == nil {
+			if title := visibleRecordTitle(rec, titleField, names); title != "" {
 				titles[rec.ID] = title
 			}
 		}
