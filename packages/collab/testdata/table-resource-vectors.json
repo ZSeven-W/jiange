@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "wrong type takes precedence over a transient cycle",
+      "limits": {},
+      "operations": [
+        {"kind":"axis-insert","id":{"client":1,"clock":44},"axis":"row","after":{"client":1,"clock":38}},
+        {"kind":"text-insert","id":{"client":1,"clock":38},"row":{"client":1,"clock":44},"column":{"client":1,"clock":8},"after":{"client":1,"clock":21},"char":"x"}
+      ],
+      "results": ["accepted","accepted"],
+      "grid": [],
+      "pending": 0,
+      "rejected": [
+        {"id":{"client":1,"clock":38},"reason":"cell axis has wrong type"},
+        {"id":{"client":1,"clock":44},"reason":"axis dependency has wrong type"}
+      ]
+    },
+    {
+      "name": "cyclic rows and dependent",
+      "limits": {},
+      "operations": [
+        {"kind":"axis-insert","id":{"client":2,"clock":3},"axis":"row","after":{"client":2,"clock":1}},
+        {"kind":"axis-insert","id":{"client":2,"clock":1},"axis":"row","after":{"client":2,"clock":2}},
+        {"kind":"axis-insert","id":{"client":2,"clock":2},"axis":"row","after":{"client":2,"clock":1}}
+      ],
+      "results": ["accepted","accepted","accepted"],
+      "grid": [],
+      "pending": 0,
+      "rejected": [
+        {"id":{"client":2,"clock":1},"reason":"cyclic dependency"},
+        {"id":{"client":2,"clock":2},"reason":"cyclic dependency"},
+        {"id":{"client":2,"clock":3},"reason":"axis dependency has wrong type"}
+      ]
+    },
+    {
+      "name": "pending limit retry preserves identity",
+      "limits": {"maxPending":1},
+      "operations": [
+        {"kind":"axis-insert","id":{"client":2,"clock":2},"axis":"row","after":{"client":2,"clock":1}},
+        {"kind":"axis-insert","id":{"client":3,"clock":2},"axis":"column","after":{"client":3,"clock":1}},
+        {"kind":"axis-insert","id":{"client":2,"clock":2},"axis":"row","after":{"client":2,"clock":1}},
+        {"kind":"axis-insert","id":{"client":2,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":3,"clock":2},"axis":"column","after":{"client":3,"clock":1}}
+      ],
+      "results": ["accepted","table resource limit: maxPending","duplicate","accepted","accepted"],
+      "grid": [[],[]],
+      "pending": 1,
+      "rejected": []
+    },
+    {
+      "name": "grid and character reservations",
+      "limits": {"maxGridCells":1,"maxCharactersPerCell":1},
+      "operations": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"text-insert","id":{"client":2,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"🙂"},
+        {"kind":"text-insert","id":{"client":2,"clock":2},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"字"},
+        {"kind":"axis-insert","id":{"client":3,"clock":1},"axis":"column","after":null}
+      ],
+      "results": ["accepted","accepted","accepted","table resource limit: maxCharactersPerCell","table resource limit: maxGridCells"],
+      "grid": [["🙂"]],
+      "pending": 0,
+      "rejected": []
+    },
+    {
+      "name": "utf8 operation budget",
+      "limits": {"maxOperationBytes":323},
+      "operations": [
+        {"kind":"text-insert","id":{"client":2,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"🙂"},
+        {"kind":"text-insert","id":{"client":2,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"A"}
+      ],
+      "results": ["table resource limit: maxOperationBytes","accepted"],
+      "grid": [],
+      "pending": 1,
+      "rejected": []
+    },
+    {
+      "name": "snapshot reservation",
+      "limits": {"maxSnapshotBytes":214},
+      "operations": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null}
+      ],
+      "results": ["table resource limit: maxSnapshotBytes"],
+      "grid": [],
+      "pending": 0,
+      "rejected": []
+    }
+  ]
+}

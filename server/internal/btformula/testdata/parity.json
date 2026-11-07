@@ -1,0 +1,8939 @@
+[
+  {
+    "expression": "2 ^ 3 ^ 2",
+    "values": {},
+    "result": 512
+  },
+  {
+    "expression": "-[价格]+10",
+    "values": {
+      "价格": 4
+    },
+    "result": 6
+  },
+  {
+    "expression": "[数量]*[单价]",
+    "values": {
+      "数量": 3,
+      "单价": 2.5
+    },
+    "result": 7.5
+  },
+  {
+    "expression": "IF([分]>=60,\"通过\",1/0)",
+    "values": {
+      "分": 88
+    },
+    "result": "通过"
+  },
+  {
+    "expression": "IF(TRUE,1,UNKNOWN())",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "IFS(FALSE,0,TRUE,4)",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "SUM(1,2,3.5)",
+    "values": {},
+    "result": 6.5
+  },
+  {
+    "expression": "NOT()",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ISBLANK()",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "VALUE()",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "LEN()",
+    "values": {},
+    "error": "#错误"
+  },
+  {
+    "expression": "UPPER()",
+    "values": {},
+    "error": "#错误"
+  },
+  {
+    "expression": "TRIM()",
+    "values": {},
+    "error": "#错误"
+  },
+  {
+    "expression": "CONTAINS()",
+    "values": {},
+    "error": "#错误"
+  },
+  {
+    "expression": "CONTAINS(\"undefined\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "LEFT()",
+    "values": {},
+    "error": "#错误"
+  },
+  {
+    "expression": "LEFT(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "TEXT()",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "VALUE(\"Inf\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "VALUE(\"1_2\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "VALUE(\"0x+1\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "VALUE(\"0x10000000000000000\")",
+    "values": {},
+    "result": 18446744073709552000
+  },
+  {
+    "expression": "VALUE(\"0b101\")",
+    "values": {},
+    "result": 5
+  },
+  {
+    "expression": "VALUE(\"1e400\")",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "TRIM(\"﻿x﻿\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "TRIM(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "[i̇]",
+    "values": {
+      "İ": 42
+    },
+    "result": 42
+  },
+  {
+    "expression": "[﻿金额﻿]",
+    "values": {
+      "金额": 2
+    },
+    "result": 2
+  },
+  {
+    "expression": "UPPER(\"straße\")",
+    "values": {},
+    "result": "STRASSE"
+  },
+  {
+    "expression": "RIGHT(\"abcde\",2.5)",
+    "values": {},
+    "result": "cde"
+  },
+  {
+    "expression": "MID(\"abcdef\",2.5,1.5)",
+    "values": {},
+    "result": "bc"
+  },
+  {
+    "expression": "LEFT(\"😀\",1)",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "\"𐀀\" < \"\"",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "TEXT(0.0000001)",
+    "values": {},
+    "result": "1e-7"
+  },
+  {
+    "expression": "FOO(1/0)",
+    "values": {},
+    "error": "#NAME?"
+  },
+  {
+    "expression": "1/0",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "SQRT(-1)",
+    "values": {},
+    "error": "#NUM?"
+  },
+  {
+    "expression": "ROUND(1.4999999999999998)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "ROUND(-0.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)^VALUE(\"Infinity\")",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "POW(1,VALUE(\"Infinity\"))",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "TEXT(2^2.5)",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "(2^2.5)=5.65685424949238",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "ROUND(2,0.5)",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "(0)+(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)-(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(0)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(0)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(0)&(0)",
+    "values": {},
+    "result": "00"
+  },
+  {
+    "expression": "(0)=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)!=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)+(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(0)-(1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(0)*(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)&(1)",
+    "values": {},
+    "result": "01"
+  },
+  {
+    "expression": "(0)=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)+(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(0)-(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(0)*(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(-1)",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "(0)&(-1)",
+    "values": {},
+    "result": "0-1"
+  },
+  {
+    "expression": "(0)=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)+(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(0)-(2.5)",
+    "values": {},
+    "result": -2.5
+  },
+  {
+    "expression": "(0)*(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)&(2.5)",
+    "values": {},
+    "result": "02.5"
+  },
+  {
+    "expression": "(0)=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)+(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(0)-(TRUE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(0)*(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)&(TRUE)",
+    "values": {},
+    "result": "0TRUE"
+  },
+  {
+    "expression": "(0)=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)+(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)-(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(0)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(0)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(0)&(FALSE)",
+    "values": {},
+    "result": "0FALSE"
+  },
+  {
+    "expression": "(0)=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)!=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)&(BLANK())",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "(0)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)&(\"\")",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "(0)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)+(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(0)-(\" 2 \")",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(0)*(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)&(\" 2 \")",
+    "values": {},
+    "result": "0 2 "
+  },
+  {
+    "expression": "(0)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)&(\"x\")",
+    "values": {},
+    "result": "0x"
+  },
+  {
+    "expression": "(0)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(0)&(\"😀\")",
+    "values": {},
+    "result": "0😀"
+  },
+  {
+    "expression": "(0)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)+(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(0)-(\"0x10\")",
+    "values": {},
+    "result": -16
+  },
+  {
+    "expression": "(0)*(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)/(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)%(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)^(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(0)&(\"0x10\")",
+    "values": {},
+    "result": "00x10"
+  },
+  {
+    "expression": "(0)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(0)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)<(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(0)>=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)+(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)-(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(1)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(1)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(0)",
+    "values": {},
+    "result": "10"
+  },
+  {
+    "expression": "(1)=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(1)-(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)*(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)/(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)^(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(1)",
+    "values": {},
+    "result": "11"
+  },
+  {
+    "expression": "(1)=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)!=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)<(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)-(-1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(1)*(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(1)/(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(1)%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)^(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(-1)",
+    "values": {},
+    "result": "1-1"
+  },
+  {
+    "expression": "(1)=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(2.5)",
+    "values": {},
+    "result": 3.5
+  },
+  {
+    "expression": "(1)-(2.5)",
+    "values": {},
+    "result": -1.5
+  },
+  {
+    "expression": "(1)*(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(1)/(2.5)",
+    "values": {},
+    "result": 0.4
+  },
+  {
+    "expression": "(1)%(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)^(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(2.5)",
+    "values": {},
+    "result": "12.5"
+  },
+  {
+    "expression": "(1)=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)+(TRUE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(1)-(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)*(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)/(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)^(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(TRUE)",
+    "values": {},
+    "result": "1TRUE"
+  },
+  {
+    "expression": "(1)=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)!=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)<(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)-(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(1)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(1)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(1)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(FALSE)",
+    "values": {},
+    "result": "1FALSE"
+  },
+  {
+    "expression": "(1)=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)&(BLANK())",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "(1)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)&(\"\")",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "(1)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(\" 2 \")",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "(1)-(\" 2 \")",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(1)*(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(1)/(\" 2 \")",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(1)%(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)^(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(\" 2 \")",
+    "values": {},
+    "result": "1 2 "
+  },
+  {
+    "expression": "(1)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)&(\"x\")",
+    "values": {},
+    "result": "1x"
+  },
+  {
+    "expression": "(1)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(1)&(\"😀\")",
+    "values": {},
+    "result": "1😀"
+  },
+  {
+    "expression": "(1)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)+(\"0x10\")",
+    "values": {},
+    "result": 17
+  },
+  {
+    "expression": "(1)-(\"0x10\")",
+    "values": {},
+    "result": -15
+  },
+  {
+    "expression": "(1)*(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(1)/(\"0x10\")",
+    "values": {},
+    "result": 0.0625
+  },
+  {
+    "expression": "(1)%(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)^(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(1)&(\"0x10\")",
+    "values": {},
+    "result": "10x10"
+  },
+  {
+    "expression": "(1)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(1)<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(1)>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)+(0)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)-(0)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(-1)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(-1)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)&(0)",
+    "values": {},
+    "result": "-10"
+  },
+  {
+    "expression": "(-1)=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)-(1)",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(-1)*(1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)/(1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)^(1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)&(1)",
+    "values": {},
+    "result": "-11"
+  },
+  {
+    "expression": "(-1)=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(-1)",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(-1)-(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)*(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)/(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)^(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)&(-1)",
+    "values": {},
+    "result": "-1-1"
+  },
+  {
+    "expression": "(-1)=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)!=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)+(2.5)",
+    "values": {},
+    "result": 1.5
+  },
+  {
+    "expression": "(-1)-(2.5)",
+    "values": {},
+    "result": -3.5
+  },
+  {
+    "expression": "(-1)*(2.5)",
+    "values": {},
+    "result": -2.5
+  },
+  {
+    "expression": "(-1)/(2.5)",
+    "values": {},
+    "result": -0.4
+  },
+  {
+    "expression": "(-1)%(2.5)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)^(2.5)",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "(-1)&(2.5)",
+    "values": {},
+    "result": "-12.5"
+  },
+  {
+    "expression": "(-1)=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)-(TRUE)",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(-1)*(TRUE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)/(TRUE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)^(TRUE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)&(TRUE)",
+    "values": {},
+    "result": "-1TRUE"
+  },
+  {
+    "expression": "(-1)=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(FALSE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)-(FALSE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(-1)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(-1)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(-1)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)&(FALSE)",
+    "values": {},
+    "result": "-1FALSE"
+  },
+  {
+    "expression": "(-1)=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)&(BLANK())",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "(-1)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)&(\"\")",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "(-1)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)+(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)-(\" 2 \")",
+    "values": {},
+    "result": -3
+  },
+  {
+    "expression": "(-1)*(\" 2 \")",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(-1)/(\" 2 \")",
+    "values": {},
+    "result": -0.5
+  },
+  {
+    "expression": "(-1)%(\" 2 \")",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)^(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)&(\" 2 \")",
+    "values": {},
+    "result": "-1 2 "
+  },
+  {
+    "expression": "(-1)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)&(\"x\")",
+    "values": {},
+    "result": "-1x"
+  },
+  {
+    "expression": "(-1)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(-1)&(\"😀\")",
+    "values": {},
+    "result": "-1😀"
+  },
+  {
+    "expression": "(-1)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)+(\"0x10\")",
+    "values": {},
+    "result": 15
+  },
+  {
+    "expression": "(-1)-(\"0x10\")",
+    "values": {},
+    "result": -17
+  },
+  {
+    "expression": "(-1)*(\"0x10\")",
+    "values": {},
+    "result": -16
+  },
+  {
+    "expression": "(-1)/(\"0x10\")",
+    "values": {},
+    "result": -0.0625
+  },
+  {
+    "expression": "(-1)%(\"0x10\")",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(-1)^(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(-1)&(\"0x10\")",
+    "values": {},
+    "result": "-10x10"
+  },
+  {
+    "expression": "(-1)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(-1)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)<(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(-1)>=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)+(0)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)-(0)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(2.5)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(2.5)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(2.5)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(2.5)&(0)",
+    "values": {},
+    "result": "2.50"
+  },
+  {
+    "expression": "(2.5)=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(1)",
+    "values": {},
+    "result": 3.5
+  },
+  {
+    "expression": "(2.5)-(1)",
+    "values": {},
+    "result": 1.5
+  },
+  {
+    "expression": "(2.5)*(1)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)/(1)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)%(1)",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(2.5)^(1)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)&(1)",
+    "values": {},
+    "result": "2.51"
+  },
+  {
+    "expression": "(2.5)=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(-1)",
+    "values": {},
+    "result": 1.5
+  },
+  {
+    "expression": "(2.5)-(-1)",
+    "values": {},
+    "result": 3.5
+  },
+  {
+    "expression": "(2.5)*(-1)",
+    "values": {},
+    "result": -2.5
+  },
+  {
+    "expression": "(2.5)/(-1)",
+    "values": {},
+    "result": -2.5
+  },
+  {
+    "expression": "(2.5)%(-1)",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(2.5)^(-1)",
+    "values": {},
+    "result": 0.4
+  },
+  {
+    "expression": "(2.5)&(-1)",
+    "values": {},
+    "result": "2.5-1"
+  },
+  {
+    "expression": "(2.5)=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(2.5)",
+    "values": {},
+    "result": 5
+  },
+  {
+    "expression": "(2.5)-(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(2.5)*(2.5)",
+    "values": {},
+    "result": 6.25
+  },
+  {
+    "expression": "(2.5)/(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(2.5)%(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(2.5)^(2.5)",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "(2.5)&(2.5)",
+    "values": {},
+    "result": "2.52.5"
+  },
+  {
+    "expression": "(2.5)=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)!=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)<(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(TRUE)",
+    "values": {},
+    "result": 3.5
+  },
+  {
+    "expression": "(2.5)-(TRUE)",
+    "values": {},
+    "result": 1.5
+  },
+  {
+    "expression": "(2.5)*(TRUE)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)/(TRUE)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)%(TRUE)",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(2.5)^(TRUE)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)&(TRUE)",
+    "values": {},
+    "result": "2.5TRUE"
+  },
+  {
+    "expression": "(2.5)=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(FALSE)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)-(FALSE)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(2.5)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(2.5)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(2.5)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(2.5)&(FALSE)",
+    "values": {},
+    "result": "2.5FALSE"
+  },
+  {
+    "expression": "(2.5)=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)&(BLANK())",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "(2.5)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)&(\"\")",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "(2.5)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(\" 2 \")",
+    "values": {},
+    "result": 4.5
+  },
+  {
+    "expression": "(2.5)-(\" 2 \")",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(2.5)*(\" 2 \")",
+    "values": {},
+    "result": 5
+  },
+  {
+    "expression": "(2.5)/(\" 2 \")",
+    "values": {},
+    "result": 1.25
+  },
+  {
+    "expression": "(2.5)%(\" 2 \")",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(2.5)^(\" 2 \")",
+    "values": {},
+    "result": 6.25
+  },
+  {
+    "expression": "(2.5)&(\" 2 \")",
+    "values": {},
+    "result": "2.5 2 "
+  },
+  {
+    "expression": "(2.5)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)&(\"x\")",
+    "values": {},
+    "result": "2.5x"
+  },
+  {
+    "expression": "(2.5)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(2.5)&(\"😀\")",
+    "values": {},
+    "result": "2.5😀"
+  },
+  {
+    "expression": "(2.5)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)+(\"0x10\")",
+    "values": {},
+    "result": 18.5
+  },
+  {
+    "expression": "(2.5)-(\"0x10\")",
+    "values": {},
+    "result": -13.5
+  },
+  {
+    "expression": "(2.5)*(\"0x10\")",
+    "values": {},
+    "result": 40
+  },
+  {
+    "expression": "(2.5)/(\"0x10\")",
+    "values": {},
+    "result": 0.15625
+  },
+  {
+    "expression": "(2.5)%(\"0x10\")",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(2.5)^(\"0x10\")",
+    "values": {},
+    "result": 2328306.4365386963
+  },
+  {
+    "expression": "(2.5)&(\"0x10\")",
+    "values": {},
+    "result": "2.50x10"
+  },
+  {
+    "expression": "(2.5)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(2.5)<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(2.5)>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)-(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(TRUE)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(TRUE)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(0)",
+    "values": {},
+    "result": "TRUE0"
+  },
+  {
+    "expression": "(TRUE)=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(TRUE)-(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)*(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)/(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)^(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(1)",
+    "values": {},
+    "result": "TRUE1"
+  },
+  {
+    "expression": "(TRUE)=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)!=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)<(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)-(-1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(TRUE)*(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(TRUE)/(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(TRUE)%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)^(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(-1)",
+    "values": {},
+    "result": "TRUE-1"
+  },
+  {
+    "expression": "(TRUE)=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(2.5)",
+    "values": {},
+    "result": 3.5
+  },
+  {
+    "expression": "(TRUE)-(2.5)",
+    "values": {},
+    "result": -1.5
+  },
+  {
+    "expression": "(TRUE)*(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(TRUE)/(2.5)",
+    "values": {},
+    "result": 0.4
+  },
+  {
+    "expression": "(TRUE)%(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)^(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(2.5)",
+    "values": {},
+    "result": "TRUE2.5"
+  },
+  {
+    "expression": "(TRUE)=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)+(TRUE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(TRUE)-(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)*(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)/(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)^(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(TRUE)",
+    "values": {},
+    "result": "TRUETRUE"
+  },
+  {
+    "expression": "(TRUE)=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)!=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)<(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)-(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(TRUE)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(TRUE)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(TRUE)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(FALSE)",
+    "values": {},
+    "result": "TRUEFALSE"
+  },
+  {
+    "expression": "(TRUE)=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)&(BLANK())",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "(TRUE)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)&(\"\")",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "(TRUE)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(\" 2 \")",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "(TRUE)-(\" 2 \")",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(TRUE)*(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(TRUE)/(\" 2 \")",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(TRUE)%(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)^(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(\" 2 \")",
+    "values": {},
+    "result": "TRUE 2 "
+  },
+  {
+    "expression": "(TRUE)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)&(\"x\")",
+    "values": {},
+    "result": "TRUEx"
+  },
+  {
+    "expression": "(TRUE)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(TRUE)&(\"😀\")",
+    "values": {},
+    "result": "TRUE😀"
+  },
+  {
+    "expression": "(TRUE)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)+(\"0x10\")",
+    "values": {},
+    "result": 17
+  },
+  {
+    "expression": "(TRUE)-(\"0x10\")",
+    "values": {},
+    "result": -15
+  },
+  {
+    "expression": "(TRUE)*(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(TRUE)/(\"0x10\")",
+    "values": {},
+    "result": 0.0625
+  },
+  {
+    "expression": "(TRUE)%(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)^(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(TRUE)&(\"0x10\")",
+    "values": {},
+    "result": "TRUE0x10"
+  },
+  {
+    "expression": "(TRUE)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(TRUE)<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(TRUE)>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)-(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(FALSE)%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(FALSE)^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(FALSE)&(0)",
+    "values": {},
+    "result": "FALSE0"
+  },
+  {
+    "expression": "(FALSE)=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)!=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(FALSE)-(1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(FALSE)*(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)&(1)",
+    "values": {},
+    "result": "FALSE1"
+  },
+  {
+    "expression": "(FALSE)=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)+(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(FALSE)-(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(FALSE)*(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(-1)",
+    "values": {},
+    "unsupported": true
+  },
+  {
+    "expression": "(FALSE)&(-1)",
+    "values": {},
+    "result": "FALSE-1"
+  },
+  {
+    "expression": "(FALSE)=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "(FALSE)-(2.5)",
+    "values": {},
+    "result": -2.5
+  },
+  {
+    "expression": "(FALSE)*(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(2.5)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)&(2.5)",
+    "values": {},
+    "result": "FALSE2.5"
+  },
+  {
+    "expression": "(FALSE)=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)+(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(FALSE)-(TRUE)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "(FALSE)*(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)&(TRUE)",
+    "values": {},
+    "result": "FALSETRUE"
+  },
+  {
+    "expression": "(FALSE)=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)+(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)-(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(FALSE)%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(FALSE)^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(FALSE)&(FALSE)",
+    "values": {},
+    "result": "FALSEFALSE"
+  },
+  {
+    "expression": "(FALSE)=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)!=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)&(BLANK())",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "(FALSE)=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)&(\"\")",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "(FALSE)=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(FALSE)-(\" 2 \")",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(FALSE)*(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)&(\" 2 \")",
+    "values": {},
+    "result": "FALSE 2 "
+  },
+  {
+    "expression": "(FALSE)=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)&(\"x\")",
+    "values": {},
+    "result": "FALSEx"
+  },
+  {
+    "expression": "(FALSE)=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(FALSE)&(\"😀\")",
+    "values": {},
+    "result": "FALSE😀"
+  },
+  {
+    "expression": "(FALSE)=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)+(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(FALSE)-(\"0x10\")",
+    "values": {},
+    "result": -16
+  },
+  {
+    "expression": "(FALSE)*(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)/(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)%(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)^(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(FALSE)&(\"0x10\")",
+    "values": {},
+    "result": "FALSE0x10"
+  },
+  {
+    "expression": "(FALSE)=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(FALSE)<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(FALSE)>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())+(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "(BLANK())=(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "(BLANK())=(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "(BLANK())=(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "(BLANK())=(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(TRUE)",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "(BLANK())=(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(FALSE)",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "(BLANK())=(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "(BLANK())=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())!=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())<(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())>=(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "(BLANK())=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())!=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())+(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(\" 2 \")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "(BLANK())=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())<(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())>=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "(BLANK())=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "(BLANK())=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())+(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())-(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())*(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())/(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())%(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())^(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(BLANK())&(\"0x10\")",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "(BLANK())=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(BLANK())!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())<(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(BLANK())>=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "(\"\")=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "(\"\")=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "(\"\")=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "(\"\")=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(TRUE)",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "(\"\")=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(FALSE)",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "(\"\")=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "(\"\")=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")!=(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")<(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")>=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "(\"\")=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")!=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")+(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(\" 2 \")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "(\"\")=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "(\"\")=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "(\"\")=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")+(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")-(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")*(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")/(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")%(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")^(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"\")&(\"0x10\")",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "(\"\")=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"\")!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")<(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"\")>=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(0)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")-(0)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\" 2 \")%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\" 2 \")^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")&(0)",
+    "values": {},
+    "result": " 2 0"
+  },
+  {
+    "expression": "(\" 2 \")=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(1)",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "(\" 2 \")-(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")*(1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")/(1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")^(1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")&(1)",
+    "values": {},
+    "result": " 2 1"
+  },
+  {
+    "expression": "(\" 2 \")=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")-(-1)",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "(\" 2 \")*(-1)",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(\" 2 \")/(-1)",
+    "values": {},
+    "result": -2
+  },
+  {
+    "expression": "(\" 2 \")%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")^(-1)",
+    "values": {},
+    "result": 0.5
+  },
+  {
+    "expression": "(\" 2 \")&(-1)",
+    "values": {},
+    "result": " 2 -1"
+  },
+  {
+    "expression": "(\" 2 \")=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(2.5)",
+    "values": {},
+    "result": 4.5
+  },
+  {
+    "expression": "(\" 2 \")-(2.5)",
+    "values": {},
+    "result": -0.5
+  },
+  {
+    "expression": "(\" 2 \")*(2.5)",
+    "values": {},
+    "result": 5
+  },
+  {
+    "expression": "(\" 2 \")/(2.5)",
+    "values": {},
+    "result": 0.8
+  },
+  {
+    "expression": "(\" 2 \")%(2.5)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")^(2.5)",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "(\" 2 \")&(2.5)",
+    "values": {},
+    "result": " 2 2.5"
+  },
+  {
+    "expression": "(\" 2 \")=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(TRUE)",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "(\" 2 \")-(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")*(TRUE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")/(TRUE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")^(TRUE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")&(TRUE)",
+    "values": {},
+    "result": " 2 TRUE"
+  },
+  {
+    "expression": "(\" 2 \")=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(FALSE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")-(FALSE)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\" 2 \")%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\" 2 \")^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")&(FALSE)",
+    "values": {},
+    "result": " 2 FALSE"
+  },
+  {
+    "expression": "(\" 2 \")=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")&(BLANK())",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "(\" 2 \")=(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")>=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")&(\"\")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "(\" 2 \")=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")+(\" 2 \")",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "(\" 2 \")-(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")*(\" 2 \")",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "(\" 2 \")/(\" 2 \")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\" 2 \")%(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\" 2 \")^(\" 2 \")",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "(\" 2 \")&(\" 2 \")",
+    "values": {},
+    "result": " 2  2 "
+  },
+  {
+    "expression": "(\" 2 \")=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")!=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")&(\"x\")",
+    "values": {},
+    "result": " 2 x"
+  },
+  {
+    "expression": "(\" 2 \")=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\" 2 \")&(\"😀\")",
+    "values": {},
+    "result": " 2 😀"
+  },
+  {
+    "expression": "(\" 2 \")=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")+(\"0x10\")",
+    "values": {},
+    "result": 18
+  },
+  {
+    "expression": "(\" 2 \")-(\"0x10\")",
+    "values": {},
+    "result": -14
+  },
+  {
+    "expression": "(\" 2 \")*(\"0x10\")",
+    "values": {},
+    "result": 32
+  },
+  {
+    "expression": "(\" 2 \")/(\"0x10\")",
+    "values": {},
+    "result": 0.125
+  },
+  {
+    "expression": "(\" 2 \")%(\"0x10\")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "(\" 2 \")^(\"0x10\")",
+    "values": {},
+    "result": 65536
+  },
+  {
+    "expression": "(\" 2 \")&(\"0x10\")",
+    "values": {},
+    "result": " 2 0x10"
+  },
+  {
+    "expression": "(\" 2 \")=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\" 2 \")!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")<(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\" 2 \")>=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")+(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(0)",
+    "values": {},
+    "result": "x0"
+  },
+  {
+    "expression": "(\"x\")=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(1)",
+    "values": {},
+    "result": "x1"
+  },
+  {
+    "expression": "(\"x\")=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(-1)",
+    "values": {},
+    "result": "x-1"
+  },
+  {
+    "expression": "(\"x\")=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(2.5)",
+    "values": {},
+    "result": "x2.5"
+  },
+  {
+    "expression": "(\"x\")=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(TRUE)",
+    "values": {},
+    "result": "xTRUE"
+  },
+  {
+    "expression": "(\"x\")=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(FALSE)",
+    "values": {},
+    "result": "xFALSE"
+  },
+  {
+    "expression": "(\"x\")=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(BLANK())",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "(\"x\")=(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(\"\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "(\"x\")=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(\" 2 \")",
+    "values": {},
+    "result": "x 2 "
+  },
+  {
+    "expression": "(\"x\")=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(\"x\")",
+    "values": {},
+    "result": "xx"
+  },
+  {
+    "expression": "(\"x\")=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")!=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")<(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(\"😀\")",
+    "values": {},
+    "result": "x😀"
+  },
+  {
+    "expression": "(\"x\")=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")+(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")-(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")*(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")/(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")%(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")^(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"x\")&(\"0x10\")",
+    "values": {},
+    "result": "x0x10"
+  },
+  {
+    "expression": "(\"x\")=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"x\")<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"x\")>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(0)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(0)",
+    "values": {},
+    "result": "😀0"
+  },
+  {
+    "expression": "(\"😀\")=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(1)",
+    "values": {},
+    "result": "😀1"
+  },
+  {
+    "expression": "(\"😀\")=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(-1)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(-1)",
+    "values": {},
+    "result": "😀-1"
+  },
+  {
+    "expression": "(\"😀\")=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(2.5)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(2.5)",
+    "values": {},
+    "result": "😀2.5"
+  },
+  {
+    "expression": "(\"😀\")=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(TRUE)",
+    "values": {},
+    "result": "😀TRUE"
+  },
+  {
+    "expression": "(\"😀\")=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(FALSE)",
+    "values": {},
+    "result": "😀FALSE"
+  },
+  {
+    "expression": "(\"😀\")=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(BLANK())",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "(\"😀\")=(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(\"\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "(\"😀\")=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(\" 2 \")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(\" 2 \")",
+    "values": {},
+    "result": "😀 2 "
+  },
+  {
+    "expression": "(\"😀\")=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(\"x\")",
+    "values": {},
+    "result": "😀x"
+  },
+  {
+    "expression": "(\"😀\")=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(\"😀\")",
+    "values": {},
+    "result": "😀😀"
+  },
+  {
+    "expression": "(\"😀\")=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")!=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")<(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")+(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")-(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")*(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")/(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")%(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")^(\"0x10\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"😀\")&(\"0x10\")",
+    "values": {},
+    "result": "😀0x10"
+  },
+  {
+    "expression": "(\"😀\")=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")!=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"😀\")<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"😀\")>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(0)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")-(0)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")*(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")/(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\"0x10\")%(0)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\"0x10\")^(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\"0x10\")&(0)",
+    "values": {},
+    "result": "0x100"
+  },
+  {
+    "expression": "(\"0x10\")=(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(1)",
+    "values": {},
+    "result": 17
+  },
+  {
+    "expression": "(\"0x10\")-(1)",
+    "values": {},
+    "result": 15
+  },
+  {
+    "expression": "(\"0x10\")*(1)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")/(1)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")%(1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")^(1)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")&(1)",
+    "values": {},
+    "result": "0x101"
+  },
+  {
+    "expression": "(\"0x10\")=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(-1)",
+    "values": {},
+    "result": 15
+  },
+  {
+    "expression": "(\"0x10\")-(-1)",
+    "values": {},
+    "result": 17
+  },
+  {
+    "expression": "(\"0x10\")*(-1)",
+    "values": {},
+    "result": -16
+  },
+  {
+    "expression": "(\"0x10\")/(-1)",
+    "values": {},
+    "result": -16
+  },
+  {
+    "expression": "(\"0x10\")%(-1)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")^(-1)",
+    "values": {},
+    "result": 0.0625
+  },
+  {
+    "expression": "(\"0x10\")&(-1)",
+    "values": {},
+    "result": "0x10-1"
+  },
+  {
+    "expression": "(\"0x10\")=(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(-1)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(2.5)",
+    "values": {},
+    "result": 18.5
+  },
+  {
+    "expression": "(\"0x10\")-(2.5)",
+    "values": {},
+    "result": 13.5
+  },
+  {
+    "expression": "(\"0x10\")*(2.5)",
+    "values": {},
+    "result": 40
+  },
+  {
+    "expression": "(\"0x10\")/(2.5)",
+    "values": {},
+    "result": 6.4
+  },
+  {
+    "expression": "(\"0x10\")%(2.5)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\"0x10\")^(2.5)",
+    "values": {},
+    "unsupported": true,
+    "reason": "fractional-pow"
+  },
+  {
+    "expression": "(\"0x10\")&(2.5)",
+    "values": {},
+    "result": "0x102.5"
+  },
+  {
+    "expression": "(\"0x10\")=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(2.5)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(TRUE)",
+    "values": {},
+    "result": 17
+  },
+  {
+    "expression": "(\"0x10\")-(TRUE)",
+    "values": {},
+    "result": 15
+  },
+  {
+    "expression": "(\"0x10\")*(TRUE)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")/(TRUE)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")%(TRUE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")^(TRUE)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")&(TRUE)",
+    "values": {},
+    "result": "0x10TRUE"
+  },
+  {
+    "expression": "(\"0x10\")=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(TRUE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(FALSE)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")-(FALSE)",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "(\"0x10\")*(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")/(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\"0x10\")%(FALSE)",
+    "values": {},
+    "error": "#DIV/0!"
+  },
+  {
+    "expression": "(\"0x10\")^(FALSE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\"0x10\")&(FALSE)",
+    "values": {},
+    "result": "0x10FALSE"
+  },
+  {
+    "expression": "(\"0x10\")=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")-(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")*(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")/(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")%(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")^(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")&(BLANK())",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "(\"0x10\")=(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(BLANK())",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")-(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")*(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")/(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")%(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")^(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")&(\"\")",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "(\"0x10\")=(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(\"\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(\" 2 \")",
+    "values": {},
+    "result": 18
+  },
+  {
+    "expression": "(\"0x10\")-(\" 2 \")",
+    "values": {},
+    "result": 14
+  },
+  {
+    "expression": "(\"0x10\")*(\" 2 \")",
+    "values": {},
+    "result": 32
+  },
+  {
+    "expression": "(\"0x10\")/(\" 2 \")",
+    "values": {},
+    "result": 8
+  },
+  {
+    "expression": "(\"0x10\")%(\" 2 \")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")^(\" 2 \")",
+    "values": {},
+    "result": 256
+  },
+  {
+    "expression": "(\"0x10\")&(\" 2 \")",
+    "values": {},
+    "result": "0x10 2 "
+  },
+  {
+    "expression": "(\"0x10\")=(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(\" 2 \")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")+(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")-(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")*(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")/(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")%(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")^(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")&(\"x\")",
+    "values": {},
+    "result": "0x10x"
+  },
+  {
+    "expression": "(\"0x10\")=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(\"x\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")-(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")*(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")/(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")%(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")^(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "(\"0x10\")&(\"😀\")",
+    "values": {},
+    "result": "0x10😀"
+  },
+  {
+    "expression": "(\"0x10\")=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")!=(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")<(\"😀\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")>=(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")+(\"0x10\")",
+    "values": {},
+    "result": 32
+  },
+  {
+    "expression": "(\"0x10\")-(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")*(\"0x10\")",
+    "values": {},
+    "result": 256
+  },
+  {
+    "expression": "(\"0x10\")/(\"0x10\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "(\"0x10\")%(\"0x10\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "(\"0x10\")^(\"0x10\")",
+    "values": {},
+    "result": 18446744073709552000
+  },
+  {
+    "expression": "(\"0x10\")&(\"0x10\")",
+    "values": {},
+    "result": "0x100x10"
+  },
+  {
+    "expression": "(\"0x10\")=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "(\"0x10\")!=(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")<(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "(\"0x10\")>=(\"0x10\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ABS(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "FLOOR(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "CEILING(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "INT(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "SQRT(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "NOT(0)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ISBLANK(0)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(0)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "UPPER(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "LOWER(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "TRIM(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "VALUE(0)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "TEXT(0)",
+    "values": {},
+    "result": "0"
+  },
+  {
+    "expression": "ABS(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "FLOOR(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "CEILING(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "INT(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "SQRT(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "NOT(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "UPPER(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "LOWER(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "TRIM(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "VALUE(1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "TEXT(1)",
+    "values": {},
+    "result": "1"
+  },
+  {
+    "expression": "ABS(-1)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "FLOOR(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "CEILING(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "INT(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "SQRT(-1)",
+    "values": {},
+    "error": "#NUM?"
+  },
+  {
+    "expression": "NOT(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(-1)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(-1)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "UPPER(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "LOWER(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "TRIM(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "VALUE(-1)",
+    "values": {},
+    "result": -1
+  },
+  {
+    "expression": "TEXT(-1)",
+    "values": {},
+    "result": "-1"
+  },
+  {
+    "expression": "ABS(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "FLOOR(2.5)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "CEILING(2.5)",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "INT(2.5)",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "SQRT(2.5)",
+    "values": {},
+    "result": 1.5811388300841898
+  },
+  {
+    "expression": "NOT(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(2.5)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(2.5)",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "UPPER(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "LOWER(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "TRIM(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "VALUE(2.5)",
+    "values": {},
+    "result": 2.5
+  },
+  {
+    "expression": "TEXT(2.5)",
+    "values": {},
+    "result": "2.5"
+  },
+  {
+    "expression": "ABS(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "FLOOR(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "CEILING(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "INT(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "SQRT(TRUE)",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "NOT(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(TRUE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(TRUE)",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "UPPER(TRUE)",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "LOWER(TRUE)",
+    "values": {},
+    "result": "true"
+  },
+  {
+    "expression": "TRIM(TRUE)",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "VALUE(TRUE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "TEXT(TRUE)",
+    "values": {},
+    "result": "TRUE"
+  },
+  {
+    "expression": "ABS(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "FLOOR(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "CEILING(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "INT(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "SQRT(FALSE)",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "NOT(FALSE)",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ISBLANK(FALSE)",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(FALSE)",
+    "values": {},
+    "result": 5
+  },
+  {
+    "expression": "UPPER(FALSE)",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "LOWER(FALSE)",
+    "values": {},
+    "result": "false"
+  },
+  {
+    "expression": "TRIM(FALSE)",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "VALUE(FALSE)",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "TEXT(FALSE)",
+    "values": {},
+    "result": "FALSE"
+  },
+  {
+    "expression": "ABS(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "FLOOR(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "CEILING(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "INT(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "SQRT(BLANK())",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "NOT(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ISBLANK(BLANK())",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "LEN(BLANK())",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "UPPER(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "LOWER(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "TRIM(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "VALUE(BLANK())",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "TEXT(BLANK())",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "ABS(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "FLOOR(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "CEILING(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "INT(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "SQRT(\"\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "NOT(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "ISBLANK(\"\")",
+    "values": {},
+    "result": true
+  },
+  {
+    "expression": "LEN(\"\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "UPPER(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "LOWER(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "TRIM(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "VALUE(\"\")",
+    "values": {},
+    "result": 0
+  },
+  {
+    "expression": "TEXT(\"\")",
+    "values": {},
+    "result": ""
+  },
+  {
+    "expression": "ABS(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "FLOOR(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "CEILING(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "INT(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "SQRT(\" 2 \")",
+    "values": {},
+    "result": 1.4142135623730951
+  },
+  {
+    "expression": "NOT(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(\" 2 \")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(\" 2 \")",
+    "values": {},
+    "result": 3
+  },
+  {
+    "expression": "UPPER(\" 2 \")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "LOWER(\" 2 \")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "TRIM(\" 2 \")",
+    "values": {},
+    "result": "2"
+  },
+  {
+    "expression": "VALUE(\" 2 \")",
+    "values": {},
+    "result": 2
+  },
+  {
+    "expression": "TEXT(\" 2 \")",
+    "values": {},
+    "result": " 2 "
+  },
+  {
+    "expression": "ABS(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "FLOOR(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "CEILING(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "INT(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "SQRT(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "NOT(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(\"x\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(\"x\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "UPPER(\"x\")",
+    "values": {},
+    "result": "X"
+  },
+  {
+    "expression": "LOWER(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "TRIM(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "VALUE(\"x\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "TEXT(\"x\")",
+    "values": {},
+    "result": "x"
+  },
+  {
+    "expression": "ABS(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "FLOOR(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "CEILING(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "INT(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "SQRT(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "NOT(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(\"😀\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(\"😀\")",
+    "values": {},
+    "result": 1
+  },
+  {
+    "expression": "UPPER(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "LOWER(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "TRIM(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "VALUE(\"😀\")",
+    "values": {},
+    "error": "#VALUE?"
+  },
+  {
+    "expression": "TEXT(\"😀\")",
+    "values": {},
+    "result": "😀"
+  },
+  {
+    "expression": "ABS(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "FLOOR(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "CEILING(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "INT(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "SQRT(\"0x10\")",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "NOT(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "ISBLANK(\"0x10\")",
+    "values": {},
+    "result": false
+  },
+  {
+    "expression": "LEN(\"0x10\")",
+    "values": {},
+    "result": 4
+  },
+  {
+    "expression": "UPPER(\"0x10\")",
+    "values": {},
+    "result": "0X10"
+  },
+  {
+    "expression": "LOWER(\"0x10\")",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "TRIM(\"0x10\")",
+    "values": {},
+    "result": "0x10"
+  },
+  {
+    "expression": "VALUE(\"0x10\")",
+    "values": {},
+    "result": 16
+  },
+  {
+    "expression": "TEXT(\"0x10\")",
+    "values": {},
+    "result": "0x10"
+  }
+]

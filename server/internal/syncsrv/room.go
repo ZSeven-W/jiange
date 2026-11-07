@@ -12,6 +12,11 @@ import (
 
 const catchUpChunk = 1000
 
+// A busy multi-instance document can advance between our read and conditional
+// write. Retry without dropping the other clients in this room, but bound the
+// work per incoming batch so a contended room cannot monopolize its mutex.
+const maxAppendAttempts = 32
+
 type room struct {
 	hub  *Hub
 	id   int64
@@ -234,38 +239,102 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		c.send(collab.EncodeError("internal", "room unavailable"))
 		return errors.New("room unavailable")
 	}
-	if err := r.catchUp(ctx); err != nil {
-		r.reset()
-		return err
-	}
 	var accepted []collab.Op
 	var raws []store.RawOp
-	rejected := 0
-	for _, op := range ops {
-		switch err := r.doc.TryApply(op); err {
-		case nil:
-			b, _ := collab.EncodeOps([]collab.Op{op})
-			accepted = append(accepted, op)
-			raws = append(raws, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b})
-		case collab.ErrDuplicate:
-		default:
-			rejected++
+	var seqs []int64
+	var rejected int
+	committed := false
+	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-	}
-	if len(raws) == 0 {
-		if rejected > 0 {
-			c.send(collab.EncodeError("not_ready", fmt.Sprintf("%d ops depend on unknown ops", rejected)))
-			return errBatchRejected
-		} else {
+		if err := r.catchUp(ctx); err != nil {
+			r.reset()
+			return err
+		}
+		accepted, raws, rejected = nil, nil, 0
+		// Check the durable log before applying a retry: compacted snapshots
+		// no longer contain every original operation or deleted character.
+		lookup := make([]store.RawOp, len(ops))
+		for i, op := range ops {
+			lookup[i] = store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock)}
+		}
+		existing, err := r.hub.Store.ExistingOpIDs(ctx, r.id, lookup)
+		if err != nil || len(existing) != len(ops) {
+			r.reset()
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("operation lookup %d: expected %d results, got %d", r.id, len(ops), len(existing))
+		}
+		tx := r.doc.BeginTryTransaction()
+		batchIDs := make(map[collab.OpID]bool)
+		for i, op := range ops {
+			if existing[i] || batchIDs[op.ID] {
+				b, _ := collab.EncodeOps([]collab.Op{op})
+				accepted = append(accepted, op)
+				raws = append(raws, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b})
+				continue
+			}
+			switch err := tx.TryApply(op); err {
+			case nil:
+				b, _ := collab.EncodeOps([]collab.Op{op})
+				accepted = append(accepted, op)
+				raws = append(raws, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b})
+				batchIDs[op.ID] = true
+			case collab.ErrDuplicate:
+				// The store must compare the persisted payload before ACK.
+				b, _ := collab.EncodeOps([]collab.Op{op})
+				accepted = append(accepted, op)
+				raws = append(raws, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b})
+			default:
+				rejected++
+			}
+		}
+		if len(raws) == 0 {
+			tx.Rollback()
+			// A concurrently committed dependency may have arrived since
+			// catchUp; retry it rather than rejecting an otherwise valid batch.
+			if rejected > 0 {
+				head, err := r.hub.Store.Head(ctx, r.id)
+				if err != nil {
+					r.reset()
+					return err
+				}
+				if head > r.head {
+					continue
+				}
+				c.send(collab.EncodeError("not_ready", fmt.Sprintf("%d ops depend on unknown ops", rejected)))
+				return errBatchRejected
+			}
 			c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
+			return nil
 		}
-		return nil
+		seqs, err = r.hub.Store.AppendOpsAtHead(ctx, r.id, r.head, raws)
+		if err != nil {
+			tx.Rollback()
+			if errors.Is(err, store.ErrConflict) {
+				continue
+			}
+			if errors.Is(err, store.ErrOpIdentityConflict) {
+				// A single invalid client must not reset other collaborators.
+				// The rollback left this room at its last durable head.
+				c.send(collab.EncodeError("bad_ops", "operation identity conflicts with document history"))
+				return errBatchRejected
+			}
+			r.hub.Log.Error("append ops", "doc", r.id, "err", err)
+			r.reset()
+			return err
+		}
+		tx.Commit()
+		committed = true
+		break
 	}
-	seqs, err := r.hub.Store.AppendOps(ctx, r.id, raws)
-	if err != nil {
-		r.hub.Log.Error("append ops", "doc", r.id, "err", err)
-		r.reset()
-		return err
+	if !committed {
+		// The connection will retry its unacknowledged batch on reconnect;
+		// the room and all other connections retain their correct state.
+		c.send(collab.EncodeError("retry", "document is busy; retry the batch"))
+		return errBatchRejected
 	}
 	if len(seqs) != len(accepted) {
 		r.reset()

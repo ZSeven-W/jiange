@@ -13,15 +13,19 @@ type memClient struct {
 }
 
 type memDoc struct {
-	iconRevision int64
-	cover        DocCover
-	meta         DocMeta
-	deleted      bool
-	ops          []SeqOp
-	ids          map[[2]int64]bool
-	snaps        map[int64][]byte
-	versions     map[int64]memVersion
-	opAt         []time.Time // arrival time per op (auto-version sweep)
+	meta            DocMeta
+	driveRevision   int64
+	driveTrashBatch int64
+	iconRevision    int64
+	cover           DocCover
+	deleted         bool
+	ops             []SeqOp
+	ids             map[[2]int64]bool
+	ranges          map[int64][]memoryOpRange
+	opaqueIDs       map[int64]bool
+	snaps           map[int64][]byte
+	versions        map[int64]memVersion
+	opAt            []time.Time // arrival time per op (auto-version sweep)
 }
 
 type memVersion struct {
@@ -31,9 +35,10 @@ type memVersion struct {
 }
 
 type memDocs struct {
-	docs    []*memDoc
-	clients []memClient
-	subs    []func(int64, int64)
+	docs               []*memDoc
+	driveTrashSequence int64
+	clients            []memClient
+	subs               []func(int64, int64)
 }
 
 func (m *Memory) doc(id int64) *memDoc {
@@ -60,7 +65,20 @@ func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, 
 		snaps:    map[int64][]byte{},
 		versions: map[int64]memVersion{},
 	}
+	batch, err := prepareMemoryIdentityBatch(d, initial)
+	if err != nil {
+		m.mu.Unlock()
+		return DocMeta{}, err
+	}
+	for _, dup := range batch.duplicate {
+		if dup {
+			m.mu.Unlock()
+			return DocMeta{}, ErrOpIdentityConflict
+		}
+	}
+	batch.commit(d)
 	for i, op := range initial {
+		op.Bytes = slices.Clone(op.Bytes)
 		d.ids[[2]int64{op.ClientID, op.Clock}] = true
 		d.ops = append(d.ops, SeqOp{int64(i + 1), op.ClientID, op.Bytes})
 	}
@@ -186,17 +204,50 @@ func (m *Memory) Horizon(_ context.Context, doc int64, since time.Time) (int64, 
 	return h, nil
 }
 
-func (m *Memory) AppendOps(_ context.Context, doc int64, ops []RawOp) ([]int64, error) {
+func (m *Memory) ExistingOpIDs(_ context.Context, doc int64, ops []RawOp) ([]bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(doc)
+	if d == nil {
+		return nil, ErrNotFound
+	}
+	out := make([]bool, len(ops))
+	for i, op := range ops {
+		out[i] = d.ids[[2]int64{op.ClientID, op.Clock}]
+	}
+	return out, nil
+}
+
+func (m *Memory) AppendOps(ctx context.Context, doc int64, ops []RawOp) ([]int64, error) {
+	return m.appendOps(ctx, doc, nil, ops)
+}
+
+func (m *Memory) AppendOpsAtHead(ctx context.Context, doc, expectedHead int64, ops []RawOp) ([]int64, error) {
+	return m.appendOps(ctx, doc, &expectedHead, ops)
+}
+
+func (m *Memory) appendOps(_ context.Context, doc int64, expectedHead *int64, ops []RawOp) ([]int64, error) {
 	m.mu.Lock()
 	d := m.doc(doc)
 	if d == nil {
 		m.mu.Unlock()
 		return nil, ErrNotFound
 	}
+	if expectedHead != nil && int64(len(d.ops)) != *expectedHead {
+		m.mu.Unlock()
+		return nil, ErrConflict
+	}
 	seqs := make([]int64, len(ops))
+	batch, err := prepareMemoryIdentityBatch(d, ops)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	batch.commit(d)
 	for i, op := range ops {
+		op.Bytes = slices.Clone(op.Bytes)
 		k := [2]int64{op.ClientID, op.Clock}
-		if d.ids[k] {
+		if batch.duplicate[i] {
 			continue
 		}
 		d.ids[k] = true
@@ -236,14 +287,16 @@ func (m *Memory) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, 
 		m.mu.Unlock()
 		return nil, ErrConflict
 	}
-	seen := make(map[[2]int64]bool, len(ops))
-	for _, op := range ops {
-		key := [2]int64{op.ClientID, op.Clock}
-		if d.ids[key] || seen[key] {
+	batch, err := prepareMemoryIdentityBatch(d, ops)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, ErrConflict
+	}
+	for _, duplicate := range batch.duplicate {
+		if duplicate {
 			m.mu.Unlock()
 			return nil, ErrConflict
 		}
-		seen[key] = true
 	}
 	if err := ctx.Err(); err != nil {
 		m.mu.Unlock()
@@ -255,7 +308,7 @@ func (m *Memory) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, 
 	now := time.Now()
 	for i, op := range ops {
 		seqs[i] = expectedHead + int64(i) + 1
-		rows[i] = SeqOp{seqs[i], op.ClientID, op.Bytes}
+		rows[i] = SeqOp{seqs[i], op.ClientID, slices.Clone(op.Bytes)}
 		times[i] = now
 	}
 	if !guard.currentTime().Before(session.expires) {
@@ -266,8 +319,9 @@ func (m *Memory) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, 
 		m.mu.Unlock()
 		return seqs, nil
 	}
-	for key := range seen {
-		d.ids[key] = true
+	batch.commit(d)
+	for _, op := range ops {
+		d.ids[[2]int64{op.ClientID, op.Clock}] = true
 	}
 	d.ops = append(d.ops, rows...)
 	d.opAt = append(d.opAt, times...)

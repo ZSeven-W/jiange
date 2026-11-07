@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const automationCols = `id, base_id, name, enabled, trigger_kind, config, last_fired_at`
+const automationCols = `id, base_id, name, enabled, trigger_kind, config, COALESCE(last_fired_at, '0001-01-01 00:00:00+00'::timestamptz)`
 
 func (p *Postgres) Automations(ctx context.Context, base int64) ([]Automation, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+automationCols+` FROM bt_automations WHERE base_id=$1 ORDER BY id`, base)

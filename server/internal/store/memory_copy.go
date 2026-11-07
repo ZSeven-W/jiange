@@ -100,11 +100,19 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 			d.cover.FileID = mapped
 		}
 	}
-	for i, op := range ops {
-		if d.ids[[2]int64{op.ClientID, op.Clock}] {
+	batch, err := prepareMemoryIdentityBatch(d, ops)
+	if err != nil {
+		return DocMeta{}, err
+	}
+	for _, dup := range batch.duplicate {
+		if dup {
 			return DocMeta{}, ErrConflict
 		}
+	}
+	batch.commit(d)
+	for i, op := range ops {
 		d.ids[[2]int64{op.ClientID, op.Clock}] = true
+		op.Bytes = append([]byte(nil), op.Bytes...)
 		d.ops = append(d.ops, SeqOp{Seq: int64(i + 1), ClientID: op.ClientID, Bytes: append([]byte(nil), op.Bytes...)})
 	}
 	if err := ctx.Err(); err != nil {

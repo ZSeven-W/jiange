@@ -59,6 +59,10 @@ type Doc struct {
 	blocks  map[OpID]*block
 	seen    map[OpID]bool
 	pending []Op
+	// occupied is a lazy in-memory index of block and currently retained
+	// character IDs. It is only a validation accelerator: compacted IDs and
+	// historical operation identities remain the durable store's authority.
+	occupied map[OpID]uint32
 }
 
 func NewDoc() *Doc {
@@ -137,6 +141,7 @@ func (d *Doc) integrate(op *Op) {
 		b := newBlock(op.ID, op.Parent, op.Pos)
 		b.props["type"] = propReg{op.Type, op.ID}
 		d.blocks[op.ID] = b
+		d.occupy(op.ID)
 	case TBlockMove:
 		b := d.blocks[op.Block]
 		if op.ID.Cmp(b.locTS) > 0 {
@@ -163,7 +168,15 @@ func (d *Doc) integrate(op *Op) {
 			} else {
 				parent.right = insertSorted(parent.right, n)
 			}
+			// Replayed legacy history may already be corrupt and overwrite a
+			// retained ID. Keep the accelerator consistent with the chars map;
+			// durable identity verification remains responsible for rejecting
+			// such history and this does not repair the character tree.
+			if b.chars[n.id] != nil {
+				d.unoccupy(n.id)
+			}
 			b.chars[n.id] = n
+			d.occupy(n.id)
 			parent, side = n, 1
 			i++
 		}

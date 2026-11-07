@@ -85,16 +85,35 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 		ALTER TABLE base_records ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
 		ALTER TABLE bt_views ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
 		ALTER TABLE bt_links ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
+		ALTER TABLE bt_events ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
+		ALTER TABLE bt_automations ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
+		ALTER TABLE bt_public_form_links ADD COLUMN table_scope bigint NOT NULL DEFAULT 0;
 		DROP INDEX base_fields_one_primary;
 		CREATE UNIQUE INDEX base_fields_one_primary_scope ON base_fields(base_id, table_scope) WHERE is_primary;
 		ALTER TABLE base_fields RENAME TO base_fields_all;
 		ALTER TABLE base_records RENAME TO base_records_all;
 		ALTER TABLE bt_views RENAME TO bt_views_all;
 		ALTER TABLE bt_links RENAME TO bt_links_all;
+		ALTER TABLE bt_events RENAME TO bt_events_all;
+		ALTER TABLE bt_automations RENAME TO bt_automations_all;
+		ALTER TABLE bt_public_form_links RENAME TO bt_public_form_links_all;
 		CREATE VIEW base_fields WITH (security_barrier=true) AS SELECT id,base_id,name,type,options,option_colors,description,formula,position,is_primary FROM base_fields_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW base_records WITH (security_barrier=true) AS SELECT id,base_id,cells,position,creator_id,created_at,updated_at FROM base_records_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_views WITH (security_barrier=true) AS SELECT id,base_id,type,name,config,pos FROM bt_views_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_links WITH (security_barrier=true) AS SELECT id,base_id,field_id,from_record,to_record FROM bt_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW bt_events WITH (security_barrier=true) AS SELECT id,base_id,body,at FROM bt_events_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW bt_automations WITH (security_barrier=true) AS SELECT id,base_id,name,enabled,trigger_kind,config,last_fired_at FROM bt_automations_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW bt_public_form_links WITH (security_barrier=true) AS SELECT view_id,base_id,token_hash,revision,window_started,window_count FROM bt_public_form_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE OR REPLACE FUNCTION revoke_form_link_on_type_change() RETURNS trigger LANGUAGE plpgsql
+		SECURITY DEFINER SET search_path=` + qs + `,pg_catalog AS $$
+		BEGIN
+		  IF OLD.type = 'form' AND NEW.type <> 'form' THEN
+		    INSERT INTO bt_public_form_links_all (view_id, base_id, table_scope, token_hash, revision)
+		    VALUES (OLD.id, OLD.base_id, OLD.table_scope, NULL, 1)
+		    ON CONFLICT (view_id) DO UPDATE SET token_hash = NULL, revision = bt_public_form_links_all.revision + 1;
+		  END IF;
+		  RETURN NEW;
+		END $$;
 		CREATE FUNCTION leak_probe(value text) RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
 		BEGIN
 		  IF value='新表私有字段' THEN RAISE EXCEPTION 'hidden row reached caller predicate'; END IF;
@@ -151,12 +170,24 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 	if err = owner.QueryRow(ctx, `INSERT INTO base_records_all(base_id,table_scope,cells,position) VALUES ($1,99,$2,1) RETURNING id`, base.ID, cells).Scan(&newRecord); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = owner.Exec(ctx, `INSERT INTO bt_views_all(base_id,table_scope,type,name,config,pos) VALUES ($1,99,'grid','新表视图','{}',1)`, base.ID); err != nil {
+	var newView int64
+	if err = owner.QueryRow(ctx, `INSERT INTO bt_views_all(base_id,table_scope,type,name,config,pos) VALUES ($1,99,'form','新表视图','{}',1) RETURNING id`, base.ID).Scan(&newView); err != nil {
+		t.Fatal(err)
+	}
+	var privateToken [32]byte
+	privateToken[0] = 99
+	if _, err = owner.Exec(ctx, `INSERT INTO bt_public_form_links_all(view_id,base_id,table_scope,token_hash,revision) VALUES ($1,$2,99,$3,1)`, newView, base.ID, privateToken[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.Exec(ctx, `INSERT INTO bt_automations_all(base_id,table_scope,name,enabled,trigger_kind) VALUES ($1,99,'新表自动化',true,'form_submit')`, base.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.Exec(ctx, `INSERT INTO bt_events_all(base_id,table_scope,body) VALUES ($1,99,$2)`, base.ID, json.RawMessage(`{"kind":"record","private":"新表事件"}`)); err != nil {
 		t.Fatal(err)
 	}
 	grant := "GRANT USAGE ON SCHEMA " + qs + " TO " + qr + "; " +
 		"GRANT SELECT,UPDATE ON nodes TO " + qr + "; " +
-		"GRANT SELECT,INSERT,UPDATE,DELETE ON base_fields,base_records,bt_views,bt_links TO " + qr + "; " +
+		"GRANT SELECT,INSERT,UPDATE,DELETE ON base_fields,base_records,bt_views,bt_links,bt_events,bt_automations,bt_public_form_links TO " + qr + "; " +
 		"GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA " + qs + " TO " + qr
 	if _, err = owner.Exec(ctx, grant); err != nil {
 		t.Fatal(err)
@@ -199,6 +230,53 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 	if err != nil || len(views) != 1 || views[0].Name != "表格" {
 		t.Fatalf("legacy views: %+v, %v", views, err)
 	}
+	head, err := old.BtHead(ctx, base.ID)
+	if err != nil || head != 0 {
+		t.Fatalf("legacy head included other table event: head=%d err=%v", head, err)
+	}
+	seq, err := old.AppendBtEvent(ctx, base.ID, json.RawMessage(`{"kind":"reload"}`))
+	if err != nil {
+		t.Fatalf("legacy event append through view: %v", err)
+	}
+	events, err := old.BtEventsAfter(ctx, base.ID, 0, 100)
+	if err != nil || len(events) != 1 || events[0].Seq != seq {
+		t.Fatalf("legacy replay included other table event: events=%+v err=%v", events, err)
+	}
+	var eventBody map[string]any
+	if json.Unmarshal(events[0].Body, &eventBody) != nil || eventBody["kind"] != "reload" || len(eventBody) != 1 {
+		t.Fatalf("legacy replay exposed unexpected event: %s", events[0].Body)
+	}
+	automations, err := old.AllAutomations(ctx)
+	if err != nil || len(automations) != 0 {
+		t.Fatalf("legacy automation scan included another table: %+v err=%v", automations, err)
+	}
+	automation, err := old.AddAutomation(ctx, Automation{BaseID: base.ID, Name: "默认表自动化", Enabled: true, TriggerKind: "form_submit"})
+	if err != nil {
+		t.Fatalf("legacy automation insert through view: %v", err)
+	}
+	automations, err = old.AllAutomations(ctx)
+	if err != nil || len(automations) != 1 || automations[0].ID != automation.ID {
+		t.Fatalf("legacy automation scan: %+v err=%v", automations, err)
+	}
+	if err = old.MarkFired(ctx, automation.ID, time.Now()); err != nil {
+		t.Fatalf("legacy automation update through view: %v", err)
+	}
+	if _, _, err = old.LookupPublicForm(ctx, privateToken[:]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("legacy public form lookup included another table: %v", err)
+	}
+	// Type changes in the new scope must revoke only that form. In particular
+	// their trigger must not create a visible default-scope publication row.
+	if _, err = owner.Exec(ctx, `UPDATE bt_views_all SET type='grid' WHERE id=$1`, newView); err != nil {
+		t.Fatal(err)
+	}
+	var revoked bool
+	if err = owner.QueryRow(ctx, `SELECT token_hash IS NULL AND revision=2 AND table_scope=99 FROM bt_public_form_links_all WHERE view_id=$1`, newView).Scan(&revoked); err != nil || !revoked {
+		t.Fatalf("new table form was not safely revoked: revoked=%v err=%v", revoked, err)
+	}
+	var leakedForm int
+	if err = legacy.QueryRow(ctx, `SELECT count(*) FROM bt_public_form_links WHERE view_id=$1`, newView).Scan(&leakedForm); err != nil || leakedForm != 0 {
+		t.Fatalf("legacy view exposed new table form: count=%d err=%v", leakedForm, err)
+	}
 	// Existing Store insert/update/RETURNING and table locking must still work.
 	field, err := old.AddField(ctx, Field{BaseID: base.ID, Name: "旧接口字段", Type: "text"})
 	if err != nil {
@@ -213,6 +291,25 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 	}
 	if _, err = old.AddView(ctx, View{BaseID: base.ID, Type: "grid", Name: "旧接口视图"}); err != nil {
 		t.Fatal(err)
+	}
+	defaultForm, err := old.AddView(ctx, View{BaseID: base.ID, Type: "form", Name: "默认表收集表"})
+	if err != nil {
+		t.Fatalf("legacy form insert through view: %v", err)
+	}
+	var defaultToken [32]byte
+	defaultToken[0] = 42
+	if _, err = legacy.Exec(ctx, `INSERT INTO bt_public_form_links(view_id,base_id,token_hash,revision) VALUES ($1,$2,$3,1)`, defaultForm.ID, base.ID, defaultToken[:]); err != nil {
+		t.Fatalf("legacy publication insert through view: %v", err)
+	}
+	if gotBase, gotView, err := old.LookupPublicForm(ctx, defaultToken[:]); err != nil || gotBase != base.ID || gotView != defaultForm.ID {
+		t.Fatalf("legacy form lookup: base=%d view=%d err=%v", gotBase, gotView, err)
+	}
+	defaultForm.Type = "grid"
+	if _, err = old.UpdateView(ctx, defaultForm); err != nil {
+		t.Fatalf("legacy form conversion through view: %v", err)
+	}
+	if _, _, err = old.LookupPublicForm(ctx, defaultToken[:]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("legacy form conversion did not revoke token: %v", err)
 	}
 	// Exercise the legacy ON CONFLICT DO NOTHING link path via the view.
 	link, err := old.AddField(ctx, Field{BaseID: base.ID, Name: "旧关联", Type: "link"})
@@ -237,7 +334,7 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 	if err = old.SetLinks(ctx, base.ID, link.ID, records[0].ID, []int64{records[1].ID}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"base_fields_all", "base_records_all", "bt_views_all", "bt_links_all"} {
+	for _, table := range []string{"base_fields_all", "base_records_all", "bt_views_all", "bt_links_all", "bt_events_all", "bt_automations_all", "bt_public_form_links_all"} {
 		var count int
 		err := legacy.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{table}.Sanitize()).Scan(&count)
 		var pgErr *pgconn.PgError

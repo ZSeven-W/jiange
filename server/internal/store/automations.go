@@ -32,4 +32,7 @@ type AutomationStore interface {
 	UpdateAutomation(ctx context.Context, a Automation) (Automation, error)
 	DeleteAutomation(ctx context.Context, baseID, id int64) error
 	MarkFired(ctx context.Context, id int64, at time.Time) error
+	// MutateAutomationGuarded revalidates the caller and commits the automation
+	// mutation with a Base reload event. Before protects against stale edits.
+	MutateAutomationGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, before, after *Automation) (Automation, error)
 }

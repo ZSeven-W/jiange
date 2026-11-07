@@ -1,6 +1,9 @@
 package btformula
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // valid/invalid pairs mirror the TS tests (formula.test.ts) so both sides
 // accept the same grammar.
@@ -71,5 +74,35 @@ func TestValidate(t *testing.T) {
 	refs, err := Refs("[A] + [b] * [A]")
 	if err != nil || len(refs) != 2 || refs[0] != "A" || refs[1] != "b" {
 		t.Errorf("refs: %v %v", refs, err)
+	}
+}
+
+func TestValidateBrowserReferenceNamesAndNumbers(t *testing.T) {
+	// The browser maps capital dotted I to two code points. Go's simple
+	// strings.ToLower maps it to one and would reject this valid reference.
+	if err := Validate("[i\u0307] + 1", []string{"İ"}); err != nil {
+		t.Fatalf("browser lowercase reference rejected: %v", err)
+	}
+	if err := Validate("[i] + 1", []string{"İ"}); err == nil {
+		t.Fatal("distinct browser field name accepted as a match")
+	}
+	if err := Validate("[\ufeff金额\ufeff]", []string{"金额"}); err != nil {
+		t.Fatalf("browser whitespace reference rejected: %v", err)
+	}
+	if err := Validate("[\u0085金额\u0085]", []string{"金额"}); err == nil {
+		t.Fatal("non-ECMAScript whitespace incorrectly removed")
+	}
+	refs, err := Refs("[\ufeff金额\ufeff]+[\u0085金额\u0085]")
+	if err != nil || len(refs) != 2 || refs[0] != "金额" || refs[1] != "\u0085金额\u0085" {
+		t.Fatalf("reference trimming = %#v, %v", refs, err)
+	}
+	for _, src := range []string{".", "1..2", "3.4.5"} {
+		if err := Validate(src, nil); err == nil || !strings.HasPrefix(err.Error(), "#NUM?") {
+			t.Errorf("malformed numeric literal %q: %v", src, err)
+		}
+	}
+	// A syntactically valid huge number is Infinity in JS rather than NaN.
+	if err := Validate(strings.Repeat("9", 400), nil); err != nil {
+		t.Fatalf("numeric overflow is not a syntax error: %v", err)
 	}
 }

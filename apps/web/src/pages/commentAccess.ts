@@ -33,6 +33,12 @@ export function mayRetainCommentQuote(meta: DocumentPermissions | undefined, met
   return metadataVerified && commentsAvailable && canCopyContent(meta);
 }
 
+/** A pending request is immutable. Initial loading or a transient error must
+ * not irreversibly redact its quote; only a verified denial can do that. */
+export function mustRedactCommentAttemptQuote(meta: DocumentPermissions | undefined, metadataVerified: boolean, documentDenied: boolean, commentsDenied: boolean): boolean {
+  return documentDenied || commentsDenied || metadataVerified && !!meta && !canCopyContent(meta);
+}
+
 /** Keep frozen drafts until explicitly dismissed, even if a composer is reused. */
 export function mergeRecoveredCommentDrafts(existing: readonly SavedCommentDraft[], incoming: readonly SavedCommentDraft[]): SavedCommentDraft[] {
   const result = existing.map((item) => ({ ...item, draft: item.draft ? { ...item.draft } : null }));

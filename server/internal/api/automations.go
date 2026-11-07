@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -160,10 +161,20 @@ func (s *Server) addAutomation(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &a) {
 		return
 	}
-	a, err := s.Store.AddAutomation(r.Context(), a)
-	if err != nil {
-		s.fail(w, r, err)
+	if !validSchedule(w, a) {
 		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	a, err := s.Store.MutateAutomationGuarded(r.Context(), guard, b.ID, nil, &a)
+	if err != nil {
+		s.automationMutationError(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(b.ID)
 	}
 	httpx.JSON(w, http.StatusCreated, a)
 }
@@ -197,9 +208,19 @@ func (s *Server) patchAutomation(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &a) {
 		return
 	}
-	if a, err = s.Store.UpdateAutomation(r.Context(), a); err != nil {
-		s.fail(w, r, err)
+	if !validSchedule(w, a) {
 		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	if a, err = s.Store.MutateAutomationGuarded(r.Context(), guard, b.ID, cur, &a); err != nil {
+		s.automationMutationError(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(b.ID)
 	}
 	httpx.JSON(w, http.StatusOK, a)
 }
@@ -209,11 +230,61 @@ func (s *Server) deleteAutomation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteAutomation(r.Context(), b.ID, pathID(r, "aid")); err != nil {
+	as, err := s.Store.Automations(r.Context(), b.ID)
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	var current *store.Automation
+	for i := range as {
+		if as[i].ID == pathID(r, "aid") {
+			current = &as[i]
+			break
+		}
+	}
+	if current == nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "自动化不存在")
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.Store.MutateAutomationGuarded(r.Context(), guard, b.ID, current, nil); err != nil {
+		s.automationMutationError(w, r, err)
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(b.ID)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validSchedule(w http.ResponseWriter, a store.Automation) bool {
+	if a.TriggerKind != "schedule" {
+		return true
+	}
+	var cfg automationConfig
+	if json.Unmarshal(a.Config, &cfg) != nil || cfg.Schedule == nil || !scheduleEvery[cfg.Schedule.Every] {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "定时触发需要 schedule.every = 1h/1d/1w")
+		return false
+	}
+	return true
+}
+
+func (s *Server) automationMutationError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限无法修改自动化")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "自动化不存在")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "automation_conflict", "自动化已变化，请刷新后重试")
+	default:
+		s.fail(w, r, err)
+	}
 }
 
 // ---- execution ----

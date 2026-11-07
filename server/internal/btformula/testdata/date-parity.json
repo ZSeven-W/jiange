@@ -1,0 +1,9077 @@
+[
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"0000-01-01\")",
+    "result": 0
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-30\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-30\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-30\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2024-02-29\")",
+    "result": 2024
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2024-02-29\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2024-02-29\")",
+    "result": 29
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-01-01T00:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-01-01T23:59:59.123\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2024-03-10T02:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2024-03-10T02:30\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2024-03-10T02:30\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2024-11-03T01:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2024-11-03T01:30\")",
+    "result": 11
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2024-11-03T01:30\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2011-12-30T12:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2011-12-30T12:00\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2011-12-30T12:00\")",
+    "result": 30
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01T24:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01t01:02:03.1z\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01t01:02:03.1z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01t01:02:03.1z\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01T00:30+08:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01T00:30+08:00\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01T00:30+08:00\")",
+    "result": 31
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01T00:30-05:30\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01T00:30-05:30\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01T00:30-05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"+010000-01-01\")",
+    "result": 10000
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"-000001-01-01\")",
+    "result": -1
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"+275760-09-13\")",
+    "result": 275760
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"+275760-09-13\")",
+    "result": 9
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"+275760-09-13\")",
+    "result": 13
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"-271821-04-20\")",
+    "result": -271821
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"-271821-04-20\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"-271821-04-20\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2022\")",
+    "result": 2022
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2013-02\")",
+    "result": 2013
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2013-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2013-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2004-04-03\")",
+    "result": 2004
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2004-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2004-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1978-08-07T05:00:31.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1978-08-07T05:00:31.123\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1978-08-07T05:00:31.123\")",
+    "result": 7
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2025-06-04T11:14:01.123Z\")",
+    "result": 2025
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2025-06-04T11:14:01.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2025-06-04T11:14:01.123Z\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2020
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1974-02\")",
+    "result": 1974
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1974-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1974-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1993-04-21\")",
+    "result": 1993
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1993-04-21\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1993-04-21\")",
+    "result": 21
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 1978
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2017-08-28T05:44:39.123\")",
+    "result": 2017
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2017-08-28T05:44:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2017-08-28T05:44:39.123\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2027-10-17T03:06:41.123Z\")",
+    "result": 2027
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2027-10-17T03:06:41.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2027-10-17T03:06:41.123Z\")",
+    "result": 17
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 1975
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1976\")",
+    "result": 1976
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2024-06\")",
+    "result": 2024
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2024-06\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2024-06\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1990-12-21\")",
+    "result": 1990
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1990-12-21\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1990-12-21\")",
+    "result": 21
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 1992
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2032-12-20T13:24:39.123\")",
+    "result": 2032
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2032-12-20T13:24:39.123\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2032-12-20T13:24:39.123\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-10-08T11:46:05.123Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-10-08T11:46:05.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-10-08T11:46:05.123Z\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 2007
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 1982
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2011\")",
+    "result": 2011
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2015-02\")",
+    "result": 2015
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2015-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2015-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2037-08-28\")",
+    "result": 2037
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2037-08-28\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2037-08-28\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2034
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2000-12-25T05:12:47.123\")",
+    "result": 2000
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2000-12-25T05:12:47.123\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2000-12-25T05:12:47.123\")",
+    "result": 25
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2000
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2000-02-15T03:38:05.123Z\")",
+    "result": 15
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 2037
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2014
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2000\")",
+    "result": 2000
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2015-06\")",
+    "result": 2015
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2015-06\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2015-06\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2021-04-05\")",
+    "result": 2021
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2021-04-05\")",
+    "result": 5
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 1993
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2018-04-02T13:16:23.123\")",
+    "result": 2018
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2018-04-02T13:16:23.123\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2018-04-02T13:16:23.123\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1988-02-20T11:58:41.123Z\")",
+    "result": 1988
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1988-02-20T11:58:41.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1988-02-20T11:58:41.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 26
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2019\")",
+    "result": 2019
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2000-06\")",
+    "result": 2000
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2000-06\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2000-06\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1985-04-29\")",
+    "result": 1985
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1985-04-29\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1985-04-29\")",
+    "result": 29
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 1996
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1978-08-22T21:24:39.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1978-08-22T21:24:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1978-08-22T21:24:39.123\")",
+    "result": 22
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1984-10-14T19:22:13.123Z\")",
+    "result": 1984
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1984-10-14T19:22:13.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1984-10-14T19:22:13.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 11
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2004
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1996\")",
+    "result": 1996
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2013-10\")",
+    "result": 2013
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2013-10\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2013-10\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2007-12-10\")",
+    "result": 2007
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2007-12-10\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2007-12-10\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 2030
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2013-04-18T05:16:15.123\")",
+    "result": 2013
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2013-04-18T05:16:15.123\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2013-04-18T05:16:15.123\")",
+    "result": 18
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2029
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2029-02-09T03:34:33.123Z\")",
+    "result": 9
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 1976
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 22
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 1977
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 31
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2006-12-30\")",
+    "result": 2006
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2006-12-30\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2006-12-30\")",
+    "result": 30
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 1972
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1971-08-23T13:40:15.123\")",
+    "result": 1971
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1971-08-23T13:40:15.123\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1971-08-23T13:40:15.123\")",
+    "result": 23
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2008
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2008-02-06T03:46:09.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 31
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 2028
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 15
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2020\")",
+    "result": 2020
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2034-10\")",
+    "result": 2034
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2034-10\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2034-10\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1989-04-03\")",
+    "result": 1989
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1989-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1989-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 2017
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1996-04-01T21:00:47.123\")",
+    "result": 1996
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1996-04-01T21:00:47.123\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1996-04-01T21:00:47.123\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1974-10-11T11:50:37.123Z\")",
+    "result": 1974
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1974-10-11T11:50:37.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1974-10-11T11:50:37.123Z\")",
+    "result": 11
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 1980
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1972\")",
+    "result": 1972
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2014-02\")",
+    "result": 2014
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2014-02\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2014-02\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1995-08-07\")",
+    "result": 1995
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1995-08-07\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1995-08-07\")",
+    "result": 7
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 2035
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2035-12-16T13:16:15.123\")",
+    "result": 2035
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2035-12-16T13:16:15.123\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2035-12-16T13:16:15.123\")",
+    "result": 16
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2010
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2010-02-19T11:34:33.123Z\")",
+    "result": 19
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 1992
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 1986
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1981\")",
+    "result": 1981
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1987-10\")",
+    "result": 1987
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1987-10\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1987-10\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2003-08-06\")",
+    "result": 2003
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2003-08-06\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2003-08-06\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 2001
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1984-12-04T13:32:55.123\")",
+    "result": 1984
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1984-12-04T13:32:55.123\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1984-12-04T13:32:55.123\")",
+    "result": 4
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1989-06-21T03:22:13.123Z\")",
+    "result": 1989
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1989-06-21T03:22:13.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1989-06-21T03:22:13.123Z\")",
+    "result": 21
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1985
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 19
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2010-10\")",
+    "result": 2010
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2010-10\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2010-10\")",
+    "result": 1
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1977-12-26\")",
+    "result": 1977
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1977-12-26\")",
+    "result": 12
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1977-12-26\")",
+    "result": 26
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 2022
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1997-08-16T05:12:59.123\")",
+    "result": 1997
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1997-08-16T05:12:59.123\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1997-08-16T05:12:59.123\")",
+    "result": 16
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2002
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2002-02-28T03:34:01.123Z\")",
+    "result": 28
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 2015
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "UTC",
+    "expression": "YEAR(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "UTC",
+    "expression": "MONTH(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "UTC",
+    "expression": "DAY(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"0000-01-01\")",
+    "result": 0
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-30\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-30\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2024-02-29\")",
+    "result": 2024
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2024-02-29\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2024-02-29\")",
+    "result": 29
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-01-01T00:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-01-01T23:59:59.123\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2024-03-10T02:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2024-03-10T02:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2024-03-10T02:30\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2024-11-03T01:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2024-11-03T01:30\")",
+    "result": 11
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2024-11-03T01:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2011-12-30T12:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2011-12-30T12:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2011-12-30T12:00\")",
+    "result": 30
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01T24:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01t01:02:03.1z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01t01:02:03.1z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01t01:02:03.1z\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01T00:30+08:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01T00:30+08:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01T00:30+08:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01T00:30-05:30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01T00:30-05:30\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01T00:30-05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"+010000-01-01\")",
+    "result": 10000
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"-000001-01-01\")",
+    "result": -1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"+275760-09-13\")",
+    "result": 275760
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"+275760-09-13\")",
+    "result": 9
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"+275760-09-13\")",
+    "result": 13
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"-271821-04-20\")",
+    "result": -271821
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"-271821-04-20\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"-271821-04-20\")",
+    "result": 20
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2022\")",
+    "result": 2022
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2013-02\")",
+    "result": 2013
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2013-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2013-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2004-04-03\")",
+    "result": 2004
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2004-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2004-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1978-08-07T05:00:31.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1978-08-07T05:00:31.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1978-08-07T05:00:31.123\")",
+    "result": 7
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2025-06-04T11:14:01.123Z\")",
+    "result": 2025
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2025-06-04T11:14:01.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2025-06-04T11:14:01.123Z\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2020
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 29
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1974-02\")",
+    "result": 1974
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1974-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1974-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1993-04-21\")",
+    "result": 1993
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1993-04-21\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1993-04-21\")",
+    "result": 21
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 1978
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2017-08-28T05:44:39.123\")",
+    "result": 2017
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2017-08-28T05:44:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2017-08-28T05:44:39.123\")",
+    "result": 28
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2027-10-17T03:06:41.123Z\")",
+    "result": 2027
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2027-10-17T03:06:41.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2027-10-17T03:06:41.123Z\")",
+    "result": 17
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 1975
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1976\")",
+    "result": 1976
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2024-06\")",
+    "result": 2024
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2024-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2024-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1990-12-21\")",
+    "result": 1990
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1990-12-21\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1990-12-21\")",
+    "result": 21
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 1992
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2032-12-20T13:24:39.123\")",
+    "result": 2032
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2032-12-20T13:24:39.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2032-12-20T13:24:39.123\")",
+    "result": 20
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-10-08T11:46:05.123Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-10-08T11:46:05.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-10-08T11:46:05.123Z\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 2007
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 1982
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2011\")",
+    "result": 2011
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2015-02\")",
+    "result": 2015
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2015-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2015-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2037-08-28\")",
+    "result": 2037
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2037-08-28\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2037-08-28\")",
+    "result": 28
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2034
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2000-12-25T05:12:47.123\")",
+    "result": 2000
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2000-12-25T05:12:47.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2000-12-25T05:12:47.123\")",
+    "result": 25
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2000
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2000-02-15T03:38:05.123Z\")",
+    "result": 15
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 2037
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 28
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2014
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2000\")",
+    "result": 2000
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2015-06\")",
+    "result": 2015
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2015-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2015-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2021-04-05\")",
+    "result": 2021
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2021-04-05\")",
+    "result": 5
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 1993
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2018-04-02T13:16:23.123\")",
+    "result": 2018
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2018-04-02T13:16:23.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2018-04-02T13:16:23.123\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1988-02-20T11:58:41.123Z\")",
+    "result": 1988
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1988-02-20T11:58:41.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1988-02-20T11:58:41.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 26
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2019\")",
+    "result": 2019
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2000-06\")",
+    "result": 2000
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2000-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2000-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1985-04-29\")",
+    "result": 1985
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1985-04-29\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1985-04-29\")",
+    "result": 29
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 1996
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1978-08-22T21:24:39.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1978-08-22T21:24:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1978-08-22T21:24:39.123\")",
+    "result": 22
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1984-10-14T19:22:13.123Z\")",
+    "result": 1984
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1984-10-14T19:22:13.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1984-10-14T19:22:13.123Z\")",
+    "result": 15
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2004
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1996\")",
+    "result": 1996
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2013-10\")",
+    "result": 2013
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2013-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2013-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2007-12-10\")",
+    "result": 2007
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2007-12-10\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2007-12-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 2030
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2013-04-18T05:16:15.123\")",
+    "result": 2013
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2013-04-18T05:16:15.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2013-04-18T05:16:15.123\")",
+    "result": 18
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2029
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2029-02-09T03:34:33.123Z\")",
+    "result": 9
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 1976
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 23
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 1977
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 31
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2006-12-30\")",
+    "result": 2006
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2006-12-30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2006-12-30\")",
+    "result": 30
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 1972
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1971-08-23T13:40:15.123\")",
+    "result": 1971
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1971-08-23T13:40:15.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1971-08-23T13:40:15.123\")",
+    "result": 23
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2008
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2008-02-06T03:46:09.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 2028
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 15
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2020\")",
+    "result": 2020
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2034-10\")",
+    "result": 2034
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2034-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2034-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1989-04-03\")",
+    "result": 1989
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1989-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1989-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 2017
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1996-04-01T21:00:47.123\")",
+    "result": 1996
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1996-04-01T21:00:47.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1996-04-01T21:00:47.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1974-10-11T11:50:37.123Z\")",
+    "result": 1974
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1974-10-11T11:50:37.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1974-10-11T11:50:37.123Z\")",
+    "result": 11
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 1980
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 29
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1972\")",
+    "result": 1972
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2014-02\")",
+    "result": 2014
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2014-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2014-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1995-08-07\")",
+    "result": 1995
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1995-08-07\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1995-08-07\")",
+    "result": 7
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 2035
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2035-12-16T13:16:15.123\")",
+    "result": 2035
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2035-12-16T13:16:15.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2035-12-16T13:16:15.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2010
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2010-02-19T11:34:33.123Z\")",
+    "result": 19
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 1992
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 1986
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1981\")",
+    "result": 1981
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1987-10\")",
+    "result": 1987
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1987-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1987-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2003-08-06\")",
+    "result": 2003
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2003-08-06\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2003-08-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 2001
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1984-12-04T13:32:55.123\")",
+    "result": 1984
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1984-12-04T13:32:55.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1984-12-04T13:32:55.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1989-06-21T03:22:13.123Z\")",
+    "result": 1989
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1989-06-21T03:22:13.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1989-06-21T03:22:13.123Z\")",
+    "result": 21
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1985
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 19
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2010-10\")",
+    "result": 2010
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2010-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2010-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1977-12-26\")",
+    "result": 1977
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1977-12-26\")",
+    "result": 12
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1977-12-26\")",
+    "result": 26
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 2022
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 21
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1997-08-16T05:12:59.123\")",
+    "result": 1997
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1997-08-16T05:12:59.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1997-08-16T05:12:59.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2002
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2002-02-28T03:34:01.123Z\")",
+    "result": 28
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 2015
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 21
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "YEAR(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "MONTH(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Asia/Shanghai",
+    "expression": "DAY(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"0001-01-01\")",
+    "result": 0
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"0001-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"0001-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"0000-01-01\")",
+    "result": -1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"0000-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"0000-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026\")",
+    "result": 2025
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-30\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-30\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-30\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2024-02-29\")",
+    "result": 2024
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2024-02-29\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2024-02-29\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-01-01T00:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-01-01T23:59:59.123\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2024-03-10T02:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2024-03-10T02:30\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2024-03-10T02:30\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2024-11-03T01:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2024-11-03T01:30\")",
+    "result": 11
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2024-11-03T01:30\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2011-12-30T12:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2011-12-30T12:00\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2011-12-30T12:00\")",
+    "result": 30
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01T24:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01t01:02:03.1z\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01t01:02:03.1z\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01t01:02:03.1z\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01T00:30+08:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01T00:30+08:00\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01T00:30+08:00\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01T00:30-05:30\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01T00:30-05:30\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01T00:30-05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"+010000-01-01\")",
+    "result": 9999
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"+010000-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"+010000-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"-000001-01-01\")",
+    "result": -2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"-000001-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"-000001-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"+275760-09-13\")",
+    "result": 275760
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"+275760-09-13\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"+275760-09-13\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"-271821-04-20\")",
+    "result": -271821
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"-271821-04-20\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"-271821-04-20\")",
+    "result": 19
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2022\")",
+    "result": 2021
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2022\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2022\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2013-02\")",
+    "result": 2013
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2013-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2013-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2004-04-03\")",
+    "result": 2004
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2004-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2004-04-03\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1978-08-07T05:00:31.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1978-08-07T05:00:31.123\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1978-08-07T05:00:31.123\")",
+    "result": 7
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2025-06-04T11:14:01.123Z\")",
+    "result": 2025
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2025-06-04T11:14:01.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2025-06-04T11:14:01.123Z\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2020
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026\")",
+    "result": 2025
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1974-02\")",
+    "result": 1974
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1974-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1974-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1993-04-21\")",
+    "result": 1993
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1993-04-21\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1993-04-21\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 1978
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2017-08-28T05:44:39.123\")",
+    "result": 2017
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2017-08-28T05:44:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2017-08-28T05:44:39.123\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2027-10-17T03:06:41.123Z\")",
+    "result": 2027
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2027-10-17T03:06:41.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2027-10-17T03:06:41.123Z\")",
+    "result": 16
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 7
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 1975
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1976\")",
+    "result": 1975
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1976\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1976\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2024-06\")",
+    "result": 2024
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2024-06\")",
+    "result": 5
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2024-06\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1990-12-21\")",
+    "result": 1990
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1990-12-21\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1990-12-21\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 1992
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2032-12-20T13:24:39.123\")",
+    "result": 2032
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2032-12-20T13:24:39.123\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2032-12-20T13:24:39.123\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-10-08T11:46:05.123Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-10-08T11:46:05.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-10-08T11:46:05.123Z\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 2007
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 1982
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2011\")",
+    "result": 2010
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2011\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2011\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2015-02\")",
+    "result": 2015
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2015-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2015-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2037-08-28\")",
+    "result": 2037
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2037-08-28\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2037-08-28\")",
+    "result": 27
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2034
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2000-12-25T05:12:47.123\")",
+    "result": 2000
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2000-12-25T05:12:47.123\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2000-12-25T05:12:47.123\")",
+    "result": 25
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2000
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2000-02-15T03:38:05.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 2037
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2014
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2000\")",
+    "result": 1999
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2000\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2000\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2015-06\")",
+    "result": 2015
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2015-06\")",
+    "result": 5
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2015-06\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2021-04-05\")",
+    "result": 2021
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 1993
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2018-04-02T13:16:23.123\")",
+    "result": 2018
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2018-04-02T13:16:23.123\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2018-04-02T13:16:23.123\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1988-02-20T11:58:41.123Z\")",
+    "result": 1988
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1988-02-20T11:58:41.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1988-02-20T11:58:41.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 26
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2019\")",
+    "result": 2018
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2019\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2019\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2000-06\")",
+    "result": 2000
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2000-06\")",
+    "result": 5
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2000-06\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1985-04-29\")",
+    "result": 1985
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1985-04-29\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1985-04-29\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 1996
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1978-08-22T21:24:39.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1978-08-22T21:24:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1978-08-22T21:24:39.123\")",
+    "result": 22
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1984-10-14T19:22:13.123Z\")",
+    "result": 1984
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1984-10-14T19:22:13.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1984-10-14T19:22:13.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 11
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2004
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1996\")",
+    "result": 1995
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1996\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1996\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2013-10\")",
+    "result": 2013
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2013-10\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2013-10\")",
+    "result": 30
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2007-12-10\")",
+    "result": 2007
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2007-12-10\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2007-12-10\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 2030
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2013-04-18T05:16:15.123\")",
+    "result": 2013
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2013-04-18T05:16:15.123\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2013-04-18T05:16:15.123\")",
+    "result": 18
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2029
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2029-02-09T03:34:33.123Z\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 1976
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 22
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 1977
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1987\")",
+    "result": 1986
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1987\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1987\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2026-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2006-12-30\")",
+    "result": 2006
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2006-12-30\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2006-12-30\")",
+    "result": 29
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 1972
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1971-08-23T13:40:15.123\")",
+    "result": 1971
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1971-08-23T13:40:15.123\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1971-08-23T13:40:15.123\")",
+    "result": 23
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2008
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2008-02-06T03:46:09.123Z\")",
+    "result": 5
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 3
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 2028
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 15
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2020\")",
+    "result": 2019
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2020\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2020\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2034-10\")",
+    "result": 2034
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2034-10\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2034-10\")",
+    "result": 30
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1989-04-03\")",
+    "result": 1989
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1989-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1989-04-03\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 2017
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1996-04-01T21:00:47.123\")",
+    "result": 1996
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1996-04-01T21:00:47.123\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1996-04-01T21:00:47.123\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1974-10-11T11:50:37.123Z\")",
+    "result": 1974
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1974-10-11T11:50:37.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1974-10-11T11:50:37.123Z\")",
+    "result": 11
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 1980
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1972\")",
+    "result": 1971
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1972\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1972\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2014-02\")",
+    "result": 2014
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2014-02\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2014-02\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1995-08-07\")",
+    "result": 1995
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1995-08-07\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1995-08-07\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 2035
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2035-12-16T13:16:15.123\")",
+    "result": 2035
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2035-12-16T13:16:15.123\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2035-12-16T13:16:15.123\")",
+    "result": 16
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2010
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2010-02-19T11:34:33.123Z\")",
+    "result": 19
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 1992
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 7
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 1986
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1981\")",
+    "result": 1980
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1981\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1981\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1987-10\")",
+    "result": 1987
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1987-10\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1987-10\")",
+    "result": 30
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2003-08-06\")",
+    "result": 2003
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2003-08-06\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2003-08-06\")",
+    "result": 5
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 2001
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1984-12-04T13:32:55.123\")",
+    "result": 1984
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1984-12-04T13:32:55.123\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1984-12-04T13:32:55.123\")",
+    "result": 4
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1989-06-21T03:22:13.123Z\")",
+    "result": 1989
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1989-06-21T03:22:13.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1989-06-21T03:22:13.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1985
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 19
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1987\")",
+    "result": 1986
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1987\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1987\")",
+    "result": 31
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2010-10\")",
+    "result": 2010
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2010-10\")",
+    "result": 9
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2010-10\")",
+    "result": 30
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1977-12-26\")",
+    "result": 1977
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1977-12-26\")",
+    "result": 12
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1977-12-26\")",
+    "result": 25
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 2022
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1997-08-16T05:12:59.123\")",
+    "result": 1997
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1997-08-16T05:12:59.123\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1997-08-16T05:12:59.123\")",
+    "result": 16
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2002
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2002-02-28T03:34:01.123Z\")",
+    "result": 27
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 2015
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "YEAR(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "MONTH(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "America/New_York",
+    "expression": "DAY(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"0001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"0000-01-01\")",
+    "result": 0
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"0000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-30\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-30\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2024-02-29\")",
+    "result": 2024
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2024-02-29\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2024-02-29\")",
+    "result": 29
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-01-01T00:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-01-01T23:59:59.123\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2024-03-10T02:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2024-03-10T02:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2024-03-10T02:30\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2024-11-03T01:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2024-11-03T01:30\")",
+    "result": 11
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2024-11-03T01:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2011-12-30T12:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2011-12-30T12:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2011-12-30T12:00\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01T24:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01t01:02:03.1z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01t01:02:03.1z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01t01:02:03.1z\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01T00:30+08:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01T00:30+08:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01T00:30+08:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01T00:30-05:30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01T00:30-05:30\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01T00:30-05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"+010000-01-01\")",
+    "result": 10000
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"-000001-01-01\")",
+    "result": -1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"-000001-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"+275760-09-13\")",
+    "result": 275760
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"+275760-09-13\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"+275760-09-13\")",
+    "result": 13
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"-271821-04-20\")",
+    "result": -271821
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"-271821-04-20\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"-271821-04-20\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2022\")",
+    "result": 2022
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2013-02\")",
+    "result": 2013
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2013-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2013-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2004-04-03\")",
+    "result": 2004
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2004-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2004-04-03\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1978-08-07T05:00:31.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1978-08-07T05:00:31.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1978-08-07T05:00:31.123\")",
+    "result": 7
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2025-06-04T11:14:01.123Z\")",
+    "result": 2025
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2025-06-04T11:14:01.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2025-06-04T11:14:01.123Z\")",
+    "result": 5
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2020
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 29
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1974-02\")",
+    "result": 1974
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1974-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1974-02\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1993-04-21\")",
+    "result": 1993
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1993-04-21\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1993-04-21\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 1978
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2017-08-28T05:44:39.123\")",
+    "result": 2017
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2017-08-28T05:44:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2017-08-28T05:44:39.123\")",
+    "result": 28
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2027-10-17T03:06:41.123Z\")",
+    "result": 2027
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2027-10-17T03:06:41.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2027-10-17T03:06:41.123Z\")",
+    "result": 17
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 7
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 1975
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1976\")",
+    "result": 1975
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1976\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1976\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2024-06\")",
+    "result": 2024
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2024-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2024-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1990-12-21\")",
+    "result": 1990
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1990-12-21\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1990-12-21\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 1992
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2032-12-20T13:24:39.123\")",
+    "result": 2032
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2032-12-20T13:24:39.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2032-12-20T13:24:39.123\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-10-08T11:46:05.123Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-10-08T11:46:05.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-10-08T11:46:05.123Z\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 2007
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 1982
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2011\")",
+    "result": 2010
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2011\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2011\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2015-02\")",
+    "result": 2015
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2015-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2015-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2037-08-28\")",
+    "result": 2037
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2037-08-28\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2037-08-28\")",
+    "result": 28
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2034
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2000-12-25T05:12:47.123\")",
+    "result": 2000
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2000-12-25T05:12:47.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2000-12-25T05:12:47.123\")",
+    "result": 25
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2000
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2000-02-15T03:38:05.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 2037
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 29
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2014
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2000\")",
+    "result": 1999
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2000\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2000\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2015-06\")",
+    "result": 2015
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2015-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2015-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2021-04-05\")",
+    "result": 2021
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2021-04-05\")",
+    "result": 5
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 1993
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 11
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2018-04-02T13:16:23.123\")",
+    "result": 2018
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2018-04-02T13:16:23.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2018-04-02T13:16:23.123\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1988-02-20T11:58:41.123Z\")",
+    "result": 1988
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1988-02-20T11:58:41.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1988-02-20T11:58:41.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 26
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2019\")",
+    "result": 2019
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2000-06\")",
+    "result": 2000
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2000-06\")",
+    "result": 5
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2000-06\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1985-04-29\")",
+    "result": 1985
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1985-04-29\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1985-04-29\")",
+    "result": 28
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 1996
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1978-08-22T21:24:39.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1978-08-22T21:24:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1978-08-22T21:24:39.123\")",
+    "result": 22
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1984-10-14T19:22:13.123Z\")",
+    "result": 1984
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1984-10-14T19:22:13.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1984-10-14T19:22:13.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 11
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2004
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1996\")",
+    "result": 1995
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1996\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1996\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2013-10\")",
+    "result": 2013
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2013-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2013-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2007-12-10\")",
+    "result": 2007
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2007-12-10\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2007-12-10\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 2030
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2013-04-18T05:16:15.123\")",
+    "result": 2013
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2013-04-18T05:16:15.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2013-04-18T05:16:15.123\")",
+    "result": 18
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2029
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2029-02-09T03:34:33.123Z\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 1976
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 22
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 1977
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1987\")",
+    "result": 1986
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1987\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1987\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2006-12-30\")",
+    "result": 2006
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2006-12-30\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2006-12-30\")",
+    "result": 29
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 1972
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1971-08-23T13:40:15.123\")",
+    "result": 1971
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1971-08-23T13:40:15.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1971-08-23T13:40:15.123\")",
+    "result": 23
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2008
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2008-02-06T03:46:09.123Z\")",
+    "result": 5
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 2028
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 15
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2020\")",
+    "result": 2020
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2034-10\")",
+    "result": 2034
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2034-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2034-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1989-04-03\")",
+    "result": 1989
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1989-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1989-04-03\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 2017
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1996-04-01T21:00:47.123\")",
+    "result": 1996
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1996-04-01T21:00:47.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1996-04-01T21:00:47.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1974-10-11T11:50:37.123Z\")",
+    "result": 1974
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1974-10-11T11:50:37.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1974-10-11T11:50:37.123Z\")",
+    "result": 11
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 1980
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1972\")",
+    "result": 1971
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1972\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1972\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2014-02\")",
+    "result": 2014
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2014-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2014-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1995-08-07\")",
+    "result": 1995
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1995-08-07\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1995-08-07\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 2035
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2035-12-16T13:16:15.123\")",
+    "result": 2035
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2035-12-16T13:16:15.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2035-12-16T13:16:15.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2010
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2010-02-19T11:34:33.123Z\")",
+    "result": 19
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 1992
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 7
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 1986
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1981\")",
+    "result": 1980
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1981\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1981\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1987-10\")",
+    "result": 1987
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1987-10\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1987-10\")",
+    "result": 30
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2003-08-06\")",
+    "result": 2003
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2003-08-06\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2003-08-06\")",
+    "result": 5
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 2001
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1984-12-04T13:32:55.123\")",
+    "result": 1984
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1984-12-04T13:32:55.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1984-12-04T13:32:55.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1989-06-21T03:22:13.123Z\")",
+    "result": 1989
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1989-06-21T03:22:13.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1989-06-21T03:22:13.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1985
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 19
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1987\")",
+    "result": 1986
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1987\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1987\")",
+    "result": 31
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2010-10\")",
+    "result": 2010
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2010-10\")",
+    "result": 9
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2010-10\")",
+    "result": 30
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1977-12-26\")",
+    "result": 1977
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1977-12-26\")",
+    "result": 12
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1977-12-26\")",
+    "result": 25
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 2022
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 21
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1997-08-16T05:12:59.123\")",
+    "result": 1997
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1997-08-16T05:12:59.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1997-08-16T05:12:59.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2002
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2002-02-28T03:34:01.123Z\")",
+    "result": 27
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 2015
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 21
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "YEAR(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "MONTH(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Pacific/Apia",
+    "expression": "DAY(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"0001-01-01\")",
+    "result": 0
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"0001-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"0001-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"0000-01-01\")",
+    "result": -1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"0000-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"0000-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-30\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-30\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2024-02-29\")",
+    "result": 2024
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2024-02-29\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2024-02-29\")",
+    "result": 29
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-01-01T00:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-01-01T00:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-01-01T23:59:59.123\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-01-01T23:59:59.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2024-03-10T02:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2024-03-10T02:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2024-03-10T02:30\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2024-11-03T01:30\")",
+    "result": 2024
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2024-11-03T01:30\")",
+    "result": 11
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2024-11-03T01:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2011-12-30T12:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2011-12-30T12:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2011-12-30T12:00\")",
+    "result": 30
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01T24:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01T24:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01T01:02:03.1234Z\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01t01:02:03.1z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01t01:02:03.1z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01t01:02:03.1z\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01T00:30+08:00\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01T00:30+08:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01T00:30+08:00\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01T00:30-05:30\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01T00:30-05:30\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01T00:30-05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"+010000-01-01\")",
+    "result": 10000
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"+010000-01-01\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"-000001-01-01\")",
+    "result": -2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"-000001-01-01\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"-000001-01-01\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"+275760-09-13\")",
+    "result": 275760
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"+275760-09-13\")",
+    "result": 9
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"+275760-09-13\")",
+    "result": 13
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"-271821-04-20\")",
+    "result": -271821
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"-271821-04-20\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"-271821-04-20\")",
+    "result": 19
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02-01T24:01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-13-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-00-01\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-01-00\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-01-32\")",
+    "unsupported": true
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2022\")",
+    "result": 2022
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2022\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2013-02\")",
+    "result": 2013
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2013-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2013-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2004-04-03\")",
+    "result": 2004
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2004-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2004-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 2011
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2011-06-24T07:34:57.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1978-08-07T05:00:31.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1978-08-07T05:00:31.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1978-08-07T05:00:31.123\")",
+    "result": 7
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2025-06-04T11:14:01.123Z\")",
+    "result": 2025
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2025-06-04T11:14:01.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2025-06-04T11:14:01.123Z\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1971-08-20T01:08:23.123+05:30\")",
+    "result": 19
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2020
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2020-02-28T15:42:13.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1974-02\")",
+    "result": 1974
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1974-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1974-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1993-04-21\")",
+    "result": 1993
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1993-04-21\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1993-04-21\")",
+    "result": 21
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 1978
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1978-06-03T15:14:21.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2017-08-28T05:44:39.123\")",
+    "result": 2017
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2017-08-28T05:44:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2017-08-28T05:44:39.123\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2027-10-17T03:06:41.123Z\")",
+    "result": 2027
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2027-10-17T03:06:41.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2027-10-17T03:06:41.123Z\")",
+    "result": 17
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1971-04-08T09:20:39.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 1975
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1975-02-06T07:42:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1976\")",
+    "result": 1976
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1976\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2024-06\")",
+    "result": 2024
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2024-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2024-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1990-12-21\")",
+    "result": 1990
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1990-12-21\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1990-12-21\")",
+    "result": 21
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 1992
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1992-02-12T07:58:01.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2032-12-20T13:24:39.123\")",
+    "result": 2032
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2032-12-20T13:24:39.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2032-12-20T13:24:39.123\")",
+    "result": 20
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-10-08T11:46:05.123Z\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-10-08T11:46:05.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-10-08T11:46:05.123Z\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 2007
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2007-08-01T17:56:27.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 1982
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1982-10-09T07:10:13.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2011\")",
+    "result": 2011
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2011\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2015-02\")",
+    "result": 2015
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2015-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2015-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2037-08-28\")",
+    "result": 2037
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2037-08-28\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2037-08-28\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2034
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2034-02-25T07:54:21.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2000-12-25T05:12:47.123\")",
+    "result": 2000
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2000-12-25T05:12:47.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2000-12-25T05:12:47.123\")",
+    "result": 25
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2000
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2000-02-15T03:38:05.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2000-02-15T03:38:05.123Z\")",
+    "result": 15
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 2037
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2037-12-28T17:12:35.123+05:30\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 2014
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2014-06-01T15:34:01.123-07:00\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2000\")",
+    "result": 2000
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2000\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2015-06\")",
+    "result": 2015
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2015-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2015-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2021-04-05\")",
+    "result": 2021
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2021-04-05\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2021-04-05\")",
+    "result": 5
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 1993
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1993-02-11T23:02:25.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2018-04-02T13:16:23.123\")",
+    "result": 2018
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2018-04-02T13:16:23.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2018-04-02T13:16:23.123\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1988-02-20T11:58:41.123Z\")",
+    "result": 1988
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1988-02-20T11:58:41.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1988-02-20T11:58:41.123Z\")",
+    "result": 20
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 1971
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1971-08-26T17:24:51.123+05:30\")",
+    "result": 26
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1984-06-09T07:14:25.123-07:00\")",
+    "result": 9
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2019\")",
+    "result": 2019
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2019\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2000-06\")",
+    "result": 2000
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2000-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2000-06\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1985-04-29\")",
+    "result": 1985
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1985-04-29\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1985-04-29\")",
+    "result": 29
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 1996
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1996-06-24T07:06:49.123-07:00\")",
+    "result": 24
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1978-08-22T21:24:39.123\")",
+    "result": 1978
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1978-08-22T21:24:39.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1978-08-22T21:24:39.123\")",
+    "result": 22
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1984-10-14T19:22:13.123Z\")",
+    "result": 1984
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1984-10-14T19:22:13.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1984-10-14T19:22:13.123Z\")",
+    "result": 14
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1981-08-12T01:48:35.123+05:30\")",
+    "result": 11
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2004
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2004-02-30T23:06:45.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1996\")",
+    "result": 1996
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1996\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2013-10\")",
+    "result": 2013
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2013-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2013-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2007-12-10\")",
+    "result": 2007
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2007-12-10\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2007-12-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 2030
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2030-06-12T23:26:09.123-07:00\")",
+    "result": 13
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2013-04-18T05:16:15.123\")",
+    "result": 2013
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2013-04-18T05:16:15.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2013-04-18T05:16:15.123\")",
+    "result": 18
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2029
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2029-02-09T03:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2029-02-09T03:34:33.123Z\")",
+    "result": 9
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 1976
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1976-12-23T01:08:27.123+05:30\")",
+    "result": 22
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 1977
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1977-10-31T07:22:57.123-07:00\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2026-02\")",
+    "result": 2026
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2026-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2026-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2006-12-30\")",
+    "result": 2006
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2006-12-30\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2006-12-30\")",
+    "result": 30
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 1972
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1972-02-03T07:18:09.123-07:00\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1971-08-23T13:40:15.123\")",
+    "result": 1971
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1971-08-23T13:40:15.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1971-08-23T13:40:15.123\")",
+    "result": 23
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2008
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2008-02-06T03:46:09.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2008-02-06T03:46:09.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 1981
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1981-04-01T01:36:47.123+05:30\")",
+    "result": 31
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 2028
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2028-06-14T23:54:57.123-07:00\")",
+    "result": 15
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2020\")",
+    "result": 2020
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2020\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2034-10\")",
+    "result": 2034
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2034-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2034-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1989-04-03\")",
+    "result": 1989
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1989-04-03\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1989-04-03\")",
+    "result": 3
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 2017
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2017-06-12T07:30:09.123-07:00\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1996-04-01T21:00:47.123\")",
+    "result": 1996
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1996-04-01T21:00:47.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1996-04-01T21:00:47.123\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1974-10-11T11:50:37.123Z\")",
+    "result": 1974
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1974-10-11T11:50:37.123Z\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1974-10-11T11:50:37.123Z\")",
+    "result": 11
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 1980
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1980-04-20T09:20:47.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1994-10-28T15:46:49.123-07:00\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1972\")",
+    "result": 1972
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1972\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2014-02\")",
+    "result": 2014
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2014-02\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2014-02\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1995-08-07\")",
+    "result": 1995
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1995-08-07\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1995-08-07\")",
+    "result": 7
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 2035
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2035-06-25T07:46:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2035-12-16T13:16:15.123\")",
+    "result": 2035
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2035-12-16T13:16:15.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2035-12-16T13:16:15.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2010
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2010-02-19T11:34:33.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2010-02-19T11:34:33.123Z\")",
+    "result": 19
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 1992
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1992-12-08T09:56:27.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 1986
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1986-06-25T15:38:13.123-07:00\")",
+    "result": 25
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1981\")",
+    "result": 1981
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1981\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1987-10\")",
+    "result": 1987
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1987-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1987-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2003-08-06\")",
+    "result": 2003
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2003-08-06\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2003-08-06\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 2001
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2001-06-26T07:38:05.123-07:00\")",
+    "result": 26
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1984-12-04T13:32:55.123\")",
+    "result": 1984
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1984-12-04T13:32:55.123\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1984-12-04T13:32:55.123\")",
+    "result": 4
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1989-06-21T03:22:13.123Z\")",
+    "result": 1989
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1989-06-21T03:22:13.123Z\")",
+    "result": 6
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1989-06-21T03:22:13.123Z\")",
+    "result": 21
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1985
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1985-12-01T17:24:15.123+05:30\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 1984
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1984-02-19T07:06:05.123-07:00\")",
+    "result": 19
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1987\")",
+    "result": 1987
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1987\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2010-10\")",
+    "result": 2010
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2010-10\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2010-10\")",
+    "result": 1
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1977-12-26\")",
+    "result": 1977
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1977-12-26\")",
+    "result": 12
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1977-12-26\")",
+    "result": 26
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 2022
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 10
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2022-10-20T15:42:05.123-07:00\")",
+    "result": 20
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1997-08-16T05:12:59.123\")",
+    "result": 1997
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1997-08-16T05:12:59.123\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1997-08-16T05:12:59.123\")",
+    "result": 16
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2002
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2002-02-28T03:34:01.123Z\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2002-02-28T03:34:01.123Z\")",
+    "result": 28
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 2015
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 8
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"2015-08-21T01:36:59.123+05:30\")",
+    "result": 20
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "YEAR(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 1994
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "MONTH(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 2
+  },
+  {
+    "zone": "Europe/London",
+    "expression": "DAY(\"1994-02-04T07:38:01.123-07:00\")",
+    "result": 4
+  }
+]
