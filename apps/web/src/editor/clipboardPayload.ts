@@ -1,4 +1,4 @@
-import { parseText, type ClipBlock } from "./model";
+import { parseText, TEXTLESS, type ClipBlock } from "./model";
 
 function stringRecord(value: unknown): value is Record<string, string> {
   return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string");
@@ -24,4 +24,18 @@ export function clipboardBlocks(raw: string, plain: string): ClipBlock[] | null 
     } catch { /* Use plain text if the custom data is invalid. */ }
   }
   return plain ? parseText(plain) : null;
+}
+
+/** A column supports one text block; flatten copied block breaks into newlines. */
+export function columnClipboardBlocks(raw: string, plain: string): ClipBlock[] | null {
+  const blocks = clipboardBlocks(raw, plain);
+  if (!blocks) return null;
+  // Columns have no nested media/source blocks; do not silently discard one.
+  if (blocks.some((block) => TEXTLESS.has(block.type)) || (!plain && blocks.every((block) => block.chars.length === 0))) return null;
+  const chars: ClipBlock["chars"] = [];
+  blocks.forEach((block, i) => {
+    if (i) chars.push({ ch: "\n", marks: {} });
+    chars.push(...block.chars);
+  });
+  return chars.length ? [{ type: "paragraph", props: {}, chars }] : null;
 }

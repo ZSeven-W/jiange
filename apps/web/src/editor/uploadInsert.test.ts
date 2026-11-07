@@ -14,6 +14,16 @@ function setup(text: string) {
 const view = (doc: Doc) => bodyBlocks(doc).map((b) => [doc.blockInfo(b).type, doc.text(b)]);
 
 describe("uploaded block insertion", () => {
+  it("rejects a captured command changed to a formula before upload", () => {
+    const { doc, block } = setup("/图片"), end = { b: block, o: 3 };
+    const captured = captureSlashInsertion(doc, { b: block, o: 0 }, { a: end, f: end }, false)!;
+    new Tx(doc).format(block, 1, 3, "math", "图片");
+    expect(validateUploadCommand(captured)).toBe("changed");
+    const tx = new Tx(doc);
+    expect(insertUploadedFiles(tx, captured, [image])).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe("/图片");
+  });
   it("removes only the captured command, keeps surrounding text and preserves the original paragraph", () => {
     const { doc, block } = setup("正文/图片"), end = { b: block, o: 5 };
     const captured = captureSlashInsertion(doc, { b: block, o: 2 }, { a: end, f: end }, false)!;

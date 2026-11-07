@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
 import { docsApi, type DocMeta, type Me } from "@/lib/api";
@@ -9,11 +9,13 @@ import { Editor, type ExternalUndoRecorder } from "@/editor/Editor";
 import { replaceMatches } from "@/editor/findReplace";
 import { FindScrollIntent } from "@/editor/findNavigation";
 import { preflightFindReplace } from "@/editor/findReplaceSafety";
+import { scrollToCommentAnchor } from "@/editor/commentAnchor";
 import { scheduleFindSnapshot, type FindSnapshot } from "@/editor/findSearchScheduler";
 import { FindReplacePanel, type FindReplaceMode } from "@/editor/FindReplacePanel";
 import { Avatar } from "@/components/brand";
 import { AddIcon, BuildingIcon, DownBoldIcon, EditIcon, MoreIcon, SearchIcon } from "@/components/FeishuIcons";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
+import { TitleConsistency } from "./TitleConsistency";
 import { hasUnsupportedImportBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starterTemplateOps";
 import { peekStarter, takeStarter } from "./pendingStarter";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
@@ -23,7 +25,8 @@ import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { VersionPanel } from "./VersionPanel";
-import { CommentsPanel, type CommentAnchor } from "./CommentsPanel";
+import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
+import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, newCommentSession, type CommentTarget } from "./commentAccess";
 import { OutlinePanel, outlineOf, ImagePreview, type OutlineItem } from "./OutlinePanel";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -81,13 +84,22 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
   const [, setPendingRevision] = useState(0);
   const [sharing, setSharing] = useState(false);
+  const [titleCheckTarget, setTitleCheckTarget] = useState<{ doc: number; user: number } | null>(null);
+  useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
+  const pendingCommentScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (activeThread !== null && pendingCommentScroll.current === activeThread) {
+      pendingCommentScroll.current = null;
+      scrollToCommentAnchor(body.current, activeThread);
+    }
+  }, [activeThread]);
   const [templatesHidden, setTemplatesHidden] = useState(false);
   const [templateError, setTemplateError] = useState("");
   const [readingMode, setReadingMode] = useState(false);
@@ -104,7 +116,65 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const findScrollIntent = useRef(new FindScrollIntent());
   const findPanel = useRef<HTMLDivElement>(null);
   const newDoc = useMutation({ mutationFn: () => docsApi.create(""), onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); } });
-  const comments = useQuery({ queryKey: ["comments", id], queryFn: () => commentsApi.list(id), refetchInterval: 5000, refetchIntervalInBackground: false });
+  // A fresh namespace prevents an earlier authorization period (or another
+  // account) from displaying cached comments after access is revalidated.
+  const [commentRevision, setCommentRevision] = useState(0);
+  const [commentDenial, setCommentDenial] = useState<CommentTarget | null>(null);
+  const commentDraftJournal = useRef(new CommentDraftJournal());
+  const [commentRecovery, setCommentRecovery] = useState<{ doc: number; user: number; values: CommentRecovery[] } | null>(null);
+  useEffect(() => { setCommentRecovery(null); }, [id, me.user.id]);
+  const commentRecoveryGate = useRef(new CommentRecoveryGate());
+  const commentSession = useMemo(() => newCommentSession(), [id, me.user.id, metadataVerified, commentRevision]);
+  const commentIdentity = useRef<CommentTarget>({ doc: id, user: me.user.id, session: commentSession });
+  commentIdentity.current = { doc: id, user: me.user.id, session: commentSession };
+  const commentsOpen = matchesCommentTarget(commentsTarget, id, me.user.id, commentSession);
+  const commentSuspended = matchesCommentTarget(commentDenial, id, me.user.id, commentSession);
+  const comments = useQuery({ queryKey: commentListKey(id, me.user.id, commentSession), queryFn: () => commentsApi.list(id), enabled: metadataVerified && !commentSuspended, refetchInterval: 5000, refetchIntervalInBackground: false });
+  const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
+  const commentAccessDenied = (comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error)) || commentSuspended;
+  const commentsAvailable = metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
+  const freezeCommentDrafts = useCallback(() => {
+    const values = commentDraftJournal.current.freeze(id, me.user.id);
+    if (values.length) setCommentRecovery({ doc: id, user: me.user.id, values });
+  }, [id, me.user.id]);
+  const revalidateCommentAccess = useCallback((recovery?: CommentRecovery) => {
+    const target = { doc: id, user: me.user.id, session: commentSession };
+    if (!matchesCommentTarget(commentIdentity.current, target.doc, target.user, target.session)) return;
+    if (recovery?.text.trim()) commentDraftJournal.current.save(id, me.user.id, recovery);
+    freezeCommentDrafts();
+    setCommentDenial(target);
+    setCommentsTarget(null);
+    setDraft(null);
+    setActiveThread(null);
+    pendingCommentScroll.current = null;
+    if (!commentRecoveryGate.current.begin()) return;
+    void meta.refetch().then((result) => {
+      if (!result.isError && matchesCommentTarget(commentIdentity.current, target.doc, target.user, target.session)) {
+        // Reopen only through fresh list/member requests in a new namespace;
+        // an editor downgraded to viewer can then read authorized comments.
+        setCommentRevision((value) => value + 1);
+      }
+    });
+  }, [id, me.user.id, commentSession, meta.refetch, freezeCommentDrafts]);
+  useEffect(() => {
+    if (comments.isSuccess && members.isSuccess) commentRecoveryGate.current.reset();
+  }, [commentSession, comments.isSuccess, members.isSuccess]);
+  useEffect(() => {
+    if ((comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error))) revalidateCommentAccess();
+  }, [comments.isError, comments.error, members.isError, members.error, revalidateCommentAccess]);
+  useEffect(() => {
+    setCommentsTarget(null);
+    setDraft(null);
+    setActiveThread(null);
+    pendingCommentScroll.current = null;
+  }, [id, me.user.id, metadataVerified, commentAccessDenied]);
+  useEffect(() => {
+    if (!commentsAvailable) freezeCommentDrafts();
+    else {
+      const values = commentDraftJournal.current.recovered(id, me.user.id);
+      if (values.length) setCommentRecovery({ doc: id, user: me.user.id, values });
+    }
+  }, [commentsAvailable, freezeCommentDrafts]);
   const ancestors = useQuery({ queryKey: ["ancestors", id], queryFn: () => extrasApi.ancestors(id) });
   const outline: OutlineItem[] = useMemo(() => {
     const d = sync.client.doc;
@@ -149,10 +219,10 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
-  const members = useQuery({ queryKey: ["docmembers", id], queryFn: () => commentsApi.members(id) });
   // Reading mode disables document changes, not commenting by editors.
   // The server currently requires edit permission for comment mutations.
   const canComment = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
   const canEditContent = canComment && !readingMode && !sync.blocked;
   canEditRef.current = canEditContent;
   const findDoc = sync.client.doc;
@@ -345,13 +415,18 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           ancestors={ancestors.data ?? []}
           shareAnchor={shareAnchor}
           onShare={() => setSharing((v) => !v)}
-          onComments={() => setCommentsOpen((v) => !v)}
+          onComments={() => {
+            if (commentAccessDenied) { commentRecoveryGate.current.reset(); revalidateCommentAccess(); return; }
+            if (commentsOpen) freezeCommentDrafts();
+            setCommentsTarget(commentsOpen ? null : { doc: id, user: me.user.id, session: commentSession });
+          }}
           onFind={() => openFind("replace")}
           readingMode={readingMode}
           onToggleReading={() => setReadingMode((value) => !value)}
           onCreate={() => newDoc.mutate()}
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
+          onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
           onExport={meta.data?.copyProtected && meta.data.role !== "manage" ? undefined : exportMd}
           onImport={canEditContent ? importMd : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
@@ -366,6 +441,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           wordCount={wordCount}
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
+        {metadataVerified && commentAccessDenied && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button></p>}
+        {metadataVerified && !commentAccessDenied && (comments.isError || members.isError) && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论加载失败。 <button type="button" className="text-primary underline" onClick={() => { void comments.refetch(); void members.refetch(); }}>重试</button></p>}
         {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。 <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? "正在重试…" : "重试"}</button></div>}
         {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
           <span>{sync.blocked === "missing_dependency" ? "本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。" : sync.blocked === "invalid_history" ? "服务端文档历史不完整，无法确认同步状态；请联系管理员。" : `${sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。`}</span>{" "}
@@ -410,18 +487,18 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 onCopyBlock={!!meta.data?.copyProtected && meta.data.role !== "manage"}
                 docs={mentionDocs}
                 upload={canEditContent ? (f) => docsApi.upload(id, f) : undefined}
-                comments={comments.data ?? []}
+                comments={commentsAvailable && comments.isSuccess ? comments.data : []}
                 activeThread={activeThread}
                 onActivateThread={(cid) => {
                   setActiveThread(cid);
-                  if (cid !== null) setCommentsOpen(true);
+                  if (cid !== null) setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 }}
-                onComment={canComment ? (anchor) => {
+                onComment={canComment && commentsAvailable ? (anchor) => {
                   setDraft(anchor);
-                  setCommentsOpen(true);
+                  setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
                 onPreviewImage={(src, alt) => setPreview({ src, alt })}
-                people={(members.data ?? []).map((m) => ({ id: m.id, name: m.name }))}
+                people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name }))}
                 onMentionPerson={(uid, name) => {
                   // 文档内 @人 → 通知中心（mention）
                   fetch("/api/docs/" + id + "/comments", {
@@ -477,6 +554,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       )}
       {preview && <ImagePreview src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={!meta.data.copyProtected || meta.data.role === "manage"} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {history && <VersionPanel id={id} canEdit={canEditContent} disableFileDownloads={!metadataVerified || !!meta.data?.copyProtected && meta.data.role !== "manage"} onClose={() => setHistory(false)} />}
       {meta.data?.copyProtected && (
         <div
@@ -495,18 +573,32 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           ))}
         </div>
       )}
-      {commentsOpen && (
+      {commentsAvailable && commentsOpen && (
         <CommentsPanel
+          key={`${id}:${me.user.id}:${commentSession}`}
           id={id}
           meId={me.user.id}
+          session={commentSession}
+          onAccessDenied={revalidateCommentAccess}
+          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values : []}
+          onDismissRecovery={() => { commentDraftJournal.current.dismiss(id, me.user.id); setCommentRecovery(null); }}
+          onSnapshot={(value) => {
+            if (!matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
+            commentDraftJournal.current.save(id, me.user.id, value);
+          }}
+          onComposerSuspended={freezeCommentDrafts}
           canEdit={canComment}
           canManage={meta.data?.role === "manage"}
           draft={draft}
           onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}
           activeThread={activeThread}
-          onActivate={setActiveThread}
+          onActivate={(thread) => {
+            pendingCommentScroll.current = thread;
+            setActiveThread(thread);
+          }}
           onClose={() => {
-            setCommentsOpen(false);
+            freezeCommentDrafts();
+            setCommentsTarget(null);
             setDraft(null);
             setActiveThread(null);
           }}
@@ -552,6 +644,7 @@ function TopBar({
   onCreate,
   creating,
   onHistory,
+  onTitleCheck,
   onExport,
   onImport,
   onOutline,
@@ -569,6 +662,7 @@ function TopBar({
   creating: boolean;
   onOutline: () => void;
   onHistory: () => void;
+  onTitleCheck: () => void;
   onExport?: () => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
@@ -612,7 +706,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onComments={onComments} onFind={onFind} wordCount={wordCount} />
+        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onComments={onComments} onFind={onFind} wordCount={wordCount} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -675,6 +769,7 @@ function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) 
 function DocMenu({
   meta,
   onHistory,
+  onTitleCheck,
   onExport,
   onImport,
   onOutline,
@@ -684,6 +779,7 @@ function DocMenu({
 }: {
   meta?: DocMeta;
   onHistory?: () => void;
+  onTitleCheck?: () => void;
   onExport?: () => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
@@ -754,6 +850,7 @@ function DocMenu({
         <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
           <div className="px-3 py-1.5 text-[12px] text-subtle" data-word-count>字数统计：{wordCount}</div>
           <button className={item} onClick={() => { close(); onFind(); }}>查找和替换</button>
+          {onTitleCheck && <button className={item} onClick={() => { close(); onTitleCheck(); }}>检查文档名称</button>}
           <button className={cn(item, "sm:hidden")} onClick={() => { close(); onComments(); }}>评论</button>
           {meta && <StarMenuItem docId={meta.id} onDone={close} />}
           {onHistory && (

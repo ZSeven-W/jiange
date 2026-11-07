@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
@@ -16,9 +16,11 @@ import {
   isSourceBlock,
   isColumnText,
   selectionContainsColumns,
+  snapMathPos,
   len,
   LIST_TYPES,
   markdownShortcut,
+  mathSpansFromChars,
   normalize,
   TEXTLESS,
   pasteBlocks,
@@ -45,10 +47,11 @@ import { captureCompositionSelection, resolveCompositionSelection, type Composit
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureSlashInsertion, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
-import { clipboardBlocks } from "./clipboardPayload";
+import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
 import type { SlashInsertion } from "./slashInsert";
-import { commentSelection } from "./commentAnchor";
+import { commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
+import { validEditorSelection } from "./selectionSafety";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -241,11 +244,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       d = sync.client.doc;
     if (!s || !d) return;
     saved.current = null;
-    if (d.hasBlock(s.ab) && d.hasBlock(s.fb))
-      sel.current = {
+    if (d.hasBlock(s.ab) && d.hasBlock(s.fb)) {
+      const restored = {
         a: { b: s.ab, o: d.resolveAnchor(s.ab, s.a) },
         f: { b: s.fb, o: d.resolveAnchor(s.fb, s.f) },
       };
+      const at = collapsed(restored) ? snapMathPos(d, restored.a) : null;
+      sel.current = at ? { a: at, f: at } : restored;
+    }
   }, [sync.version, sync.client]);
 
   const publish = useCallback(() => {
@@ -262,8 +268,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const run = useCallback(
     (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false) => {
       const d = sync.client.doc,
-        s = sel.current;
-      if (!d || !s || readOnlyRef.current) return;
+        original = sel.current;
+      if (!d || !original || readOnlyRef.current) return;
+      if (!validEditorSelection(d, original)) { sel.current = null; setColumnNotice("编辑位置已变化，请重新选择位置。"); return; }
+      const at = collapsed(original) ? snapMathPos(d, original.a) : null;
+      const s = at ? { a: at, f: at } : original;
       // Cross-column selections cannot be represented as a root block range.
       // Never let a structural operation delete unrelated document blocks.
       if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) { setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。"); return; }
@@ -355,7 +364,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         if (isSourceBlock(tx.doc, p.b)) p = { b: tx.create("paragraph", p.b, tx.doc.blockInfo(p.b).parent), o: 0 };
         const marks = stored.current;
         const n = tx.insert(p.b, p.o, text);
-        if (marks) for (const [k, v] of Object.entries(marks)) tx.format(p.b, p.o, p.o + n, k, v);
+        if (marks) for (const [k, v] of Object.entries(marks)) if (k !== "math" && k !== "mathId") tx.format(p.b, p.o, p.o + n, k, v);
         p = { b: p.b, o: p.o + n };
         const md = isColumnText(tx.doc, p.b) ? null : markdownShortcut(tx, p, [...text].pop() ?? "");
         if (md) {
@@ -395,9 +404,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (!wrap.current?.contains(document.activeElement)) { setToolbar(null); setCommentError(null); }
       return;
     }
-    const a = domToPos(el, ds.anchorNode!, ds.anchorOffset),
+    let a = domToPos(el, ds.anchorNode!, ds.anchorOffset),
       f = domToPos(el, ds.focusNode!, ds.focusOffset);
     if (!a || !f) return;
+    const current = sync.client.doc;
+    if (!current || !validEditorSelection(current, { a, f })) { sel.current = null; setToolbar(null); return; }
+    if (current && eqId(a.b, f.b) && a.o === f.o) a = f = snapMathPos(current, a);
     const prev = sel.current;
     if (!prev || !eqId(prev.a.b, a.b) || prev.a.o !== a.o || !eqId(prev.f.b, f.b) || prev.f.o !== f.o) setCommentError(null);
     if (prev && (!eqId(prev.f.b, f.b) || Math.abs(prev.f.o - f.o) > 1)) {
@@ -520,7 +532,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       readSel();
       const s = sel.current,
         d = sync.client.doc;
-      if (!s || !d) return;
+      if (!s || !d || !validEditorSelection(d, s)) return;
       switch (e.inputType) {
         case "insertText":
         case "insertReplacementText": {
@@ -562,6 +574,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const r = ranges[0];
         const a = domToPos(el, r.startContainer, r.startOffset),
           f = domToPos(el, r.endContainer, r.endOffset);
+        if (a && f && !validEditorSelection(d, { a, f })) { setColumnNotice("编辑位置已变化，请重新选择位置。"); return; }
         if (a && f && !(eqId(a.b, f.b) && a.o === f.o)) {
           if (eqId(a.b, f.b)) return run((tx) => deleteRange(tx, { a, f }), "delete");
         }
@@ -638,12 +651,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (!c) return;
       const currentDoc = sync.client.doc;
       const selection = currentDoc && c.anchor ? resolveCompositionSelection(currentDoc, c.anchor) : null;
-      if (!selection) {
+      // A peer may have turned only part of the captured selection into a
+      // formula while composition was active. Expanding now would delete
+      // characters the user did not select, so preserve the IME draft.
+      const bounds = currentDoc && selection && !collapsed(selection) ? normalize(currentDoc, selection) : null;
+      const expanded = bounds && (bounds.start.o !== Math.min(selection!.a.o, selection!.f.o) || bounds.end.o !== Math.max(selection!.a.o, selection!.f.o));
+      if (!selection || expanded) {
         setRemount((m) => ({ ...m, [idKey(c.sel.a.b)]: (m[idKey(c.sel.a.b)] ?? 0) + 1 }));
         if (e.data) setConflictDraft({ text: e.data, message: "输入位置已被协作者修改或删除，内容未应用。请复制草稿后重试。" });
         return;
       }
-      sel.current = selection;
+      const at = collapsed(selection) ? snapMathPos(currentDoc!, selection.a) : null;
+      sel.current = at ? { a: at, f: at } : selection;
       // throw away the browser's DOM mutations for this block and commit the text
       setRemount((m) => ({
         ...m,
@@ -744,6 +763,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const m = slash;
     setSlash(null);
     if (!m) return;
+    // A remote mark change can turn a previously typed command into a formula
+    // while its menu is open. Never remove part of that formula as a command.
+    const original = sync.client.doc, current = sel.current;
+    if (!m.fromButton) {
+      if (!original || !current || !eqId(m.at.b, current.f.b) || !original.hasBlock(m.at.b) || m.at.o < 0 || m.at.o >= current.f.o) {
+        setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
+        return;
+      }
+      const chars = original.richChars(m.at.b), a = m.at.o, b = current.f.o;
+      if (chars[a]?.ch !== m.kind || chars.slice(a, b).some((char) => !!char.marks.math)) {
+        setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
+        return;
+      }
+    }
     const targetBlock = (tx: Tx): OpId | null => {
       const anchor = m.insertAfter ?? m.at.b;
       if (!tx.doc.hasBlock(anchor)) return null;
@@ -912,15 +945,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         return;
       }
     }
-    const s = sel.current,
-      d = sync.client.doc;
-    if (!s || !d) return;
-    if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) {
-      if (!e.metaKey && !e.ctrlKey || e.key === "Backspace" || e.key === "Delete") e.preventDefault();
-      if (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1) setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。");
-      return;
-    }
     const k = e.key.toLowerCase();
+    // Undo belongs to the editor even when a remote deletion or a non-editable
+    // formula temporarily leaves no valid DOM selection.
     if (mod && k === "z") {
       e.preventDefault();
       return undo(e.shiftKey);
@@ -928,6 +955,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     if (mod && k === "y") {
       e.preventDefault();
       return undo(true);
+    }
+    const s = sel.current,
+      d = sync.client.doc;
+    if (!s || !d || !validEditorSelection(d, s)) return;
+    if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) {
+      if (!e.metaKey && !e.ctrlKey || e.key === "Backspace" || e.key === "Delete") e.preventDefault();
+      if (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1) setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。");
+      return;
     }
     const markKeys: Record<string, string> = {
       b: "bold",
@@ -990,7 +1025,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     readSel();
     const s = sel.current,
       d = sync.client.doc;
-    if (!s || !d || collapsed(s)) return;
+    if (!s || !d || !validEditorSelection(d, s) || collapsed(s)) return;
     if (selectionContainsColumns(d, s)) {
       e.preventDefault();
       setColumnNotice("暂不支持复制或剪切包含分栏的选区，请分别选择栏内内容。");
@@ -1019,8 +1054,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const currentDoc = sync.client.doc;
     if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
       if (files.length) { setColumnNotice("暂不支持在分栏中粘贴图片或附件，请先将文件插入正文。"); return; }
-      if (!plain) { setColumnNotice("剪贴板中没有可粘贴的文字，原内容已保留。"); return; }
-      insertText(plain, "paste");
+      const clip = columnClipboardBlocks(raw, plain);
+      if (!clip) { setColumnNotice("分栏暂不支持粘贴该内容，原内容已保留。"); return; }
+      run((tx, s) => {
+        const at = collapsed(s) ? s.a : deleteRange(tx, s);
+        return pasteBlocks(tx, at, clip);
+      }, "paste");
       um.seal();
       return;
     }
@@ -1085,7 +1124,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     run((tx) => tx.move(b, target, d.blockInfo(b).parent));
   };
 
-  const tb = sel.current && doc && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
+  const tb = sel.current && doc && validEditorSelection(doc, sel.current) && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
   const curType = sel.current && doc?.hasBlock(sel.current.f.b) ? doc.blockInfo(sel.current.f.b).type : "paragraph";
   const slashPos = slash && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slash.at) : null;
   const base = wrap.current?.getBoundingClientRect();
@@ -1135,6 +1174,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           blocks.map((b) => {
             const k = idKey(b);
             const info = doc.blockInfo(b);
+            const commentProjection = projectCommentAnchors(doc, b, comments, activeThread);
             return (
               <Block
                 key={k + ":" + (remount[k] ?? 0)}
@@ -1144,7 +1184,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 number={numbers.get(k)}
                 spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
                 findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
-                anchors={anchorFlags(doc, b, comments)}
+                anchors={commentProjection.flags}
+                commentThreads={commentProjection.threadIds}
                 activeThread={activeThread}
                 onAnchorClick={(cid) => onActivateThread?.(cid)}
                 onSetProp={readOnly ? undefined : (key, value) => {
@@ -1166,7 +1207,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   const ci = doc.blockInfo(ch);
                   const key = idKey(ch);
                   const composingHere = composing.current?.snapshot && eqId(composing.current.sel.a.b, ch);
-                  return { id: key, type: ci.type, props: ci.props, spans: composingHere ? composing.current!.snapshot! : doc.richChars(ch), findRanges: composingHere ? composing.current!.findRanges : findRanges.get(key) };
+                  const commentProjection = projectCommentAnchors(doc, ch, comments, activeThread);
+                  return { id: key, type: ci.type, props: ci.props, spans: composingHere ? composing.current!.snapshot! : doc.richChars(ch), findRanges: composingHere ? composing.current!.findRanges : findRanges.get(key), anchors: commentProjection.flags, commentThreads: commentProjection.threadIds };
                 })}
                 columnRemount={remount}
                 syncVersion={sync.version}
@@ -1320,13 +1362,14 @@ const BLOCK_CLASS: Record<string, string> = {
 
 interface BlockProps {
   /** columns 容器：渲染其子块（每栏一个） */
-  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
+  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
   columnRemount?: Record<string, number>;
   syncVersion: number;
   syncStatus: SyncDoc["status"];
   onAddColumn?: () => void;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
+  commentThreads?: number[];
   findRanges?: { start: number; end: number; active: boolean }[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
@@ -1354,26 +1397,35 @@ interface BlockProps {
   canCopy?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
-  const threadIds = new Set<number>();
-  for (const a of anchors ?? []) if (a != null) threadIds.add(a);
-  const commentBadge = threadIds.size;
-  const firstThread = anchors?.find((a) => a != null) ?? null;
+  const commentBadge = commentThreads?.length ?? 0;
+  const firstThread = commentThreads?.includes(activeThread ?? -1) ? activeThread : (commentThreads?.[0] ?? null);
   const highlighted = new Array<0 | 1 | 2>(spans.length).fill(0);
   for (const range of findRanges ?? []) {
     for (let i = Math.max(0, range.start); i < Math.min(spans.length, range.end); i++) highlighted[i] = range.active ? 2 : 1;
   }
-  const runs: { text: string; marks: Record<string, string>; anchor: number | null; highlight: 0 | 1 | 2 }[] = [];
-  for (let i = 0; i < spans.length; i++) {
-    const c = spans[i];
-    const anchor = anchors?.[i] ?? null;
-    const last = runs[runs.length - 1];
-    const highlight = highlighted[i];
-    if (last && sameMarks(last.marks, c.marks) && last.anchor === anchor && last.highlight === highlight) last.text += c.ch;
-    else runs.push({ text: c.ch, marks: c.marks, anchor, highlight });
-  }
+  type RenderRun = { text: string; marks: Record<string, string>; anchor: number | null; highlight: 0 | 1 | 2 };
+  const makeRuns = (chars: typeof spans, flags: (0 | 1 | 2)[], commentFlags?: (number | null)[]): RenderRun[] => {
+    const result: RenderRun[] = [];
+    const atoms = new Map(mathSpansFromChars(chars).map((atom) => [atom.start, atom]));
+    for (let i = 0; i < chars.length; i++) {
+      const c = chars[i], atom = atoms.get(i);
+      if (atom) {
+        const covered = (commentFlags ?? []).slice(atom.start, atom.end).filter((value): value is number => value != null);
+        const anchor = activeThread != null && covered.includes(activeThread) ? activeThread : (covered[0] ?? null);
+        result.push({ text: chars.slice(atom.start, atom.end).map((char) => char.ch).join(""), marks: c.marks, anchor, highlight: 0 });
+        i = atom.end - 1;
+        continue;
+      }
+      const anchor = commentFlags?.[i] ?? null, last = result[result.length - 1], highlight = flags[i];
+      if (last && !last.marks.math && sameMarks(last.marks, c.marks) && last.anchor === anchor && last.highlight === highlight) last.text += c.ch;
+      else result.push({ text: c.ch, marks: c.marks, anchor, highlight });
+    }
+    return result;
+  };
+  const runs = makeRuns(spans, highlighted, anchors);
   const renderRun = (run: typeof runs[number]) => {
     if (!run.highlight) return <Run text={run.text} marks={run.marks} />;
     // Search highlight must remain visible over a user's existing background
@@ -1382,20 +1434,15 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     delete marks.bg;
     return <mark data-find-match data-find-active={run.highlight === 2 ? "true" : undefined} className={cn("rounded-[2px] text-inherit", run.highlight === 2 ? "bg-[#ffb74d]" : "bg-[#ffe69b]")}><Run text={run.text} marks={marks} /></mark>;
   };
+  const renderAnchoredRun = (run: typeof runs[number], i: number) => run.anchor != null ? (
+    <span key={i} className={cn("cursor-pointer border-b-2 border-[#F5B1E5] dark:bg-[#3a3121]", activeThread === run.anchor ? "bg-[#FBDC8D] dark:bg-[#4a3d1f]" : "bg-[#FFF3D6] dark:bg-[#3a3121]")} onClick={() => onAnchorClick?.(run.anchor!)} data-comment-anchor={run.anchor}>{renderRun(run)}</span>
+  ) : <span key={i}>{renderRun(run)}</span>;
   const renderColumnText = (ch: NonNullable<BlockProps["childBlocks"]>[number]) => {
     const flags = new Array<0 | 1 | 2>(ch.spans.length).fill(0);
     for (const range of ch.findRanges ?? []) {
       for (let i = Math.max(0, range.start); i < Math.min(ch.spans.length, range.end); i++) flags[i] = range.active ? 2 : 1;
     }
-    const columnRuns: typeof runs = [];
-    for (let i = 0; i < ch.spans.length; i++) {
-      const c = ch.spans[i], last = columnRuns[columnRuns.length - 1];
-      // Keep the existing per-character formula projection until the editor's
-      // DOM-to-model mapping and deletion semantics support atomic formulas.
-      if (last && !c.marks.math && sameMarks(last.marks, c.marks) && last.highlight === flags[i]) last.text += c.ch;
-      else columnRuns.push({ text: c.ch, marks: c.marks, anchor: null, highlight: flags[i] });
-    }
-    return columnRuns.map((run, i) => <Fragment key={i}>{renderRun(run)}</Fragment>);
+    return makeRuns(ch.spans, flags, ch.anchors).map(renderAnchoredRun);
   };
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
@@ -1455,12 +1502,14 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "columns" ? (
         <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>
           <div className="flex gap-2">
-            {(childBlocks ?? []).map((ch) => (
-              <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
+            {(childBlocks ?? []).map((ch) => {
+              const threads = ch.commentThreads ?? [];
+              return <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col relative min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none">
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
                 </div>
+                {threads.length > 0 && <button contentEditable={false} className="mt-1 flex items-center gap-0.5 rounded-full border border-[#f5b1e5] bg-surface px-1.5 py-0.5 text-[11px] font-medium text-[#c950a8] shadow-sm" title={`${threads.length} 条评论`} onMouseDown={(e) => e.preventDefault()} onClick={() => onAnchorClick?.(threads.includes(activeThread ?? -1) ? activeThread! : threads[0])} data-comment-bubble><MessageCircle size={11} strokeWidth={1.7} /> {threads.length}</button>}
                 {onDeleteColumn && <button
                   className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border bg-surface text-[11px] text-subtle hover:text-destructive group-hover/col:grid"
                   title="删除此栏"
@@ -1469,8 +1518,8 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
                 >
                   ✕
                 </button>}
-              </div>
-            ))}
+              </div>;
+            })}
           </div>
           {onAddColumn && <button className="mt-1 px-1 text-[12px] text-subtle hover:text-primary" onClick={onAddColumn} data-add-column>
             + 添加一栏
@@ -1548,7 +1597,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             </button>}
           </div>
           <div data-text className="min-w-0 whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">
-            {runs.length === 0 ? <br /> : runs.map((r, i) => <span key={i}>{renderRun(r)}</span>)}
+            {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
           </div>
         </div>
       ) : type === "callout" ? (
@@ -1565,7 +1614,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             </button>
           </span>
           <div data-text className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-            {runs.length === 0 ? <br /> : runs.map((r, i) => <span key={i}>{renderRun(r)}</span>)}
+            {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
           </div>
           {onSetProp && <span contentEditable={false} className="ml-auto flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" data-callout-colors>
             {CALLOUT_BG.map((bg, i) => (
@@ -1590,20 +1639,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             {runs.length === 0 ? (
               <br />
             ) : (
-              runs.map((r, i) =>
-                r.anchor != null ? (
-                  <span
-                    key={i}
-                    className={cn("cursor-pointer border-b-2 border-[#F5B1E5] dark:bg-[#3a3121]", activeThread === r.anchor ? "bg-[#FBDC8D] dark:bg-[#4a3d1f]" : "bg-[#FFF3D6] dark:bg-[#3a3121]")}
-                    onClick={() => onAnchorClick?.(r.anchor!)}
-                    data-comment-anchor={r.anchor}
-                  >
-                    {renderRun(r)}
-                  </span>
-                ) : (
-                  <span key={i}>{renderRun(r)}</span>
-                ),
-              )
+              runs.map(renderAnchoredRun)
             )}
           </div>
         </div>
@@ -1687,29 +1723,6 @@ function sameMarks(a: Record<string, string>, b: Record<string, string>) {
   return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
 }
 
-/**
- * Per-char comment coverage for one block: flags[i] is the top-level thread
- * id covering char i (unresolved only; replies resolve with their parent).
- */
-export function anchorFlags(doc: Doc, b: OpId, comments: Comment[]): (number | null)[] | undefined {
-  const mine = comments.filter((c) => !c.resolved && !c.parentId && c.block === idKey(b));
-  if (mine.length === 0) return undefined;
-  const ids = doc.visibleIds(b);
-  const flags: (number | null)[] = new Array(ids.length).fill(null);
-  const key = (x: OpId) => idKey(x);
-  for (const c of mine) {
-    let si = -1;
-    let ei = -1;
-    for (let i = 0; i < ids.length; i++) {
-      if (key(ids[i]) === c.startChar) si = i;
-      if (key(ids[i]) === c.endChar) ei = i;
-    }
-    if (si < 0 || ei < 0) continue; // anchor deleted; panel still shows the quote
-    for (let i = Math.min(si, ei); i <= Math.max(si, ei) && i < flags.length; i++) flags[i] = c.id;
-  }
-  return flags;
-}
-
 function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
   const cls = cn(
     marks.bold && "font-semibold",
@@ -1719,6 +1732,14 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     marks.link && "cursor-pointer text-primary underline-offset-2 hover:underline",
   );
   const style = marks.color || marks.bg ? { color: marks.color || undefined, background: marks.bg || undefined } : undefined;
+  // The rendered formula does not have the same character length as its
+  // source. Treat it as an atomic projection even when other marks overlap.
+  if (marks.math)
+    return (
+      <span className="mx-0.5 not-italic" title={`$${marks.math}$`} data-model-length={[...text].length} data-inline-math contentEditable={false}>
+        <MathView src={marks.math} />
+      </span>
+    );
   if (marks.link?.startsWith("#/doc/"))
     return (
       <a
@@ -1738,12 +1759,6 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     return (
       <span className="rounded bg-accent px-0.5 font-medium not-italic text-primary" title={`@成员 #${marks.mention}`}>
         {text}
-      </span>
-    );
-  if (marks.math)
-    return (
-      <span className="mx-0.5 not-italic" title={`$${marks.math}$`}>
-        <MathView src={marks.math} />
       </span>
     );
   if (marks.link)

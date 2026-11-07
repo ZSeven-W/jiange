@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
 import { DiagramView } from "@/editor/DiagramView";
 import { MathView } from "@/editor/MathView";
-import { parseTableData } from "@/editor/model";
+import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
 
 type Block = DocView["blocks"][number];
@@ -26,7 +26,24 @@ function fileURL(id?: string, publicToken?: string, versionSeq?: number): string
 }
 
 function RichText({ spans }: { spans: Span[] }) {
-  return <>{spans.map((span, i) => {
+  // A formula can be split into multiple view spans by unrelated formatting.
+  // Rebuild the same atomic boundaries as the editor before rendering it.
+  const chars = spans.flatMap((span, source) => [...span.text].map((ch) => ({ ch, marks: span.marks, source })));
+  const atoms = new Map(mathSpansFromChars(chars).map((atom) => [atom.start, atom]));
+  const runs: Span[] = [];
+  for (let i = 0; i < chars.length;) {
+    const atom = atoms.get(i);
+    if (atom) {
+      runs.push({ text: chars.slice(i, atom.end).map((char) => char.ch).join(""), marks: chars[i].marks });
+      i = atom.end;
+    } else {
+      let end = i + 1;
+      while (end < chars.length && !atoms.has(end) && chars[end].source === chars[i].source) end++;
+      runs.push({ text: chars.slice(i, end).map((char) => char.ch).join(""), marks: chars[i].marks });
+      i = end;
+    }
+  }
+  return <>{runs.map((span, i) => {
     const { text, marks } = span;
     if (marks.math) return <span key={i} className="mx-0.5 not-italic"><MathView src={marks.math} /></span>;
     const style: CSSProperties = { color: marks.color || undefined, background: marks.bg || undefined };

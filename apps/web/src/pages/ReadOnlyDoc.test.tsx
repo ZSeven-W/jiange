@@ -12,6 +12,23 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  it("renders formula instances once despite formatting splits, including legacy and copied formulas", () => {
+    const paragraph = b("1:1", "paragraph");
+    paragraph.spans = [
+      { text: "前", marks: {} },
+      { text: "x", marks: { math: "x^2", mathId: "1:10", bold: "true" } },
+      { text: "^2", marks: { math: "x^2", mathId: "1:10" } },
+      { text: "x^2", marks: { math: "x^2", mathId: "1:20" } },
+      { text: "x^2x^2", marks: { math: "x^2" } },
+      { text: "后😀", marks: {} },
+    ];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={{ blocks: [paragraph] }} />);
+    expect((html.match(/class="jiange-math"/g) ?? [])).toHaveLength(3);
+    expect(html).toContain("前");
+    expect(html).toContain("后😀");
+    expect(html).not.toContain("x^2");
+  });
+
   it("renders rich content without exposing formula or diagram source", () => {
     const rich = b("1:1", "paragraph");
     rich.spans = [{ text: "重点", marks: { bold: "true", italic: "true" } }, { text: "文档", marks: { link: "https://example.com" } }];

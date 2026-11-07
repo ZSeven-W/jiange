@@ -16,7 +16,7 @@ export function captureSlashInsertion(doc: Doc, at: Pos, sel: Sel | null, fromBu
   if (!sel || !collapsed(sel) || !eqId(sel.f.b, at.b) || at.o < 0 || sel.f.o <= at.o) return null;
   const ids = doc.visibleIds(at.b);
   const chars = doc.richChars(at.b);
-  if (sel.f.o > ids.length || chars[at.o]?.ch !== "/") return null;
+  if (sel.f.o > ids.length || chars[at.o]?.ch !== "/" || chars.slice(at.o, sel.f.o).some((char) => !!char.marks.math)) return null;
   return { doc, anchor, beforeAnchor: at.o === 0 && sel.f.o === ids.length, commandIds: ids.slice(at.o, sel.f.o) };
 }
 
@@ -37,6 +37,7 @@ export function insertSlashBlock(tx: Tx, captured: SlashInsertion, type: string,
     commandStart = ids.findIndex((id) => eqId(id, captured.commandIds![0]));
     if (commandStart < 0 || captured.commandIds.some((id, i) => !ids[commandStart + i] || !eqId(id, ids[commandStart + i]))) return null;
     const commandEnd = commandStart + captured.commandIds.length;
+    if (doc.richChars(captured.anchor).slice(commandStart, commandEnd).some((char) => !!char.marks.math)) return null;
     if (commandStart > 0 && commandEnd < ids.length) return "middle";
     beforeAnchor = commandStart === 0;
   }
