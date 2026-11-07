@@ -88,6 +88,33 @@ describe("base realtime access lifecycle", () => {
     expect(Socket.instances).toHaveLength(1);
   });
 
+  it.each([3, 5, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, null])(
+    "immediately revalidates when the room hello head %s does not match a valid snapshot",
+    (head) => {
+      useBaseSync(1, { ready: true, restricted: false });
+      stop = harness.effect?.();
+      Socket.instances[0].onmessage?.({ data: JSON.stringify({ t: "hello", head }) });
+      expect(refresh).toHaveBeenCalledWith({ queryKey: ["base", 1], exact: true }, { throwOnError: true });
+    },
+  );
+
+  it("keeps polling without a redundant immediate read when hello matches", () => {
+    useBaseSync(1, { ready: true, restricted: false });
+    stop = harness.effect?.();
+    Socket.instances[0].onmessage?.({ data: JSON.stringify({ t: "hello", head: 4 }) });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("stops reconnecting if head revalidation loses authorization", async () => {
+    refresh.mockImplementationOnce(async () => { status = "error"; throw new Error("403"); });
+    useBaseSync(1, { ready: true, restricted: false });
+    stop = harness.effect?.();
+    Socket.instances[0].onmessage?.({ data: JSON.stringify({ t: "hello", head: 5 }) });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(Socket.instances).toHaveLength(1);
+  });
+
   it("polls unrestricted bases even when no event arrives", async () => {
     useBaseSync(1, { ready: true, restricted: false });
     stop = harness.effect?.();

@@ -151,9 +151,17 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 		if err != nil {
 			return err
 		}
-		// Legacy writers and anonymous form submission still touch these tables
-		// without the Base lock. The coarse table locks close that transition gap.
-		if _, err := tx.Exec(ctx, `LOCK TABLE base_fields,base_records,bt_links IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		// Scalar updates and moves neither alter link edges nor allocate/delete
+		// records. Keep the schema stable against legacy writers while allowing
+		// unrelated scalar writes to proceed: PostgreSQL's implicit row-exclusive
+		// record lock still conflicts with field conversions and imports, which
+		// take SHARE ROW EXCLUSIVE on base_records. Structural and link writes
+		// retain the stronger transitional fence against legacy writers.
+		lockSQL := `LOCK TABLE base_fields,base_records,bt_links IN SHARE ROW EXCLUSIVE MODE`
+		if (mutation.Operation == "update" || mutation.Operation == "move") && len(changes) == 0 {
+			lockSQL = `LOCK TABLE base_fields IN SHARE MODE`
+		}
+		if _, err := tx.Exec(ctx, lockSQL); err != nil {
 			return err
 		}
 		fields, err := pgRecordFields(ctx, tx, baseID)
