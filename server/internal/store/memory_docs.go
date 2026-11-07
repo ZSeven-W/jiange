@@ -16,6 +16,7 @@ type memDoc struct {
 	meta            DocMeta
 	driveRevision   int64
 	driveTrashBatch int64
+	historyEpoch    int64 // 1 起；回滚/恢复后代际 +1
 	iconRevision    int64
 	cover           DocCover
 	deleted         bool
@@ -355,13 +356,37 @@ func (m *Memory) OpsAfter(_ context.Context, doc, after int64, limit int) ([]Seq
 }
 
 func (m *Memory) Head(_ context.Context, doc int64) (int64, error) {
+	_, seq, err := m.HeadVersion(nil, doc)
+	return seq, err
+}
+
+// HeadVersion returns the log's history epoch and head. The epoch is an
+// independent generation marker: after a restore it changes even when the
+// head lands on the same seq with different content.
+func (m *Memory) HeadVersion(_ context.Context, doc int64) (epoch, head int64, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(doc)
 	if d == nil {
-		return 0, ErrNotFound
+		return 0, 0, ErrNotFound
 	}
-	return int64(len(d.ops)), nil
+	if epoch < 1 {
+		epoch = 1 // 与迁移 0036 的默认值一致
+	}
+	return epoch, int64(len(d.ops)), nil
+}
+
+// BumpHistoryEpoch marks the log as a new generation (rollback/restore
+// tooling). Clients caching the old epoch must resync from a snapshot.
+func (m *Memory) BumpHistoryEpoch(_ context.Context, doc int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(doc)
+	if d == nil {
+		return ErrNotFound
+	}
+	d.historyEpoch++
+	return nil
 }
 
 func (m *Memory) LatestSnapshot(_ context.Context, doc int64) (int64, []byte, error) {

@@ -362,11 +362,33 @@ func (p *Postgres) OpsAfter(ctx context.Context, doc, after int64, limit int) ([
 }
 
 func (p *Postgres) Head(ctx context.Context, doc int64) (h int64, err error) {
-	err = p.Pool.QueryRow(ctx, `SELECT seq FROM doc_heads WHERE doc_id=$1`, doc).Scan(&h)
+	_, h, err = p.HeadVersion(ctx, doc)
+	return
+}
+
+// HeadVersion returns the log's history epoch and head. The epoch is an
+// independent generation marker: after a restore it changes even when the
+// head lands on the same seq with different content.
+func (p *Postgres) HeadVersion(ctx context.Context, doc int64) (epoch, head int64, err error) {
+	err = p.Pool.QueryRow(ctx, `SELECT history_epoch, seq FROM doc_heads WHERE doc_id=$1`, doc).Scan(&epoch, &head)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
 	return
+}
+
+// BumpHistoryEpoch marks the log as a new generation (rollback/restore
+// tooling, migration 0036). Clients caching the old epoch must resync from a
+// snapshot; their unacknowledged drafts retry through operation identity.
+func (p *Postgres) BumpHistoryEpoch(ctx context.Context, doc int64) error {
+	tag, err := p.Pool.Exec(ctx, `UPDATE doc_heads SET history_epoch = history_epoch + 1 WHERE doc_id=$1`, doc)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (p *Postgres) LatestSnapshot(ctx context.Context, doc int64) (seq int64, state []byte, err error) {
