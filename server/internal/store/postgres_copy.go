@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -104,13 +105,31 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		if err != nil {
 			return err
 		}
+		var expiry time.Time
+		if c.Guard != nil {
+			guard := c.Guard
+			var sessionUser int64
+			err := tx.QueryRow(ctx, `SELECT user_id, expires_at FROM sessions WHERE token_hash=$1 FOR SHARE`, guard.SessionHash).Scan(&sessionUser, &expiry)
+			if errors.Is(err, pgx.ErrNoRows) || err == nil && (guard.UserID != c.UserID || sessionUser != c.UserID || !guard.currentTime().Before(expiry)) {
+				return ErrUnauthenticated
+			}
+			if err != nil {
+				return err
+			}
+		}
 		if RoleRank(sourceRole) < RoleRank(RoleView) {
 			return ErrNotFound
 		}
 		if kind != "doc" {
 			return ErrConflict
 		}
-		if protected && sourceRole != RoleManage {
+		// lockCopySource holds the source node through commit, so the download
+		// threshold cannot change between this read and publishing the copy.
+		var downloadMinRole string
+		if err := tx.QueryRow(ctx, `SELECT download_min_role FROM nodes WHERE id=$1`, c.SourceID).Scan(&downloadMinRole); err != nil {
+			return err
+		}
+		if !DocumentDownloadAllowed(DocMeta{Kind: kind, CopyProtected: protected, DownloadMinRole: downloadMinRole}, sourceRole) {
 			return ErrCopyProtected
 		}
 		var member int64
@@ -132,8 +151,8 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 				return ErrNotFound
 			}
 		}
-		result, err = scanDoc(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
-			VALUES ($1,$2,'doc','V',$3,$4) RETURNING `+docCols+creatorName, c.WorkspaceID, c.ParentID, c.Title, c.UserID))
+		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
+			VALUES ($1,$2,'doc','V',$3,$4) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, c.Title, c.UserID))
 		if err != nil {
 			return err
 		}
@@ -164,6 +183,9 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 			if _, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id,seq,client_id,clock,op) VALUES ($1,$2,$3,$4,$5)`, result.ID, i+1, op.ClientID, op.Clock, op.Bytes); err != nil {
 				return err
 			}
+		}
+		if c.Guard != nil && !c.Guard.currentTime().Before(expiry) {
+			return ErrUnauthenticated
 		}
 		return nil
 	})

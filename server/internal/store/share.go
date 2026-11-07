@@ -47,11 +47,14 @@ type Link struct {
 // ManagedDocPatch is applied atomically when changing copy protection. Move
 // distinguishes moving to the root (ParentID nil) from leaving the tree alone.
 type ManagedDocPatch struct {
-	Title                 *string
-	Move                  bool
-	ParentID              *int64
-	CopyProtected         bool
-	ExpectedCopyProtected *bool
+	Title                       *string
+	Move                        bool
+	ParentID                    *int64
+	CopyProtected               bool
+	ExpectedCopyProtected       *bool
+	CopyMinRole                 *string
+	DownloadMinRole             *string
+	ExpectedPermissionsRevision *int64
 }
 
 // FileMeta is an attachment stored in the blob store under ObjectKey.

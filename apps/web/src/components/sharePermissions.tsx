@@ -1,40 +1,61 @@
-import { ApiError, type DocMeta } from "@/lib/api";
+import { ApiError, type DocMeta, type Role } from "@/lib/api";
 import { X } from "lucide-react";
-import { HelpIcon } from "@/components/FeishuIcons";
+import { ArrowDownIcon, HelpIcon } from "@/components/FeishuIcons";
 import type { RefObject } from "react";
 
-/** Revalidate both permission and the value the user saw before changing it. */
-export async function changeCopyProtection(
-  expected: boolean,
-  next: boolean,
+export type ContentPermissionKey = "copyMinRole" | "downloadMinRole";
+export type ContentPermissions = { copyMinRole: Role; downloadMinRole: Role; permissionsRevision: number };
+
+/** Reject older servers and malformed metadata rather than presenting invented permissions. */
+export function contentPermissions(meta: DocMeta | undefined): ContentPermissions | undefined {
+  const isRole = (value: unknown): value is Role => value === "view" || value === "edit" || value === "manage";
+  if (!meta || !isRole(meta.copyMinRole) || !isRole(meta.downloadMinRole) || !Number.isSafeInteger(meta.permissionsRevision) || meta.permissionsRevision! < 0) return undefined;
+  return { copyMinRole: meta.copyMinRole, downloadMinRole: meta.downloadMinRole, permissionsRevision: meta.permissionsRevision! };
+}
+
+/** Validate the current document, role, and revision before attempting a guarded write. */
+export async function changeContentPermission(
+  expected: ContentPermissions,
+  key: ContentPermissionKey,
+  next: Role,
   read: () => Promise<DocMeta>,
-  write: (next: boolean, expected: boolean) => Promise<unknown>,
+  write: (change: { copyMinRole?: Role; downloadMinRole?: Role }, expectedRevision: number) => Promise<unknown>,
   isCurrent: () => boolean,
 ): Promise<void> {
   const current = await read();
   if (!isCurrent()) throw new Error("页面状态已变化，请重新打开权限设置。");
   if (current.role !== "manage") throw new Error("你已没有管理权限，请刷新后重试。");
-  if (!!current.copyProtected !== expected) throw new Error("设置已被更改，请查看最新状态后重试。");
-  if (next !== expected) await write(next, expected);
+  const verified = contentPermissions(current);
+  if (!verified) throw new Error("当前服务不支持分项权限设置，请刷新后重试。");
+  if (verified.permissionsRevision !== expected.permissionsRevision || verified.copyMinRole !== expected.copyMinRole || verified.downloadMinRole !== expected.downloadMinRole) {
+    throw new Error("设置已被更改，请查看最新状态后重试。");
+  }
+  if (next !== expected[key]) await write({ [key]: next }, expected.permissionsRevision);
 }
 
 export function copyProtectionError(error: unknown): string {
-  if (error instanceof ApiError && error.status === 409 && error.code === "share_conflict") return "设置已被更改，请查看最新状态后重试。";
+  if (error instanceof ApiError && error.status === 409) return "设置已被更改，请查看最新状态后重试。";
   if (error instanceof TypeError) return "网络连接中断，更新结果可能尚未确认，请查看最新设置。";
   return error instanceof Error ? error.message : "更新权限设置失败，请重试。";
 }
 
+const OPTIONS: { value: Role; label: string }[] = [
+  { value: "view", label: "可阅读的用户" },
+  { value: "edit", label: "可编辑的用户" },
+  { value: "manage", label: "可管理的用户" },
+];
+
 export function SharePermissions({
-  protectedCopy, busy, loading, enabled, error, backRef, onBack, onChange,
+  permissions, busy, loading, enabled, error, backRef, onBack, onChange,
 }: {
-  protectedCopy: boolean;
+  permissions: ContentPermissions | undefined;
   busy: boolean;
   loading: boolean;
   enabled: boolean;
   error: string;
   backRef?: RefObject<HTMLButtonElement | null>;
   onBack: () => void;
-  onChange: (next: boolean) => void;
+  onChange: (key: ContentPermissionKey, next: Role) => void;
 }) {
   return <>
     <header className="flex h-[72px] shrink-0 items-center justify-between border-b px-6">
@@ -42,11 +63,19 @@ export function SharePermissions({
       <button ref={backRef} type="button" autoFocus aria-label="返回分享" aria-disabled={busy} onClick={() => { if (!busy) onBack(); }} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover aria-disabled:opacity-50"><X size={18} /></button>
     </header>
     <div className="overflow-y-auto px-6 py-6">
-      <p className="mb-3 font-medium">内容安全</p>
-      <label className="flex items-start justify-between gap-4 rounded-md py-2">
-        <span><span className="block leading-5">防复制下载</span><span className="mt-1 block text-[12px] leading-5 text-muted-foreground">开启后限制非管理者复制、下载和导出内容</span></span>
-        <input type="checkbox" aria-label="防复制下载" checked={protectedCopy} disabled={busy || !enabled} onChange={(event) => onChange(event.target.checked)} className="mt-1 size-4 accent-primary disabled:opacity-50" />
-      </label>
+      {([
+        ["copyMinRole", "谁可以复制内容"],
+        ["downloadMinRole", "谁可以创建副本、打印和下载"],
+      ] as const).map(([key, label]) => <div key={key} className="mb-7 last:mb-0">
+        <label htmlFor={`permission-${key}`} className="block font-medium leading-5">{label}</label>
+        <span className="relative mt-2 inline-flex border-b border-border">
+          <select id={`permission-${key}`} value={permissions?.[key] ?? ""} disabled={busy || !enabled || !permissions} onChange={(event) => onChange(key, event.target.value as Role)} className="h-9 cursor-pointer appearance-none bg-transparent pr-6 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 sm:text-[14px]">
+            {!permissions && <option value="">加载中…</option>}
+            {OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <ArrowDownIcon className="pointer-events-none absolute right-1 top-4 size-2 text-muted-foreground" />
+        </span>
+      </div>)}
       {loading && <p role="status" className="pt-2 text-[12px] text-muted-foreground">正在验证权限设置…</p>}
       {error && <p role="alert" className="pt-2 text-[12px] text-destructive">{error}</p>}
     </div>

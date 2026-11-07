@@ -46,12 +46,12 @@ function RichText({ spans }: { spans: Span[] }) {
   })}</>;
 }
 
-function ReadOnlyImage({ block, publicToken, versionSeq, recovery }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number }) {
+function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean }) {
   const [failed, setFailed] = useState(false);
   const src = fileURL(block.props.fileId, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
   if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
-  return <figure className="my-2"><img src={src} alt={block.props.name || "图片"} referrerPolicy="no-referrer" className="max-h-[480px] max-w-full rounded-lg border" onError={() => setFailed(true)} /></figure>;
+  return <figure className="my-2"><img src={src} alt={block.props.name || "图片"} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} className="max-h-[480px] max-w-full rounded-lg border" onError={() => setFailed(true)} /></figure>;
 }
 
 function ReadOnlyTable({ data }: { data?: string }) {
@@ -65,12 +65,13 @@ function formatSize(size: string | undefined): string {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
 }
 
-function ReadOnlyVideo({ url, name }: { url?: string; name?: string }) {
+function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: string; name?: string; disableFileDownloads?: boolean }) {
   const [failed, setFailed] = useState(false);
   const href = safeURL(url);
   const native = !failed && href && /^https?:\/\//i.test(href) && /\.(mp4|webm|mov)(\?|$)/i.test(href);
-  if (native) return <video src={href} controls onError={() => setFailed(true)} className="my-2 aspect-video w-full max-w-[640px] rounded-lg border bg-black" />;
-  if (href) return <a href={href} target="_blank" rel="noopener noreferrer" className="my-2 block max-w-[640px] rounded-lg border px-3.5 py-3 text-primary">{name || href}</a>;
+  if (native) return <video src={href} controls controlsList={disableFileDownloads ? "nodownload" : undefined} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onError={() => setFailed(true)} className="my-2 aspect-video w-full max-w-[640px] rounded-lg border bg-black" />;
+  if (href && !disableFileDownloads) return <a href={href} target="_blank" rel="noopener noreferrer" className="my-2 block max-w-[640px] rounded-lg border px-3.5 py-3 text-primary">{name || href}</a>;
+  if (href) return <div className="my-2 rounded-lg border px-3.5 py-3 text-subtle">{name || "视频"} · 当前不提供外部链接</div>;
   return <div className="my-2 rounded-lg border px-3.5 py-3 text-subtle">视频链接不可用</div>;
 }
 
@@ -112,12 +113,12 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "table": content = <ReadOnlyTable data={block.props.tableData} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-3 border-border" />; break;
-        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} />; break;
+        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
           content = <div className="my-1 flex w-[360px] max-w-full items-center gap-3 rounded-lg border px-3.5 py-2.5"><span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(block.props.name?.split(".").pop() || "FILE").slice(0, 4).toUpperCase()}</span><span className="min-w-0">{href ? <a href={href} rel="noreferrer" className="block truncate text-[14px] font-medium hover:underline">{block.props.name || "附件"}</a> : <span className="block truncate text-[14px] font-medium">{block.props.name || "附件"}</span>}<span className="block text-[12px] text-subtle">{disableFileDownloads ? "下载已关闭" : formatSize(block.props.size)}</span></span></div>; break;
         }
-        case "video": content = <ReadOnlyVideo url={block.props.url} name={block.props.name} />; break;
+        case "video": content = <ReadOnlyVideo url={block.props.url} name={block.props.name} disableFileDownloads={disableFileDownloads} />; break;
         case "bookmark": {
           const href = safeURL(block.props.url);
           content = <div className="my-2 flex max-w-[520px] items-center gap-3 rounded-lg border px-3.5 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(block.props.name || "W").slice(0, 1).toUpperCase()}</span><span className="min-w-0 flex-1">{href ? <a href={href} target="_blank" rel="noopener noreferrer" className="block truncate text-[14px] font-medium">{block.props.name || href}</a> : <span className="block truncate text-[14px] font-medium">{block.props.name || "网页卡片"}</span>}<span className="block truncate text-[12px] text-subtle">{href || "链接不可用"}</span></span></div>; break;

@@ -22,11 +22,15 @@ export function outlineOf(blocks: { id: string; type: string; spans: { text: str
 export function OutlinePanel({
   items,
   activeId,
+  allowCopy = true,
+  allowPrint = true,
   onJump,
   onClose,
 }: {
   items: OutlineItem[];
   activeId: string | null;
+  allowCopy?: boolean;
+  allowPrint?: boolean;
   onJump: (id: string) => void;
   onClose: () => void;
 }) {
@@ -38,7 +42,7 @@ export function OutlinePanel({
           ✕
         </button>
       </header>
-      <nav className="flex-1 overflow-y-auto p-2 text-[13px]" data-outline-list>
+      <nav className="flex-1 overflow-y-auto p-2 text-[13px]" data-outline-list data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
         {items.length === 0 && <p className="px-2 py-8 text-center text-subtle">在文档中使用标题即可生成目录</p>}
         {items.map((it) => (
           <button
@@ -60,10 +64,10 @@ export function OutlinePanel({
 }
 
 /** 飞书式图片大图预览遮罩。 */
-export function ImagePreview({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+export function ImagePreview({ src, alt, allowCopy = true, allowPrint = true, onClose }: { src: string; alt: string; allowCopy?: boolean; allowPrint?: boolean; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80" onClick={onClose} data-image-preview>
-      <img src={src} alt={alt} className="max-h-[88vh] max-w-[92vw] rounded-lg object-contain shadow-2xl" />
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80" onClick={onClose} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }} data-image-preview>
+      <img src={src} alt={alt} draggable={allowPrint} data-document-print-restricted={!allowPrint ? "true" : undefined} onContextMenu={(event) => { if (!allowPrint) event.preventDefault(); }} className="max-h-[88vh] max-w-[92vw] rounded-lg object-contain shadow-2xl" />
       <button className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label="关闭">
         ✕
       </button>

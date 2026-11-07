@@ -59,6 +59,9 @@ export interface DocMeta {
   kind?: "doc" | "base";
   workspaceName?: string;
   copyProtected?: boolean;
+  copyMinRole?: Role;
+  downloadMinRole?: Role;
+  permissionsRevision?: number;
 }
 /** A document returned by the per-user recent-visit history. */
 export interface RecentDoc extends DocMeta {
@@ -303,5 +306,6 @@ export const docsApi = {
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
   rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
   setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
+  setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
 };

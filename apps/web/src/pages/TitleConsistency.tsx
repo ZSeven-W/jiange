@@ -57,7 +57,7 @@ export function createTitleConsistencyCheck(
 }
 
 /** Explicit, read-only snapshot; no title is selected or changed by this panel. */
-export function TitleConsistency({ id, allowCopy, onClose, onAccessDenied }: { id: number; allowCopy: boolean; onClose: () => void; onAccessDenied: () => void }) {
+export function TitleConsistency({ id, allowCopy, allowPrint = true, onClose, onAccessDenied }: { id: number; allowCopy: boolean; allowPrint?: boolean; onClose: () => void; onAccessDenied: () => void }) {
   const [state, setState] = useState<CheckState>({ status: "loading" });
   const [copyNotice, setCopyNotice] = useState("");
   const active = useRef(false);
@@ -89,7 +89,7 @@ export function TitleConsistency({ id, allowCopy, onClose, onAccessDenied }: { i
       {state.status === "loading" && <p role="status" className="mt-5 text-sm text-muted-foreground">正在检查…</p>}
       {state.status === "denied" && <p role="alert" className="mt-5 text-sm text-destructive">文档不存在或当前没有查看权限。</p>}
       {state.status === "error" && <p role="alert" className="mt-5 text-sm text-destructive">暂时无法检查文档名称，请稍后重试。</p>}
-      {state.status === "ready" && <div className="mt-4 space-y-4 text-sm">
+      {state.status === "ready" && <div className="mt-4 space-y-4 text-sm" data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
         <p className={state.snapshot.differs ? "text-amber-700" : "text-muted-foreground"}>{state.snapshot.differs ? "目录名称和文档标题不同，请核对。" : "目录名称和文档标题一致。"}</p>
         {([["目录名称", state.snapshot.directoryTitle], ["文档标题", state.snapshot.documentTitle]] as const).map(([label, text]) => <div key={label}>
           <div className="mb-1 flex items-center justify-between gap-3"><span className="text-muted-foreground">{label}</span>{allowCopy && <button type="button" onClick={() => void copy(text)} className="text-primary hover:underline">复制</button>}</div>

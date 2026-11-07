@@ -43,6 +43,8 @@ export function CommentsPanel({
   session,
   canEdit,
   canManage,
+  allowCopyQuote = true,
+  allowPrintQuote = true,
   draft,
   onDraftSent,
   activeThread,
@@ -59,6 +61,8 @@ export function CommentsPanel({
   session: number;
   canEdit: boolean;
   canManage: boolean;
+  allowCopyQuote?: boolean;
+  allowPrintQuote?: boolean;
   draft: CommentAnchor | null;
   onDraftSent: (draft: CommentAnchor) => void;
   activeThread: number | null;
@@ -125,13 +129,13 @@ export function CommentsPanel({
         {!!recovery?.length && <div className="mb-3 rounded-lg border p-2 text-[12px] text-muted-foreground" role="status">
           <p>上次未发送的评论已保留，请复制后重新选择位置。</p>
           {recovery.map((item, index) => <div key={index}>
-            {item.draft?.quote && <p className="mt-1 truncate">原引用：{item.draft.quote}</p>}
+            {item.draft?.quote && <p className="mt-1 truncate" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>原引用：{item.draft.quote}</p>}
             {item.parentId && <p className="mt-1">原回复所属评论 #{item.parentId}</p>}
             <textarea readOnly value={item.text} aria-label="未发送的评论内容" rows={2} className="mt-1 w-full resize-none rounded border p-1 text-foreground" />
           </div>)}
           <button type="button" className="mt-1 text-primary" onClick={onDismissRecovery}>已复制，清除恢复记录</button>
         </div>}
-        {canEdit && <Composer id={id} meId={meId} members={visibleMembers} draft={draft} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
+        {canEdit && <Composer id={id} meId={meId} members={visibleMembers} draft={draft} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
         {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
         {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
         {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{canEdit ? "还没有评论，可以在上方添加" : "还没有评论"}</p>}
@@ -142,7 +146,7 @@ export function CommentsPanel({
             onClick={() => onActivate(activeThread === t.id ? null : t.id)}
             data-thread={t.id}
           >
-            {t.quote && <div className="mb-2 border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground">{t.quote}</div>}
+            {t.quote && <div className="mb-2 border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t.quote}</div>}
             <CommentBody c={t} members={visibleMembers} />
             <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
               {t.userName} · {new Date(t.createdAt).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -231,6 +235,8 @@ function Composer({
   meId,
   members,
   draft,
+  allowCopyQuote = true,
+  allowPrintQuote = true,
   parentId,
   onAccessDenied,
   onSnapshot,
@@ -241,6 +247,8 @@ function Composer({
   meId: number;
   members: User[];
   draft: CommentAnchor | null;
+  allowCopyQuote?: boolean;
+  allowPrintQuote?: boolean;
   parentId?: number;
   onAccessDenied: (draft?: CommentRecovery) => void;
   onSnapshot: (draft: CommentRecovery) => void;
@@ -291,7 +299,7 @@ function Composer({
   };
   return (
     <div ref={composerRef} tabIndex={-1} className="mb-3 rounded-lg border p-2 focus-within:border-primary" data-comment-composer>
-      {draft?.quote && !parentId && <div className="mb-1.5 truncate border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground">{draft.quote}</div>}
+      {draft?.quote && !parentId && <div className="mb-1.5 truncate border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{draft.quote}</div>}
       {posting && <p role="status" className="mb-1 text-[12px] text-muted-foreground">上一条评论正在发送，请稍候。</p>}
       {originChanged && <p role="alert" className="mb-1 text-[12px] text-muted-foreground">未发送的文字属于之前的选区。 <button type="button" className="text-primary underline" onClick={() => { setTextOrigin(draft); onSnapshot({ text, draft, parentId }); }}>用于当前选区</button></p>}
       <textarea

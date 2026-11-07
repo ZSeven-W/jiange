@@ -2,36 +2,37 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocMeta } from "@/lib/api";
-import { changeCopyProtection, copyProtectionError, SharePermissions } from "./sharePermissions";
+import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "./sharePermissions";
 import { ShareDialog } from "./ShareDialog";
 
-const doc: DocMeta = { id: 7, workspaceId: 1, parentId: null, title: "测试", creatorId: 1, creatorName: "测试", icon: "", createdAt: "", updatedAt: "", role: "manage", copyProtected: false };
+const doc: DocMeta = { id: 7, workspaceId: 1, parentId: null, title: "测试", creatorId: 1, creatorName: "测试", icon: "", createdAt: "", updatedAt: "", role: "manage", copyProtected: false, copyMinRole: "view", downloadMinRole: "view", permissionsRevision: 0 };
+const permissions = { copyMinRole: "view", downloadMinRole: "view", permissionsRevision: 0 } as const;
 
 describe("share permission settings", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("offers the supported combined restriction and disables it until verified", () => {
-    const html = renderToStaticMarkup(<SharePermissions protectedCopy={false} busy={false} loading={true} enabled={false} error="" onBack={() => {}} onChange={() => {}} />);
+  it("offers separate role settings and disables them until verified", () => {
+    const html = renderToStaticMarkup(<SharePermissions permissions={undefined} busy={false} loading={true} enabled={false} error="" onBack={() => {}} onChange={() => {}} />);
     expect(html).toContain("权限设置");
-    expect(html).toContain("限制非管理者复制、下载和导出内容");
-    expect(html).toContain('aria-label="防复制下载"');
+    expect(html).toContain("谁可以复制内容");
+    expect(html).toContain("谁可以创建副本、打印和下载");
     expect(html).toContain("disabled");
     expect(html).toContain("正在验证权限设置");
-    expect(html).not.toContain("可编辑的用户");
+    expect(html).toContain("可编辑的用户");
   });
 
   it("keeps a focusable back control while a setting update is pending", () => {
-    const html = renderToStaticMarkup(<SharePermissions protectedCopy={false} busy={true} loading={false} enabled={true} error="" onBack={() => {}} onChange={() => {}} />);
+    const html = renderToStaticMarkup(<SharePermissions permissions={permissions} busy={true} loading={false} enabled={true} error="" onBack={() => {}} onChange={() => {}} />);
     expect(html).toMatch(/<button[^>]*aria-label="返回分享"[^>]*aria-disabled="true"/);
     expect(html).not.toMatch(/<button[^>]*\sdisabled=""/);
-    expect(html).toMatch(/<input[^>]*disabled=""/);
+    expect(html).toMatch(/<select[^>]*disabled=""/);
   });
 
   it("writes the requested value only after a fresh manager check", async () => {
     const write = vi.fn(async () => undefined);
-    await changeCopyProtection(false, true, async () => doc, write, () => true);
+    await changeContentPermission(permissions, "copyMinRole", "edit", async () => doc, write, () => true);
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write).toHaveBeenCalledWith(true, false);
+    expect(write).toHaveBeenCalledWith({ copyMinRole: "edit" }, 0);
   });
 
   it("sends the observed value in the guarded update and reports conflicts", async () => {
@@ -40,11 +41,11 @@ describe("share permission settings", () => {
       requests.push({ body: init.body as string });
       return new Response(JSON.stringify(doc), { status: 200, headers: { "Content-Type": "application/json" } });
     });
-    await docsApi.setCopyProtected(doc.id, true, false);
-    await docsApi.setCopyProtected(doc.id, false);
+    await docsApi.setContentPermissions(doc.id, { copyMinRole: "edit" }, 0);
+    await docsApi.setContentPermissions(doc.id, { downloadMinRole: "manage" }, 1);
     expect(requests.map((request) => JSON.parse(request.body!))).toEqual([
-      { copyProtected: true, expectedCopyProtected: false },
-      { copyProtected: false },
+      { copyMinRole: "edit", expectedPermissionsRevision: 0 },
+      { downloadMinRole: "manage", expectedPermissionsRevision: 1 },
     ]);
     expect(copyProtectionError(new ApiError(409, "share_conflict", "conflict"))).toContain("设置已被更改");
     expect(copyProtectionError(new TypeError("network"))).toContain("更新结果可能尚未确认");
@@ -52,15 +53,37 @@ describe("share permission settings", () => {
 
   it("does not overwrite a changed value or write after a role loss", async () => {
     const write = vi.fn(async () => undefined);
-    await expect(changeCopyProtection(false, true, async () => ({ ...doc, copyProtected: true }), write, () => true)).rejects.toThrow("设置已被更改");
-    await expect(changeCopyProtection(false, true, async () => ({ ...doc, role: "edit" }), write, () => true)).rejects.toThrow("没有管理权限");
+    await expect(changeContentPermission(permissions, "copyMinRole", "edit", async () => ({ ...doc, permissionsRevision: 2 }), write, () => true)).rejects.toThrow("设置已被更改");
+    await expect(changeContentPermission(permissions, "copyMinRole", "edit", async () => ({ ...doc, role: "edit" }), write, () => true)).rejects.toThrow("没有管理权限");
     expect(write).not.toHaveBeenCalled();
   });
 
   it("does not write when the dialog closes during the permission check", async () => {
     const write = vi.fn(async () => undefined);
-    await expect(changeCopyProtection(false, true, async () => doc, write, () => false)).rejects.toThrow("页面状态已变化");
+    await expect(changeContentPermission(permissions, "copyMinRole", "edit", async () => doc, write, () => false)).rejects.toThrow("页面状态已变化");
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing, invalid, or unsafe policy revisions rather than inventing a value", () => {
+    expect(contentPermissions({ ...doc, copyMinRole: undefined })).toBeUndefined();
+    expect(contentPermissions({ ...doc, permissionsRevision: Number.MAX_SAFE_INTEGER + 1 })).toBeUndefined();
+    expect(contentPermissions({ ...doc, permissionsRevision: -1 })).toBeUndefined();
+    expect(contentPermissions(doc)).toEqual(permissions);
+  });
+
+  it("keeps the two independent permission choices when updating either", async () => {
+    const write = vi.fn(async () => undefined);
+    const current = { ...doc, copyMinRole: "edit" as const, downloadMinRole: "manage" as const, permissionsRevision: 9 };
+    await changeContentPermission(contentPermissions(current)!, "downloadMinRole", "view", async () => current, write, () => true);
+    expect(write).toHaveBeenCalledWith({ downloadMinRole: "view" }, 9);
+  });
+
+  it("renders the selected role for each permission independently", () => {
+    const html = renderToStaticMarkup(<SharePermissions permissions={{ copyMinRole: "edit", downloadMinRole: "manage", permissionsRevision: 3 }} busy={false} loading={false} enabled={true} error="" onBack={() => {}} onChange={() => {}} />);
+    const copy = html.match(/<select id="permission-copyMinRole"[^>]*>(.*?)<\/select>/)?.[1];
+    const download = html.match(/<select id="permission-downloadMinRole"[^>]*>(.*?)<\/select>/)?.[1];
+    expect(copy).toContain('<option value="edit" selected="">可编辑的用户</option>');
+    expect(download).toContain('<option value="manage" selected="">可管理的用户</option>');
   });
 
   it("shows settings only to document managers", () => {
@@ -92,6 +115,6 @@ describe("share permission settings", () => {
     vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
     expect(await docsApi.share(doc.id, "user@example.test", "edit")).toBeUndefined();
     expect(await docsApi.setLink(doc.id, "view")).toBeUndefined();
-    expect(await docsApi.setCopyProtected(doc.id, true, false)).toBeUndefined();
+    expect(await docsApi.setContentPermissions(doc.id, { copyMinRole: "edit" }, 0)).toBeUndefined();
   });
 });

@@ -21,8 +21,42 @@ type DocMeta struct {
 	WorkspaceName string `json:"workspaceName,omitempty"`
 	// CopyProtected docs watermark and disable copy/download for non-manage roles.
 	CopyProtected bool `json:"copyProtected,omitempty"`
+	// The two action policies apply only after document access is established.
+	// CopyProtected remains a conservative compatibility projection.
+	CopyMinRole         string `json:"copyMinRole,omitempty"`
+	DownloadMinRole     string `json:"downloadMinRole,omitempty"`
+	PermissionsRevision int64  `json:"permissionsRevision"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
+}
+
+func documentActionAllowed(meta DocMeta, role, threshold string) bool {
+	if role == "anon" {
+		role = RoleView
+	}
+	if RoleRank(role) == 0 {
+		return false
+	}
+	// Base and pre-migration metadata retain the legacy combined policy.
+	if meta.Kind == "base" || threshold == "" {
+		threshold = RoleView
+		if meta.CopyProtected {
+			threshold = RoleManage
+		}
+	}
+	if RoleRank(threshold) == 0 {
+		return false
+	}
+	return RoleRank(role) >= RoleRank(threshold)
+}
+
+// These helpers do not grant access: callers must authorize the document first.
+func DocumentCopyAllowed(meta DocMeta, role string) bool {
+	return documentActionAllowed(meta, role, meta.CopyMinRole)
+}
+
+func DocumentDownloadAllowed(meta DocMeta, role string) bool {
+	return documentActionAllowed(meta, role, meta.DownloadMinRole)
 }
 
 // RawOp is one encoded operation (a single-op batch) and its identity.
@@ -57,6 +91,9 @@ type DocCopy struct {
 	ParentID                      *int64
 	Title                         string
 	FileIDs                       []int64
+	// Guard is required by authenticated request handlers. A nil guard is
+	// reserved for trusted internal callers, such as direct store operations.
+	Guard                         *RestoreGuard
 }
 
 type DocCopyBuilder func(map[int64]int64) ([]RawOp, error)

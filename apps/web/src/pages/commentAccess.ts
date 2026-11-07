@@ -1,3 +1,5 @@
+import { canCopyContent, canDownloadDocument, type DocumentPermissions } from "./documentCopy";
+
 /** Each verified access period gets an isolated cache namespace. */
 let nextSession = 0;
 export type CommentTarget = { doc: number; user: number; session: number };
@@ -8,8 +10,16 @@ export function redactCommentDraftQuote(value: SavedCommentDraft, allowQuote: bo
   return { ...value, draft: value.draft ? { ...value.draft, quote: allowQuote ? value.draft.quote : "" } : null };
 }
 
-export function mayExportCommentDraftData(meta: { copyProtected?: boolean; role?: string } | undefined, metadataVerified: boolean, commentsAvailable: boolean): boolean {
-  return metadataVerified && commentsAvailable && !!meta && (!meta.copyProtected || meta.role === "manage");
+export function mayExportCommentDraftData(meta: DocumentPermissions | undefined, metadataVerified: boolean, commentsAvailable: boolean): boolean {
+  // Damaged raw storage can include both the user's text and a quoted document
+  // selection. Never release unredacted bytes unless both permissions allow it.
+  return metadataVerified && commentsAvailable && canCopyContent(meta) && canDownloadDocument(meta);
+}
+
+/** Keep an already authorized draft anchor across an in-flight policy check;
+ * presentation and export must additionally require that check to finish. */
+export function mayRetainCommentQuote(meta: DocumentPermissions | undefined, metadataVerified: boolean, commentsAvailable: boolean): boolean {
+  return metadataVerified && commentsAvailable && canCopyContent(meta);
 }
 
 /** Keep frozen drafts until explicitly dismissed, even if a composer is reused. */

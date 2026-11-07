@@ -80,4 +80,15 @@ describe("read-only document snapshots", () => {
     expect(managerHTML).toContain('src="/api/files/12?version=42"');
     expect(managerHTML).toContain('href="/api/files/34"');
   });
+
+  it("limits video download controls and disables the external fallback link when downloads are restricted", () => {
+    const view: DocView = { blocks: [b("1:1", "video", "", { url: "https://example.com/demo.mp4", name: "示例视频" }), b("1:2", "video", "", { url: "https://example.com/watch", name: "外部视频" })] };
+    const restricted = renderToStaticMarkup(<ReadOnlyDoc view={view} disableFileDownloads />);
+    expect(restricted).toContain('controlsList="nodownload"');
+    expect(restricted).not.toContain('href="https://example.com/watch"');
+    expect(restricted).toContain("当前不提供外部链接");
+    const allowed = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(allowed).not.toContain('controlsList="nodownload"');
+    expect(allowed).toContain('href="https://example.com/watch"');
+  });
 });

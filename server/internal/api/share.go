@@ -250,7 +250,19 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "view": doc.View()})
+	// Metadata retrieval may block after the preceding token check. Recheck the
+	// public link after it returns so revocation during that read does not
+	// return the snapshot using stale authorization.
+	currentID, currentRole, err = s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) || err == nil && (currentID != id || currentRole != "anon") {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "view": doc.View()})
 }
 
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +382,7 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 			// access policy, do not serve files to restricted Base viewers.
 			return false, store.ErrNotFound
 		}
-		requireRaster := meta.CopyProtected && meta.Role != store.RoleManage
+		requireRaster := !store.DocumentDownloadAllowed(meta, meta.Role)
 		if !requireRaster {
 			return false, nil
 		}

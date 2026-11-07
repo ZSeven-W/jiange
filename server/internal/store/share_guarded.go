@@ -243,6 +243,45 @@ func (p *Postgres) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard
 	return
 }
 
+func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bool, error) {
+	if patch.ExpectedCopyProtected != nil && meta.CopyProtected != *patch.ExpectedCopyProtected {
+		return "", "", false, ErrConflict
+	}
+	// JSON clients must be able to compare revisions exactly.
+	if meta.PermissionsRevision >= 9007199254740991 {
+		return "", "", false, ErrConflict
+	}
+	if patch.CopyMinRole == nil && patch.DownloadMinRole == nil {
+		if patch.ExpectedPermissionsRevision != nil {
+			return "", "", false, ErrConflict
+		}
+		if patch.CopyProtected {
+			return RoleManage, RoleManage, true, nil
+		}
+		return RoleView, RoleView, false, nil
+	}
+	if meta.Kind != "doc" || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
+		return "", "", false, ErrConflict
+	}
+	copyRole, downloadRole := meta.CopyMinRole, meta.DownloadMinRole
+	if copyRole == "" || downloadRole == "" {
+		copyRole, downloadRole = RoleView, RoleView
+		if meta.CopyProtected {
+			copyRole, downloadRole = RoleManage, RoleManage
+		}
+	}
+	if patch.CopyMinRole != nil {
+		copyRole = *patch.CopyMinRole
+	}
+	if patch.DownloadMinRole != nil {
+		downloadRole = *patch.DownloadMinRole
+	}
+	if RoleRank(copyRole) == 0 || RoleRank(downloadRole) == 0 {
+		return "", "", false, ErrConflict
+	}
+	return copyRole, downloadRole, copyRole != RoleView || downloadRole != RoleView, nil
+}
+
 func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard, docID int64, patch ManagedDocPatch) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -251,8 +290,9 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 		return err
 	}
 	d := m.doc(docID)
-	if patch.ExpectedCopyProtected != nil && d.meta.CopyProtected != *patch.ExpectedCopyProtected {
-		return ErrConflict
+	copyRole, downloadRole, protected, err := managedPermissions(d.meta, patch)
+	if err != nil {
+		return err
 	}
 	if patch.Move && patch.ParentID != nil {
 		parent := m.doc(*patch.ParentID)
@@ -289,7 +329,9 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	if patch.Title != nil {
 		d.meta.Title, d.meta.UpdatedAt = *patch.Title, time.Now()
 	}
-	d.meta.CopyProtected = patch.CopyProtected
+	d.meta.CopyProtected = protected
+	d.meta.CopyMinRole, d.meta.DownloadMinRole = copyRole, downloadRole
+	d.meta.PermissionsRevision++
 	return nil
 }
 
@@ -299,14 +341,13 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 		if err != nil {
 			return err
 		}
-		if patch.ExpectedCopyProtected != nil {
-			var current bool
-			if err := tx.QueryRow(ctx, `SELECT copy_protected FROM nodes WHERE id=$1`, docID).Scan(&current); err != nil {
-				return err
-			}
-			if current != *patch.ExpectedCopyProtected {
-				return ErrConflict
-			}
+		var current DocMeta
+		if err := tx.QueryRow(ctx, `SELECT kind,copy_protected,copy_min_role,download_min_role,permissions_revision FROM nodes WHERE id=$1`, docID).Scan(&current.Kind, &current.CopyProtected, &current.CopyMinRole, &current.DownloadMinRole, &current.PermissionsRevision); err != nil {
+			return err
+		}
+		copyRole, downloadRole, protected, err := managedPermissions(current, patch)
+		if err != nil {
+			return err
 		}
 		if patch.Move && patch.ParentID != nil {
 			var workspace int64
@@ -353,7 +394,7 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE nodes SET copy_protected=$2 WHERE id=$1`, docID, patch.CopyProtected); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE nodes SET copy_protected=$2,copy_min_role=$3,download_min_role=$4,permissions_revision=permissions_revision+1 WHERE id=$1`, docID, protected, copyRole, downloadRole); err != nil {
 			return err
 		}
 		if !guard.currentTime().Before(expiry) {

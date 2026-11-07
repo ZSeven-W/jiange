@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CommentsPanel, focusCommentDraft, notifyCommentAccessError, sameCommentAnchor } from "./CommentsPanel";
-import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote } from "./commentAccess";
+import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote } from "./commentAccess";
 import { ApiError, type Comment } from "@/lib/api";
 
 const time = "2026-01-01T00:00:00Z";
@@ -17,6 +17,17 @@ function renderPanel(canEdit: boolean, canManage: boolean) {
 }
 
 describe("comment permissions", () => {
+  it("preserves a draft anchor during revalidation without granting export", () => {
+    const meta = { role: "edit", copyMinRole: "view", downloadMinRole: "view", permissionsRevision: 3 };
+    const draft = { text: "正在输入", draft: { block: "1:1", startChar: "1:2", endChar: "1:3", quote: "原文" } };
+    const journal = new CommentDraftJournal();
+    journal.save(7, 1, redactCommentDraftQuote(draft, mayRetainCommentQuote(meta, true, true)));
+    expect(journal.list(7, 1)[0]).toEqual(draft);
+    // During fetching, export permission is unverified but stored text is not overwritten.
+    expect(mayExportCommentDraftData(meta, false, true)).toBe(false);
+    expect(journal.list(7, 1)[0].draft?.quote).toBe("原文");
+    expect(mayRetainCommentQuote(meta, false, true)).toBe(false);
+  });
   it("redacts protected quotes and only permits export with current verified access", () => {
     const anchor = { block: "1:1", startChar: "1:2", endChar: "1:3", quote: "受保护的原文" };
     const record = { text: "我自己写的评论", draft: anchor };
@@ -28,6 +39,9 @@ describe("comment permissions", () => {
     expect(mayExportCommentDraftData({ copyProtected: false, role: "edit" }, true, true)).toBe(true);
     expect(mayExportCommentDraftData({ copyProtected: false, role: "manage" }, false, true)).toBe(false);
     expect(mayExportCommentDraftData({ copyProtected: false, role: "manage" }, true, false)).toBe(false);
+    expect(mayExportCommentDraftData({ role: "edit", copyMinRole: "view", downloadMinRole: "manage", permissionsRevision: 1 }, true, true)).toBe(false);
+    expect(mayExportCommentDraftData({ role: "edit", copyMinRole: "manage", downloadMinRole: "view", permissionsRevision: 1 }, true, true)).toBe(false);
+    expect(mayExportCommentDraftData({ role: "edit", copyMinRole: "view", downloadMinRole: "edit", permissionsRevision: 1 }, true, true)).toBe(true);
     expect(mayExportCommentDraftData(undefined, true, true)).toBe(false);
     const client = new QueryClient();
     client.setQueryData(commentListKey(7, 1, 1), []);

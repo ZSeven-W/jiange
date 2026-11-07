@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchPublicDoc, initialPublicDocState, updatePublicDocState, type PublicSnapshot } from "./publicDocState";
+import { fetchPublicDoc, initialPublicDocState, publicDocumentPermissions, updatePublicDocState, type PublicSnapshot } from "./publicDocState";
 
 const snapshot: PublicSnapshot = { title: "公开方案", updatedAt: "2026-11-06T00:00:00Z", view: { blocks: [] } };
 
@@ -20,10 +20,32 @@ describe("public document refresh", () => {
     const offline = updatePublicDocState(loaded, "abc", { issue: "temporary" });
     expect(offline.snapshot).toEqual(snapshot);
     expect(offline.issue).toBe("temporary");
+    expect(publicDocumentPermissions(loaded, "abc")).toEqual({ copy: true, download: true });
+    expect(publicDocumentPermissions(loaded, "abc", true)).toEqual({ copy: false, download: false });
+    expect(publicDocumentPermissions(offline, "abc")).toEqual({ copy: false, download: false });
+    expect(publicDocumentPermissions(loaded, "other")).toEqual({ copy: false, download: false });
     const recovered = updatePublicDocState(offline, "abc", { snapshot });
     expect(recovered.issue).toBeNull();
     expect(recovered.recovery).toBe(1);
     expect(updatePublicDocState(offline, "different-token", { issue: "temporary" }).snapshot).toBeNull();
+  });
+
+  it("applies the two policies independently to verified anonymous readers", () => {
+    const policy = { ...snapshot, copyMinRole: "view", downloadMinRole: "edit", permissionsRevision: 2 };
+    const state = updatePublicDocState(initialPublicDocState("abc"), "abc", { snapshot: policy });
+    expect(publicDocumentPermissions(state, "abc")).toEqual({ copy: true, download: false });
+  });
+
+  it("rejects incomplete or invalid server policy responses", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot, copyMinRole: "view" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot, copyMinRole: "view", downloadMinRole: "bogus" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot, copyMinRole: "view", downloadMinRole: "edit", permissionsRevision: -1 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const signal = new AbortController().signal;
+    expect(await fetchPublicDoc("abc", signal)).toEqual({ issue: "temporary" });
+    expect(await fetchPublicDoc("abc", signal)).toEqual({ issue: "temporary" });
+    expect(await fetchPublicDoc("abc", signal)).toEqual({ issue: "temporary" });
   });
 
   it("distinguishes login, revoked links and transient errors", async () => {

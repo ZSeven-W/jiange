@@ -53,6 +53,9 @@ import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
 import { validEditorSelection } from "./selectionSafety";
+import { editorClipboardRoute, isNativeControl } from "./nativeControl";
+import { TableCellHistory } from "./tableCellHistory";
+import { applyTableHistory } from "./tableHistoryUndo";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -99,8 +102,10 @@ interface Props {
   onComment?: (anchor: { block: string; startChar: string; endChar: string; quote: string }) => void;
   /** user clicked an anchored range */
   onActivateThread?: (id: number | null) => void;
-  /** 防复制下载：禁用复制/剪切 */
+  /** 禁用正文复制/剪切 */
   onCopyBlock?: boolean;
+  /** 单独控制附件下载；未提供时兼容旧的合并设置。 */
+  disableFileDownloads?: boolean;
   /** 点击图片 → 大图预览 */
   onPreviewImage?: (src: string, alt: string) => void;
   /** 公式块编辑器（默认 askText；返回 null 表示取消） */
@@ -115,14 +120,17 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, onPreviewImage, onMathSource, onMentionPerson }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
   const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]>; findRanges?: { start: number; end: number; active: boolean }[]; slashQuery?: SlashQuery } | null>(null);
   const blockedComposition = useRef<Sel | null>(null);
   const stored = useRef<Record<string, string | null> | null>(null);
-  const um = useMemo(() => new UndoManager<Sel>(), []);
+  const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
+  const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
+  const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
+  const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const readOnlyRef = useRef(!!readOnly);
   readOnlyRef.current = !!readOnly;
   const commentAllowedRef = useRef(!!onComment);
@@ -133,6 +141,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
+  const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number } | null>(null);
   const recordExternal = useCallback<ExternalUndoRecorder>((tx, options) => {
     if (readOnlyRef.current || tx.doc !== sync.client.doc || !tx.ops.length) return;
     // Template/import operations can race with other replicas editing the new
@@ -390,6 +399,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     (redo: boolean) => {
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
+      const marker = um.peekMarker(redo);
+      if (marker) { tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -410,6 +421,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const readSel = useCallback(() => {
     const el = root.current,
       ds = document.getSelection();
+    if (el && document.activeElement && el.contains(document.activeElement) && isNativeControl(document.activeElement)) {
+      sel.current = null;
+      setToolbar(null);
+      return;
+    }
     if (!el || !ds || ds.rangeCount === 0 || !el.contains(ds.anchorNode) || !el.contains(ds.focusNode)) {
       if (!wrap.current?.contains(document.activeElement)) { setToolbar(null); setCommentError(null); }
       return;
@@ -501,7 +517,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const el = root.current,
       s = sel.current,
       d = sync.client.doc;
-    if (el && s && d && (document.activeElement === el || el.contains(document.activeElement)) && !composing.current) {
+    if (el && s && d && (document.activeElement === el || el.contains(document.activeElement)) && !isNativeControl(document.activeElement) && !composing.current) {
       const a = posToDom(el, s.a),
         f = posToDom(el, s.f);
       const ds = document.getSelection();
@@ -524,6 +540,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const el = root.current;
     if (!el) return;
     const onBeforeInput = (e: InputEvent) => {
+      if (isNativeControl(e.target)) {
+        if ((e.inputType === "historyUndo" || e.inputType === "historyRedo") && tableCellUndoRef.current(e.target, e.inputType === "historyRedo")) e.preventDefault();
+        return;
+      }
       if (readOnlyRef.current || e.inputType === "insertCompositionText" || composing.current) return;
       if (slashRef.current?.fromButton) {
         if (e.inputType === "insertText" || e.inputType === "insertReplacementText") {
@@ -623,6 +643,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       finishDelete();
     };
     const onCompStart = (event: CompositionEvent) => {
+      if (isNativeControl(event.target)) return;
       if (readOnlyRef.current) return;
       blockedComposition.current = null;
       readSel();
@@ -650,6 +671,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       composing.current = { sel: s, anchor, snapshot: d.richChars(s.a.b), findRanges: findRangesRef.current.get(idKey(s.a.b)) ?? [], slashQuery };
     };
     const onCompEnd = (e: CompositionEvent) => {
+      if (isNativeControl(e.target)) return;
       if (blockedComposition.current) {
         const blocked = blockedComposition.current;
         blockedComposition.current = null;
@@ -989,6 +1011,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (isNativeControl(e.target)) {
+      const key = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && tableCellUndoRef.current(e.target, key === "y" || e.shiftKey)) e.preventDefault();
+      return;
+    }
     if (readOnlyRef.current) return;
     if (e.nativeEvent.isComposing || composing.current) return;
     readSel();
@@ -1112,6 +1139,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     if (cut) run((tx, s2) => deleteRange(tx, s2));
   };
   const onPaste = (e: React.ClipboardEvent) => {
+    if (isNativeControl(e.target)) return;
     if (readOnlyRef.current) return;
     e.preventDefault();
     readSel();
@@ -1191,6 +1219,34 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     force((x) => x + 1);
   };
 
+  // Cell coordinates are only safe while both the table's type and data
+  // register are unchanged. A remote edit, including a same-value write or a
+  // row deletion and re-addition, invalidates the local undo rather than
+  // overwriting another collaborator's work.
+  tableHistoryActionRef.current = (key, redo) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current) return;
+    const result = applyTableHistory(d, sync.client, um, tableHistory, key, redo);
+    if (result.status !== "ready") {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
+      return;
+    }
+    setTableHistoryConflict(null);
+    sync.client.push(result.ops);
+    force((x) => x + 1);
+    publish();
+  };
+  tableCellUndoRef.current = (target, redo) => {
+    if (!(target instanceof HTMLInputElement) || !target.hasAttribute("data-table-cell")) return false;
+    const cell = /^(\d+):(\d+)$/.exec(target.dataset.tableCell ?? "");
+    const block = target.closest<HTMLElement>("[data-block]");
+    if (!cell || !block?.dataset.block) return true;
+    const key = `table:${block.dataset.block}:${cell[1]}:${cell[2]}`;
+    if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
+    else if (redo ? um.canRedo : um.canUndo) setColumnNotice("最近的操作不在当前单元格，请先从文档中撤销或重做该操作。");
+    return true;
+  };
+
   const onDrop = (e: React.DragEvent) => {
     if (!drag || readOnlyRef.current) return;
     e.preventDefault();
@@ -1220,6 +1276,15 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
+      {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
+        <span>表格已变化，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <button type="button" className="text-primary" onClick={() => {
+          if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo);
+          else setColumnNotice("撤销记录已变化，未跳过任何记录，请重新操作。");
+          setTableHistoryConflict(null);
+        }}>跳过此条{tableHistoryConflict.redo ? "重做" : "撤销"}记录</button>
+        <button type="button" className="ml-auto text-primary" onClick={() => setTableHistoryConflict(null)}>关闭</button>
+      </div>}
       {conflictDraft !== null && <div role="alert" contentEditable={false} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-[13px] text-foreground">
         <p>{conflictDraft.message}</p>
         <textarea aria-label="未应用的草稿" readOnly value={conflictDraft.text} className="mt-2 w-full resize-y rounded border bg-surface p-2" rows={3} />
@@ -1236,14 +1301,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         data-editor
         className="outline-none"
         onKeyDown={onKeyDown}
-        onCopy={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e))}
-        onCut={(e) => (onCopyBlock ? e.preventDefault() : onCopy(e, true))}
+        onCopy={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e); }}
+        onCut={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e, true); }}
         onPaste={onPaste}
         onFocus={(event) => {
           // A nested editable column receives focus before the browser places
           // the clicked caret. Restoring a stale/root selection at that point
           // would redirect the first keystroke into another block.
-          if (event.target !== event.currentTarget) { sel.current = null; return; }
+          if (event.target !== event.currentTarget) {
+            sel.current = null;
+            if (isNativeControl(event.target)) { changeSlash(null); setToolbar(null); um.seal(); }
+            return;
+          }
           if (!sel.current && doc && blocks.length)
             sel.current = {
               a: { b: blocks[0], o: 0 },
@@ -1315,13 +1384,27 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   // collaborator may still send edits to it after undo.
                   if (requestColumnDeletion(doc, cid) === "unsupported") setColumnNotice("暂不支持安全删除分栏：协作者可能仍在编辑，栏内容已保留。");
                 }}
-                onTableEdit={readOnly ? undefined : (r, c, v) => {
-                  if (readOnlyRef.current) return;
+                onTableEdit={readOnly ? undefined : (r, c, v, kind) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return;
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
-                  const rows = applyTableEdit(parseTableData(info.props.tableData), r, c, v);
+                  if (info.type !== "table") return;
+                  const before = parseTableData(info.props.tableData);
+                  const old = before[r]?.[c];
+                  if (r >= 0 && typeof old !== "string") return;
+                  if (r >= 0 && old === v) return;
+                  const previousVersion = doc.propVersion(b, "tableData");
+                  const typeVersion = doc.propVersion(b, "type");
+                  const rows = applyTableEdit(before, r, c, v);
                   tx.setProp(b, "tableData", JSON.stringify(rows));
-                  um.record(tx, sel.current, sel.current, "table");
+                  if (tx.ops.length) {
+                    const next = doc.propVersion(b, "tableData");
+                    const key = r < 0 ? `table:${idKey(b)}:-1:-1` : `table:${idKey(b)}:${r}:${c}`;
+                    const beforeValue = r < 0 ? (info.props.tableData ?? "") : old;
+                    const afterValue = r < 0 ? (doc.blockInfo(b).props.tableData ?? "") : v;
+                    const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, typeVersion ? idKey(typeVersion) : null, kind, Date.now(), um.peekMarker(false) === key);
+                    um.recordMarker(key, merged);
+                  }
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();
@@ -1332,6 +1415,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onDragOver={readOnly ? undefined : (after) => drag && setDrag({ ...drag, over: b, after })}
                 onDragEnd={readOnly ? undefined : () => setDrag(null)}
                 canCopy={!onCopyBlock}
+                canDownload={!(disableFileDownloads ?? onCopyBlock)}
               />
             );
           })}
@@ -1459,7 +1543,7 @@ interface BlockProps {
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
-  onTableEdit?: (r: number, c: number, value: string) => void;
+  onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   /** The insertion affordance is visible on an otherwise blank document. */
@@ -1480,9 +1564,10 @@ interface BlockProps {
   onDragOver?: (after: boolean) => void;
   onDragEnd?: () => void;
   canCopy?: boolean;
+  canDownload?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -1622,21 +1707,21 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
         </button>
       )}
       {type === "math" || type === "diagram" || type === "columns" ? null : type === "table" ? (
-        <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v) => onTableEdit?.(r, c, v)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
+        <TableBlock data={props.tableData ?? ""} onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)} onDelete={() => onSetProp?.("type", "paragraph")} readOnly={!onTableEdit} />
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} version={syncVersion} status={syncStatus} onPreviewImage={onPreviewImage} />
+        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
       ) : type === "video" ? (
-        <VideoBlock url={props.url} name={props.name} />
+        <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
         <BookmarkBlock url={props.url} name={props.name} />
       ) : type === "file" ? (
         <div contentEditable={false} className="my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5" data-file-card>
           <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
           <span className="min-w-0">
-            {canCopy ? <a href={`/api/files/${props.fileId}`} className="block truncate text-[14px] font-medium hover:underline">{props.name}</a> : <span className="block truncate text-[14px] font-medium">{props.name}</span>}
-            <span className="block text-[12px] text-subtle">{canCopy ? fmtSize(Number(props.size ?? 0)) : "下载已关闭"}</span>
+            {canDownload ? <a href={`/api/files/${props.fileId}`} className="block truncate text-[14px] font-medium hover:underline">{props.name}</a> : <span className="block truncate text-[14px] font-medium">{props.name}</span>}
+            <span className="block text-[12px] text-subtle">{canDownload ? fmtSize(Number(props.size ?? 0)) : "下载已关闭"}</span>
           </span>
         </div>
       ) : type === "code" ? (
@@ -1726,7 +1811,7 @@ const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8D
 const CALLOUT_EMOJI = ["💡", "📌", "⚠️", "✅", "🔥", "📝", "❓", "🎯"];
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */
-function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit: (r: number, c: number, v: string) => void; onDelete: () => void; readOnly: boolean }) {
+function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
   const rows = parseTableData(data);
   const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
   return (
@@ -1742,7 +1827,7 @@ function TableBlock({ data, onEdit, onDelete, readOnly }: { data: string; onEdit
                   ) : (
                     <input
                       value={cell}
-                      onChange={(e) => onEdit(ri, ci, e.target.value)}
+                      onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
                       className="w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-surface"
                       data-table-cell={`${ri}:${ci}`}
                     />
@@ -1863,7 +1948,7 @@ function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
     : <div contentEditable={false} className={className} data-bookmark>{content}</div>;
 }
 
-function InlineImage({ fileId, name, version, status, onPreviewImage }: { fileId?: string; name?: string; version: number; status: SyncDoc["status"]; onPreviewImage?: (src: string, alt: string) => void }) {
+function InlineImage({ fileId, name, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string) => void }) {
   const [failure, setFailure] = useState<ImageFailure | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [automatic, setAutomatic] = useState(0);
@@ -1875,7 +1960,7 @@ function InlineImage({ fileId, name, version, status, onPreviewImage }: { fileId
     setAttempt((n) => n + 1);
   }, [failure, version, status, automatic]);
   return <figure contentEditable={false} className="my-2 select-none">
-    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onClick={() => onPreviewImage?.(src, name ?? "图片")} onError={() => setFailure({ version, status })} data-preview-image />}
+    {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} className="max-h-[480px] max-w-full cursor-zoom-in rounded-lg border" draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片")} onError={() => setFailure({ version, status })} data-preview-image />}
   </figure>;
 }
 
@@ -1897,19 +1982,19 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
 
 
 /** 视频块：mp4/webm 源用原生播放器；源失效（404/格式不支持）自动回退链接卡片。 */
-function VideoBlock({ url, name }: { url?: string; name?: string }) {
+function VideoBlock({ url, name, disableFileDownloads = false }: { url?: string; name?: string; disableFileDownloads?: boolean }) {
   const [failed, setFailed] = useState(false);
   const href = safeURL(url);
   const native = !failed && href && /^https?:\/\//i.test(href) && /\.(mp4|webm|mov)(\?|$)/i.test(href);
   const content = <>
     <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-primary"><Play size={14} strokeWidth={1.7} /></span>
-    <span className="min-w-0"><span className="block truncate text-[14px] font-medium text-foreground">{name || url || "视频链接"}</span><span className="block truncate text-[12px] text-subtle">{url}</span></span>
+    <span className="min-w-0"><span className="block truncate text-[14px] font-medium text-foreground">{name || (!disableFileDownloads && url) || "视频链接"}</span><span className="block truncate text-[12px] text-subtle">{disableFileDownloads ? "当前不提供外部链接" : url}</span></span>
   </>;
   return (
     <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
       {native ? (
-        <video src={href} controls className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
-      ) : href ? (
+        <video src={href} controls controlsList={disableFileDownloads ? "nodownload" : undefined} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
+      ) : href && !disableFileDownloads ? (
         <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 px-3.5 py-3 no-underline hover:bg-hover">{content}</a>
       ) : (
         <div className="flex items-center gap-3 px-3.5 py-3">{content}</div>

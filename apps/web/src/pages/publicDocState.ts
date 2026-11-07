@@ -1,9 +1,13 @@
 import type { DocView } from "@/lib/api";
+import { canCopyContent, canDownloadDocument } from "./documentCopy";
 
 export interface PublicSnapshot {
   title: string;
   updatedAt: string;
   copyProtected?: boolean;
+  copyMinRole?: string;
+  downloadMinRole?: string;
+  permissionsRevision?: number;
   view: DocView;
 }
 
@@ -19,6 +23,12 @@ export interface PublicDocState {
 
 export function initialPublicDocState(token: string): PublicDocState {
   return { token, snapshot: null, issue: null, recovery: 0 };
+}
+
+/** A stale snapshot remains readable, but never grants copy/download access. */
+export function publicDocumentPermissions(state: PublicDocState, token: string, refreshing = false) {
+  const meta = state.token === token && state.snapshot && !state.issue && !refreshing ? { ...state.snapshot, role: "view" } : undefined;
+  return { copy: canCopyContent(meta), download: canDownloadDocument(meta) };
 }
 
 /** A definitive denial hides stale content; a network failure preserves it. */
@@ -38,7 +48,9 @@ export async function fetchPublicDoc(token: string, signal: AbortSignal): Promis
     const value: unknown = await response.json();
     if (!value || typeof value !== "object") return { issue: "temporary" };
     const data = value as Partial<PublicSnapshot>;
-    if (typeof data.title !== "string" || typeof data.updatedAt !== "string" || !data.view || !Array.isArray(data.view.blocks) || (data.copyProtected !== undefined && typeof data.copyProtected !== "boolean")) return { issue: "temporary" };
+    const role = (v: unknown) => v === "view" || v === "edit" || v === "manage";
+    const split = data.copyMinRole !== undefined || data.downloadMinRole !== undefined || data.permissionsRevision !== undefined;
+    if (typeof data.title !== "string" || typeof data.updatedAt !== "string" || !data.view || !Array.isArray(data.view.blocks) || (data.copyProtected !== undefined && typeof data.copyProtected !== "boolean") || (split && (!role(data.copyMinRole) || !role(data.downloadMinRole) || !Number.isSafeInteger(data.permissionsRevision) || (data.permissionsRevision as number) < 0))) return { issue: "temporary" };
     return { snapshot: data as PublicSnapshot };
   } catch {
     return { issue: "temporary" };
