@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
+import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
 import { commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mergeRecoveredCommentDrafts, newCommentSession, redactCommentDraftQuote, type CommentTarget } from "./commentAccess";
@@ -36,6 +37,7 @@ import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
 import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyDocument, copyErrorMessage } from "./documentCopy";
+import { markdownExportLosses } from "./markdownExport";
 import { Check, Eye, MessageSquare, Star } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
@@ -59,6 +61,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const sync = useSyncDoc(id, me.user.id);
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const metadataVerified = metadataState === "ready";
+  const exportContext = useRef({ id, user: me.user.id, client: sync.client, verified: metadataVerified, meta: meta.data, mounted: true });
+  const exportingMarkdown = useRef(false);
+  const [exportNotice, setExportNotice] = useState<{ id: number; user: number; text: string } | null>(null);
+  useLayoutEffect(() => {
+    exportContext.current = { id, user: me.user.id, client: sync.client, verified: metadataVerified, meta: meta.data, mounted: true };
+    return () => { exportContext.current.mounted = false; };
+  }, [id, me.user.id, sync.client, metadataVerified, meta.data]);
   const visitRecorder = useMemo(() => createVisitRecorder(
     () => docsApi.recordVisit(id),
     () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
@@ -253,15 +262,46 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     return n;
   }, [sync.client.doc, sync.version]);
-  const exportMd = () => {
+  const exportMd = async () => {
+    if (exportingMarkdown.current || !metadataVerified || !canCopyDocument(meta.data)) return;
     const d = sync.client.doc;
     if (!d) return;
-    const md = viewToMarkdown(d.view());
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
-    a.download = `${(title || meta.data?.title || "未命名").trim() || "未命名"}.md`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    if (!sync.client.caughtUp || sync.client.blocked) {
+      setExportNotice({ id, user: me.user.id, text: "文档尚未完成同步，请同步完成后再导出。" });
+      return;
+    }
+    const view = d.view();
+    const snapshot = JSON.stringify(view);
+    const losses = markdownExportLosses(view);
+    exportingMarkdown.current = true;
+    setExportNotice(null);
+    try {
+      if (losses.length && !await ask("Markdown 导出可能丢失内容", `${losses.join("；")}。仍要下载吗？`, false)) return;
+      const current = exportContext.current;
+      if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client || current.client.doc !== d || !current.verified || !canCopyDocument(current.meta)) return;
+      if (!current.client.caughtUp || current.client.blocked) {
+        setExportNotice({ id, user: me.user.id, text: "文档同步状态已变化，请同步完成后重新导出。" });
+        return;
+      }
+      if (JSON.stringify(d.view()) !== snapshot) {
+        setExportNotice({ id, user: me.user.id, text: "文档内容已变化，请重新导出并确认。" });
+        return;
+      }
+      const md = viewToMarkdown(view);
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
+      try {
+        a.href = url;
+        a.download = `${(title || current.meta?.title || "未命名").trim() || "未命名"}.md`;
+        a.click();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
+    } catch {
+      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setExportNotice({ id, user: me.user.id, text: "导出失败，请重试。" });
+    } finally {
+      exportingMarkdown.current = false;
+    }
   };
   const importMd = async (file: File) => {
     const d = sync.client.doc;
@@ -271,7 +311,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
     if (!sync.client.caughtUp || sync.client.status !== "synced") { setTemplateError("请等待文档同步完成后再导入。"); return; }
     if (!parseMarkdown(md).length) { setTemplateError("文件没有可导入的内容。"); return; }
-    if (hasUnsupportedImportBlocks(md)) { setTemplateError("暂不支持导入图片或独立文件链接，请先移除这些内容。"); return; }
+    if (hasUnsupportedImportBlocks(md)) { setTemplateError("暂不支持导入图片，请先移除图片内容。"); return; }
     if (d !== sync.client.doc || !canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || !recordExternalUndo.current) { setTemplateError("文档同步状态已改变，请重新导入。"); return; }
     const tx = appendMarkdownOps(d, md);
     if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
@@ -487,7 +527,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
-          onExport={meta.data?.copyProtected && meta.data.role !== "manage" ? undefined : exportMd}
+          onExport={metadataVerified && canCopyDocument(meta.data) ? exportMd : undefined}
           onImport={canEditContent ? importMd : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
           readOnly={!canComment}
@@ -501,6 +541,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           wordCount={wordCount}
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
+        {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
         {metadataVerified && commentAccessDenied && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button></p>}
         {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
         {commentsAvailable && commentStorageDamaged?.doc === id && commentStorageDamaged.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageDamaged.count} 条本机草稿数据损坏，原始数据已保留。 {commentDraftExportAllowed && <button type="button" className="text-primary underline" onClick={() => {

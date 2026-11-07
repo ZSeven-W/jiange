@@ -4,6 +4,7 @@ import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
+import { safeURL } from "@/lib/safeURL";
 import {
   activeMarks,
   bodyBlocks,
@@ -1629,23 +1630,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} />
       ) : type === "bookmark" ? (
-        <a
-          contentEditable={false}
-          href={props.url}
-          target="_blank"
-          rel="noreferrer"
-          className="my-2 flex w-full max-w-[520px] select-none items-center gap-3 rounded-lg border px-3.5 py-3 no-underline hover:bg-hover"
-          data-bookmark
-        >
-          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">
-            {(props.name ?? "W").slice(0, 1).toUpperCase()}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[14px] font-medium text-foreground">{props.name || props.url}</span>
-            <span className="block truncate text-[12px] text-subtle">{props.url}</span>
-          </span>
-          <span className="shrink-0 text-subtle">↗</span>
-        </a>
+        <BookmarkBlock url={props.url} name={props.name} />
       ) : type === "file" ? (
         <div contentEditable={false} className="my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5" data-file-card>
           <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
@@ -1808,12 +1793,13 @@ function sameMarks(a: Record<string, string>, b: Record<string, string>) {
 }
 
 function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
+  const href = safeURL(marks.link);
   const cls = cn(
     marks.bold && "font-semibold",
     marks.italic && "italic",
     (marks.underline || marks.strike) && [marks.underline && "underline", marks.strike && "line-through"],
     marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]",
-    marks.link && "cursor-pointer text-primary underline-offset-2 hover:underline",
+    href && "cursor-pointer text-primary underline-offset-2 hover:underline",
   );
   const style = marks.color || marks.bg ? { color: marks.color || undefined, background: marks.bg || undefined } : undefined;
   // The rendered formula does not have the same character length as its
@@ -1824,16 +1810,16 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         <MathView src={marks.math} />
       </span>
     );
-  if (marks.link?.startsWith("#/doc/"))
+  if (href?.startsWith("#/doc/"))
     return (
       <a
         style={style}
-        href={marks.link}
+        href={href}
         data-mention
         className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF]")}
         onClick={(e) => {
           e.preventDefault();
-          location.hash = marks.link;
+          location.hash = href;
         }}
       >
         {text}
@@ -1845,9 +1831,12 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         {text}
       </span>
     );
-  if (marks.link)
+  if (href)
     return (
-      <a style={style} href={marks.link} className={cls} onClick={(e) => (e.metaKey || e.ctrlKey ? window.open(marks.link, "_blank", "noopener") : e.preventDefault())}>
+      <a style={style} href={href} className={cls} onClick={(e) => {
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) window.open(href, "_blank", "noopener,noreferrer");
+      }}>
         {text}
       </a>
     );
@@ -1856,6 +1845,22 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
 
 function fmtSize(n: number) {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+}
+
+function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
+  const href = safeURL(url);
+  const content = <>
+    <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(name ?? "W").slice(0, 1).toUpperCase()}</span>
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-[14px] font-medium text-foreground">{name || url || "网页卡片"}</span>
+      <span className="block truncate text-[12px] text-subtle">{url}</span>
+    </span>
+    {href && <span className="shrink-0 text-subtle">↗</span>}
+  </>;
+  const className = "my-2 flex w-full max-w-[520px] select-none items-center gap-3 rounded-lg border px-3.5 py-3 no-underline";
+  return href
+    ? <a contentEditable={false} href={href} target="_blank" rel="noopener noreferrer" className={cn(className, "hover:bg-hover")} data-bookmark>{content}</a>
+    : <div contentEditable={false} className={className} data-bookmark>{content}</div>;
 }
 
 function InlineImage({ fileId, name, version, status, onPreviewImage }: { fileId?: string; name?: string; version: number; status: SyncDoc["status"]; onPreviewImage?: (src: string, alt: string) => void }) {
@@ -1894,21 +1899,20 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
 /** 视频块：mp4/webm 源用原生播放器；源失效（404/格式不支持）自动回退链接卡片。 */
 function VideoBlock({ url, name }: { url?: string; name?: string }) {
   const [failed, setFailed] = useState(false);
-  const native = !failed && /^https?:\/\/.+/.test(url ?? "") && (url ?? "").match(/\.(mp4|webm|mov)(\?|$)/i);
+  const href = safeURL(url);
+  const native = !failed && href && /^https?:\/\//i.test(href) && /\.(mp4|webm|mov)(\?|$)/i.test(href);
+  const content = <>
+    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-primary"><Play size={14} strokeWidth={1.7} /></span>
+    <span className="min-w-0"><span className="block truncate text-[14px] font-medium text-foreground">{name || url || "视频链接"}</span><span className="block truncate text-[12px] text-subtle">{url}</span></span>
+  </>;
   return (
     <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
       {native ? (
-        <video src={url} controls className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
+        <video src={href} controls className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
+      ) : href ? (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 px-3.5 py-3 no-underline hover:bg-hover">{content}</a>
       ) : (
-        <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3.5 py-3 no-underline hover:bg-hover">
-          <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-primary">
-            <Play size={14} strokeWidth={1.7} />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-[14px] font-medium text-foreground">{name || url || "视频链接"}</span>
-            <span className="block truncate text-[12px] text-subtle">{url}</span>
-          </span>
-        </a>
+        <div className="flex items-center gap-3 px-3.5 py-3">{content}</div>
       )}
     </div>
   );

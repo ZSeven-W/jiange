@@ -75,6 +75,26 @@ func (m *Memory) SetShare(_ context.Context, doc, uid int64, role string) error 
 	return nil
 }
 
+func (m *Memory) AddShare(_ context.Context, doc, uid int64, role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(doc)
+	if d == nil || d.deleted || uid <= 0 || uid > int64(len(m.users)) {
+		return ErrNotFound
+	}
+	if RoleRank(role) == 0 || d.meta.CreatorID == uid || m.sh.shares[doc][uid] != "" {
+		return ErrConflict
+	}
+	if m.sh.shares == nil {
+		m.sh.shares = map[int64]map[int64]string{}
+	}
+	if m.sh.shares[doc] == nil {
+		m.sh.shares[doc] = map[int64]string{}
+	}
+	m.sh.shares[doc][uid] = role
+	return nil
+}
+
 func (m *Memory) GetLink(_ context.Context, doc int64) (Link, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

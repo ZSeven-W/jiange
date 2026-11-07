@@ -269,12 +269,28 @@ func (s *Server) markNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// docMembers lists the doc workspace's users (for @人 autocomplete).
+// docMembers lists autocomplete candidates without exposing the workspace
+// directory to external document collaborators.
 func (s *Server) docMembers(w http.ResponseWriter, r *http.Request) {
 	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
 		return
 	}
+	u, _ := UserFrom(r.Context())
+	spaces, err := s.Store.Workspaces(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	isMember := func(spaces []store.Workspace) bool {
+		for _, space := range spaces {
+			if space.ID == d.WorkspaceID {
+				return true
+			}
+		}
+		return false
+	}
+	member := isMember(spaces)
 	ms, err := s.Store.WorkspaceMembers(r.Context(), d.WorkspaceID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -288,7 +304,7 @@ func (s *Server) docMembers(w http.ResponseWriter, r *http.Request) {
 	seen := map[int64]bool{}
 	out := make([]store.User, 0, len(ms)+len(shares))
 	for _, m := range ms {
-		if !seen[m.ID] {
+		if (member || m.ID == d.CreatorID) && !seen[m.ID] {
 			seen[m.ID] = true
 			out = append(out, store.User{ID: m.ID, Email: m.Email, Name: m.Name, CreatedAt: m.CreatedAt})
 		}
@@ -299,5 +315,29 @@ func (s *Server) docMembers(w http.ResponseWriter, r *http.Request) {
 			out = append(out, store.User{ID: sh.UserID, Email: sh.Email, Name: sh.Name})
 		}
 	}
+	// Link or inherited access may not have a direct share on this document.
+	if !seen[u.ID] {
+		out = append(out, store.User{ID: u.ID, Email: u.Email, Name: u.Name})
+	}
+	// A revocation during candidate collection must not leak the old result.
+	current, err := s.Store.GetDoc(r.Context(), u.ID, d.ID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && (store.RoleRank(current.Role) < store.RoleRank(store.RoleView) || current.WorkspaceID != d.WorkspaceID) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "文档权限已变化")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	spaces, err = s.Store.Workspaces(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if member && !isMember(spaces) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "工作区权限已变化")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"members": out})
 }

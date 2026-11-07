@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, serializeInline, toMarkdown } from "./markdown";
+import { parseInline, parseMarkdown, serializeInline, toMarkdown, type MdSpan } from "./markdown";
 
 const SAMPLE = `# 发布计划
 
@@ -53,12 +53,12 @@ describe("markdown inline marks", () => {
 });
 
 describe("markdown blocks", () => {
-  it("parses headings, lists, todo, quote, code, divider, image and file", () => {
+  it("parses headings, lists, todo, quote, code, divider, image and standard links", () => {
     const blocks = parseMarkdown(SAMPLE);
     const types = blocks.map((b) => b.type);
     expect(types).toEqual([
       "h1", "paragraph", "h2", "bullet", "bullet", "bullet", "todo", "todo",
-      "h3", "quote", "code", "divider", "image", "file", "paragraph",
+      "h3", "quote", "code", "divider", "image", "paragraph", "paragraph",
     ]);
     const nested = blocks.find((b) => b.text === "看板视图")!;
     expect(nested.props.indent).toBe("1");
@@ -89,5 +89,55 @@ describe("markdown blocks", () => {
     expect(out).toContain("3. 三");
     expect(out).toContain("1. 又一个");
     expect(toMarkdown(parseMarkdown(out))).toBe(out);
+  });
+
+  it("keeps literal Markdown syntax and backslashes as ordinary paragraph text", () => {
+    const texts = ["# 标题", "- 列表", "1. 项目", "**重要**", "[文字](https://a.b)", "a `b` c", "\\# 标题", "---", "![图](https://a.b)", "$$x$$", "中文 😀"];
+    const blocks = texts.map(text => ({ type: "paragraph", text, props: {}, spans: [{ text, marks: {} }] }));
+    expect(parseMarkdown(toMarkdown(blocks)).map(b => [b.type, b.text, b.spans])).toEqual(
+      texts.map(text => ["paragraph", text, [{ text, marks: {} }]]),
+    );
+  });
+
+  it("preserves nested marks, literal punctuation, and escaped URL parentheses", () => {
+    const marks = { bold: "1", italic: "1", strike: "1", link: "https://example.com/a(b)" };
+    const spans: MdSpan[] = [{ text: "重要 *[中文]\\*", marks }, { text: " = ", marks: {} }, { text: "a`b", marks: { code: "1" } }];
+    expect(parseInline(serializeInline(spans))).toEqual(spans);
+  });
+
+  it("separates adjacent marks and preserves backslashes in linked code", () => {
+    const spans: MdSpan[] = [
+      { text: "甲", marks: { bold: "1" } },
+      { text: "乙", marks: { bold: "1", italic: "1" } },
+      { text: "丙", marks: { italic: "1" } },
+      { text: "]\\", marks: { code: "1", link: "https://x.dev" } },
+      { text: "**~~`", marks: { code: "1", bold: "1", strike: "1" } },
+    ];
+    expect(parseInline(serializeInline(spans))).toEqual(spans);
+  });
+
+  it("handles long malformed link labels without repeatedly scanning the line", () => {
+    for (const input of ["[".repeat(100_000), "[".repeat(100_000) + "](unclosed"]) {
+      expect(parseInline(input)).toEqual([{ text: input, marks: {} }]);
+    }
+  }, 2000);
+
+  it("chooses code and diagram fences longer than the source fences", () => {
+    const blocks = ["code", "diagram"].map(type => ({ type, text: "示例\n```\n````\n结束", props: {}, spans: [] }));
+    expect(parseMarkdown(toMarkdown(blocks))).toEqual(blocks);
+  });
+
+  it("recognizes fenced language tags containing punctuation", () => {
+    const blocks = parseMarkdown("```c++\nint x;\n```\n```c#\nint y;\n```\n正文");
+    expect(blocks.map(b => [b.type, b.text, b.props.lang])).toEqual([
+      ["code", "int x;", "c++"], ["code", "int y;", "c#"], ["paragraph", "正文", undefined],
+    ]);
+    expect(parseMarkdown(toMarkdown(blocks))).toEqual(blocks);
+  });
+
+  it("preserves empty formulas and whitespace in single- and multi-line formulas", () => {
+    const texts = ["", " x ", " \n x + y \n ", "x\n"];
+    const blocks = texts.map(text => ({ type: "math", text, props: {}, spans: [] }));
+    expect(parseMarkdown(toMarkdown(blocks))).toEqual(blocks);
   });
 });
