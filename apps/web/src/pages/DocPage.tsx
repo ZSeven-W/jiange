@@ -25,7 +25,8 @@ import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/ShareDialog";
 import { DocumentIconEditor } from "@/components/DocumentIconEditor";
-import { DocumentGlyph } from "@/components/DocumentGlyph";
+import { DocumentCover } from "@/components/DocumentCover";
+import { DocumentGlyph, displayDocumentIcon } from "@/components/DocumentGlyph";
 import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
@@ -629,8 +630,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <article className={cn("mx-auto w-full max-w-[960px] px-7 pt-12 sm:px-16 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
-            <div data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}><DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article className={cn("mx-auto w-full max-w-[960px] px-7 sm:px-16", hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+            <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
                 const current = iconIdentity.current;
@@ -702,7 +703,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
-          </article>
+          </article>}</DocumentCover>
         </div>
         {findOpen && <div ref={findPanel}>
           <FindReplacePanel

@@ -1,5 +1,21 @@
 # 飞书文档界面核验记录
 
+## 2026-11-07：封面与全局搜索
+
+![桌面文档封面](screenshots/document-cover-desktop-20261107.jpg)
+
+![移动视口文档封面](screenshots/document-cover-mobile-20261107.jpg)
+
+![桌面全局搜索](screenshots/document-global-search-desktop-20261107.jpg)
+
+![移动视口全局搜索](screenshots/document-global-search-mobile-20261107.jpg)
+
+![上传后的文档封面](screenshots/document-cover-upload-20261107.jpg)
+
+参考[飞书封面说明](https://www.feishu.cn/hc/zh-CN/articles/230455566106-%E8%AE%BE%E7%BD%AE%E6%96%87%E6%A1%A3%E5%B0%81%E9%9D%A2)及实际飞书全局搜索界面；截图来自合成文档、隔离 PostgreSQL 和 Go 服务。已验证原创图库封面添加、位置调整、移除和刷新保留，以及标题搜索与方向键选择。上传使用仅本机的内存 S3 替身，不验证真实 S3/MinIO、系统文件选择器或真实手机。移动图为 390×844 浏览器模拟视口。
+
+目前只有一张原创图库图，未包含飞书官方图库；上传完成但绑定失败或离开页面可能留下未引用对象。全局搜索的高级筛选仅支持当前结果的类型与所有者，不代表完整飞书高级搜索。
+
 ## 2026-11-07：文档图标
 
 ![桌面图标选择器](screenshots/document-icon-picker-desktop-20261107.jpg)

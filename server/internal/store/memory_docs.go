@@ -14,6 +14,7 @@ type memClient struct {
 
 type memDoc struct {
 	iconRevision int64
+	cover        DocCover
 	meta         DocMeta
 	deleted      bool
 	ops          []SeqOp

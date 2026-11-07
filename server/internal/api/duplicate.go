@@ -143,6 +143,27 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusConflict, "invalid_attachment", "文档中的附件引用无效，无法创建完整副本")
 		return
 	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	cover, err := s.Store.DocCoverGuarded(r.Context(), guard, d.ID)
+	if err != nil {
+		s.docCoverError(w, r, err)
+		return
+	}
+	if cover.Kind == "file" {
+		found := false
+		for _, id := range fileIDs {
+			if id == cover.FileID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fileIDs = append(fileIDs, cover.FileID)
+		}
+	}
 	if len(fileIDs) > maxCopyAttachments {
 		httpx.Error(w, http.StatusUnprocessableEntity, "copy_attachment_limit", "文档中的不同附件超过 1000 个，暂无法一次创建副本")
 		return
@@ -161,11 +182,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	guard, ok := s.viewGuard(w, r)
-	if !ok {
-		return
-	}
-	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, FileIDs: fileIDs, Guard: &guard}, func(ids map[int64]int64) ([]store.RawOp, error) {
+	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, FileIDs: fileIDs, Guard: &guard, Cover: &cover}, func(ids map[int64]int64) ([]store.RawOp, error) {
 		ops, err := buildCopyOps(src, title, ids)
 		if err != nil {
 			return nil, errors.Join(errCopyProjection, err)
