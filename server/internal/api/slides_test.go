@@ -7,6 +7,25 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
+func TestSlideShapeGeometryValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		valid     bool
+	}{
+		{"legacy defaults", `[{"id":"a","kind":"ellipse","x":84,"y":80,"color":"#3370ff"}]`, true},
+		{"resized and rotated", `[{"id":"a","kind":"rectangle","x":40,"y":50,"width":60,"height":50,"rotation":90,"color":"#3370ff"}]`, true},
+		{"overflow", `[{"id":"a","kind":"rectangle","x":41,"y":50,"width":60,"height":50,"rotation":90,"color":"#3370ff"}]`, false},
+		{"angle out of bounds", `[{"id":"a","kind":"rectangle","x":0,"y":0,"rotation":360,"color":"#3370ff"}]`, false},
+		{"duplicate ids", `[{"id":"a","kind":"ellipse","x":0,"y":0,"color":"#3370ff"},{"id":"a","kind":"ellipse","x":1,"y":1,"color":"#3370ff"}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validSlideShapes(json.RawMessage(tc.raw)); got != tc.valid {
+				t.Fatalf("valid=%v, want %v", got, tc.valid)
+			}
+		})
+	}
+}
+
 // 幻灯片纵切：建 slides 节点 → 页面 CRUD → 排序 → 删除。
 func TestSlidesVerticalSlice(t *testing.T) {
 	ts, c := newTestServer(t, store.NewMemory(), nil)

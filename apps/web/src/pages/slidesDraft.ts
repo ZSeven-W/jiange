@@ -1,7 +1,7 @@
 import { ApiError, type SlidesPage } from "@/lib/api";
 
 export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "notes" | "shapes">;
-const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color; });
+const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color && (item.width ?? 16) === (other.width ?? 16) && (item.height ?? 20) === (other.height ?? 20) && (item.rotation ?? 0) === (other.rotation ?? 0); });
 export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
 
 /** Serialise writes per page; keep the user's latest text when a write fails. */

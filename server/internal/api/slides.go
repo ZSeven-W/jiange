@@ -139,18 +139,32 @@ func validSlideShapes(raw json.RawMessage) bool {
 		return false
 	}
 	var shapes []struct {
-		ID    string  `json:"id"`
-		Kind  string  `json:"kind"`
-		X     float64 `json:"x"`
-		Y     float64 `json:"y"`
-		Color string  `json:"color"`
+		ID       string   `json:"id"`
+		Kind     string   `json:"kind"`
+		X        float64  `json:"x"`
+		Y        float64  `json:"y"`
+		Color    string   `json:"color"`
+		Width    *float64 `json:"width"`
+		Height   *float64 `json:"height"`
+		Rotation *float64 `json:"rotation"`
 	}
 	if json.Unmarshal(raw, &shapes) != nil || len(shapes) > 100 {
 		return false
 	}
 	seen := make(map[string]bool)
 	for _, s := range shapes {
-		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle") || !(s.X >= 0 && s.X <= 84 && s.Y >= 0 && s.Y <= 80) || !slideShapeColor.MatchString(s.Color) {
+		width, height := 16.0, 20.0
+		if s.Width != nil {
+			width = *s.Width
+		}
+		if s.Height != nil {
+			height = *s.Height
+		}
+		rotation := 0.0
+		if s.Rotation != nil {
+			rotation = *s.Rotation
+		}
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
 			return false
 		}
 		seen[s.ID] = true
