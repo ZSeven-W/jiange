@@ -143,8 +143,19 @@ func (p *Postgres) SetCopyProtected(ctx context.Context, id int64, on bool) erro
 	return err
 }
 
-func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (DocMeta, error) {
-	return scanDocDrive(p.Pool.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0)`, id, title))
+func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (doc DocMeta, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var e error
+		doc, e = scanDocDrive(tx.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0)`, id, title))
+		if e != nil {
+			return e
+		}
+		return recordDocumentModifier(ctx, tx, id, documentActor(ctx))
+	})
+	if err != nil {
+		return DocMeta{}, err
+	}
+	return doc, nil
 }
 
 func (p *Postgres) AllocClient(ctx context.Context, uid, doc int64) (id int64, err error) {
@@ -517,8 +528,12 @@ func (p *Postgres) Move(ctx context.Context, id int64, parent *int64) error {
 			return ErrConflict
 		}
 	}
-	_, err := p.Pool.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent)
-	return err
+	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent); err != nil {
+			return err
+		}
+		return recordDocumentModifier(ctx, tx, id, documentActor(ctx))
+	})
 }
 
 func (p *Postgres) SaveVersion(ctx context.Context, doc, seq int64, label string, userID int64) error {

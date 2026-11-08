@@ -111,7 +111,7 @@ func (m *Memory) SetDocIconGuarded(ctx context.Context, guard RestoreGuard, id i
 	d.meta.Icon = icon
 	d.iconRevision++
 	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, 0)
+	m.setDocumentModifierLocked(d, guard.UserID)
 	return DocIcon{Icon: icon, Revision: d.iconRevision}, nil
 }
 
@@ -196,6 +196,9 @@ func (p *Postgres) SetDocIconGuarded(ctx context.Context, guard RestoreGuard, id
 			return ErrConflict
 		}
 		if _, err = tx.Exec(ctx, `UPDATE nodes SET icon=$2,icon_revision=icon_revision+1,updated_at=now() WHERE id=$1`, id, icon); err != nil {
+			return err
+		}
+		if err = recordDocumentModifier(ctx, tx, id, guard.UserID); err != nil {
 			return err
 		}
 		if !guard.currentTime().Before(expiry) {

@@ -216,10 +216,12 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, current)
 		return
 	} else {
+		u, _ := UserFrom(r.Context())
+		mutationCtx := store.WithDocumentActor(r.Context(), u.ID)
 		// Move checks for cycles before changing the parent. Do it before changing
 		// other fields so a reported cycle conflict does not change those fields.
 		if in.Move {
-			if err := s.Store.Move(r.Context(), d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
+			if err := s.Store.Move(mutationCtx, d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
 				httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
 				return
 			} else if err != nil {
@@ -229,7 +231,7 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 			d.ParentID = in.ParentID
 		}
 		if in.Title != nil {
-			if _, err := s.Store.UpdateTitle(r.Context(), d.ID, title); err != nil {
+			if _, err := s.Store.UpdateTitle(mutationCtx, d.ID, title); err != nil {
 				s.fail(w, r, err)
 				return
 			}

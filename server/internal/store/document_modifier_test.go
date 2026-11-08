@@ -71,11 +71,18 @@ func checkDocumentModifier(t *testing.T, st store.Store) {
 	if got := modifier(); got != editor.Name {
 		t.Fatalf("retry changed modifier: %q", got)
 	}
-	if _, err = st.RenameDriveNode(ctx, ownerGuard, doc.ID, "Renamed", doc.DriveRevision); err != nil {
+	renamed, err := st.RenameDriveNode(ctx, ownerGuard, doc.ID, "Renamed", doc.DriveRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.LastModifierName != owner.Name || modifier() != owner.Name {
+		t.Fatalf("guarded rename modifier: %+v", renamed)
+	}
+	if _, err = st.UpdateTitle(ctx, doc.ID, "Unattributed change"); err != nil {
 		t.Fatal(err)
 	}
 	if got := modifier(); got != "" {
-		t.Fatalf("untracked rename retained stale modifier: %q", got)
+		t.Fatalf("unattributed update retained stale modifier: %q", got)
 	}
 	if _, err = st.AppendRestoreOps(ctx, editorGuard, doc.ID, 2, []store.RawOp{{ClientID: 4, Clock: 1, Bytes: []byte{4}}}); err != nil {
 		t.Fatal(err)

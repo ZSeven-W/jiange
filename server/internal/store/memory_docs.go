@@ -161,7 +161,7 @@ func (m *Memory) SetCopyProtected(_ context.Context, id int64, on bool) error {
 	return nil
 }
 
-func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta, error) {
+func (m *Memory) UpdateTitle(ctx context.Context, id int64, title string) (DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(id)
@@ -172,7 +172,7 @@ func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta
 		return DocMeta{}, ErrConflict
 	}
 	d.meta.Title, d.meta.UpdatedAt = title, time.Now()
-	m.setDocumentModifierLocked(d, 0)
+	m.setDocumentModifierLocked(d, documentActor(ctx))
 	return d.meta, nil
 }
 
@@ -514,7 +514,7 @@ func (m *Memory) ListTrash(_ context.Context, uid int64) ([]DocMeta, error) {
 	return out, nil
 }
 
-func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
+func (m *Memory) Move(ctx context.Context, id int64, parent *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := m.doc(id)
@@ -535,7 +535,8 @@ func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
 		}
 	}
 	d.meta.ParentID = parent
-	m.setDocumentModifierLocked(d, 0)
+	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, documentActor(ctx))
 	return nil
 }
 
