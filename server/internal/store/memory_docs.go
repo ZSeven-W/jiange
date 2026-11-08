@@ -14,6 +14,8 @@ type memClient struct {
 
 type memDoc struct {
 	meta            DocMeta
+	lastModifierID  int64
+	lastModifier    string
 	driveFileID     int64
 	driveRevision   int64
 	driveTrashBatch int64
@@ -170,6 +172,7 @@ func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta
 		return DocMeta{}, ErrConflict
 	}
 	d.meta.Title, d.meta.UpdatedAt = title, time.Now()
+	m.setDocumentModifierLocked(d, 0)
 	return d.meta, nil
 }
 
@@ -240,7 +243,7 @@ func (m *Memory) AppendOpsAtHead(ctx context.Context, doc, expectedHead int64, o
 	return m.appendOps(ctx, doc, &expectedHead, ops)
 }
 
-func (m *Memory) appendOps(_ context.Context, doc int64, expectedHead *int64, ops []RawOp) ([]int64, error) {
+func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, ops []RawOp) ([]int64, error) {
 	m.mu.Lock()
 	d := m.doc(doc)
 	if d == nil {
@@ -252,6 +255,7 @@ func (m *Memory) appendOps(_ context.Context, doc int64, expectedHead *int64, op
 		return nil, ErrConflict
 	}
 	seqs := make([]int64, len(ops))
+	start := len(d.ops)
 	batch, err := prepareMemoryIdentityBatch(d, ops)
 	if err != nil {
 		m.mu.Unlock()
@@ -269,7 +273,12 @@ func (m *Memory) appendOps(_ context.Context, doc int64, expectedHead *int64, op
 		d.ops = append(d.ops, SeqOp{seqs[i], op.ClientID, op.Bytes})
 		d.opAt = append(d.opAt, time.Now())
 	}
+	if len(d.ops) == start {
+		m.mu.Unlock()
+		return seqs, nil
+	}
 	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, documentActor(ctx))
 	head := int64(len(d.ops))
 	subs := slices.Clone(m.d.subs)
 	m.mu.Unlock()
@@ -340,6 +349,7 @@ func (m *Memory) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc, 
 	d.ops = append(d.ops, rows...)
 	d.opAt = append(d.opAt, times...)
 	d.meta.UpdatedAt = now
+	m.setDocumentModifierLocked(d, guard.UserID)
 	head := int64(len(d.ops))
 	subs := slices.Clone(m.d.subs)
 	m.mu.Unlock()
@@ -484,6 +494,7 @@ func (m *Memory) setDeleted(id int64, v bool) error {
 	}
 	for _, d := range nodes {
 		d.deleted = v
+		m.setDocumentModifierLocked(d, 0)
 	}
 	return nil
 }
@@ -524,6 +535,7 @@ func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
 		}
 	}
 	d.meta.ParentID = parent
+	m.setDocumentModifierLocked(d, 0)
 	return nil
 }
 

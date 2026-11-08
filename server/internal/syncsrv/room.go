@@ -343,7 +343,7 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 			c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
 			return nil
 		}
-		seqs, err = r.hub.Store.AppendOpsAtHead(ctx, r.id, r.head, raws)
+		seqs, err = r.hub.Store.AppendOpsAtHead(store.WithDocumentActor(ctx, c.user.ID), r.id, r.head, raws)
 		if err != nil {
 			tx.Rollback()
 			if errors.Is(err, store.ErrConflict) {

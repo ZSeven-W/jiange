@@ -239,6 +239,9 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc); err != nil {
 			return err
 		}
+		if err := recordDocumentModifier(ctx, tx, doc, documentActor(ctx)); err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10))
 		return err
 	})
@@ -316,6 +319,9 @@ func (p *Postgres) AppendRestoreOps(ctx context.Context, guard RestoreGuard, doc
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc); err != nil {
+			return err
+		}
+		if err := recordDocumentModifier(ctx, tx, doc, guard.UserID); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10))

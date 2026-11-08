@@ -14,19 +14,20 @@ import (
 // Folder access uses the existing workspace and inherited node grants. It does
 // not imply that a workspace member's folder is private to its creator.
 type DriveEntry struct {
-	ID          int64     `json:"id"`
-	WorkspaceID int64     `json:"workspaceId"`
-	ParentID    *int64    `json:"parentId"`
-	Kind        string    `json:"kind"`
-	Title       string    `json:"title"`
-	Icon        string    `json:"icon,omitempty"`
-	CreatorID   int64     `json:"creatorId"`
-	CreatorName string    `json:"creatorName"`
-	Role        string    `json:"role"`
-	Revision    int64     `json:"revision"`
-	Personal    bool      `json:"personal"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID               int64     `json:"id"`
+	WorkspaceID      int64     `json:"workspaceId"`
+	ParentID         *int64    `json:"parentId"`
+	Kind             string    `json:"kind"`
+	Title            string    `json:"title"`
+	Icon             string    `json:"icon,omitempty"`
+	CreatorID        int64     `json:"creatorId"`
+	CreatorName      string    `json:"creatorName"`
+	LastModifierName string    `json:"lastModifierName,omitempty"`
+	Role             string    `json:"role"`
+	Revision         int64     `json:"revision"`
+	Personal         bool      `json:"personal"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // DriveFolderStore implements the versioned directory API. These operations
@@ -131,7 +132,7 @@ func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, mi
 	return nil
 }
 func driveMemoryEntry(m *Memory, d *memDoc, user int64) DriveEntry {
-	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, CreatorName: d.meta.CreatorName, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, CreatedAt: d.meta.CreatedAt, UpdatedAt: d.meta.UpdatedAt}
+	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, CreatorName: d.meta.CreatorName, LastModifierName: d.lastModifier, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, CreatedAt: d.meta.CreatedAt, UpdatedAt: d.meta.UpdatedAt}
 }
 
 func cloneDriveParent(parent *int64) *int64 {
@@ -343,6 +344,7 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, 0)
 	return nil
 }
 
@@ -384,6 +386,7 @@ func (m *Memory) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, 0)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
 
@@ -424,6 +427,7 @@ func (m *Memory) TrashDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 	for _, item := range items {
 		if !item.deleted {
 			item.deleted = true
+			m.setDocumentModifierLocked(item, 0)
 			item.driveTrashBatch = batch
 			item.driveRevision++
 			item.meta.DriveRevision = item.driveRevision
@@ -474,6 +478,7 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	for _, item := range items {
 		if item.deleted && item.driveTrashBatch == batch {
 			item.deleted = false
+			m.setDocumentModifierLocked(item, 0)
 			item.driveTrashBatch = 0
 			item.driveRevision++
 			item.meta.DriveRevision = item.driveRevision
@@ -779,14 +784,14 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var d DriveEntry
-			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
+			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.LastModifierName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
 				return e
 			}
 			out = append(out, d)

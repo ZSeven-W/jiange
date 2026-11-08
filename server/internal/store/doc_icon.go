@@ -111,6 +111,7 @@ func (m *Memory) SetDocIconGuarded(ctx context.Context, guard RestoreGuard, id i
 	d.meta.Icon = icon
 	d.iconRevision++
 	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, 0)
 	return DocIcon{Icon: icon, Revision: d.iconRevision}, nil
 }
 
