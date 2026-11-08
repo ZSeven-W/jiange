@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -57,11 +59,12 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title            string  `json:"title"`
-		Body             string  `json:"body"`
-		Background       string  `json:"background"`
-		Notes            *string `json:"notes"`
-		ExpectedRevision int64   `json:"expectedRevision"`
+		Title            string           `json:"title"`
+		Body             string           `json:"body"`
+		Background       string           `json:"background"`
+		Notes            *string          `json:"notes"`
+		Shapes           *json.RawMessage `json:"shapes"`
+		ExpectedRevision int64            `json:"expectedRevision"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -74,12 +77,16 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_body", "内容超出限制")
 		return
 	}
+	if in.Shapes != nil && !validSlideShapes(*in.Shapes) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_shapes", "图形数据无效")
+		return
+	}
 	pid, err := strconv.ParseInt(r.PathValue("pid"), 10, 64)
 	if err != nil || pid <= 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_id", "page id required")
 		return
 	}
-	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.Notes, in.ExpectedRevision)
+	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.Notes, in.Shapes, in.ExpectedRevision)
 	if driveWriteErr(w, err, "update page") {
 		return
 	}
@@ -122,4 +129,31 @@ func (s *Server) moveSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+var slideShapeID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+var slideShapeColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func validSlideShapes(raw json.RawMessage) bool {
+	if len(raw) > 20000 || len(raw) == 0 || raw[0] != '[' {
+		return false
+	}
+	var shapes []struct {
+		ID    string  `json:"id"`
+		Kind  string  `json:"kind"`
+		X     float64 `json:"x"`
+		Y     float64 `json:"y"`
+		Color string  `json:"color"`
+	}
+	if json.Unmarshal(raw, &shapes) != nil || len(shapes) > 100 {
+		return false
+	}
+	seen := make(map[string]bool)
+	for _, s := range shapes {
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle") || !(s.X >= 0 && s.X <= 84 && s.Y >= 0 && s.Y <= 80) || !slideShapeColor.MatchString(s.Color) {
+			return false
+		}
+		seen[s.ID] = true
+	}
+	return true
 }

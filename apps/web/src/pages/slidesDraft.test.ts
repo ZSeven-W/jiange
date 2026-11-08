@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, type SlidesPage } from "@/lib/api";
 import { SlidesDraftQueue, type SlideContent } from "./slidesDraft";
 
-const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
+const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", shapes: [], revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {
@@ -42,5 +42,12 @@ describe("slide drafts", () => {
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
     q.edit(page, { title: "local" }); await tick();
     expect(q.get({ ...page, title: "remote", revision: 3 }).content.title).toBe("remote");
+  });
+
+  it("accepts reordered JSON object keys from PostgreSQL while saving shapes", async () => {
+    const shape = { id: "one", kind: "ellipse" as const, x: 20, y: 30, color: "#3370ff" };
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, shapes: [{ color: shape.color, y: shape.y, x: shape.x, kind: shape.kind, id: shape.id }], revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { shapes: [shape] }); await tick();
+    expect(q.get(page).state).toBe("saved");
   });
 });
