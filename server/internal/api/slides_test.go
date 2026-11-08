@@ -41,13 +41,13 @@ func TestSlidesVerticalSlice(t *testing.T) {
 		t.Fatalf("deck: %+v", deck)
 	}
 
-	// 页面：建两页
+	// 新演示文稿自带一张空白页，再创建第二页。
 	var p1, p2 store.SlidesPage
-	if res := post(t, c, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages", map[string]any{"title": "封面"}); res.StatusCode != 201 {
-		t.Fatalf("page1: %d", res.StatusCode)
-	} else {
-		json.NewDecoder(res.Body).Decode(&p1)
+	var initial struct{ Pages []store.SlidesPage }
+	if err := json.NewDecoder(cGet(t, c, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages").Body).Decode(&initial); err != nil || len(initial.Pages) != 1 || initial.Pages[0].Title != "" {
+		t.Fatalf("initial slide: %+v %v", initial.Pages, err)
 	}
+	p1 = initial.Pages[0]
 	if res := post(t, c, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages", map[string]any{"title": "议程"}); res.StatusCode != 201 {
 		t.Fatalf("page2: %d", res.StatusCode)
 	} else {
