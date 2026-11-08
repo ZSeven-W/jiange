@@ -1,21 +1,68 @@
-MIT License
-
+Jiange 个人与商业双轨许可协议
 Copyright (c) 2026 ZSeven-W
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+一、授予
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. 个人与非商业使用：在遵守本协议的前提下，任何个人及非商业组织可免费
+   使用、复制、修改本软件，并为个人学习、研究、评估或非商业目的分发
+   修改后的版本，但必须保留本协议全文与原作者版权声明。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. 商业使用：任何以营利为目的的使用（包括但不限于：企业内部生产经营
+   使用、向最终用户提供托管/SaaS 服务、集成进商业产品销售、用于提供
+   收费服务）须事先取得商业授权。未取得有效商业授权前，不得将本软件
+   或其修改版用于任何商业用途。
+
+3. 商业授权请联系版权所有者洽谈授权范围、期限与费用。取得商业授权后，
+   相应使用行为以商业授权合同条款为准。
+
+二、限制
+
+1. 未经版权所有者书面许可，不得将本软件申请专利或将其中的原创内容
+   登记为他人知识产权。
+2. 不得移除或遮挡本软件中的版权声明与作者信息。
+3. 本协议不授予商标使用权。
+
+三、免责
+
+本软件按"原样"提供，不提供任何明示或默示的担保，包括但不限于适销性、
+特定用途适用性的担保。在任何情况下，作者或版权持有人都不对任何索赔、
+损害或其他责任负责，无论这些责任源自合同、侵权或其他行为，也不论与
+本软件的使用或其他交易是否相关。
+
+---
+
+Jiange Dual-Track License (Personal Free / Commercial Paid)
+Copyright (c) 2026 ZSeven-W
+
+1. Grants
+
+   a) Personal & non-commercial use: any individual or non-commercial
+      organization may use, copy, and modify this software free of charge
+      for personal study, research, evaluation, or other non-commercial
+      purposes, provided that this license and the original copyright
+      notice are retained.
+
+   b) Commercial use: any revenue-generating use — including but not
+      limited to internal business operations, hosting/SaaS offerings,
+      embedding in commercial products, or providing paid services —
+      requires a separately purchased commercial license from the
+      copyright holder before such use.
+
+   c) Commercial licensing terms (scope, duration, fees) are governed by
+      the commercial license agreement negotiated with the copyright
+      holder.
+
+2. Restrictions
+
+   a) You may not patent the software or claim its original content as
+      third-party intellectual property without written permission.
+   b) You may not remove or obscure copyright notices or attribution.
+   c) This license grants no trademark rights.
+
+3. Disclaimer
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+   LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+   OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
