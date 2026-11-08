@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/store"
@@ -15,7 +16,7 @@ const catchUpChunk = 1000
 // A busy multi-instance document can advance between our read and conditional
 // write. Retry without dropping the other clients in this room, but bound the
 // work per incoming batch so a contended room cannot monopolize its mutex.
-const maxAppendAttempts = 32
+const maxAppendAttempts = 128
 
 type room struct {
 	hub  *Hub
@@ -343,16 +344,36 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 			c.send(collab.EncodeServerAck(uint64(r.head+1), 0))
 			return nil
 		}
-		seqs, err = r.hub.Store.AppendOpsAtHead(store.WithDocumentActor(ctx, c.user.ID), r.id, r.head, raws)
+		writeCtx := store.WithDocumentActor(ctx, c.user.ID)
+		if c.writeGuard != nil {
+			seqs, err = r.hub.Store.AppendOpsAtHeadGuarded(writeCtx, *c.writeGuard, r.id, r.head, raws)
+		} else {
+			// Direct room fixtures do not pass through Hub.Serve.
+			seqs, err = r.hub.Store.AppendOpsAtHead(writeCtx, r.id, r.head, raws)
+		}
 		if err != nil {
 			tx.Rollback()
 			if errors.Is(err, store.ErrConflict) {
+				// Give other instances time to finish their bursts; vary the
+				// delay by replica so competing rooms do not retry in lockstep.
+				delay := time.Duration(1+(attempt*5+int(c.clientID%7))%8) * time.Millisecond
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
 				continue
 			}
 			if errors.Is(err, store.ErrOpIdentityConflict) {
 				// A single invalid client must not reset other collaborators.
 				// The rollback left this room at its last durable head.
 				c.send(collab.EncodeError("bad_ops", "operation identity conflicts with document history"))
+				return errBatchRejected
+			}
+			if errors.Is(err, store.ErrForbidden) || errors.Is(err, store.ErrUnauthenticated) || errors.Is(err, store.ErrNotFound) {
+				c.send(collab.EncodeError("read_only", "session or edit access is no longer valid"))
 				return errBatchRejected
 			}
 			r.hub.Log.Error("append ops", "doc", r.id, "err", err)

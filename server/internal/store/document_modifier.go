@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -9,6 +10,7 @@ import (
 // The actor is assigned by the authenticated sync connection, never by the
 // operation payload. A missing actor means attribution is unknown.
 type documentActorKey struct{}
+type documentWriteGuardKey struct{}
 
 func WithDocumentActor(ctx context.Context, userID int64) context.Context {
 	return context.WithValue(ctx, documentActorKey{}, userID)
@@ -17,6 +19,17 @@ func WithDocumentActor(ctx context.Context, userID int64) context.Context {
 func documentActor(ctx context.Context) int64 {
 	id, _ := ctx.Value(documentActorKey{}).(int64)
 	return id
+}
+
+// Bind a guarded append to its original authenticated session internally.
+func withDocumentWriteGuard(ctx context.Context, guard RestoreGuard) context.Context {
+	guard.SessionHash = slices.Clone(guard.SessionHash)
+	return context.WithValue(ctx, documentWriteGuardKey{}, guard)
+}
+
+func documentWriteGuard(ctx context.Context) (RestoreGuard, bool) {
+	guard, ok := ctx.Value(documentWriteGuardKey{}).(RestoreGuard)
+	return guard, ok
 }
 
 // Caller holds the memory-store lock. Unknown writers clear stale attribution.

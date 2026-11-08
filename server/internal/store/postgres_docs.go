@@ -203,8 +203,13 @@ func (p *Postgres) AppendOpsAtHead(ctx context.Context, doc, expectedHead int64,
 	return p.appendOps(ctx, doc, &expectedHead, ops)
 }
 
+func (p *Postgres) AppendOpsAtHeadGuarded(ctx context.Context, guard RestoreGuard, doc, expectedHead int64, ops []RawOp) ([]int64, error) {
+	return p.appendOps(withDocumentWriteGuard(ctx, guard), doc, &expectedHead, ops)
+}
+
 func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64, ops []RawOp) (seqs []int64, err error) {
 	seqs = make([]int64, len(ops))
+	guard, guarded := documentWriteGuard(ctx)
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var head int64
 		if err := tx.QueryRow(ctx, `SELECT seq FROM doc_heads WHERE doc_id=$1 FOR UPDATE`, doc).Scan(&head); err != nil {
@@ -213,11 +218,48 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 			}
 			return err
 		}
+		nodeLocked := false
+		var expires time.Time
+		if guarded {
+			var e error
+			expires, e = drivePGSession(ctx, tx, guard)
+			if e != nil {
+				return e
+			}
+			var ws int64
+			var kind string
+			var deleted bool
+			e = tx.QueryRow(ctx, `SELECT workspace_id,kind,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&ws, &kind, &deleted)
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrForbidden
+			}
+			if e != nil {
+				return e
+			}
+			if kind != "doc" || deleted {
+				return ErrForbidden
+			}
+			nodeLocked = true
+			role, _, _, e := lockCopySource(ctx, tx, doc, guard.UserID)
+			if errors.Is(e, ErrNotFound) {
+				return ErrForbidden
+			}
+			if e != nil {
+				return e
+			}
+			if RoleRank(role) < RoleRank(RoleEdit) {
+				return ErrForbidden
+			}
+			if e = drivePGValidChain(ctx, tx, doc, ws); errors.Is(e, ErrConflict) {
+				return ErrForbidden
+			} else if e != nil {
+				return e
+			}
+		}
 		if expectedHead != nil && head != *expectedHead {
 			return ErrConflict
 		}
 		start := head
-		nodeLocked := false
 		for i, op := range ops {
 			duplicate, err := checkOperationIdentity(ctx, tx, doc, op)
 			if err != nil {
@@ -253,6 +295,9 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 			seqs[i] = head
 		}
 		if head == start {
+			if guarded {
+				return drivePGEnd(ctx, guard, expires)
+			}
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `UPDATE doc_heads SET seq=$2 WHERE doc_id=$1`, doc, head); err != nil {
@@ -261,12 +306,24 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc); err != nil {
 			return err
 		}
-		if err := recordDocumentModifier(ctx, tx, doc, documentActor(ctx)); err != nil {
+		actor := documentActor(ctx)
+		if guarded {
+			actor = guard.UserID
+		}
+		if err := recordDocumentModifier(ctx, tx, doc, actor); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10))
-		return err
+		if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10)); err != nil {
+			return err
+		}
+		if guarded {
+			return drivePGEnd(ctx, guard, expires)
+		}
+		return nil
 	})
+	if guarded && retryableRestoreConflict(err) {
+		err = ErrConflict
+	}
 	return
 }
 

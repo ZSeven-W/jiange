@@ -105,7 +105,11 @@ func checkNamedSnapshotRecovery(t *testing.T, st store.Store) {
 	}
 
 	hub := &syncsrv.Hub{Store: st}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.Serve(w, r, user, nil) }))
+	guard := store.RestoreGuard{UserID: user.ID, SessionHash: []byte("snapshot-versions-session")}
+	if err := st.CreateSession(ctx, guard.SessionHash, user.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.Serve(w, r, user, nil, guard) }))
 	defer server.Close()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {
