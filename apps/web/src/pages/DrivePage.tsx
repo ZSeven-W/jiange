@@ -4,7 +4,7 @@ import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, PencilIcon, PlusIcon, RotateCcwIcon, StarIcon, TableIcon, Trash2Icon } from "lucide-react";
+import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, LayoutGridIcon, ListIcon, PencilIcon, PlusIcon, RotateCcwIcon, SearchIcon, StarIcon, TableIcon, Trash2Icon } from "lucide-react";
 
 type DriveSort = "name" | "updated";
 
@@ -25,6 +25,8 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
   // 顶层空间由路由决定；目录内空间由其条目继承（子节点跟随父目录）
   const scope = folderId === null ? personalRoot : (list.data?.[0]?.personal ?? false);
   const [sort, setSort] = useState<DriveSort>("name");
+  const [grid, setGrid] = useState(false);
+  const [filter, setFilter] = useState("");
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["drive"] });
     qc.invalidateQueries({ queryKey: ["drive-ancestors"] });
@@ -78,8 +80,13 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
     });
     return es;
   }, [list.data, sort]);
-  const folders = entries.filter((e) => e.kind === "folder");
-  const files = entries.filter((e) => e.kind !== "folder");
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter((e) => (e.title || "未命名").toLowerCase().includes(q));
+  }, [entries, filter]);
+  const folders = visible.filter((e) => e.kind === "folder");
+  const files = visible.filter((e) => e.kind !== "folder");
   // Ancestors 返回从直接父级到根；渲染为 根→…→父级
   const crumbsOrdered = useMemo(() => [...(crumbs.data ?? [])].reverse(), [crumbs.data]);
 
@@ -116,6 +123,24 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
           </nav>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <div className="relative">
+            <SearchIcon size={14} strokeWidth={1.7} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-subtle" />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="搜索当前目录"
+              className="h-8 w-[180px] rounded-md border pl-8 pr-2.5 text-[13px] outline-none focus:border-primary"
+              data-drive-search
+            />
+          </div>
+          <button
+            className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:bg-hover hover:text-foreground"
+            onClick={() => setGrid((v) => !v)}
+            title={grid ? "切换为列表视图" : "切换为网格视图"}
+            data-drive-view
+          >
+            {grid ? <ListIcon size={15} strokeWidth={1.7} /> : <LayoutGridIcon size={15} strokeWidth={1.7} />}
+          </button>
           <div className="relative">
             <button
               className="flex h-8 items-center gap-1 rounded-md border px-2.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
@@ -178,7 +203,25 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {list.isError && <p className="py-12 text-center text-[13px] text-subtle">无法访问该目录（可能已删除或无权限）</p>}
-        {!list.isError && (
+        {!list.isError && grid ? (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3" data-drive-grid>
+            {visible.map((e) => (
+              <div
+                key={e.id}
+                className="group flex cursor-pointer flex-col gap-2 rounded-lg border p-3 hover:bg-sidebar"
+                data-drive-row={e.id}
+                onClick={() => (location.hash = e.kind === "folder" ? `#/drive/${e.id}` : hrefOf({ id: e.id, kind: e.kind as "doc" | "base" }))}
+              >
+                <span className="text-primary">
+                  {e.kind === "folder" ? <FolderIcon size={28} strokeWidth={1.5} /> : e.kind === "base" ? <BaseIcon /> : <DocIcon />}
+                </span>
+                <span className="truncate text-[13px]">{e.title || "未命名"}</span>
+                <span className="text-[11px] text-subtle">{e.updatedAt ? new Date(e.updatedAt).toLocaleDateString("zh-CN") : ""}</span>
+              </div>
+            ))}
+            {visible.length === 0 && list.isSuccess && <p className="col-span-full py-12 text-center text-[13px] text-subtle" data-drive-empty>{filter ? "没有匹配的条目" : "此文件夹为空"}</p>}
+          </div>
+        ) : !list.isError && (
           <div className="overflow-hidden rounded-lg border" data-drive-list>
             {folders.map((e) => (
               <DriveRow
@@ -210,7 +253,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                 onTrash={() => void ask(`删除「${e.title}」？`, "会移到回收站，可恢复。").then((ok) => ok && trash.mutate(e))}
               />
             ))}
-            {entries.length === 0 && list.isSuccess && <p className="px-4 py-12 text-center text-[13px] text-subtle" data-drive-empty>{scope ? "此处为空；我的空间仅自己可见，分享后他人才能访问" : "此文件夹为空"}</p>}
+            {visible.length === 0 && list.isSuccess && <p className="px-4 py-12 text-center text-[13px] text-subtle" data-drive-empty>{filter ? "没有匹配的条目" : scope ? "此处为空；我的空间仅自己可见，分享后他人才能访问" : "此文件夹为空"}</p>}
           </div>
         )}
       </div>
