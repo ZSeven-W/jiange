@@ -343,11 +343,12 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	if patch.Move {
 		d.meta.ParentID = patch.ParentID
-		m.setDocumentModifierLocked(d, 0)
+		d.meta.UpdatedAt = time.Now()
+		m.setDocumentModifierLocked(d, guard.UserID)
 	}
 	if patch.Title != nil {
 		d.meta.Title, d.meta.UpdatedAt = *patch.Title, time.Now()
-		m.setDocumentModifierLocked(d, 0)
+		m.setDocumentModifierLocked(d, guard.UserID)
 	}
 	d.meta.CopyProtected = protected
 	d.meta.CopyMinRole, d.meta.DownloadMinRole = copyRole, downloadRole
@@ -416,6 +417,11 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 		}
 		if patch.Title != nil {
 			if _, err := tx.Exec(ctx, `UPDATE nodes SET title=$2,updated_at=now() WHERE id=$1`, docID, *patch.Title); err != nil {
+				return err
+			}
+		}
+		if patch.Move || patch.Title != nil {
+			if err := recordDocumentModifier(ctx, tx, docID, guard.UserID); err != nil {
 				return err
 			}
 		}

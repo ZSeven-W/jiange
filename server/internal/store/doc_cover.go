@@ -104,7 +104,7 @@ func (m *Memory) SetDocCoverGuarded(ctx context.Context, guard RestoreGuard, id 
 	cover.Revision = expected + 1
 	d.cover = cover
 	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, 0)
+	m.setDocumentModifierLocked(d, guard.UserID)
 	return cover, nil
 }
 
@@ -181,6 +181,9 @@ func (p *Postgres) SetDocCoverGuarded(ctx context.Context, guard RestoreGuard, i
 			fileID = &found
 		}
 		if _, e = tx.Exec(ctx, `UPDATE nodes SET cover_kind=$2,cover_asset=$3,cover_file_id=$4,cover_position=$5,cover_revision=cover_revision+1,updated_at=now() WHERE id=$1`, id, cover.Kind, cover.Asset, fileID, cover.Position); e != nil {
+			return e
+		}
+		if e = recordDocumentModifier(ctx, tx, id, guard.UserID); e != nil {
 			return e
 		}
 		if !guard.currentTime().Before(expiry) {

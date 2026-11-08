@@ -344,7 +344,7 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, 0)
+	m.setDocumentModifierLocked(d, g.UserID)
 	return nil
 }
 
@@ -386,7 +386,7 @@ func (m *Memory) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, 0)
+	m.setDocumentModifierLocked(d, g.UserID)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
 
@@ -860,6 +860,9 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 		if e != nil {
 			return e
 		}
+		if e = recordDocumentModifier(ctx, tx, id, g.UserID); e != nil {
+			return e
+		}
 		return drivePGEnd(ctx, g, exp)
 	})
 	return drivePGError(err)
@@ -1096,6 +1099,14 @@ func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64
 		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, id, title).
 			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
+		}
+		if e = recordDocumentModifier(ctx, tx, id, g.UserID); e != nil {
+			return e
+		}
+		if out.Kind == "doc" {
+			if e = tx.QueryRow(ctx, `SELECT name FROM users WHERE id=$1`, g.UserID).Scan(&out.LastModifierName); e != nil {
+				return e
+			}
 		}
 		if out.Kind == "file" {
 			tag, e := tx.Exec(ctx, `UPDATE attachments SET name=$2 WHERE id=(SELECT attachment_id FROM drive_files WHERE node_id=$1) AND doc_id=$1`, id, title)
