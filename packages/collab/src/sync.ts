@@ -137,9 +137,10 @@ export class SyncClient {
     this.setStatus("connecting");
     // The server also treats HELLO.lastSeq as an acknowledgement. Do not
     // advertise sequences received while local work remained unconfirmed.
-    // v2 HELLO (with the cached epoch) goes only to servers that already
-    // proved epoch support with a v2 WELCOME — a v1 server would reject the
-    // trailing byte and drop the connection.
+    // On first contact the transport advertises v2 support separately (the
+    // web transport uses ?protocol=2); the v1 frame remains safe for old
+    // servers, which ignore the hint and return a v1 WELCOME. Once a v2
+    // WELCOME establishes an epoch, subsequent HELLOs include it.
     const hello: ClientMsg = this.historyEpoch === null
       ? { type: "hello", docId: this.docId, clientId: this.clientId, lastSeq: this.safeSeq }
       : { type: "hello", docId: this.docId, clientId: this.clientId, lastSeq: this.safeSeq, historyEpoch: this.historyEpoch };
@@ -284,7 +285,17 @@ export class SyncClient {
         // A changed epoch invalidates every cached seq even at an unchanged
         // head: the log itself is a different generation (restore/PITR).
         const epoch = "historyEpoch" in m ? m.historyEpoch : undefined;
-        const epochChanged = epoch !== undefined && this.historyEpoch !== null && epoch !== this.historyEpoch;
+        if (epoch !== undefined && (!Number.isSafeInteger(epoch) || epoch < 1)) {
+          this.h.error?.("invalid_epoch", "服务器返回了无效的历史代际，已停止同步并保留本地草稿。");
+          throw new Error("invalid sync history epoch");
+        }
+        if (epoch === undefined && this.historyEpoch !== null) {
+          this.h.error?.("protocol_downgrade", "服务器未确认历史代际，已停止同步并保留本地草稿。");
+          throw new Error("sync protocol downgrade after epoch negotiation");
+        }
+        // Moving from a v1 connection with a cached replica to v2 is also a
+        // generation change: v1 sequences cannot be tied to any epoch.
+        const epochChanged = epoch !== undefined && epoch !== this.historyEpoch && this.doc !== null;
         if (epochChanged) {
           this.lastSeq = 0;
           this.safeSeq = 0;
@@ -300,7 +311,7 @@ export class SyncClient {
         if (m.snapshot || !this.doc || m.clientId !== this.clientId || epochChanged) {
           this.h.beforeRemote?.();
           const fresh = m.snapshot ? Doc.fromState(m.clientId, m.snapshot.state) : new Doc(m.clientId);
-          if (!m.snapshot && this.doc && m.clientId !== this.clientId) {
+          if (!m.snapshot && this.doc && m.clientId !== this.clientId && !epochChanged) {
             // server issued a new client id but no snapshot: keep our state, switch id
             this.doc.client = m.clientId;
           } else {

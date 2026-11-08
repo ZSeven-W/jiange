@@ -28,7 +28,7 @@ export interface SyncDoc {
 }
 
 function syncURL() {
-  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sync`;
+  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sync?protocol=2`;
 }
 
 /** Opens a live replica of a document over the Jiange sync protocol, reconnecting with backoff. */
