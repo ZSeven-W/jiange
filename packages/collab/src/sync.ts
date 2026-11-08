@@ -2,7 +2,7 @@ import { Doc } from "./doc";
 import { decodeOps, encodeOps } from "./encoding";
 import { idKey } from "./id";
 import type { Op } from "./ops";
-import { decodeServerMsg, encodeClientMsg } from "./protocol";
+import { decodeServerMsg, encodeClientMsg, type ClientMsg } from "./protocol";
 
 export type SyncStatus = "connecting" | "synced" | "syncing" | "offline";
 
@@ -43,6 +43,9 @@ export class SyncClient {
   private awareness: string | null = null;
   status: SyncStatus = "connecting";
   droppedOnResync = 0;
+  /** History generation of the log this replica last synced with; a change
+   * means the server rewound (restore/PITR) and every cached seq is void. */
+  private historyEpoch: number | null = null;
   private welcomeHead: number | null = null;
   private sequenceGap = false;
   private _caughtUp = false;
@@ -122,6 +125,9 @@ export class SyncClient {
     this.send(encodeClientMsg({ type: "ack", seq: this.safeSeq }));
   }
 
+  /** History epoch this replica last synced with (null = v1 server / first contact). */
+  get epoch(): number | null { return this.historyEpoch; }
+
   /** Attach a freshly opened transport. */
   open(send: (b: Uint8Array) => void) {
     this.send = send;
@@ -131,7 +137,13 @@ export class SyncClient {
     this.setStatus("connecting");
     // The server also treats HELLO.lastSeq as an acknowledgement. Do not
     // advertise sequences received while local work remained unconfirmed.
-    send(encodeClientMsg({ type: "hello", docId: this.docId, clientId: this.clientId, lastSeq: this.safeSeq }));
+    // v2 HELLO (with the cached epoch) goes only to servers that already
+    // proved epoch support with a v2 WELCOME — a v1 server would reject the
+    // trailing byte and drop the connection.
+    const hello: ClientMsg = this.historyEpoch === null
+      ? { type: "hello", docId: this.docId, clientId: this.clientId, lastSeq: this.safeSeq }
+      : { type: "hello", docId: this.docId, clientId: this.clientId, lastSeq: this.safeSeq, historyEpoch: this.historyEpoch };
+    send(encodeClientMsg(hello));
   }
 
   /** Transport closed: keep unacked ops for the next connection. */
@@ -269,13 +281,23 @@ export class SyncClient {
     const m = decodeServerMsg(bytes);
     switch (m.type) {
       case "welcome": {
+        // A changed epoch invalidates every cached seq even at an unchanged
+        // head: the log itself is a different generation (restore/PITR).
+        const epoch = "historyEpoch" in m ? m.historyEpoch : undefined;
+        const epochChanged = epoch !== undefined && this.historyEpoch !== null && epoch !== this.historyEpoch;
+        if (epochChanged) {
+          this.lastSeq = 0;
+          this.safeSeq = 0;
+          this.droppedOnResync++;
+        }
+        if (epoch !== undefined) this.historyEpoch = epoch;
         const pending = this.inflight.flat().concat(this.queued);
         this.inflight = [];
         this.awaitingFence = false;
         this.deferredAcks = [];
         this.queued = [];
         let rebuilt = false;
-        if (m.snapshot || !this.doc || m.clientId !== this.clientId) {
+        if (m.snapshot || !this.doc || m.clientId !== this.clientId || epochChanged) {
           this.h.beforeRemote?.();
           const fresh = m.snapshot ? Doc.fromState(m.clientId, m.snapshot.state) : new Doc(m.clientId);
           if (!m.snapshot && this.doc && m.clientId !== this.clientId) {
