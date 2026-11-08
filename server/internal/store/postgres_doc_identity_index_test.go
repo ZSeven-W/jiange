@@ -68,6 +68,10 @@ func TestPostgresOperationIndexUpgrade(t *testing.T) {
 	  INSERT INTO doc_heads(doc_id,seq) VALUES(1,2),(2,2),(4,2),(5,2)`); err != nil {
 		t.Fatal(err)
 	}
+	// 新二进制读取 0036 的列；本测试只保留 28 未应用以模拟身份索引懒回填
+	if _, err := pool.Exec(ctx, `ALTER TABLE doc_heads ADD COLUMN history_epoch bigint NOT NULL DEFAULT 1`); err != nil {
+		t.Fatal(err)
+	}
 	raw := func(clock uint64, text string) store.RawOp {
 		op := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 12, Clock: clock}, Block: collab.OpID{Client: 1, Clock: 1}, Parent: collab.Root, Side: 1, Text: text}
 		b, e := collab.EncodeOps([]collab.Op{op})
