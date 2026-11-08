@@ -22,6 +22,8 @@ type Memory struct {
 	d                memDocs
 	sh               memShare
 	b                memBase
+	slides          []SlidesPage
+	slidesSequence  int64
 	comments         []Comment
 	commentSequence  int64
 	notifications    []Notification

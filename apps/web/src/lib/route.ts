@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
 
 export function parseHash(h: string): Route {
   const m = /^#\/doc\/(\d+)/.exec(h);
   if (m) return { page: "doc", id: Number(m[1]) };
   const bm = /^#\/base\/(\d+)/.exec(h);
   if (bm) return { page: "base", id: Number(bm[1]) };
+  const sm = /^#\/slides\/(\d+)/.exec(h);
+  if (sm) return { page: "slides", id: Number(sm[1]) };
   const j = /^#\/s\/([0-9a-f]+)/.exec(h);
   if (j) return { page: "join", token: j[1] };
   if (h.startsWith("#/recent")) return { page: "recent" };

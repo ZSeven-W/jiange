@@ -79,8 +79,8 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Kind != "doc" && in.Kind != "base" && in.Kind != "folder" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "kind 必须是 doc/base/folder")
+	if in.Kind != "doc" && in.Kind != "base" && in.Kind != "folder" && in.Kind != "slides" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "kind 必须是 doc/base/folder/slides")
 		return
 	}
 	if in.WorkspaceID == 0 {

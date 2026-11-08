@@ -15,6 +15,7 @@ import { BasePage } from "@/pages/BasePage";
 import { PublicForm } from "@/pages/PublicForm";
 import { PublicDoc } from "@/pages/PublicDoc";
 import { DrivePage } from "@/pages/DrivePage";
+import { SlidesDeck } from "@/pages/SlidesPage";
 import { AskHost } from "@/components/ui/ask";
 
 export default function App() {
@@ -93,6 +94,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <JoinLink token={route.token} />
       ) : route.page === "drive" ? (
         <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} />
+      ) : route.page === "slides" ? (
+        <SlidesDeck key={route.id} deckId={route.id} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (
