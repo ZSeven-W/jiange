@@ -298,7 +298,7 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
       </div>}
     </div>;
   };
-  return <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7]">
+  return <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7] xl:w-[300px]">
     <div className="flex h-14 items-center px-5"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]"/><span className="ml-2 text-[14px] font-semibold">Jiange 云文档</span></div>
     <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label="返回主页" onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">云盘</span></div>
     <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索<span className="ml-auto text-[11px] text-[#b3b8bf]">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</span></button>

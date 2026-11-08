@@ -284,6 +284,7 @@ export interface Automation {
 export interface DriveEntry {
   id: number;
   workspaceId: number;
+  creatorId?: number;
   parentId: number | null;
   kind: string;
   title: string;
