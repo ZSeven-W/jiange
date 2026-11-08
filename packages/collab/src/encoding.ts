@@ -5,7 +5,7 @@ import type { Anchor, Op, Side } from "./ops";
 export const MAGIC = 0x4a;
 export const VERSION = 1;
 
-export const TAG = { bcreate: 1, bmove: 2, bset: 3, bdel: 4, tins: 5, tdel: 6, mark: 7 } as const;
+export const TAG = { bcreate: 1, bmove: 2, bset: 3, bdel: 4, tins: 5, tdel: 6, mark: 7, ttable: 8 } as const;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder("utf-8", { fatal: true });
@@ -45,6 +45,13 @@ export class Writer {
     this.uvar(id.client);
     this.uvar(id.clock);
   }
+  /** Length-prefixed raw bytes. */
+  blob(b: Uint8Array) {
+    this.uvar(b.length);
+    this.ensure(b.length);
+    this.buf.set(b, this.n);
+    this.n += b.length;
+  }
   bytes(): Uint8Array {
     return this.buf.slice(0, this.n);
   }
@@ -80,6 +87,14 @@ export class Reader {
   }
   id(): OpId {
     return { client: this.uvar(), clock: this.uvar() };
+  }
+  /** Length-prefixed raw bytes. */
+  blob(): Uint8Array {
+    const n = this.uvar();
+    if (this.i + n > this.b.length) throw new RangeError("unexpected end of input");
+    const out = this.b.slice(this.i, this.i + n);
+    this.i += n;
+    return out;
   }
 }
 
@@ -126,6 +141,10 @@ export function writeOp(w: Writer, op: Op): void {
       w.id(op.target);
       w.uvar(op.len);
       return;
+    case "ttable":
+      w.id(op.block);
+      w.blob(op.payload);
+      return;
     case "mark":
       w.id(op.block);
       w.str(op.key);
@@ -158,6 +177,8 @@ export function readOp(r: Reader): Op {
       return { t: "tins", id, block: r.id(), parent: r.id(), side: side(r), text: r.str() };
     case TAG.tdel:
       return { t: "tdel", id, block: r.id(), target: r.id(), len: r.uvar() };
+    case TAG.ttable:
+      return { t: "ttable", id, block: r.id(), payload: r.blob() };
     case TAG.mark: {
       const block = r.id();
       const key = r.str();

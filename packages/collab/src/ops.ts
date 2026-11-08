@@ -18,7 +18,12 @@ export type Op =
   /** Deletes chars (target.client, target.clock .. target.clock+len-1). */
   | { t: "tdel"; id: OpId; block: OpId; target: OpId; len: number }
   /** Formats the span between two anchors; value null removes the mark key. */
-  | { t: "mark"; id: OpId; block: OpId; key: string; value: string | null; start: Anchor; end: Anchor };
+  | { t: "mark"; id: OpId; block: OpId; key: string; value: string | null; start: Anchor; end: Anchor }
+  /** Carries one experimental-table sub-CRDT operation for `block` as opaque
+   * bytes. Consumes exactly one Lamport tick; the table op's internal OpId is
+   * this op's id (reserved via Doc.allocateOpIds). Old clients reject the
+   * tag, so servers must gate these ops to v2-negotiated rooms. */
+  | { t: "ttable"; id: OpId; block: OpId; payload: Uint8Array };
 
 /** Number of Lamport ticks an op consumes. */
 export function opSpan(op: Op): number {
