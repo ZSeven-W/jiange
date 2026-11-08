@@ -251,7 +251,11 @@ func (m *Memory) DeleteFile(_ context.Context, id int64) (string, int64, error) 
 	if id < 1 || int(id) > len(m.sh.files) || m.sh.files[id-1].ID == 0 {
 		return "", 0, ErrNotFound
 	}
-	key := m.sh.files[id-1].ObjectKey
+	file := m.sh.files[id-1]
+	if d := m.doc(file.DocID); d != nil && d.meta.Kind == "file" && !d.purged && d.driveFileID == id {
+		return "", 0, ErrConflict
+	}
+	key := file.ObjectKey
 	m.sh.files[id-1] = FileMeta{}
 	var refs int64
 	for _, f := range m.sh.files {

@@ -314,7 +314,7 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	if patch.Move && patch.ParentID != nil {
 		parent := m.doc(*patch.ParentID)
-		if parent == nil || parent.deleted || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleView) {
+		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleView) {
 			return ErrNotFound
 		}
 		seen := map[int64]bool{}
@@ -377,8 +377,8 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 			if err := tx.QueryRow(ctx, `SELECT workspace_id FROM nodes WHERE id=$1`, docID).Scan(&workspace); err != nil {
 				return err
 			}
-			role, _, _, err := lockCopySource(ctx, tx, *patch.ParentID, guard.UserID)
-			if errors.Is(err, ErrNotFound) || err == nil && RoleRank(role) < RoleRank(RoleView) {
+			role, _, kind, err := lockCopySource(ctx, tx, *patch.ParentID, guard.UserID)
+			if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleView)) {
 				return ErrNotFound
 			}
 			if err != nil {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
-import { go, type Route } from "@/lib/route";
+import { go, nodeHref, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
@@ -11,13 +11,7 @@ import { DocColorIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
 
-export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => {
-  if (d.kind === "base") return `#/base/${d.id}`;
-  if (d.kind === "slides") return `#/slides/${d.id}`;
-  if (d.kind === "folder") return `#/drive/${d.id}`;
-  // 未知资源类型不得伪装成文档：路由层会兜底显示"不支持的类型"
-  return `#/doc/${d.id}`;
-};
+export const hrefOf = nodeHref;
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
 
 export function renameErrorMessage(error: unknown): string {
@@ -117,7 +111,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
     return m;
   }, [docs.data]);
   // expand ancestors of the open doc
-  const activeId = route.page === "doc" || route.page === "base" ? route.id : null;
+  const activeId = route.page === "doc" || route.page === "base" || route.page === "file" ? route.id : null;
   const ancestors = useMemo(() => {
     const byId = new Map((docs.data ?? []).map((d) => [d.id, d]));
     const out = new Set<number>();
@@ -194,7 +188,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={() => setSearchOpen(true)} onCloseSearch={() => setSearchOpen(false)} />;
 
   return (
-    <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
+    <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="relative px-3 pt-4">
         <div className="flex h-8 items-center px-2"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" /><span className="ml-2 text-[14px] font-semibold tracking-[-0.01em]">Jiange 云文档</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
@@ -304,10 +298,10 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
       </div>}
     </div>;
   };
-  return <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7]">
+  return <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7]">
     <div className="flex h-14 items-center px-5"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]"/><span className="ml-2 text-[14px] font-semibold">Jiange 云文档</span></div>
     <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label="返回主页" onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">云盘</span></div>
-    <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索</button>
+    <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索<span className="ml-auto text-[11px] text-[#b3b8bf]">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</span></button>
     <nav className="min-h-0 flex-1 overflow-y-auto px-2">{group(true)}{group(false)}{error && <p role="alert" className="px-2 text-xs text-destructive">{error}</p>}</nav>
     {searchOpen && <GlobalSearch userId={userId} onClose={onCloseSearch}/>}
   </aside>;

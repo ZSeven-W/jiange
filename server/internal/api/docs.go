@@ -71,7 +71,7 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.ParentID != nil {
 		p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID)
-		if err != nil || p.WorkspaceID != in.WorkspaceID {
+		if err != nil || p.WorkspaceID != in.WorkspaceID || p.Kind == "file" {
 			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
 			return
 		}
@@ -129,6 +129,10 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.Kind == "file" {
+		httpx.Error(w, http.StatusConflict, "drive_file", "请使用云盘操作文件")
+		return
+	}
 	var in docInput
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -163,7 +167,7 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Move && in.ParentID != nil {
 		u, _ := UserFrom(r.Context())
-		if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID {
+		if p, err := s.Store.GetDoc(r.Context(), u.ID, *in.ParentID); err != nil || p.WorkspaceID != d.WorkspaceID || p.Kind == "file" {
 			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
 			return
 		}
@@ -244,6 +248,10 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
 	d, ok := s.need(w, r, store.RoleManage)
 	if !ok {
+		return
+	}
+	if d.Kind == "file" {
+		httpx.Error(w, http.StatusConflict, "drive_file", "请使用云盘回收文件")
 		return
 	}
 	if err := s.Store.Trash(r.Context(), d.ID); err != nil {

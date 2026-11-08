@@ -30,8 +30,8 @@ func (p *Postgres) CreateInitializedBase(ctx context.Context, ws, creator int64,
 		if parent != nil {
 			// Lock the full parent chain, so trashing any ancestor cannot race
 			// publication of a child under a deeper descendant.
-			role, _, _, err := lockCopySource(ctx, tx, *parent, creator)
-			if errors.Is(err, ErrNotFound) || err == nil && RoleRank(role) < RoleRank(RoleView) {
+			role, _, kind, err := lockCopySource(ctx, tx, *parent, creator)
+			if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleView)) {
 				return ErrNotFound
 			}
 			if err != nil {

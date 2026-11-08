@@ -115,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/docs/{id}/members":                        s.docMembers,
 		"GET /api/notifications":                            s.listNotifications,
 		"POST /api/notifications/read":                      s.markNotificationsRead,
+		"POST /api/drive/files":                             s.postDriveFile,
+		"GET /api/drive/files/{id}":                         s.getDriveFile,
 		"POST /api/drive/folders":                           s.postDriveFolder,
 		"POST /api/drive/nodes":                             s.postDriveNode,
 		"GET /api/drive/children":                           s.listDriveChildren,

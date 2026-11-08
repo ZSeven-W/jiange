@@ -67,6 +67,7 @@ type FileMeta struct {
 	Mime       string    `json:"mime"`
 	Size       int64     `json:"size"`
 	ObjectKey  string    `json:"-"`
+	Personal   bool      `json:"personal,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
 

@@ -10,7 +10,7 @@ type DocMeta struct {
 	ID          int64     `json:"id"`
 	WorkspaceID int64     `json:"workspaceId"`
 	ParentID    *int64    `json:"parentId"`
-	Kind        string    `json:"kind"` // doc | base
+	Kind        string    `json:"kind"` // doc | base | folder | slides | file
 	Title       string    `json:"title"`
 	Icon        string    `json:"icon"`
 	CreatorID   int64     `json:"creatorId"`

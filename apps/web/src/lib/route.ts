@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
 
 export function parseHash(h: string): Route {
   const m = /^#\/doc\/(\d+)/.exec(h);
   if (m) return { page: "doc", id: Number(m[1]) };
   const bm = /^#\/base\/(\d+)/.exec(h);
   if (bm) return { page: "base", id: Number(bm[1]) };
+  const file = /^#\/file\/(\d+)\/?$/.exec(h);
+  if (file) return { page: "file", id: Number(file[1]) };
   const sm = /^#\/slides\/(\d+)/.exec(h);
   if (sm) return { page: "slides", id: Number(sm[1]) };
   const j = /^#\/s\/([0-9a-f]+)/.exec(h);
@@ -43,3 +45,12 @@ export function useRoute(): Route {
 export const go = (hash: string) => {
   location.hash = hash;
 };
+
+/** Route known node kinds to their dedicated editor or viewer. */
+export function nodeHref(d: { id: number; kind?: string }): string {
+  if (d.kind === "base") return `#/base/${d.id}`;
+  if (d.kind === "slides") return `#/slides/${d.id}`;
+  if (d.kind === "file") return `#/file/${d.id}`;
+  if (d.kind === "folder") return `#/drive/${d.id}`;
+  return `#/doc/${d.id}`;
+}

@@ -88,7 +88,7 @@ func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int
 func (p *Postgres) ListDocs(ctx context.Context, uid int64) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0) FROM nodes n
 		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.deleted_at IS NULL AND (NOT n.personal OR n.creator_id = $1) ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
+		WHERE n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1) ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
 	if err != nil {
 		return nil, err
 	}

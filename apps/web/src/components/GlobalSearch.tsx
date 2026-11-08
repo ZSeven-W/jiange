@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Clock3, Filter, Grid2X2, Search, X } from "lucide-react";
+import { Clock3, FileText, Filter, Grid2X2, Presentation, Search, X } from "lucide-react";
 import { ApiError, docsApi, extrasApi, type DocMeta } from "@/lib/api";
-import { go } from "@/lib/route";
+import { go, nodeHref } from "@/lib/route";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { DocColorIcon } from "./FeishuIcons";
 import { SearchOpenGuard, searchKeyboardTarget } from "./globalSearchActions";
@@ -103,7 +103,7 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
         return;
       }
       onClose(false);
-      go(current.kind === "base" ? `#/base/${current.id}` : `#/doc/${current.id}`);
+      go(nodeHref(current));
     } catch (error) {
       if (!openGuard.current.current(version)) return;
       setOpenError(error instanceof ApiError && [401, 403, 404].includes(error.status)
@@ -148,7 +148,7 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
           <span className="grid size-6 place-items-center rounded-full bg-[#3370ff] text-white"><Search size={14}/></span>高级搜索
         </button>
         {advanced && <div className="mx-1 mb-2 flex flex-wrap items-end gap-3 rounded-md border px-3 py-2 text-[12px] text-muted-foreground">
-          <label className="grid gap-1">文档类型<select aria-label="文档类型筛选" value={kind} onChange={(e) => { invalidateOpen(); setKind(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">全部类型</option><option value="doc">文档</option><option value="base">多维表格</option><option value="folder">文件夹</option></select></label>
+          <label className="grid gap-1">文档类型<select aria-label="文档类型筛选" value={kind} onChange={(e) => { invalidateOpen(); setKind(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">全部类型</option><option value="doc">文档</option><option value="base">多维表格</option><option value="folder">文件夹</option><option value="file">文件</option><option value="slides">幻灯片</option></select></label>
           <label className="grid gap-1">所有者<select aria-label="所有者筛选" value={owner} onChange={(e) => { invalidateOpen(); setOwner(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">所有人</option><option value="mine">我创建的</option></select></label>
           <label className="grid gap-1">更新时间<select aria-label="更新时间筛选" value={within} onChange={(e) => { invalidateOpen(); setWithin(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="0">全部时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
           <span className="pb-1">{keyword ? "筛选当前搜索结果" : "筛选最近浏览"}</span>
@@ -161,7 +161,7 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
         {state.status === "ready" && !docs.length && <p className="px-2 py-8 text-center text-[13px] text-subtle">没有符合筛选条件的文档</p>}
         <div id={`${instance}-results`} role="listbox" aria-label={keyword ? "搜索结果" : "最近浏览"}>
         {state.status === "ready" && docs.map((doc) => <button id={`${instance}-result-${doc.id}`} role="option" aria-selected={selected === doc.id} key={`${doc.kind ?? "doc"}:${doc.id}`} type="button" disabled={opening !== null} onFocus={() => setSelected(doc.id)} onClick={() => void openDoc(doc)} className={`flex min-h-[59px] w-full items-center gap-3 rounded-md px-2 text-left hover:bg-hover focus-visible:bg-hover disabled:opacity-60 ${selected === doc.id ? "bg-hover" : ""}`}>
-          <span className="grid size-7 shrink-0 place-items-center">{doc.kind === "base" ? <Grid2X2 size={20} className="text-[#7b56d9]"/> : <DocumentGlyph icon={doc.icon} className="!size-6 !text-xl" fallback={<DocColorIcon className="size-6"/>}/>}</span>
+          <span className="grid size-7 shrink-0 place-items-center">{doc.kind === "base" ? <Grid2X2 size={20} className="text-[#7b56d9]"/> : doc.kind === "file" ? <FileText size={20} className="text-[#3370ff]"/> : doc.kind === "slides" ? <Presentation size={20} className="text-[#ff8800]"/> : <DocumentGlyph icon={doc.icon} className="!size-6 !text-xl" fallback={<DocColorIcon className="size-6"/>}/>}</span>
           <span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium">{doc.title.trim() || "未命名文档"}</span><span className="mt-0.5 block truncate text-[12px] text-subtle">{doc.workspaceName || "我的文档库"}{doc.creatorName ? ` · 所有者：${doc.creatorName}` : ""}{doc.viewedAt ? ` · ${timeLabel(doc.viewedAt)}访问` : ""}</span></span>
         </button>)}
         </div>

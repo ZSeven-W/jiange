@@ -47,7 +47,7 @@ func (m *Memory) CreateInitializedBase(ctx context.Context, ws, creator int64, p
 	var parentID *int64
 	if parent != nil {
 		p := m.doc(*parent)
-		if p == nil || p.deleted || p.meta.WorkspaceID != ws || RoleRank(m.roleLocked(creator, p)) < RoleRank(RoleView) {
+		if p == nil || p.deleted || p.meta.Kind == "file" || p.meta.WorkspaceID != ws || RoleRank(m.roleLocked(creator, p)) < RoleRank(RoleView) {
 			return DocMeta{}, ErrNotFound
 		}
 		id := *parent
