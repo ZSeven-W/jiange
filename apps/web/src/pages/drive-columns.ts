@@ -1,28 +1,30 @@
-export type DriveColumn = "owner" | "updated" | "created";
+export type DriveColumn = "owner" | "modifier" | "updated" | "created";
 export type DriveColumnPreferences = { order: DriveColumn[]; visible: Record<DriveColumn, boolean> };
 
 export function defaultDriveColumns(): DriveColumnPreferences {
-  return { order: ["owner", "updated", "created"], visible: { owner: false, updated: true, created: true } };
+  return { order: ["owner", "modifier", "updated", "created"], visible: { owner: false, modifier: false, updated: true, created: true } };
 }
 
 /** Ignore corrupt or obsolete local settings instead of hiding columns unexpectedly. */
 export function readDriveColumns(storage: Pick<Storage, "getItem"> | undefined, userId: number): DriveColumnPreferences {
   try {
-    const current = storage?.getItem(`jiange:drive-columns:v2:${userId}`);
-    const raw = current ?? storage?.getItem(`jiange:drive-columns:v1:${userId}`);
+    const current = storage?.getItem(`jiange:drive-columns:v3:${userId}`);
+    const previous = current == null ? storage?.getItem(`jiange:drive-columns:v2:${userId}`) : null;
+    const raw = current ?? previous ?? storage?.getItem(`jiange:drive-columns:v1:${userId}`);
     if (!raw) return defaultDriveColumns();
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object") return defaultDriveColumns();
     const prefs = value as Partial<DriveColumnPreferences>;
     if (!Array.isArray(prefs.order) || new Set(prefs.order).size !== prefs.order.length || !prefs.order.includes("updated") || !prefs.order.includes("created") || typeof prefs.visible?.updated !== "boolean" || typeof prefs.visible?.created !== "boolean") return defaultDriveColumns();
-    if (current == null && prefs.order.length === 2) return { order: ["owner", ...prefs.order], visible: { owner: false, updated: prefs.visible.updated, created: prefs.visible.created } };
-    if (prefs.order.length !== 3 || !prefs.order.includes("owner") || typeof prefs.visible?.owner !== "boolean") return defaultDriveColumns();
-    return { order: [...prefs.order], visible: { owner: prefs.visible.owner, updated: prefs.visible.updated, created: prefs.visible.created } };
+    if (current == null && previous == null && prefs.order.length === 2) return { order: ["owner", "modifier", ...prefs.order], visible: { owner: false, modifier: false, updated: prefs.visible.updated, created: prefs.visible.created } };
+    if (current == null && prefs.order.length === 3 && prefs.order.includes("owner") && typeof prefs.visible?.owner === "boolean") return { order: prefs.order.flatMap((column): DriveColumn[] => column === "owner" ? [column, "modifier"] : [column]), visible: { owner: prefs.visible.owner, modifier: false, updated: prefs.visible.updated, created: prefs.visible.created } };
+    if (prefs.order.length !== 4 || !prefs.order.includes("owner") || !prefs.order.includes("modifier") || typeof prefs.visible?.owner !== "boolean" || typeof prefs.visible?.modifier !== "boolean") return defaultDriveColumns();
+    return { order: [...prefs.order], visible: { owner: prefs.visible.owner, modifier: prefs.visible.modifier, updated: prefs.visible.updated, created: prefs.visible.created } };
   } catch { return defaultDriveColumns(); }
 }
 
 export function writeDriveColumns(storage: Pick<Storage, "setItem"> | undefined, userId: number, prefs: DriveColumnPreferences): boolean {
-  try { if (!storage) return false; storage.setItem(`jiange:drive-columns:v2:${userId}`, JSON.stringify(prefs)); return true; }
+  try { if (!storage) return false; storage.setItem(`jiange:drive-columns:v3:${userId}`, JSON.stringify(prefs)); return true; }
   catch { return false; }
 }
 

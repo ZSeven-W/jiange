@@ -343,9 +343,11 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	if patch.Move {
 		d.meta.ParentID = patch.ParentID
+		m.setDocumentModifierLocked(d, 0)
 	}
 	if patch.Title != nil {
 		d.meta.Title, d.meta.UpdatedAt = *patch.Title, time.Now()
+		m.setDocumentModifierLocked(d, 0)
 	}
 	d.meta.CopyProtected = protected
 	d.meta.CopyMinRole, d.meta.DownloadMinRole = copyRole, downloadRole

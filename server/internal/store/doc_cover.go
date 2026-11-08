@@ -104,6 +104,7 @@ func (m *Memory) SetDocCoverGuarded(ctx context.Context, guard RestoreGuard, id 
 	cover.Revision = expected + 1
 	d.cover = cover
 	d.meta.UpdatedAt = time.Now()
+	m.setDocumentModifierLocked(d, 0)
 	return cover, nil
 }
 
