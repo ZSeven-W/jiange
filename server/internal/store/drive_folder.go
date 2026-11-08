@@ -230,6 +230,23 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
 	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
+	if kind == "doc" {
+		initial := InitialDocOps(title)
+		batch, e := prepareMemoryIdentityBatch(d, initial)
+		if e != nil {
+			return DriveEntry{}, e
+		}
+		for _, duplicate := range batch.duplicate {
+			if duplicate {
+				return DriveEntry{}, ErrOpIdentityConflict
+			}
+		}
+		batch.commit(d)
+		for i, op := range initial {
+			d.ids[[2]int64{op.ClientID, op.Clock}] = true
+			d.ops = append(d.ops, SeqOp{int64(i + 1), op.ClientID, op.Bytes})
+		}
+	}
 	if kind == "base" {
 		field := Field{BaseID: id, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
 		view := View{BaseID: id, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
@@ -698,10 +715,26 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 		}
 		out.Role = RoleManage
 		if kind == "doc" {
-			if _, e = tx.Exec(ctx, `INSERT INTO doc_heads (doc_id, seq) VALUES ($1, 0)`, out.ID); e != nil {
+			initial := InitialDocOps(title)
+			if _, e = tx.Exec(ctx, `INSERT INTO doc_heads (doc_id, seq) VALUES ($1, $2)`, out.ID, len(initial)); e != nil {
 				return e
 			}
-		} else {
+			for i, op := range initial {
+				duplicate, e := checkOperationIdentity(ctx, tx, out.ID, op)
+				if e != nil {
+					return e
+				}
+				if duplicate {
+					return ErrOpIdentityConflict
+				}
+				if _, e = tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1, $2, $3, $4, $5)`, out.ID, i+1, op.ClientID, op.Clock, op.Bytes); e != nil {
+					return e
+				}
+				if e = insertOperationRange(ctx, tx, out.ID, int64(i+1), op); e != nil {
+					return e
+				}
+			}
+		} else if kind == "base" {
 			if _, e = tx.Exec(ctx, `INSERT INTO base_fields (base_id,name,type,position,is_primary) VALUES ($1,'文本','text',1,true)`, out.ID); e != nil {
 				return e
 			}

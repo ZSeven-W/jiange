@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, type SlidesPage } from "@/lib/api";
 import { SlidesDraftQueue, type SlideContent } from "./slidesDraft";
 
-const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
+const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {

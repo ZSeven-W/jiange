@@ -46,17 +46,27 @@ func TestSlidesVerticalSlice(t *testing.T) {
 	p1u, err := store.SlidesPage{}, error(nil)
 	_ = p1u
 	_ = err
-	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111", "expectedRevision": p1.Revision}); res.StatusCode != 200 {
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111", "notes": "提醒听众", "expectedRevision": p1.Revision}); res.StatusCode != 200 {
 		t.Fatalf("patch: %d", res.StatusCode)
 	} else {
 		var got store.SlidesPage
 		json.NewDecoder(res.Body).Decode(&got)
-		if got.Title != "季度汇报" || got.Body != "要点一\n要点二" || got.Background != "#111" {
+		if got.Title != "季度汇报" || got.Body != "要点一\n要点二" || got.Background != "#111" || got.Notes != "提醒听众" {
 			t.Fatalf("patched: %+v", got)
 		}
 	}
 	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "旧内容", "body": "", "background": "#111", "expectedRevision": p1.Revision}); res.StatusCode != 409 {
 		t.Fatalf("stale patch must be rejected: %d", res.StatusCode)
+	}
+	// 旧客户端没有 notes 字段，更新页面时不得清除演示者备注。
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "新版标题", "body": "要点", "background": "#111", "expectedRevision": p1.Revision + 1}); res.StatusCode != 200 {
+		t.Fatalf("legacy patch: %d", res.StatusCode)
+	} else {
+		var got store.SlidesPage
+		json.NewDecoder(res.Body).Decode(&got)
+		if got.Notes != "提醒听众" {
+			t.Fatalf("legacy patch lost notes: %+v", got)
+		}
 	}
 
 	// 排序：把第二页移到最前（pos 取 0.5）

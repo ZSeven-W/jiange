@@ -75,7 +75,7 @@ func (m *Memory) findSlidesPageLocked(pageID int64) (int, *SlidesPage) {
 	return -1, nil
 }
 
-func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, expectedRevision int64) (SlidesPage, error) {
+func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, expectedRevision int64) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	i, p := m.findSlidesPageLocked(pageID)
@@ -89,6 +89,9 @@ func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 		return SlidesPage{}, ErrConflict
 	}
 	m.slides[i].Title, m.slides[i].Body, m.slides[i].Background = title, body, background
+	if notes != nil {
+		m.slides[i].Notes = *notes
+	}
 	m.slides[i].Revision++
 	m.slides[i].UpdatedAt = time.Now()
 	return m.slides[i], nil

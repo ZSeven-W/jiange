@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -107,6 +108,16 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	docNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "doc", "Folder doc", false)
 	if err != nil {
 		t.Fatalf("create drive doc: %v", err)
+	}
+	ops, err := st.OpsAfter(ctx, docNode.ID, 0, 10)
+	initial := store.InitialDocOps("Folder doc")
+	if err != nil || len(ops) != len(initial) {
+		t.Fatalf("initial drive document ops: %v %v", ops, err)
+	}
+	for i := range initial {
+		if ops[i].Seq != int64(i+1) || !bytes.Equal(ops[i].Bytes, initial[i].Bytes) {
+			t.Fatalf("initial operation %d differs", i)
+		}
 	}
 	baseNode, err := st.CreateDriveNode(ctx, guard, ws.ID, &root.ID, "base", "Folder base", false)
 	if err != nil {

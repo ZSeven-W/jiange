@@ -320,14 +320,15 @@ export interface SlidesPage {
   title: string;
   body: string;
   background: string;
+  notes: string;
   revision: number;
   updatedAt: string;
 }
 export const slidesApi = {
   pages: (deckId: number) => request<{ pages: SlidesPage[] }>("GET", `/api/slides/${deckId}/pages`).then((r) => r.pages),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
-  update: (pid: number, title: string, body: string, background: string, expectedRevision: number) =>
-    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision }),
+  update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string) =>
+    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }) }),
   remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
   move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
 };
