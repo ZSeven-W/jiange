@@ -338,7 +338,9 @@ func waitForPGBlock(t *testing.T, pg *store.Postgres, queryPrefix string) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		var blocked bool
-		if err := pg.Pool.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND query LIKE $1 AND cardinality(pg_blocking_pids(pid))>0)`, queryPrefix+"%").Scan(&blocked); err != nil {
+		// 行锁经由 multixact 队列等待时 pg_blocking_pids 可能为空（postgres 的已知
+		// 盲区），因此以 wait_event_type='Lock' 判定等待，而不是依赖阻塞方解析。
+		if err := pg.Pool.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND query LIKE $1 AND wait_event_type='Lock')`, queryPrefix+"%").Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {
@@ -346,7 +348,29 @@ func waitForPGBlock(t *testing.T, pg *store.Postgres, queryPrefix string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("query %q did not block on a PostgreSQL lock", queryPrefix)
+	var active string
+	rows, err := pg.Pool.Query(context.Background(), `SELECT state||' '||wait_event_type||'/'||coalesce(wait_event,'')||' '||left(regexp_replace(query,'\s+',' ','g'),90) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()`)
+	if err == nil {
+		for rows.Next() {
+			var line string
+			if rows.Scan(&line) == nil {
+				active += "\n  " + line
+			}
+		}
+		rows.Close()
+	}
+	var matches string
+	mrows, merr := pg.Pool.Query(context.Background(), `SELECT pid||' like='||(query LIKE $1) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()`, queryPrefix+"%")
+	if merr == nil {
+		for mrows.Next() {
+			var line string
+			if mrows.Scan(&line) == nil {
+				matches += "\n  " + line
+			}
+		}
+		mrows.Close()
+	}
+	t.Fatalf("query %q did not block on a PostgreSQL lock; activity:%s; match:%s", queryPrefix, active, matches)
 }
 
 func TestPostgresShareGuardConcurrentAuthorization(t *testing.T) {
@@ -430,7 +454,7 @@ func TestPostgresShareGuardConcurrentAuthorization(t *testing.T) {
 		}
 		result := make(chan error, 1)
 		go func() { result <- pg.SetShareGuarded(ctx, guard, child.ID, guest.ID, store.RoleEdit, true) }()
-		waitForPGBlock(t, pg, `SELECT id,parent_id,workspace_id,creator_id,copy_protected,kind,link_role,deleted_at IS NOT NULL FROM nodes`)
+		waitForPGBlock(t, pg, `SELECT id,parent_id,workspace_id,creator_id,copy_protected,kind,link_role,deleted_at IS NOT NULL,personal FROM nodes`)
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
