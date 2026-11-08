@@ -1,5 +1,7 @@
 # Jiange
 
+<img src="apps/web/public/brand/jiange-lockup.svg" width="220" alt="Jiange" />
+
 开源的飞书文档 + 多维表格替代品，AI 原生、可自部署。除基础库外全部自研：自研协同模型（CRDT）、自研 Go 同步与 API 服务。
 An open-source, self-hostable, AI-native alternative to Feishu/Lark Docs and Base. Apart from a few foundational libraries, everything is written from scratch, including the collaborative data model (CRDT) and the Go backend.
 

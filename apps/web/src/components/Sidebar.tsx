@@ -190,7 +190,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   return (
     <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="relative px-3 pt-4">
-        <div className="flex h-8 items-center px-2"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]" /><span className="ml-2 text-[14px] font-semibold tracking-[-0.01em]">Jiange 云文档</span></div>
+        <div className="flex h-8 items-center px-2"><Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">云文档</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
           <SearchIcon />
           <input ref={searchTrigger} type="search" readOnly aria-label="搜索标题和正文" onFocus={() => {
@@ -299,7 +299,7 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
     </div>;
   };
   return <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7] xl:w-[300px]">
-    <div className="flex h-14 items-center px-5"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]"/><span className="ml-2 text-[14px] font-semibold">Jiange 云文档</span></div>
+    <div className="flex h-14 items-center px-5"><Logo appearance="light" className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]"/><span className="ml-1.5 text-[14px] font-semibold">云文档</span></div>
     <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label="返回主页" onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">云盘</span></div>
     <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索<span className="ml-auto text-[11px] text-[#b3b8bf]">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</span></button>
     <nav className="min-h-0 flex-1 overflow-y-auto px-2">{group(true)}{group(false)}{error && <p role="alert" className="px-2 text-xs text-destructive">{error}</p>}</nav>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Logo } from "@/components/brand";
 
 export interface FormFieldDef {
   id: number;
@@ -124,7 +125,7 @@ export function PublicForm({ token }: { token: string }) {
         {storageError && <p role="alert" className="mt-3 text-[13px] text-destructive">{storageError}</p>}
         {uncertain && !err && <p role="alert" className="mt-3 text-[13px] text-destructive">上次提交结果尚未确认，请联系收集者核对，避免重复提交。</p>}
         <button type="button" className="mt-6 h-10 w-full rounded-md bg-primary text-[14px] font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={busy || uncertain || !submissionKey} onClick={() => void submit()} data-form-submit>{busy ? "提交中…" : "提交"}</button>
-        <p className="mt-3 text-center text-[12px] text-subtle">由 Jiange 表单收集</p>
+        <p className="mt-3 flex items-center justify-center gap-1 text-[12px] text-subtle"><span>由</span><Logo className="gap-1" markClassName="size-4" wordmarkClassName="h-[11px]"/><span>表单收集</span></p>
       </>}
     </div>
   </div>;
