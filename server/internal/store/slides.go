@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type SlidesPage struct {
 // SlidesStore manages presentation pages. Mutations revalidate the session
 // (guard) and require edit access on the owning slides node.
 type SlidesStore interface {
+	CreateSlidesFile(ctx context.Context, guard RestoreGuard, slidesID int64, file FileMeta) (FileMeta, error)
 	CreateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID int64, title string) (SlidesPage, error)
 	ListSlidesPages(ctx context.Context, userID, slidesID int64) ([]SlidesPage, error)
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
@@ -32,4 +34,38 @@ type SlidesStore interface {
 	// MoveSlidesPage repositions a page (pos ordering; the client sends the
 	// midpoint between neighbours).
 	MoveSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, pos float64) error
+}
+
+// slideImageIDs is also checked in the write transaction, so a client cannot
+// attach another document's file by guessing its id.
+func slideImageIDs(shapes json.RawMessage) ([]int64, error) {
+	var items []struct {
+		Kind   string `json:"kind"`
+		FileID int64  `json:"fileId"`
+	}
+	if err := json.Unmarshal(shapes, &items); err != nil {
+		return nil, ErrConflict
+	}
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, item := range items {
+		if item.Kind == "image" {
+			if item.FileID <= 0 {
+				return nil, ErrConflict
+			}
+			if !seen[item.FileID] {
+				ids = append(ids, item.FileID)
+				seen[item.FileID] = true
+			}
+		}
+	}
+	return ids, nil
+}
+
+func slideImageMIME(mime string) bool {
+	switch strings.ToLower(mime) {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp":
+		return true
+	}
+	return false
 }

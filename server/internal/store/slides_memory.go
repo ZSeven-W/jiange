@@ -46,6 +46,21 @@ func (m *Memory) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesID 
 	return page, nil
 }
 
+func (m *Memory) CreateSlidesFile(ctx context.Context, g RestoreGuard, slidesID int64, file FileMeta) (FileMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.slidesAccessLocked(ctx, g, slidesID, false); err != nil {
+		return FileMeta{}, err
+	}
+	if !slideImageMIME(file.Mime) {
+		return FileMeta{}, ErrConflict
+	}
+	file.ID = int64(len(m.sh.files) + 1)
+	file.DocID, file.UploaderID, file.CreatedAt = slidesID, g.UserID, time.Now()
+	m.sh.files = append(m.sh.files, file)
+	return file, nil
+}
+
 func (m *Memory) ListSlidesPages(_ context.Context, uid, slidesID int64) ([]SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -90,6 +105,21 @@ func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 	}
 	if expectedRevision < 1 || p.Revision != expectedRevision {
 		return SlidesPage{}, ErrConflict
+	}
+	if shapes != nil {
+		ids, err := slideImageIDs(*shapes)
+		if err != nil {
+			return SlidesPage{}, err
+		}
+		for _, id := range ids {
+			if id < 1 || int(id) > len(m.sh.files) {
+				return SlidesPage{}, ErrConflict
+			}
+			f := m.sh.files[id-1]
+			if f.ID != id || f.DocID != p.SlidesID || !slideImageMIME(f.Mime) {
+				return SlidesPage{}, ErrConflict
+			}
+		}
 	}
 	m.slides[i].Title, m.slides[i].Body, m.slides[i].Background = title, body, background
 	if notes != nil {

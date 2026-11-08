@@ -344,7 +344,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if d.Kind == "file" || d.Kind == "folder" {
+	if d.Kind == "file" || d.Kind == "folder" || d.Kind == "slides" {
 		httpx.Error(w, http.StatusConflict, "invalid_kind", "此类型不支持添加文档附件")
 		return
 	}
@@ -419,6 +419,10 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "需要编辑权限")
 		return
 	}
+	if meta.Kind == "slides" {
+		httpx.Error(w, http.StatusConflict, "slide_image", "幻灯片图片随文稿回收，不能单独删除附件")
+		return
+	}
 	if meta.Kind == "file" {
 		httpx.Error(w, http.StatusConflict, "drive_file", "请通过云盘回收站删除文件")
 		return
@@ -470,7 +474,12 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 		if !canInlineImage(f.Mime) {
 			return false, store.ErrNotFound
 		}
-		visible, err := s.isProtectedImage(r, f)
+		var visible bool
+		if meta.Kind == "slides" {
+			visible, err = s.isProtectedSlidesImage(r, u.ID, f)
+		} else {
+			visible, err = s.isProtectedImage(r, f)
+		}
 		if err != nil {
 			return false, err
 		}

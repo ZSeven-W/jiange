@@ -325,7 +325,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "text"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right" };
+export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
 export interface SlidesPage {
   id: number;
   slidesId: number;
@@ -345,6 +345,13 @@ export const slidesApi = {
     request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
   remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
   move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
+  uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
+    const data = new FormData(); data.append("file", file);
+    const res = await fetch(`/api/slides/${deckId}/images`, { method: "POST", body: data, signal, headers: { "X-Jiange-Upload": "1", "X-Jiange-User-Id": String(userId) } });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, result.error ?? "error", result.message ?? res.statusText);
+    return result as FileMeta & { docId: number };
+  },
 };
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {

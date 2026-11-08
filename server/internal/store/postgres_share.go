@@ -200,8 +200,15 @@ func (p *Postgres) CreateFile(ctx context.Context, f FileMeta) (FileMeta, error)
 // its object key (copies share blobs; the object dies at zero references).
 func (p *Postgres) DeleteFile(ctx context.Context, id int64) (string, int64, error) {
 	var key string
-	if err := p.Pool.QueryRow(ctx, `DELETE FROM attachments WHERE id=$1 RETURNING object_key`, id).Scan(&key); err != nil {
+	if err := p.Pool.QueryRow(ctx, `DELETE FROM attachments a WHERE a.id=$1 AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id=a.doc_id AND n.kind='slides') RETURNING object_key`, id).Scan(&key); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			var protected bool
+			if e := p.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM attachments a JOIN nodes n ON n.id=a.doc_id WHERE a.id=$1 AND n.kind='slides')`, id).Scan(&protected); e != nil {
+				return "", 0, e
+			}
+			if protected {
+				return "", 0, ErrConflict
+			}
 			return "", 0, ErrNotFound
 		}
 		return "", 0, err

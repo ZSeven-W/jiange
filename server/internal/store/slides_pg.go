@@ -51,6 +51,31 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 	return page, nil
 }
 
+func (p *Postgres) CreateSlidesFile(ctx context.Context, g RestoreGuard, slidesID int64, file FileMeta) (out FileMeta, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if e := p.slidesAccessGuarded(ctx, tx, g, slidesID); e != nil {
+			return e
+		}
+		if !slideImageMIME(file.Mime) {
+			return ErrConflict
+		}
+		out = file
+		out.DocID, out.UploaderID = slidesID, g.UserID
+		if e := tx.QueryRow(ctx, `INSERT INTO attachments (doc_id,uploader_id,name,mime,size,object_key) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,created_at`, slidesID, g.UserID, file.Name, file.Mime, file.Size, file.ObjectKey).Scan(&out.ID, &out.CreatedAt); e != nil {
+			return e
+		}
+		expires, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		return drivePGEnd(ctx, g, expires)
+	})
+	if err != nil {
+		return FileMeta{}, err
+	}
+	return out, nil
+}
+
 func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) (out []SlidesPage, err error) {
 	rows, err := p.Pool.Query(ctx, `SELECT sp.id, sp.slides_id, sp.pos, sp.title, sp.body, sp.background, sp.notes, sp.shapes, sp.revision, sp.updated_at
 		FROM slides_pages sp JOIN nodes n ON n.id = sp.slides_id`+roleJoins+`
@@ -81,6 +106,25 @@ func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID 
 		}
 		if e := p.slidesAccessGuarded(ctx, tx, g, slidesID); e != nil {
 			return e
+		}
+		if shapes != nil {
+			ids, e := slideImageIDs(*shapes)
+			if e != nil {
+				return e
+			}
+			for _, id := range ids {
+				var mime string
+				e = tx.QueryRow(ctx, `SELECT mime FROM attachments WHERE id=$1 AND doc_id=$2 FOR SHARE`, id, slidesID).Scan(&mime)
+				if errors.Is(e, pgx.ErrNoRows) {
+					return ErrConflict
+				}
+				if e != nil {
+					return e
+				}
+				if !slideImageMIME(mime) {
+					return ErrConflict
+				}
+			}
 		}
 		e := tx.QueryRow(ctx, `UPDATE slides_pages SET title=$2, body=$3, background=$4, notes=COALESCE($5, notes), shapes=COALESCE($6::jsonb, shapes), revision=revision+1, updated_at=now() WHERE id=$1 AND revision=$7
 			RETURNING id, slides_id, pos, title, body, background, notes, shapes, revision, updated_at`, pageID, title, body, background, notes, shapes, expectedRevision).

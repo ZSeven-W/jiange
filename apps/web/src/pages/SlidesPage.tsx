@@ -12,12 +12,13 @@ import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, FilePlus2, ImageIcon, Maximize2, Minus, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
-export function SlidesDeck({ deckId }: { deckId: number }) {
+export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number }) {
   const qc = useQueryClient();
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [shapeMenu, setShapeMenu] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [showSlideList, setShowSlideList] = useState(true);
   const [fitZoom, setFitZoom] = useState(100);
@@ -29,6 +30,10 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const shareRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const backgroundRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageUpload = useRef<AbortController | null>(null);
+  const activePageRef = useRef<number | null>(null);
+  const canEditRef = useRef(false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
   const canEdit = !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
@@ -38,6 +43,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
     () => setDraftVersion((version) => version + 1),
   ), [deckId, qc]);
   useEffect(() => () => queue.dispose(), [queue]);
+  useEffect(() => () => { imageUpload.current?.abort(); imageUpload.current = null; }, []);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (queue.hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", warn);
@@ -49,6 +55,8 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const [operationError, setOperationError] = useState("");
   const list = pages.data ?? [];
   const active = list.find((page) => page.id === current) ?? list[0] ?? null;
+  activePageRef.current = active?.id ?? null;
+  canEditRef.current = canEdit;
   const draft = active ? queue.get(active) : null;
   const chosenShape = draft?.content.shapes.find((shape) => shape.id === selectedShape);
   const zoom = manualZoom ?? fitZoom;
@@ -70,6 +78,29 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
     queue.edit(active, { shapes });
   };
   const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = kind === "text" ? { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 12, y: 55, width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 } : { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
+  const insertImage = async (file: File) => {
+    if (!active || !canEdit || imageUpload.current) return;
+    const page = active;
+    const controller = new AbortController();
+    imageUpload.current = controller;
+    setUploadingImage(true);
+    setOperationError("");
+    try {
+      const uploaded = await slidesApi.uploadImage(deckId, file, userId, controller.signal);
+      if (!Number.isSafeInteger(uploaded.id) || uploaded.id <= 0 || uploaded.docId !== deckId) throw new Error("图片上传结果无效");
+      if (imageUpload.current !== controller) return;
+      if (!canEditRef.current || activePageRef.current !== page.id) { setOperationError("图片已上传，但页面或权限已变化，未插入图片。"); return; }
+      const latest = queue.get(page);
+      if (latest.content.shapes.length >= 100) { setOperationError("本页对象已达上限，图片未插入。"); return; }
+      const shape: SlideShape = { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind: "image", x: 35, y: 35, width: 35, height: 35, color: "#ffffff", fileId: uploaded.id };
+      queue.edit(page, { shapes: [...latest.content.shapes, shape] });
+      setSelectedShape(shape.id);
+    } catch (error) {
+      if (!controller.signal.aborted) setOperationError(error instanceof Error ? `图片未能插入：${error.message}` : "图片未能插入，请重试。");
+    } finally {
+      if (imageUpload.current === controller) { imageUpload.current = null; setUploadingImage(false); }
+    }
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -157,6 +188,8 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("text")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
             <div className="relative shrink-0"><button type="button" disabled={!canEdit || !active} aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
+            <button type="button" disabled={!canEdit || !active || uploadingImage || draft?.content.shapes.length === 100} onClick={() => imageInputRef.current?.click()} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><ImageIcon size={16}/>{uploadingImage ? "上传中" : "图片"}</button>
+            <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" aria-label="选择幻灯片图片" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void insertImage(file); }}/>
             <button type="button" disabled={!canEdit || !active} onClick={() => backgroundRef.current?.click()} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Palette size={16}/>背景</button>
             <span className="mx-1 h-5 w-px bg-[#e5e6eb]" />
             <button type="button" aria-label="复制页面" disabled={!canEdit || !active || draft?.state !== "saved"} onClick={() => active && doCopy(active)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={15}/>复制</button>

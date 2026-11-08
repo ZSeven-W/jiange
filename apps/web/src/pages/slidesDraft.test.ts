@@ -150,4 +150,23 @@ describe("slide drafts", () => {
     expect(write.mock.calls.at(-1)?.[1].shapes[0]).toMatchObject({ text: "协作计划", bold: true, fontSize: 32, align: "center" });
     expect(q.get(initial).state).toBe("saved");
   });
+
+  it("persists the image reference through geometry edits and undo", async () => {
+    const image = { id: "image", kind: "image" as const, x: 20, y: 30, width: 35, height: 35, color: "#ffffff", fileId: 42 };
+    const write = vi.fn((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(page, { shapes: [image] });
+    q.edit(page, { shapes: patchSlideShape(q.get(page).content.shapes, image.id, { x: 45, width: 40 }) });
+    await tick(); await tick();
+    expect(write.mock.calls.at(-1)?.[1].shapes[0]).toMatchObject({ fileId: 42, x: 45, width: 40 });
+    q.undo(page);
+    expect(q.get(page).content.shapes[0]).toMatchObject({ fileId: 42, x: 20, width: 35 });
+  });
+
+  it("does not report an image as saved if the response changes its file reference", async () => {
+    const image = { id: "image", kind: "image" as const, x: 20, y: 30, color: "#ffffff", fileId: 42 };
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, shapes: [{ ...image, fileId: 43 }], revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { shapes: [image] }); await tick();
+    expect(q.get(page)).toMatchObject({ state: "unknown", content: { shapes: [{ fileId: 42 }] } });
+  });
 });

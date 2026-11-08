@@ -252,6 +252,9 @@ func (m *Memory) DeleteFile(_ context.Context, id int64) (string, int64, error) 
 		return "", 0, ErrNotFound
 	}
 	file := m.sh.files[id-1]
+	if d := m.doc(file.DocID); d != nil && d.meta.Kind == "slides" && !d.purged {
+		return "", 0, ErrConflict
+	}
 	if d := m.doc(file.DocID); d != nil && d.meta.Kind == "file" && !d.purged && d.driveFileID == id {
 		return "", 0, ErrConflict
 	}

@@ -41,6 +41,10 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "unsupported", "多维表格暂不支持复制")
 		return
 	}
+	if d.Kind == "slides" {
+		httpx.Error(w, http.StatusBadRequest, "unsupported", "幻灯片暂不支持整份复制，可在编辑器中复制页面")
+		return
+	}
 	if !store.DocumentDownloadAllowed(d, d.Role) {
 		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
 		return
