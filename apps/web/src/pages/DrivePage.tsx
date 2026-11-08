@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
@@ -8,7 +8,8 @@ import { parseMarkdown } from "@/lib/markdown";
 import { stageStarter } from "./pendingStarter";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
-import type { DriveUploadManager } from "./drive-upload";
+import { DirectoryPickerGate, type DriveUploadManager } from "./drive-upload";
+import type { DriveDirectoryHandle } from "./drive-upload-plan";
 import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { ArrowDownUp, ChevronDown, ChevronRight, Ellipsis, FileInput, FileText, FileUp, Folder, FolderUp, LayoutGrid, Link2, List, ListFilter, Presentation, Search } from "lucide-react";
 
@@ -17,7 +18,18 @@ type DriveSort = "name" | "updated";
 /** Cloud drive: folder navigation and file operations use the guarded drive API. */
 export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderId: number | null; personalRoot: boolean; userId: number; uploads: DriveUploadManager }) {
   const uploadState = useSyncExternalStore(uploads.subscribe, uploads.snapshot, uploads.snapshot);
-  const folderPickerSupported = typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
+  const pickerGate = useRef(new DirectoryPickerGate());
+  useEffect(() => () => pickerGate.current.invalidate(), [folderId, personalRoot, userId]);
+  const fallbackPickerSupported = typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
+  const nativePicker = typeof window !== "undefined" && window.isSecureContext ? (window as Window & { showDirectoryPicker?: (options: { mode: "read" }) => Promise<DriveDirectoryHandle> }).showDirectoryPicker : undefined;
+  const openNativeDirectory = () => {
+    if (!nativePicker) return;
+    pickerGate.current.choose(() => nativePicker.call(window, { mode: "read" }), (handle) => { void uploads.startDirectory(handle, folderId, scope); }, (error) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      uploads.selectionError("无法打开目录选择器；请重新打开上传菜单使用兼容模式，空文件夹不会上传。");
+    });
+    setUploadMenu(false);
+  };
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["drive", folderId, personalRoot], queryFn: () => driveApi.children(folderId, personalRoot), refetchInterval: 15000, refetchIntervalInBackground: false });
   const crumbs = useQuery({ queryKey: ["drive-ancestors", folderId], queryFn: () => driveApi.ancestors(folderId!), enabled: folderId !== null });
@@ -108,10 +120,11 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
           {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div className="absolute left-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]">{(["doc", "slides", "base", "folder"] as const).map((kind) => <button key={kind} type="button" onClick={() => void newItem(kind)} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DocIcon/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : "文件夹"}</button>)}</div></>}
         </div>
         <div className="relative sm:w-[130px]">
-          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading"} onClick={() => setUploadMenu((open) => !open)} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1 text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" ? "上传中" : "上传"}</span><ChevronDown size={15} className={cn("text-[#646a73]", uploadMenu && "rotate-180")}/></button>
+          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading" || uploadState.phase === "scanning"} onClick={() => { pickerGate.current.invalidate(); setUploadMenu((open) => !open); }} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1 text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" || uploadState.phase === "scanning" ? "上传中" : "上传"}</span><ChevronDown size={15} className={cn("text-[#646a73]", uploadMenu && "rotate-180")}/></button>
           {uploadMenu && <><div className="fixed inset-0 z-30" onClick={() => setUploadMenu(false)}/><div role="menu" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setUploadMenu(false); uploadTrigger.current?.focus(); } }} className="absolute left-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1.5 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
             <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>上传文件<input type="file" aria-label="上传云盘文件" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); if (files.length) void uploads.start(files, "files", folderId, scope); }}/></label>
-            {folderPickerSupported ? <label role="menuitem" tabIndex={0} title="浏览器选择器不包含空文件夹" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label="选择上传文件夹" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); void uploads.start(files, "folder", folderId, scope); }}/></label> : <button type="button" role="menuitem" disabled title="当前浏览器不支持选择文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button>}
+            {nativePicker && <button type="button" role="menuitem" onClick={openNativeDirectory} title="可保留空文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹</button>}
+            {fallbackPickerSupported ? <label role="menuitem" tabIndex={0} title="浏览器选择器不包含空文件夹" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>{nativePicker ? "兼容上传文件夹" : "上传文件夹"}<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label="选择上传文件夹" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); void uploads.start(files, "folder", folderId, scope); }}/></label> : !nativePicker && !fallbackPickerSupported ? <button type="button" role="menuitem" disabled title="当前浏览器不支持选择文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button> : null}
             <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>导入为在线文档<input type="file" aria-label="导入 Markdown 文件" tabIndex={-1} accept=".md,.markdown,text/markdown" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
           </div></>}
         </div>
