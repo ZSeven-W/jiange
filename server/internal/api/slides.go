@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 )
@@ -135,7 +136,7 @@ var slideShapeID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 var slideShapeColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 func validSlideShapes(raw json.RawMessage) bool {
-	if len(raw) > 20000 || len(raw) == 0 || raw[0] != '[' {
+	if len(raw) > 800000 || len(raw) == 0 || raw[0] != '[' {
 		return false
 	}
 	var shapes []struct {
@@ -147,6 +148,10 @@ func validSlideShapes(raw json.RawMessage) bool {
 		Width    *float64 `json:"width"`
 		Height   *float64 `json:"height"`
 		Rotation *float64 `json:"rotation"`
+		Text     *string  `json:"text"`
+		FontSize *float64 `json:"fontSize"`
+		Bold     *bool    `json:"bold"`
+		Align    *string  `json:"align"`
 	}
 	if json.Unmarshal(raw, &shapes) != nil || len(shapes) > 100 {
 		return false
@@ -164,7 +169,10 @@ func validSlideShapes(raw json.RawMessage) bool {
 		if s.Rotation != nil {
 			rotation = *s.Rotation
 		}
-		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "text") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
+			return false
+		}
+		if s.Kind == "text" && (s.Text == nil || utf8.RuneCountInString(*s.Text) > 1000 || (s.FontSize != nil && (*s.FontSize < 12 || *s.FontSize > 96)) || (s.Align != nil && *s.Align != "left" && *s.Align != "center" && *s.Align != "right")) {
 			return false
 		}
 		seen[s.ID] = true
