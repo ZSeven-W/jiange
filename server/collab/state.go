@@ -53,11 +53,18 @@ func (d *Doc) validateTryApply(op Op) error {
 			return ErrIdentityOverlap
 		}
 	}
+	if op.T == TTable && (len(op.Payload) == 0 || len(op.Payload) > maxTablePayloadBytes) {
+		return fmt.Errorf("collab: table payload out of range (%d bytes)", len(op.Payload))
+	}
 	if !d.ready(&op) {
 		return ErrNotReady
 	}
 	return nil
 }
+
+// maxTablePayloadBytes bounds one experimental-table sub-CRDT operation
+// (DEFAULT_TABLE_LIMITS.maxOperationBytes in the prototype).
+const maxTablePayloadBytes = 512
 
 // Counts accommodate legacy/corrupt states with the same retained ID in more
 // than one place; removing one occurrence must not hide another. Building the
@@ -118,12 +125,30 @@ func (d *Doc) isStructuralDup(op *Op) bool {
 // HasBlock reports whether a (possibly deleted) block exists.
 func (d *Doc) HasBlock(id OpID) bool { return d.blocks[id] != nil }
 
+// StateVersion is the snapshot format: v2 appends the experimental-table
+// payload section after the blocks. Readers accept v1 (no tables) and v2;
+// op batches keep their own Version. Old binaries reject v2 snapshots by the
+// strictness rule instead of misreading them.
+const StateVersion = 2
+
 // EncodeState serializes the replica (spec/PROTOCOL.md §State). Must match TS Doc.encodeState byte-for-byte.
+// Docs without table payloads stay byte-identical v1; only table-bearing
+// states bump to v2 (readers accept both).
 func (d *Doc) EncodeState() []byte {
 	w := &writer{b: make([]byte, 0, 256)}
+	tableCount := 0
+	for id := range d.tables {
+		if len(d.tables[id]) > 0 {
+			tableCount++
+		}
+	}
+	stateVersion := byte(Version)
+	if tableCount > 0 {
+		stateVersion = StateVersion
+	}
 	w.u8(Magic)
 	w.u8(StateTag)
-	w.u8(Version)
+	w.u8(stateVersion)
 	w.uvar(d.clock)
 	blocks := make([]*block, 0, len(d.blocks))
 	for id, b := range d.blocks {
@@ -192,6 +217,25 @@ func (d *Doc) EncodeState() []byte {
 			w.u8(m.end.Side)
 		}
 	}
+	// v2 section: opaque experimental-table payloads per block, blocks in id
+	// order for deterministic bytes. Written only in v2 (see header).
+	if stateVersion == StateVersion {
+		tableBlocks := make([]OpID, 0, len(d.tables))
+		for id := range d.tables {
+			if len(d.tables[id]) > 0 {
+				tableBlocks = append(tableBlocks, id)
+			}
+		}
+		sort.Slice(tableBlocks, func(i, j int) bool { return tableBlocks[i].Cmp(tableBlocks[j]) < 0 })
+		w.uvar(uint64(len(tableBlocks)))
+		for _, id := range tableBlocks {
+			w.id(id)
+			w.uvar(uint64(len(d.tables[id])))
+			for _, p := range d.tables[id] {
+				w.blob(p)
+			}
+		}
+	}
 	return w.b
 }
 
@@ -214,8 +258,8 @@ func DecodeState(data []byte) (*Doc, error) {
 		}
 		hdr[i] = x
 	}
-	if hdr[0] != Magic || hdr[1] != StateTag || hdr[2] != Version {
-		return nil, errors.New("collab: not a v1 state blob")
+	if hdr[0] != Magic || hdr[1] != StateTag || (hdr[2] != Version && hdr[2] != StateVersion) {
+		return nil, errors.New("collab: unsupported state blob version")
 	}
 	var err error
 	if d.clock, err = r.uvar(); err != nil {
@@ -231,6 +275,32 @@ func DecodeState(data []byte) (*Doc, error) {
 	for i := uint64(0); i < nb; i++ {
 		if err := decodeBlock(r, d); err != nil {
 			return nil, err
+		}
+	}
+	if hdr[2] == StateVersion {
+		nt, err := r.uvar()
+		if err != nil {
+			return nil, err
+		}
+		for i := uint64(0); i < nt; i++ {
+			id, err := r.id()
+			if err != nil {
+				return nil, err
+			}
+			if d.blocks[id] == nil {
+				return nil, fmt.Errorf("collab: table payloads for unknown block %d:%d", id.Client, id.Clock)
+			}
+			np, err := r.uvar()
+			if err != nil {
+				return nil, err
+			}
+			for j := uint64(0); j < np; j++ {
+				p, err := r.blob()
+				if err != nil {
+					return nil, err
+				}
+				d.tables[id] = append(d.tables[id], p)
+			}
 		}
 	}
 	if r.i != len(data) {

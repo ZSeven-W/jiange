@@ -160,6 +160,12 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 		r.reset()
 		return err
 	}
+	if !v2 && r.doc.HasTables() {
+		// 该文档已含表格子 CRDT 载荷：v1 对端无法解码快照/重放，拒绝加入
+		// 而不是让其断线失步。
+		c.send(collab.EncodeError("v2_required", "该文档包含新版表格内容，请升级客户端"))
+		return errors.New("v1 peer joined a table-bearing document")
+	}
 	welcome := func(head, snapSeq uint64, state []byte) {
 		if v2 {
 			c.send(collab.EncodeWelcomeV2(c.clientID, head, snapSeq, state, epoch))

@@ -53,12 +53,24 @@ func TestTableOpsGate(t *testing.T) {
 		t.Fatalf("v2 error frame: %+v %v", msg, err)
 	}
 
-	// 全员 v2：通过门控（随后仍会被 Doc 应用层拒绝——状态集成是下一片）
+	// 全员 v2 且块存在：应用并推进（TryApply 已集成 ttable，载荷按块持久化）
 	delete(r.conns, v1member)
-	if err := r.handleOps(ctx, v2, []collab.Op{op}); err == nil {
-		t.Fatal("ttable without state integration must not be applied")
+	block := collab.Op{T: collab.TBlockCreate, ID: collab.OpID{Client: 9, Clock: 2}, Parent: collab.Root, Pos: "V", Type: "table"}
+	if err := r.handleOps(ctx, v2, []collab.Op{block}); err != nil {
+		t.Fatalf("create table block: %v", err)
 	}
-	if r.head != head {
-		t.Fatalf("ttable advanced head before state integration: %d", r.head)
+	valid := collab.Op{T: collab.TTable, ID: collab.OpID{Client: 9, Clock: 3}, Block: block.ID, Payload: []byte(`{"kind":"axis-insert"}`)}
+	if err := r.handleOps(ctx, v2, []collab.Op{valid}); err != nil {
+		t.Fatalf("v2 apply: %v", err)
+	}
+	if r.head != head+2 {
+		t.Fatalf("ttable not persisted: %d", r.head)
+	}
+	// v1 连接此时加入该文档：拒绝而不是让它失步
+	if err := r.join(ctx, v1member, 0, false, 1); err == nil {
+		t.Fatal("v1 join of table-bearing doc accepted")
+	}
+	if msg, err := collab.DecodeServerMsg(<-v1member.out); err != nil || msg.Type != collab.MsgError || msg.Code != "v2_required" {
+		t.Fatalf("v1 join error frame: %+v %v", msg, err)
 	}
 }
