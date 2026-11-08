@@ -20,8 +20,17 @@ export function globalSearchState(keyword: string, debounced: string, recent: Qu
   return q.data?.length ? { status: "ready", docs: q.data } : { status: "empty", docs: [] };
 }
 
-export function filterGlobalSearch(docs: SearchDoc[], kind: string, owner: string, userId: number): SearchDoc[] {
-  return docs.filter((d) => (kind === "all" || (d.kind ?? "doc") === kind) && (owner !== "mine" || d.creatorId === userId));
+export function filterGlobalSearch(docs: SearchDoc[], kind: string, owner: string, userId: number, withinDays = 0): SearchDoc[] {
+  const since = withinDays > 0 ? Date.now() - withinDays * 86400000 : 0;
+  return docs.filter((d) => {
+    if (kind !== "all" && (d.kind ?? "doc") !== kind) return false;
+    if (owner === "mine" && d.creatorId !== userId) return false;
+    if (since > 0) {
+      const t = new Date(d.viewedAt ?? d.updatedAt ?? 0).getTime();
+      if (t < since) return false;
+    }
+    return true;
+  });
 }
 
 function timeLabel(value?: string): string {
@@ -45,6 +54,7 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
   const [advanced, setAdvanced] = useState(false);
   const [kind, setKind] = useState("all");
   const [owner, setOwner] = useState("all");
+  const [within, setWithin] = useState("0");
   const [opening, setOpening] = useState<number | null>(null);
   const [openError, setOpenError] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
@@ -70,7 +80,7 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
   const search = useQuery({ queryKey: ["global-search-query", userId, instance, debounced], queryFn: ({ signal }) => extrasApi.search(debounced, signal),
     enabled: !!keyword && keyword === debounced, gcTime: 0, retry: false, refetchOnMount: "always", refetchOnWindowFocus: "always", refetchInterval: 15000, refetchIntervalInBackground: false });
   const state = globalSearchState(keyword, debounced, recent, search);
-  const docs = useMemo(() => filterGlobalSearch(state.docs, kind, owner, userId), [state.docs, kind, owner, userId]);
+  const docs = useMemo(() => filterGlobalSearch(state.docs, kind, owner, userId, Number(within)), [state.docs, kind, owner, userId, within]);
   visibleIds.current = state.status === "ready" ? docs.map((doc) => doc.id) : [];
   const invalidateOpen = () => {
     openGuard.current.invalidate();
@@ -138,8 +148,9 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
           <span className="grid size-6 place-items-center rounded-full bg-[#3370ff] text-white"><Search size={14}/></span>高级搜索
         </button>
         {advanced && <div className="mx-1 mb-2 flex flex-wrap items-end gap-3 rounded-md border px-3 py-2 text-[12px] text-muted-foreground">
-          <label className="grid gap-1">文档类型<select aria-label="文档类型筛选" value={kind} onChange={(e) => { invalidateOpen(); setKind(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">全部类型</option><option value="doc">文档</option><option value="base">多维表格</option></select></label>
+          <label className="grid gap-1">文档类型<select aria-label="文档类型筛选" value={kind} onChange={(e) => { invalidateOpen(); setKind(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">全部类型</option><option value="doc">文档</option><option value="base">多维表格</option><option value="folder">文件夹</option></select></label>
           <label className="grid gap-1">所有者<select aria-label="所有者筛选" value={owner} onChange={(e) => { invalidateOpen(); setOwner(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="all">所有人</option><option value="mine">我创建的</option></select></label>
+          <label className="grid gap-1">更新时间<select aria-label="更新时间筛选" value={within} onChange={(e) => { invalidateOpen(); setWithin(e.target.value); }} className="h-8 min-w-28 rounded border bg-surface px-2 text-foreground"><option value="0">全部时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
           <span className="pb-1">{keyword ? "筛选当前搜索结果" : "筛选最近浏览"}</span>
         </div>}
         <div className="px-2 pb-1 pt-2 text-[12px] text-subtle">{keyword ? "搜索结果" : "最近浏览"}</div>
