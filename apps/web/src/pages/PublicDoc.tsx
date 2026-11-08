@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 import { PublicDocumentCover } from "@/components/DocumentCover";
+import { Logo } from "@/components/brand";
 import { fetchPublicDoc, initialPublicDocState, publicDocumentPermissions, updatePublicDocState, type PublicIssue } from "./publicDocState";
 
 /** Explain a failed public link without discarding its token on sign-in. */
@@ -65,8 +66,8 @@ export function PublicDoc({ token }: { token: string }) {
   return (
     <div className="min-h-full bg-background" data-public-doc onCopy={(e) => { if (!permissions.copy) e.preventDefault(); }} onCut={(e) => { if (!permissions.copy) e.preventDefault(); }}>
       <header className="flex h-[52px] items-center border-b px-6">
-        <a href="#/" className="text-[15px] font-semibold text-primary">
-          Jiange
+        <a href="#/" aria-label="Jiange 主页">
+          <Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[15px]" />
         </a>
         <span className="ml-3 rounded bg-accent px-2 py-0.5 text-[12px] font-medium text-accent-foreground">只读分享</span>
       </header>
