@@ -9,7 +9,7 @@ import { SlideShapes } from "./slides-shapes";
 import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, FilePlus2, ImageIcon, Maximize2, Minus, Palette, Play, Plus, Presentation, Trash2, Type, Shapes } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, FilePlus2, ImageIcon, Maximize2, Minus, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
 export function SlidesDeck({ deckId }: { deckId: number }) {
@@ -70,6 +70,23 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
     queue.edit(active, { shapes });
   };
   const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (playing || sharing || !canEdit || !active || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      const redo = (key === "z" && event.shiftKey) || (key === "y" && !event.shiftKey);
+      if (key !== "z" && !redo) return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || (target !== document.body && !target.closest("[data-slides-editor]"))) return;
+      if (target.matches("input, textarea, [contenteditable=true]") && !target.hasAttribute("data-slide-history")) return;
+      event.preventDefault();
+      if (redo) queue.redo(active); else queue.undo(active);
+      setSelectedShape(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, canEdit, playing, sharing, queue]);
 
   useEffect(() => {
     if (!playing) return;
@@ -133,6 +150,10 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
         </aside> : <div className="w-9 shrink-0 border-r border-[#dee0e3] bg-white pt-3 text-center"><button type="button" aria-label="展开幻灯片列表" onClick={() => setShowSlideList(true)} className="inline-grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><ChevronsRight size={15}/></button></div>}
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
+            <div className="flex shrink-0 items-center gap-0.5 border-r border-[#e5e6eb] pr-2">
+              <button type="button" aria-label="撤销本页内容" title="撤销本页内容 (⌘/Ctrl+Z)" disabled={!canEdit || !active || !queue.canUndo(active)} onClick={() => { if (active) { queue.undo(active); setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={16}/></button>
+              <button type="button" aria-label="重做本页内容" title="重做本页内容 (⌘/Ctrl+Shift+Z)" disabled={!canEdit || !active || !queue.canRedo(active)} onClick={() => { if (active) { queue.redo(active); setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={16}/></button>
+            </div>
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active} onClick={() => titleRef.current?.focus()} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
             <div className="relative shrink-0"><button type="button" disabled={!canEdit || !active} aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
@@ -153,15 +174,15 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
             <div className="flex min-h-full min-w-full p-4">
               {active && draft ? <div className="group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ width: SLIDE_WIDTH * zoom / 100, height: SLIDE_HEIGHT * zoom / 100, backgroundColor: draft.content.background || "#fff" }} data-slides-canvas>
                 <div className="absolute left-0 top-0" style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, padding: "48px 57.6px", transform: `scale(${zoom / 100})`, transformOrigin: "top left" }}>
-                  <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canEdit} onChange={(event) => queue.edit(active, { title: event.target.value })} placeholder="点击添加标题" className="w-full border border-transparent bg-transparent px-2 py-1 text-[36px] font-semibold leading-tight text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]" data-slides-title />
-                  <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canEdit} onChange={(event) => queue.edit(active, { body: event.target.value })} placeholder="点击添加正文" className="mt-[4%] h-[55%] w-full resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]" data-slides-body />
+                  <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canEdit} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={() => queue.endGroup(active.id)} placeholder="点击添加标题" className="w-full border border-transparent bg-transparent px-2 py-1 text-[36px] font-semibold leading-tight text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]" data-slides-title data-slide-history />
+                  <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canEdit} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={() => queue.endGroup(active.id)} placeholder="点击添加正文" className="mt-[4%] h-[55%] w-full resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]" data-slides-body data-slide-history />
                   <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} scale={zoom / 100} onSelect={setSelectedShape} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height })}/>
                 </div>
                 <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => queue.edit(active, { background: event.target.value })} className="sr-only" aria-label="幻灯片背景颜色" />
               </div> : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
             </div>
           </div>
-          {active && draft && <div className="border-t border-[#e5e6eb] bg-white px-4 py-2"><textarea aria-label="演示者备注" value={draft.content.notes} readOnly={!canEdit} onChange={(event) => queue.edit(active, { notes: event.target.value })} placeholder="点击添加演示者备注" className="h-14 w-full resize-y bg-transparent text-[13px] text-[#646a73] outline-none placeholder:text-[#a3aab3]" /></div>}
+          {active && draft && <div className="border-t border-[#e5e6eb] bg-white px-4 py-2"><textarea aria-label="演示者备注" value={draft.content.notes} readOnly={!canEdit} onChange={(event) => queue.edit(active, { notes: event.target.value }, "notes")} onBlur={() => queue.endGroup(active.id)} placeholder="点击添加演示者备注" className="h-14 w-full resize-y bg-transparent text-[13px] text-[#646a73] outline-none placeholder:text-[#a3aab3]" data-slide-history /></div>}
           <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
         </section>
       </div>
