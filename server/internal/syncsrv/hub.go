@@ -103,7 +103,11 @@ func (h *Hub) Rooms() int {
 }
 
 // Serve upgrades an authenticated request to a sync connection and blocks until it ends.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, authenticate func(context.Context) error) {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, authenticate func(context.Context) error, guard store.RestoreGuard) {
+	if guard.UserID != user.ID || guard.UserID <= 0 || len(guard.SessionHash) == 0 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	h.defaults()
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.OriginPatterns})
 	if err != nil {
@@ -112,7 +116,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	ws.SetReadLimit(8 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, wantsV2: r.URL.Query().Get("protocol") == "2"}
+	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, writeGuard: &guard, wantsV2: r.URL.Query().Get("protocol") == "2"}
 	wctx, stopWriter := context.WithCancel(context.Background())
 	writerDone := make(chan struct{})
 	go func() { c.writeLoop(wctx, ctx); close(writerDone) }()

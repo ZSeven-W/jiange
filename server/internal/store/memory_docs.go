@@ -243,12 +243,30 @@ func (m *Memory) AppendOpsAtHead(ctx context.Context, doc, expectedHead int64, o
 	return m.appendOps(ctx, doc, &expectedHead, ops)
 }
 
+func (m *Memory) AppendOpsAtHeadGuarded(ctx context.Context, guard RestoreGuard, doc, expectedHead int64, ops []RawOp) ([]int64, error) {
+	return m.appendOps(withDocumentWriteGuard(ctx, guard), doc, &expectedHead, ops)
+}
+
 func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, ops []RawOp) ([]int64, error) {
 	m.mu.Lock()
 	d := m.doc(doc)
 	if d == nil {
 		m.mu.Unlock()
 		return nil, ErrNotFound
+	}
+	guard, guarded := documentWriteGuard(ctx)
+	var expires time.Time
+	if guarded {
+		var err error
+		expires, err = m.driveSessionLocked(ctx, guard)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+		if d.meta.Kind != "doc" || d.deleted || d.purged || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || RoleRank(m.roleLocked(guard.UserID, d)) < RoleRank(RoleEdit) {
+			m.mu.Unlock()
+			return nil, ErrForbidden
+		}
 	}
 	if expectedHead != nil && int64(len(d.ops)) != *expectedHead {
 		m.mu.Unlock()
@@ -260,6 +278,12 @@ func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, 
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
+	}
+	if guarded {
+		if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
 	}
 	batch.commit(d)
 	for i, op := range ops {
@@ -278,7 +302,11 @@ func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, 
 		return seqs, nil
 	}
 	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, documentActor(ctx))
+	actor := documentActor(ctx)
+	if guarded {
+		actor = guard.UserID
+	}
+	m.setDocumentModifierLocked(d, actor)
 	head := int64(len(d.ops))
 	subs := slices.Clone(m.d.subs)
 	m.mu.Unlock()

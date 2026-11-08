@@ -53,6 +53,25 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
     el.style.height = `${el.scrollHeight}px`;
   }, []);
 
+  // The title can wrap differently after rotation, split-view resizing or a
+  // sidebar change even when its text has not changed. Recompute its height
+  // when the available width changes, not on height-only observer callbacks.
+  useEffect(() => {
+    const container = ta.current?.parentElement;
+    if (!container) return;
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", autosize);
+      return () => window.removeEventListener("resize", autosize);
+    }
+    let width = -1;
+    const observer = new ResizeObserver((entries) => {
+      const next = entries[0]?.contentRect.width;
+      if (next !== undefined && Math.abs(next - width) > 0.1) { width = next; autosize(); }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [autosize]);
+
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el || el.value === text) {

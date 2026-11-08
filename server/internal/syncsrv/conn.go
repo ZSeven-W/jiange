@@ -27,6 +27,7 @@ type conn struct {
 	// authenticate revalidates the session that originally opened this
 	// connection. Test-only callers may leave it nil when not using sessions.
 	authenticate func(context.Context) error
+	writeGuard   *store.RestoreGuard
 
 	// guarded by room.mu once joined
 	room     *room

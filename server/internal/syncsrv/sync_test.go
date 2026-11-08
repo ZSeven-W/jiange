@@ -24,12 +24,13 @@ import (
 
 // env is a sync server on httptest; the X-User header stands in for the session cookie.
 type env struct {
-	t     *testing.T
-	st    store.Store
-	hub   *Hub
-	srv   *httptest.Server
-	users []store.User
-	ws    store.Workspace
+	t      *testing.T
+	st     store.Store
+	hub    *Hub
+	srv    *httptest.Server
+	users  []store.User
+	guards []store.RestoreGuard
+	ws     store.Workspace
 }
 
 func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
@@ -42,6 +43,11 @@ func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 			t.Fatal(err)
 		}
 		e.users = append(e.users, u)
+		guard := store.RestoreGuard{UserID: u.ID, SessionHash: []byte("sync-test-" + sfx + "-" + strconv.Itoa(i))}
+		if err := st.CreateSession(ctx, guard.SessionHash, u.ID, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		e.guards = append(e.guards, guard)
 		if i == 0 {
 			e.ws = ws
 		}
@@ -63,7 +69,7 @@ func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 func (e *env) handler(h *Hub) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i, _ := strconv.Atoi(r.Header.Get("X-User"))
-		h.Serve(w, r, e.users[i], nil)
+		h.Serve(w, r, e.users[i], nil, e.guards[i])
 	})
 }
 

@@ -190,6 +190,9 @@ type DocStore interface {
 	// AppendOpsAtHead performs the ordinary append only if the locked head
 	// still equals expectedHead; otherwise it returns ErrConflict.
 	AppendOpsAtHead(ctx context.Context, docID, expectedHead int64, ops []RawOp) ([]int64, error)
+	// AppendOpsAtHeadGuarded checks the original session, current edit grant and
+	// head while holding the locks through the operation-log commit.
+	AppendOpsAtHeadGuarded(ctx context.Context, guard RestoreGuard, docID, expectedHead int64, ops []RawOp) ([]int64, error)
 	// AppendRestoreOps atomically verifies the current edit grant and head before
 	// appending a restore plan derived from that exact head. It returns
 	// ErrConflict when concurrent edits invalidate the plan, or ErrForbidden

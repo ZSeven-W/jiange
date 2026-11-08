@@ -2,6 +2,7 @@ package syncsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -150,6 +151,32 @@ func TestContentionLimitRollsBackWithoutResettingOtherClients(t *testing.T) {
 	}
 	if err := r.doc.TryApply(op); err != nil {
 		t.Fatalf("rolled-back operation remains in seen IDs: %v", err)
+	}
+}
+
+func TestContentionBackoffHonorsCancellation(t *testing.T) {
+	st := store.NewMemory()
+	u, ws, err := st.CreateUser(context.Background(), "cancel-busy@test.dev", "busy", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := st.CreateDoc(context.Background(), ws.ID, u.ID, nil, "test", InitialOps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &room{hub: &Hub{Store: &alwaysBusyStore{st}, SnapshotEvery: 1000, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, id: doc.ID, conns: map[*conn]struct{}{}}
+	if err = r.load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c := &conn{clientID: 7, out: make(chan []byte, 10), cancel: func() {}}
+	op := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 7, Clock: 10}, Block: paragraph, Parent: collab.Root, Side: 1, Text: "新"}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err = r.handleOps(ctx, c, []collab.Op{op}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled backoff: %v", err)
+	}
+	if r.doc == nil || len(c.out) != 0 {
+		t.Fatal("cancelled retry reset the room or sent an acknowledgement")
 	}
 }
 

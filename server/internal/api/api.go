@@ -190,7 +190,7 @@ func (s *Server) Handler() http.Handler {
 					return store.ErrNotFound
 				}
 				return nil
-			})
+			}, store.RestoreGuard{UserID: u.ID, SessionHash: sessionHash, Now: s.now})
 		})))
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
