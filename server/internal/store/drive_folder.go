@@ -269,6 +269,10 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 		m.b.views = append(m.b.views, view)
 		m.b.records = append(m.b.records, records...)
 	}
+	if kind == "slides" {
+		m.slidesSequence++
+		m.slides = append(m.slides, SlidesPage{ID: m.slidesSequence, SlidesID: id, Pos: 1, Shapes: json.RawMessage(`[]`), Revision: 1, UpdatedAt: now})
+	}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -760,6 +764,10 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 			}
 			if _, e = tx.Exec(ctx, `INSERT INTO base_records (base_id,cells,position,creator_id)
 				SELECT $1,'{}'::jsonb, n, $2 FROM generate_series(1,5) AS n`, out.ID, g.UserID); e != nil {
+				return e
+			}
+		} else if kind == "slides" {
+			if _, e = tx.Exec(ctx, `INSERT INTO slides_pages (slides_id,pos) VALUES ($1,1)`, out.ID); e != nil {
 				return e
 			}
 		}
