@@ -20,6 +20,9 @@ func (s *Server) postDriveFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !driveExpectedUser(w, r, u.ID) {
+		return
+	}
 	if s.Blobs == nil {
 		httpx.Error(w, http.StatusServiceUnavailable, "no_storage", "云盘文件存储未配置")
 		return

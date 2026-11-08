@@ -25,11 +25,81 @@ func (s *Server) driveGuard(w http.ResponseWriter, r *http.Request) (store.Resto
 	return store.RestoreGuard{UserID: u.ID, SessionHash: auth.HashToken(c.Value), Now: func() time.Time { return s.now() }}, true
 }
 
+// Batch uploads bind every request to the initiating account. This header is
+// not authentication: it only rejects a request if the browser session was
+// switched while the batch was in progress. Legacy callers may omit it.
+func driveExpectedUser(w http.ResponseWriter, r *http.Request, userID int64) bool {
+	if raw := r.Header.Get("X-Jiange-User-Id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 || id != userID {
+			httpx.Error(w, http.StatusUnauthorized, "session_changed", "登录账号已变化，请重新开始上传")
+			return false
+		}
+	}
+	return true
+}
+
+// Dedicated batch routes fail closed on older servers and require an account
+// binding on every mutation, even during a rolling deployment.
+func (s *Server) postDriveBatchFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Jiange-User-Id") == "" {
+		httpx.Error(w, http.StatusBadRequest, "missing_account", "上传账号未确认")
+		return
+	}
+	s.postDriveFolder(w, r)
+}
+
+func (s *Server) postDriveBatchFile(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Jiange-User-Id") == "" {
+		httpx.Error(w, http.StatusBadRequest, "missing_account", "上传账号未确认")
+		return
+	}
+	s.postDriveFile(w, r)
+}
+
+// Resolve a nested folder's workspace from an authorized parent rather than
+// guessing from the caller's first workspace. Store mutations recheck access
+// and the parent chain inside their transaction.
+func (s *Server) driveWorkspace(w http.ResponseWriter, r *http.Request, userID, requested int64, parent *int64) (int64, bool) {
+	if requested < 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_workspace", "空间无效")
+		return 0, false
+	}
+	if parent != nil {
+		folder, err := s.Store.GetDoc(r.Context(), userID, *parent)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, r, err)
+			return 0, false
+		}
+		if err != nil || folder.Kind != "folder" || requested != 0 && requested != folder.WorkspaceID {
+			httpx.Error(w, http.StatusNotFound, "not_found", "目录不存在")
+			return 0, false
+		}
+		return folder.WorkspaceID, true
+	}
+	if requested > 0 {
+		return requested, true
+	}
+	spaces, err := s.Store.Workspaces(r.Context(), userID)
+	if err != nil {
+		s.fail(w, r, err)
+		return 0, false
+	}
+	if len(spaces) == 0 {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "没有可用空间")
+		return 0, false
+	}
+	return spaces[0].ID, true
+}
+
 // postDriveFolder creates a folder (guarded drive operation).
 func (s *Server) postDriveFolder(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	g, ok := s.driveGuard(w, r)
 	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, u.ID) {
 		return
 	}
 	var in struct {
@@ -41,13 +111,8 @@ func (s *Server) postDriveFolder(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.WorkspaceID == 0 {
-		ws, werr := s.Store.Workspaces(r.Context(), u.ID)
-		if werr != nil || len(ws) == 0 {
-			s.fail(w, r, werr)
-			return
-		}
-		in.WorkspaceID = ws[0].ID
+	if in.WorkspaceID, ok = s.driveWorkspace(w, r, u.ID, in.WorkspaceID, in.ParentID); !ok {
+		return
 	}
 	title := driveCleanTitle(w, in.Title)
 	if title == "" {
@@ -83,13 +148,8 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "kind 必须是 doc/base/folder/slides")
 		return
 	}
-	if in.WorkspaceID == 0 {
-		ws, werr := s.Store.Workspaces(r.Context(), u.ID)
-		if werr != nil || len(ws) == 0 {
-			s.fail(w, r, werr)
-			return
-		}
-		in.WorkspaceID = ws[0].ID
+	if in.WorkspaceID, ok = s.driveWorkspace(w, r, u.ID, in.WorkspaceID, in.ParentID); !ok {
+		return
 	}
 	title := driveCleanTitle(w, in.Title)
 	if title == "" {
@@ -118,14 +178,17 @@ func (s *Server) listDriveChildren(w http.ResponseWriter, r *http.Request) {
 		}
 		parent = &id
 	}
-	wsID, err := strconv.ParseInt(r.URL.Query().Get("workspaceId"), 10, 64)
-	if err != nil || wsID <= 0 {
-		ws, werr := s.Store.Workspaces(r.Context(), u.ID)
-		if werr != nil || len(ws) == 0 {
-			s.fail(w, r, werr)
+	var wsID int64
+	if raw := r.URL.Query().Get("workspaceId"); raw != "" {
+		var err error
+		wsID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || wsID <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_workspace", "空间无效")
 			return
 		}
-		wsID = ws[0].ID
+	}
+	if wsID, ok = s.driveWorkspace(w, r, u.ID, wsID, parent); !ok {
+		return
 	}
 	entries, err := s.Store.ListDriveChildren(r.Context(), g, wsID, parent, r.URL.Query().Get("scope") == "personal")
 	if driveWriteErr(w, err, "list children") {

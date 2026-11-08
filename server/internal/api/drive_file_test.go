@@ -40,8 +40,37 @@ func exerciseDriveFile(t *testing.T, st store.Store) {
 			t.Fatalf("register: %d", res.StatusCode)
 		}
 	}
+	ownerUser, err := st.UserByEmail(ctx, "drive-file-0@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherSpace, err := st.CreateUser(ctx, "drive-other-space@example.test", "其他空间", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddWorkspaceMember(ctx, otherSpace.ID, ownerUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	res := post(t, owner, ts.URL+"/api/drive/folders", map[string]any{"title": "团队目录", "workspaceId": otherSpace.ID})
+	var teamRoot store.DriveEntry
+	if err := json.NewDecoder(res.Body).Decode(&teamRoot); err != nil || res.StatusCode != http.StatusCreated {
+		t.Fatalf("team folder: %d %v", res.StatusCode, err)
+	}
+	res.Body.Close()
+	res = post(t, owner, ts.URL+"/api/drive/folders", map[string]any{"title": "子目录", "parentId": teamRoot.ID})
+	var teamChild store.DriveEntry
+	if err := json.NewDecoder(res.Body).Decode(&teamChild); err != nil || res.StatusCode != http.StatusCreated || teamChild.WorkspaceID != otherSpace.ID {
+		t.Fatalf("nested folder in another workspace: %d %+v %v", res.StatusCode, teamChild, err)
+	}
+	res.Body.Close()
+	res = cGet(t, owner, ts.URL+"/api/drive/children?parent="+strconv.FormatInt(teamRoot.ID, 10))
+	var teamListing struct{ Entries []store.DriveEntry }
+	if err := json.NewDecoder(res.Body).Decode(&teamListing); err != nil || res.StatusCode != http.StatusOK || len(teamListing.Entries) != 1 || teamListing.Entries[0].ID != teamChild.ID {
+		t.Fatalf("team folder listing: %d %+v %v", res.StatusCode, teamListing, err)
+	}
+	res.Body.Close()
 	var folder store.DriveEntry
-	res := post(t, owner, ts.URL+"/api/drive/folders", map[string]any{"title": "项目资料", "scope": "personal"})
+	res = post(t, owner, ts.URL+"/api/drive/folders", map[string]any{"title": "项目资料", "scope": "personal"})
 	if err := json.NewDecoder(res.Body).Decode(&folder); err != nil || res.StatusCode != 201 {
 		t.Fatalf("folder: %d %v", res.StatusCode, err)
 	}
@@ -366,6 +395,61 @@ func exerciseDriveFile(t *testing.T, st store.Store) {
 	}
 }
 func TestMemoryDriveFile(t *testing.T) { exerciseDriveFile(t, store.NewMemory()) }
+
+func TestDriveUploadRejectsChangedAccount(t *testing.T) {
+	st := store.NewMemory()
+	srv := &Server{Store: st, Blobs: blob.NewMemory(), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	reg := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "pin@example.test", "name": "Test", "password": "password123"})
+	reg.Body.Close()
+	for _, tc := range []struct {
+		path, contentType string
+		body              io.Reader
+	}{
+		{"/api/drive/folders", "application/json", bytes.NewBufferString(`{"title":"should not exist"}`)},
+		{"/api/drive/files", "multipart/form-data; boundary=x", bytes.NewBufferString("--x--\r\n")},
+		{"/api/drive/batch/folders", "application/json", bytes.NewBufferString(`{"title":"should not exist"}`)},
+		{"/api/drive/batch/files", "multipart/form-data; boundary=x", bytes.NewBufferString("--x--\r\n")},
+	} {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+tc.path, tc.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", tc.contentType)
+		req.Header.Set("X-Jiange-User-Id", "999999")
+		req.Header.Set("X-Jiange-Upload", "1")
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s accepted switched account: %d", tc.path, res.StatusCode)
+		}
+	}
+	missing, err := http.NewRequest(http.MethodPost, ts.URL+"/api/drive/batch/folders", bytes.NewBufferString(`{"title":"unbound"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing.Header.Set("Content-Type", "application/json")
+	missingRes, err := client.Do(missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingRes.Body.Close()
+	if missingRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unbound batch accepted: %d", missingRes.StatusCode)
+	}
+	res := cGet(t, client, ts.URL+"/api/drive/children")
+	var listing struct{ Entries []store.DriveEntry }
+	if err := json.NewDecoder(res.Body).Decode(&listing); err != nil || len(listing.Entries) != 0 {
+		t.Fatalf("switched account created nodes: %+v %v", listing, err)
+	}
+	res.Body.Close()
+}
 
 type committedDriveFileError struct{ store.Store }
 

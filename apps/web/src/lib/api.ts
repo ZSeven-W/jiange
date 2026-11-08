@@ -24,11 +24,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal, extraHeaders?: Record<string, string>): Promise<T> {
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: body === undefined ? extraHeaders : { "Content-Type": "application/json", ...extraHeaders },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
@@ -295,16 +295,16 @@ export interface DriveEntry {
   updatedAt: string;
 }
 export const driveApi = {
-  uploadFile: async (file: File, parentId: number | null, personal: boolean): Promise<DriveEntry> => {
+  uploadFile: async (file: File, parentId: number | null, personal: boolean, signal?: AbortSignal, expectedUserId?: number): Promise<DriveEntry> => {
     const body = new FormData(); body.append("file", file); if (parentId !== null) body.append("parentId", String(parentId)); body.append("scope", personal ? "personal" : "shared");
-    const response = await fetch("/api/drive/files", { method: "POST", body, headers: { "X-Jiange-Upload": "1" } });
+    const response = await fetch(expectedUserId === undefined ? "/api/drive/files" : "/api/drive/batch/files", { method: "POST", body, headers: { "X-Jiange-Upload": "1", ...(expectedUserId === undefined ? {} : { "X-Jiange-User-Id": String(expectedUserId) }) }, signal });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new ApiError(response.status, data.error ?? "error", data.message ?? response.statusText);
     return data as DriveEntry;
   },
   file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
-  create: (title: string, parentId: number | null = null, personal = false) =>
-    request<DriveEntry>("POST", "/api/drive/folders", { title, parentId, scope: personal ? "personal" : "shared" }),
+  create: (title: string, parentId: number | null = null, personal = false, signal?: AbortSignal, expectedUserId?: number) =>
+    request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
   createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
   children: (parentId: number | null = null, personal = false) =>
