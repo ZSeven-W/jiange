@@ -303,6 +303,7 @@ export const driveApi = {
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
   restore: (id: number, expected: number) => request<void>("POST", `/api/drive/restore/${id}`, { expected }),
+  purge: (id: number, expected: number) => request<void>("POST", `/api/drive/purge/${id}`, { expected }),
   // 回收站列表走既有 /api/trash（条目已带 driveRevision/trashBatchId，供乐观并发还原）
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };

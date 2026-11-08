@@ -1,10 +1,19 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
@@ -213,5 +222,59 @@ func TestTrashEndpointRestoresDriveBatch(t *testing.T) {
 	json.NewDecoder(cGet(t, c, ts.URL+"/api/drive/children?parent="+strconv64(folder.ID)).Body).Decode(&children)
 	if len(children.Entries) != 1 || children.Entries[0].ID != doc.ID {
 		t.Fatalf("doc not back in folder: %+v", children.Entries)
+	}
+}
+
+// 永久删除：回收站条目连附件对象一起清掉；不可恢复；重复清理 409。
+func TestDrivePurgeReclaimsAttachmentBlobs(t *testing.T) {
+	st := store.NewMemory()
+	blobs := blob.NewMemory()
+	srv := &Server{Store: st, Blobs: blobs, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "pg@x.com", "name": "PG", "password": "password123"})
+
+	var doc struct{ ID int64 }
+	json.NewDecoder(post(t, c, ts.URL+"/api/docs", map[string]string{"title": "带附件"}).Body).Decode(&doc)
+
+	// 上传附件（服务端持有对象键）
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "x.png")
+	fw.Write([]byte("payload"))
+	mw.Close()
+	req, _ := http.NewRequest("POST", ts.URL+"/api/docs/"+strconv64(doc.ID)+"/files", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-Jiange-Upload", "1")
+	if res, err := c.Do(req); err != nil || res.StatusCode != 201 {
+		t.Fatalf("upload: %v %d", err, res.StatusCode)
+	}
+	full, err := st.GetFile(nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 回收 → 永久删除 → 对象回收、条目消失、还原端点 404
+	if res := send(t, c, "POST", ts.URL+"/api/drive/trash/"+strconv64(doc.ID), map[string]any{"expected": 0}); res.StatusCode != 204 {
+		t.Fatalf("trash: %d", res.StatusCode)
+	}
+	if res := send(t, c, "POST", ts.URL+"/api/drive/purge/"+strconv64(doc.ID), map[string]any{"expected": 1}); res.StatusCode != 204 {
+		t.Fatalf("purge: %d", res.StatusCode)
+	}
+	if _, err := blobs.Get(nil, full.ObjectKey); err != blob.ErrNotFound {
+		t.Fatalf("blob outlived purge: %v", err)
+	}
+	var list struct{ Docs []store.DocMeta }
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/trash").Body).Decode(&list)
+	if len(list.Docs) != 0 {
+		t.Fatalf("purged subtree still in trash: %+v", list.Docs)
+	}
+	if res := send(t, c, "POST", ts.URL+"/api/drive/restore/"+strconv64(doc.ID), map[string]any{"expected": 1}); res.StatusCode != 409 {
+		t.Fatalf("restore after purge: %d", res.StatusCode)
+	}
+	if res := send(t, c, "POST", ts.URL+"/api/drive/purge/"+strconv64(doc.ID), map[string]any{"expected": 1}); res.StatusCode != 409 {
+		t.Fatalf("repurge: %d", res.StatusCode)
 	}
 }

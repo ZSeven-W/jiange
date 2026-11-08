@@ -207,6 +207,40 @@ func (s *Server) postDriveRestore(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// postDrivePurge permanently removes an already-trashed subtree and reclaims
+// blobs whose last attachment reference disappeared (guarded, like restore).
+func (s *Server) postDrivePurge(w http.ResponseWriter, r *http.Request) {
+	g, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		WorkspaceID int64 `json:"workspaceId"`
+		Expected    int64 `json:"expected"`
+	}
+	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_id", "node id required")
+		return
+	}
+	freed, err := s.Store.PurgeDriveNode(r.Context(), g, id, in.Expected)
+	if driveWriteErr(w, err, "purge") {
+		return
+	}
+	for _, key := range freed {
+		if s.Blobs == nil {
+			break
+		}
+		if delErr := s.Blobs.Delete(r.Context(), key); delErr != nil {
+			s.Log.Warn("blob outlived its purge", "key", key, "error", delErr)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // driveCleanTitle trims and length-checks a folder title.
 func driveCleanTitle(w http.ResponseWriter, t string) string {
 	t = strings.TrimSpace(t)
