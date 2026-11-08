@@ -278,3 +278,29 @@ func TestDrivePurgeReclaimsAttachmentBlobs(t *testing.T) {
 		t.Fatalf("repurge: %d", res.StatusCode)
 	}
 }
+
+// 重命名：guarded + 修订号；folder 走 fence 路径（drive_revision 递增）。
+func TestDriveRename(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "rn@x.com", "name": "RN", "password": "password123"})
+
+	var folder store.DriveEntry
+	json.NewDecoder(post(t, c, ts.URL+"/api/drive/folders", map[string]any{"title": "原名"}).Body).Decode(&folder)
+	if res := send(t, c, "POST", ts.URL+"/api/drive/rename/"+strconv64(folder.ID), map[string]any{"title": " 新名字 ", "expected": folder.Revision}); res.StatusCode != 200 {
+		t.Fatalf("rename: %d", res.StatusCode)
+	} else {
+		var renamed store.DriveEntry
+		json.NewDecoder(res.Body).Decode(&renamed)
+		if renamed.Title != "新名字" || renamed.Revision != folder.Revision+1 {
+			t.Fatalf("renamed: %+v", renamed)
+		}
+	}
+	// 旧修订号 → 409
+	if res := send(t, c, "POST", ts.URL+"/api/drive/rename/"+strconv64(folder.ID), map[string]any{"title": "再改", "expected": folder.Revision}); res.StatusCode != 409 {
+		t.Fatalf("stale rename: %d", res.StatusCode)
+	}
+	// 空标题 → 400
+	if res := send(t, c, "POST", ts.URL+"/api/drive/rename/"+strconv64(folder.ID), map[string]any{"title": "  ", "expected": 2}); res.StatusCode != 400 {
+		t.Fatalf("empty rename: %d", res.StatusCode)
+	}
+}

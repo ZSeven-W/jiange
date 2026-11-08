@@ -37,6 +37,9 @@ type DriveFolderStore interface {
 	CreateDriveNode(context.Context, RestoreGuard, int64, *int64, string, string, bool) (DriveEntry, error)
 	ListDriveChildren(context.Context, RestoreGuard, int64, *int64, bool) ([]DriveEntry, error)
 	MoveDriveNode(context.Context, RestoreGuard, int64, *int64, int64) error
+	// RenameDriveNode retitles a node (guarded, revision-checked): the fence
+	// title trigger requires folders to bump drive_revision.
+	RenameDriveNode(context.Context, RestoreGuard, int64, string, int64) (DriveEntry, error)
 	TrashDriveNode(context.Context, RestoreGuard, int64, int64) error
 	RestoreDriveNode(context.Context, RestoreGuard, int64, int64) error
 	// PurgeDriveNode permanently removes an already-trashed subtree and
@@ -304,6 +307,38 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	d.meta.UpdatedAt = time.Now()
 	return nil
 }
+// RenameDriveNode retitles a node under guard; folders bump drive_revision to
+// satisfy the fence title trigger.
+func (m *Memory) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, title string, expected int64) (DriveEntry, error) {
+	if !validDriveTitle(title) {
+		return DriveEntry{}, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.driveSessionLocked(ctx, g)
+	if err != nil {
+		return DriveEntry{}, err
+	}
+	d := m.doc(id)
+	if d == nil || d.deleted || d.purged || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || RoleRank(m.roleLocked(g.UserID, d)) < RoleRank(RoleManage) {
+		return DriveEntry{}, ErrForbidden
+	}
+	if d.driveRevision != expected || d.driveRevision >= maxDriveRevision {
+		return DriveEntry{}, ErrConflict
+	}
+	if !g.currentTime().Before(expires) {
+		return DriveEntry{}, ErrUnauthenticated
+	}
+	if err = ctx.Err(); err != nil {
+		return DriveEntry{}, err
+	}
+	d.meta.Title = title
+	d.driveRevision++
+	d.meta.DriveRevision = d.driveRevision
+	d.meta.UpdatedAt = time.Now()
+	return driveMemoryEntry(m, d, g.UserID), nil
+}
+
 func (m *Memory) TrashDriveNode(ctx context.Context, g RestoreGuard, id, expected int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -920,4 +955,58 @@ func (p *Postgres) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expec
 		return nil, drivePGError(err)
 	}
 	return freed, nil
+}
+
+// RenameDriveNode retitles a node under guard. The fence title trigger
+// requires folder renames to bump drive_revision; non-folder renames bump it
+// too so every directory mutation carries optimistic concurrency.
+func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, title string, expected int64) (out DriveEntry, err error) {
+	if !validDriveTitle(title) {
+		return out, ErrConflict
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		ws, e := drivePGNodeWorkspace(ctx, tx, id)
+		if e != nil {
+			return e
+		}
+		if e = drivePGLockWorkspace(ctx, tx, ws); e != nil {
+			return e
+		}
+		exp, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		var currentWS, rev int64
+		var deleted bool
+		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&currentWS, &rev, &deleted)
+		if e != nil {
+			return e
+		}
+		if currentWS != ws || deleted || rev != expected {
+			return ErrConflict
+		}
+		if e = drivePGValidChain(ctx, tx, id, ws); e != nil {
+			return e
+		}
+		role, _, _, e := lockCopySource(ctx, tx, id, g.UserID)
+		if e != nil {
+			return e
+		}
+		if RoleRank(role) < RoleRank(RoleManage) {
+			return ErrForbidden
+		}
+		if e = drivePGEnd(ctx, g, exp); e != nil {
+			return e
+		}
+		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, id, title).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt); e != nil {
+			return e
+		}
+		out.Role = role
+		return drivePGEnd(ctx, g, exp)
+	})
+	if err != nil {
+		return DriveEntry{}, drivePGError(err)
+	}
+	return out, nil
 }

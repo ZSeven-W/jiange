@@ -301,6 +301,10 @@ export const driveApi = {
     request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}${personal ? `${parentId ? "&" : "?"}scope=personal` : ""}`).then((r) => r.entries),
   move: (id: number, parentId: number | null, expected: number) =>
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
+  rename: (id: number, title: string, expected: number) =>
+    request<DriveEntry>("POST", `/api/drive/rename/${id}`, { title, expected }),
+  ancestors: (id: number) =>
+    request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
   restore: (id: number, expected: number) => request<void>("POST", `/api/drive/restore/${id}`, { expected }),
   purge: (id: number, expected: number) => request<void>("POST", `/api/drive/purge/${id}`, { expected }),
