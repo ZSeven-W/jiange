@@ -40,7 +40,7 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	}
 	if c.ParentID != nil {
 		parent := m.doc(*c.ParentID)
-		if parent == nil || parent.deleted || parent.meta.WorkspaceID != c.WorkspaceID || RoleRank(m.roleLocked(c.UserID, parent)) < RoleRank(RoleView) {
+		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != c.WorkspaceID || RoleRank(m.roleLocked(c.UserID, parent)) < RoleRank(RoleView) {
 			return DocMeta{}, ErrNotFound
 		}
 	}

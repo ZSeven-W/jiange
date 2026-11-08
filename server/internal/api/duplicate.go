@@ -116,7 +116,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	if parentID != nil {
 		parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
-		if err != nil || parent.WorkspaceID != workspaceID {
+		if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
 			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
 			return
 		}

@@ -36,6 +36,8 @@ type DriveEntry struct {
 type DriveFolderStore interface {
 	CreateDriveFolder(context.Context, RestoreGuard, int64, *int64, string, bool) (DriveEntry, error)
 	CreateDriveNode(context.Context, RestoreGuard, int64, *int64, string, string, bool) (DriveEntry, error)
+	CreateDriveFile(context.Context, RestoreGuard, int64, *int64, FileMeta, bool) (DriveEntry, error)
+	GetDriveFile(context.Context, int64, int64) (FileMeta, error)
 	ListDriveChildren(context.Context, RestoreGuard, int64, *int64, bool) ([]DriveEntry, error)
 	MoveDriveNode(context.Context, RestoreGuard, int64, *int64, int64) error
 	// RenameDriveNode retitles a node (guarded, revision-checked): the fence
@@ -362,13 +364,22 @@ func (m *Memory) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 	if d.driveRevision != expected || d.driveRevision >= maxDriveRevision {
 		return DriveEntry{}, ErrConflict
 	}
+	if d.meta.Kind == "file" && !ValidDriveFileName(title) {
+		return DriveEntry{}, ErrConflict
+	}
 	if !g.currentTime().Before(expires) {
 		return DriveEntry{}, ErrUnauthenticated
 	}
 	if err = ctx.Err(); err != nil {
 		return DriveEntry{}, err
 	}
+	if d.meta.Kind == "file" && (d.driveFileID < 1 || d.driveFileID > int64(len(m.sh.files)) || m.sh.files[d.driveFileID-1].ID == 0 || m.sh.files[d.driveFileID-1].DocID != id) {
+		return DriveEntry{}, ErrConflict
+	}
 	d.meta.Title = title
+	if d.meta.Kind == "file" {
+		m.sh.files[d.driveFileID-1].Name = title
+	}
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
@@ -1063,9 +1074,12 @@ func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64
 		if e = drivePGValidChain(ctx, tx, id, ws); e != nil {
 			return e
 		}
-		role, _, _, e := lockCopySource(ctx, tx, id, g.UserID)
+		role, _, kind, e := lockCopySource(ctx, tx, id, g.UserID)
 		if e != nil {
 			return e
+		}
+		if kind == "file" && !ValidDriveFileName(title) {
+			return ErrConflict
 		}
 		if RoleRank(role) < RoleRank(RoleManage) {
 			return ErrForbidden
@@ -1076,6 +1090,15 @@ func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64
 		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,created_at,updated_at`, id, title).
 			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
+		}
+		if out.Kind == "file" {
+			tag, e := tx.Exec(ctx, `UPDATE attachments SET name=$2 WHERE id=(SELECT attachment_id FROM drive_files WHERE node_id=$1) AND doc_id=$1`, id, title)
+			if e != nil {
+				return e
+			}
+			if tag.RowsAffected() != 1 {
+				return ErrConflict
+			}
 		}
 		out.Role = role
 		return drivePGEnd(ctx, g, exp)

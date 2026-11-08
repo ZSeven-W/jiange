@@ -7,6 +7,7 @@ import { docTitle, hrefOf } from "@/components/Sidebar";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { DocColorIcon } from "@/components/FeishuIcons";
+import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { parseMarkdown } from "@/lib/markdown";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { stageStarter } from "./pendingStarter";
@@ -134,22 +135,8 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
   return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">文档类型</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">所有类型</option><option value="doc">文档</option><option value="base">多维表格</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
-function NewDocGlyph() {
-  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path fill="#5083FB" d="M2.5 2a1 1 0 0 0-1 1v15.059c0 1.31.541 2.567 1.504 3.494A5.24 5.24 0 0 0 6.635 23h6.073A8 8 0 0 1 20.5 9.398V6.941c0-1.31-.541-2.567-1.504-3.494A5.24 5.24 0 0 0 15.365 2z" />
-    <circle cx="18" cy="17" r="6" fill="#1456F0" />
-    <path fill="#fff" d="M15 17a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 15 17" />
-    <path fill="#fff" d="M18 20a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 1 1.5 0v4.5A.75.75 0 0 1 18 20" />
-  </svg>;
-}
 function FileBadge({ kind, icon }: { kind: "doc" | "base"; icon?: string }) {
   return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <span className="grid size-5 shrink-0 place-items-center rounded-[4px] bg-[#6756d9] text-white"><Table2 size={13} strokeWidth={2}/></span>;
-}
-function UploadGlyph() {
-  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="17" r="6" fill="#ED6D0C"/><path fill="#FF811A" fillRule="evenodd" d="M11.07 21H6a6 6 0 0 1-.94-11.927 7.001 7.001 0 0 1 13.877-.02A8 8 0 0 0 11.07 21" clipRule="evenodd"/><path fill="#fff" d="m19.488 16.68-.816-.816v3.977a.701.701 0 1 1-1.403 0v-3.917l-.756.757a.701.701 0 1 1-.992-.992l1.983-1.984a.7.7 0 0 1 .992 0l1.984 1.984a.701.701 0 0 1-.992.992"/></svg>;
-}
-function TemplateGlyph() {
-  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="#5B65F5" d="M14 13.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0"/><path fill="#FCCA03" d="M10.65 2.848a2 2 0 0 1 2.45-1.414l7.702 2.064a2 2 0 0 1 1.414 2.45l-2.064 7.702a2 2 0 0 1-2.45 1.414L10 13a2 2 0 0 1-1.414-2.45z"/><path fill="#F54A45" d="M13.89 10.297a1 1 0 0 1 1.733 0l5.768 9.999a1 1 0 0 1-.866 1.5H8.988a1 1 0 0 1-.866-1.5z"/></svg>;
 }
 function ActionCard({ icon, title, description, disabled, onClick }: { icon: React.ReactNode; title: string; description: string; disabled?: boolean; onClick: () => void }) {
   return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{title}</span><span className="mt-0.5 block truncate text-[12px] text-subtle">{description}</span></span></button>;

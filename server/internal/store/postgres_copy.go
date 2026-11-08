@@ -155,13 +155,14 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		}
 		if c.ParentID != nil {
 			var workspace int64
-			if err := tx.QueryRow(ctx, `SELECT workspace_id FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace); err != nil {
+			var parentKind string
+			if err := tx.QueryRow(ctx, `SELECT workspace_id,kind FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrNotFound
 				}
 				return err
 			}
-			if workspace != c.WorkspaceID {
+			if workspace != c.WorkspaceID || parentKind == "file" {
 				return ErrNotFound
 			}
 		}

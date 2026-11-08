@@ -155,6 +155,10 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, anon, view or edit")
 		return
 	}
+	if d.Kind == "file" && in.Role == "anon" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_role", "云盘文件暂不支持匿名分享")
+		return
+	}
 
 	// Use a fresh candidate with an atomic update. Reading a token and later
 	// writing it back could otherwise resurrect it after a concurrent close.
@@ -340,6 +344,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.Kind == "file" || d.Kind == "folder" {
+		httpx.Error(w, http.StatusConflict, "invalid_kind", "此类型不支持添加文档附件")
+		return
+	}
 	if d.Kind == "base" && s.baseChannelAccess(r.Context(), r, d.ID, store.RoleEdit) != nil {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持上传附件")
 		return
@@ -409,6 +417,10 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 	meta, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID)
 	if err != nil || store.RoleRank(meta.Role) < store.RoleRank(store.RoleEdit) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "需要编辑权限")
+		return
+	}
+	if meta.Kind == "file" {
+		httpx.Error(w, http.StatusConflict, "drive_file", "请通过云盘回收站删除文件")
 		return
 	}
 	key, refs, err := s.Store.DeleteFile(r.Context(), id)

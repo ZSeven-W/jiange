@@ -14,6 +14,7 @@ type memClient struct {
 
 type memDoc struct {
 	meta            DocMeta
+	driveFileID     int64
 	driveRevision   int64
 	driveTrashBatch int64
 	purged          bool  // 永久删除：不可恢复，目录/回收站均不可见
@@ -61,6 +62,12 @@ func (m *Memory) CanCreateIn(_ context.Context, uid, ws int64) (bool, error) {
 
 func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, title string, initial []RawOp) (DocMeta, error) {
 	m.mu.Lock()
+	if parent != nil {
+		if p := m.doc(*parent); p != nil && p.meta.Kind == "file" {
+			m.mu.Unlock()
+			return DocMeta{}, ErrConflict
+		}
+	}
 	now := time.Now()
 	d := &memDoc{
 		meta:     DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView},
@@ -96,7 +103,7 @@ func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
 		// 个人空间节点只出现在创建者的列表里
-		if m.member(uid, d.meta.WorkspaceID) && !d.deleted && (!d.personal || d.meta.CreatorID == uid) {
+		if m.member(uid, d.meta.WorkspaceID) && !d.deleted && d.meta.Kind != "file" && (!d.personal || d.meta.CreatorID == uid) {
 			meta := d.meta
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
@@ -158,6 +165,9 @@ func (m *Memory) UpdateTitle(_ context.Context, id int64, title string) (DocMeta
 	d := m.doc(id)
 	if d == nil {
 		return DocMeta{}, ErrNotFound
+	}
+	if d.meta.Kind == "file" {
+		return DocMeta{}, ErrConflict
 	}
 	d.meta.Title, d.meta.UpdatedAt = title, time.Now()
 	return d.meta, nil
@@ -466,7 +476,13 @@ func (m *Memory) setDeleted(id int64, v bool) error {
 	if m.doc(id) == nil {
 		return ErrNotFound
 	}
-	for _, d := range m.subtree(id) {
+	nodes := m.subtree(id)
+	for _, d := range nodes {
+		if d.meta.Kind == "file" {
+			return ErrConflict
+		}
+	}
+	for _, d := range nodes {
 		d.deleted = v
 	}
 	return nil
@@ -494,7 +510,13 @@ func (m *Memory) Move(_ context.Context, id int64, parent *int64) error {
 	if d == nil {
 		return ErrNotFound
 	}
+	if d.meta.Kind == "file" {
+		return ErrConflict
+	}
 	if parent != nil {
+		if p := m.doc(*parent); p != nil && p.meta.Kind == "file" {
+			return ErrConflict
+		}
 		for _, x := range m.subtree(id) {
 			if x.meta.ID == *parent {
 				return ErrConflict

@@ -56,7 +56,7 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base" | "folder" | "slides";
+  kind?: "doc" | "base" | "folder" | "slides" | "file";
   workspaceName?: string;
   copyProtected?: boolean;
   copyMinRole?: Role;
@@ -263,6 +263,7 @@ export interface FileMeta {
   name: string;
   mime: string;
   size: number;
+  personal?: boolean;
 }
 
 export interface Automation {
@@ -294,6 +295,14 @@ export interface DriveEntry {
   updatedAt: string;
 }
 export const driveApi = {
+  uploadFile: async (file: File, parentId: number | null, personal: boolean): Promise<DriveEntry> => {
+    const body = new FormData(); body.append("file", file); if (parentId !== null) body.append("parentId", String(parentId)); body.append("scope", personal ? "personal" : "shared");
+    const response = await fetch("/api/drive/files", { method: "POST", body, headers: { "X-Jiange-Upload": "1" } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiError(response.status, data.error ?? "error", data.message ?? response.statusText);
+    return data as DriveEntry;
+  },
+  file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
   create: (title: string, parentId: number | null = null, personal = false) =>
     request<DriveEntry>("POST", "/api/drive/folders", { title, parentId, scope: personal ? "personal" : "shared" }),
   createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
