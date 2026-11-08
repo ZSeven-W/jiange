@@ -72,7 +72,7 @@ P0 脚手架 ✅ · P1 协同内核 ✅ · P2 Go 同步服务 ✅ · P3 块编�
 
 ## License
 
-MIT
+个人与非商业使用免费；商业使用（含企业生产经营、托管/SaaS、集成进商业产品等）需购买商业授权，详见 [LICENSE](./LICENSE)。
 
 ## 设计 / Design
 UI 先在 OpenPencil 中设计（`design/jiange.op`），预览见 `design/previews/`，
