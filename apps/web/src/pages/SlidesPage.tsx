@@ -6,6 +6,8 @@ import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { SlidesDraftQueue } from "./slidesDraft";
 import { SlideShapes } from "./slides-shapes";
+import { SlideShapeControls } from "./slides-shape-controls";
+import { patchSlideShape } from "./slides-shape-state";
 import { ChevronLeft, Copy, FilePlus2, ImageIcon, Palette, Play, Presentation, Trash2, Type, Shapes } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
@@ -42,7 +44,12 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const active = list.find((page) => page.id === current) ?? list[0] ?? null;
   const draft = active ? queue.get(active) : null;
   const chosenShape = draft?.content.shapes.find((shape) => shape.id === selectedShape);
-  const updateShape = (shape: SlideShape) => { if (active && draft) queue.edit(active, { shapes: draft.content.shapes.map((item) => item.id === shape.id ? shape : item) }); };
+  const updateShape = (id: string, patch: Partial<SlideShape>) => {
+    if (!active) return;
+    const current = queue.get(active);
+    const shapes = patchSlideShape(current.content.shapes, id, patch);
+    queue.edit(active, { shapes });
+  };
   const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
 
   useEffect(() => {
@@ -117,14 +124,14 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
             <button type="button" disabled={!canEdit || !active || list.findIndex((page) => page.id === active.id) >= list.length - 1} onClick={() => { if (!active) return; const i = list.findIndex((page) => page.id === active.id); doMove(active, (list[i + 1].pos + (i + 2 < list.length ? list[i + 2].pos : list[i + 1].pos + 1)) / 2); }} className="h-9 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40">下移</button>
           </div>
           {shapeMenu && <div className="flex shrink-0 items-center gap-1 border-b bg-white px-4 py-2 text-[13px]" role="group" aria-label="选择图形">{([["rectangle", "矩形"], ["ellipse", "圆形"], ["triangle", "三角形"]] as const).map(([kind, label]) => <button key={kind} type="button" onClick={() => addShape(kind)} className="rounded-md px-3 py-2 hover:bg-[#f2f3f5]">{label}</button>)}<button type="button" onClick={() => setShapeMenu(false)} className="ml-auto rounded-md px-3 py-2 hover:bg-[#f2f3f5]">关闭</button></div>}
-          {chosenShape && canEdit && <div className="flex shrink-0 items-center gap-3 overflow-x-auto whitespace-nowrap border-b bg-white px-4 py-2 text-[13px] [&>*]:shrink-0"><span className="hidden sm:inline">选中图形，可拖动或用方向键移动</span><span className="sm:hidden">已选图形</span><label className="flex items-center gap-1">颜色<input type="color" aria-label="图形颜色" value={chosenShape.color} onChange={(event) => updateShape({ ...chosenShape, color: event.target.value })}/></label><button type="button" onClick={() => { if (active && draft) queue.edit(active, { shapes: draft.content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }} className="rounded px-2 py-1 text-[#d83931] hover:bg-[#f2f3f5]">删除图形</button></div>}
+          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
           {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}</p>}
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-8">
             {active && draft ? <div className="relative aspect-video w-full max-w-[960px] shrink-0 bg-white px-[6%] py-[5%] shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ backgroundColor: draft.content.background || "#fff" }} data-slides-canvas>
               <input ref={titleRef} value={draft.content.title} readOnly={!canEdit} onChange={(event) => queue.edit(active, { title: event.target.value })} placeholder="点击添加标题" className="w-full border border-transparent bg-transparent px-2 py-1 text-[clamp(18px,2.2vw,36px)] font-semibold leading-tight text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-title />
               <textarea value={draft.content.body} readOnly={!canEdit} onChange={(event) => queue.edit(active, { body: event.target.value })} placeholder="点击添加正文" className="mt-[4%] h-[55%] w-full resize-none border border-transparent bg-transparent px-2 py-1 text-[clamp(13px,1.4vw,21px)] leading-relaxed text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-body />
-              <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} onSelect={setSelectedShape} onChange={updateShape}/>
+              <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} onSelect={setSelectedShape} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y })}/>
               <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => queue.edit(active, { background: event.target.value })} className="sr-only" aria-label="幻灯片背景颜色" />
             </div> : <div className="flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
           </div>

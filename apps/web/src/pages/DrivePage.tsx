@@ -6,6 +6,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { parseMarkdown } from "@/lib/markdown";
 import { stageStarter } from "./pendingStarter";
+import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { ArrowDownUp, ChevronDown, ChevronRight, CloudUpload, Ellipsis, Folder, FolderPlus, LayoutGrid, List, Presentation, Search, Table2 } from "lucide-react";
 
@@ -27,6 +28,9 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
   const [showFilter, setShowFilter] = useState(false);
   const [moving, setMoving] = useState<DriveEntry | null>(null);
   const [creating, setCreating] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [templatePending, setTemplatePending] = useState(false);
+  const templateLock = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [importing, setImporting] = useState(false);
@@ -67,6 +71,17 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
     } catch (err) { setError(err instanceof Error ? err.message : "导入未完成，请检查目录后重试。"); }
     finally { importLock.current = false; setImporting(false); }
   };
+  const chooseTemplate = async (template: StarterTemplate) => {
+    if (templateLock.current) return;
+    templateLock.current = true; setTemplatePending(true); setError("");
+    try {
+      const doc = await driveApi.createNode("doc", template.name, folderId, scope);
+      stageStarter(userId, doc.id, template.body);
+      invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
+      setLibraryOpen(false); location.hash = hrefOf({ id: doc.id, kind: "doc" });
+    } catch { setError("创建模板文档未完成，请检查目录后重试。"); }
+    finally { templateLock.current = false; setTemplatePending(false); }
+  };
   const actions = (entry: DriveEntry) => ({
     onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" }); },
     onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
@@ -84,7 +99,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
         </div>
         <label className="flex h-16 cursor-pointer items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#fff1e6] text-[#ff8800]"><CloudUpload size={18}/></span><span><span className="block text-[14px] font-medium">{importing ? "正在导入…" : "上传"}</span><span className="hidden text-[12px] text-[#8f959e] sm:block">导入 Markdown 文档</span></span><input type="file" aria-label="上传 Markdown 文件" accept=".md,.markdown,text/markdown" disabled={importing} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importMarkdown(file); }}/></label>
         <button type="button" disabled title="暂不支持添加快捷方式" className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left opacity-50"><span className="grid size-8 place-items-center rounded-md bg-[#f0eaff] text-[#8657e5]"><ChevronRight size={18}/></span><span><span className="block text-[14px] font-medium">添加</span><span className="hidden text-[12px] text-[#8f959e] sm:block">添加云文档的快捷方式</span></span></button>
-        <button type="button" onClick={() => { location.hash = "#/"; }} className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#fff6df] text-[#f5a623]"><Table2 size={18}/></span><span><span className="block text-[14px] font-medium">模板库</span><span className="hidden text-[12px] text-[#8f959e] sm:block">前往主页选择模板</span></span></button>
+        <button type="button" onClick={() => setLibraryOpen(true)} className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#fff6df] text-[#f5a623]"><Table2 size={18}/></span><span><span className="block text-[14px] font-medium">模板库</span><span className="hidden text-[12px] text-[#8f959e] sm:block">选择模板快速新建</span></span></button>
       </div>
       {folderId !== null && <nav aria-label="文件夹路径" className="mt-5 flex flex-wrap items-center gap-1 text-[13px] text-[#646a73]"><a href={scope ? "#/drive/mine" : "#/drive"} className="hover:text-[#3370ff]">{scope ? "我的文件夹" : "共享文件夹"}</a>{crumbsOrdered.map((item) => <span key={item.id} className="flex items-center gap-1"><ChevronRight size={13}/><a href={item.kind === "folder" ? `#/drive/${item.id}` : hrefOf(item)} className="hover:text-[#3370ff]">{item.title || "未命名"}</a></span>)}</nav>}
       <div className="mt-8 flex items-center gap-5 text-[14px]"><a href="#/drive/mine" className={cn("pb-1", scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>我的文件夹</a><a href="#/drive" className={cn("pb-1", !scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>共享文件夹</a><div className="ml-auto flex items-center gap-2"><button type="button" onClick={() => setSort((value) => value === "name" ? "updated" : "name")} className="flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]" title={sort === "name" ? "按名称排序" : "按修改时间排序"}><ArrowDownUp size={14}/>排序<ChevronDown size={12}/></button><button type="button" onClick={() => setGrid((value) => !value)} className="flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]">展示<ChevronDown size={12}/></button></div></div>
@@ -99,6 +114,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
       {error && <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p>}
     </div>
     {moving && <MoveDialog entry={moving} onDone={() => setMoving(null)}/>}
+    {libraryOpen && <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-4" onMouseDown={() => { if (!templatePending) setLibraryOpen(false); }}><div role="dialog" aria-modal="true" aria-label="模板库" className="max-h-[calc(100dvh-2rem)] w-full max-w-[880px] overflow-y-auto rounded-lg border bg-white p-5 shadow-xl" onMouseDown={(event) => event.stopPropagation()}><h2 className="mb-5 text-[16px] font-semibold">模板库</h2><StarterTemplates compact disabled={templatePending} onChoose={(template) => void chooseTemplate(template)} onHide={() => setLibraryOpen(false)}/>{error && <p role="alert" className="mt-3 text-[13px] text-destructive">{error}</p>}</div></div>}
   </main>;
 }
 

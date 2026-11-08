@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, type SlidesPage } from "@/lib/api";
 import { SlidesDraftQueue, type SlideContent } from "./slidesDraft";
+import { patchSlideShape } from "./slides-shape-state";
 
 const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", shapes: [], revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -49,5 +50,26 @@ describe("slide drafts", () => {
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, shapes: [{ color: shape.color, y: shape.y, x: shape.x, kind: shape.kind, id: shape.id }], revision: base.revision + 1 }), () => {}, () => {});
     q.edit(page, { shapes: [shape] }); await tick();
     expect(q.get(page).state).toBe("saved");
+  });
+
+  it("serialises size and rotation edits while another save is in flight", async () => {
+    let finish!: () => void;
+    const shape = { id: "one", kind: "ellipse" as const, x: 20, y: 30, color: "#3370ff" };
+    const write = vi.fn().mockImplementationOnce((base: SlidesPage, content: SlideContent) => new Promise<SlidesPage>((resolve) => { finish = () => resolve({ ...base, ...content, revision: 2 }); }))
+      .mockImplementationOnce((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: 3 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(page, { shapes: [shape] });
+    q.edit(page, { shapes: [{ ...shape, width: 35, height: 25, rotation: 45 }] });
+    finish(); await tick(); await tick();
+    expect(write.mock.calls[1][1].shapes[0]).toMatchObject({ width: 35, height: 25, rotation: 45 });
+    expect(q.get(page).state).toBe("saved");
+  });
+
+  it("merges separate shape edits and keeps resized shapes within the canvas", () => {
+    const shape = { id: "one", kind: "rectangle" as const, x: 75, y: 70, color: "#3370ff" };
+    const width = patchSlideShape([shape], "one", { width: 40 });
+    const height = patchSlideShape(width, "one", { height: 35 });
+    const rotated = patchSlideShape(height, "one", { rotation: 45 });
+    expect(rotated[0]).toMatchObject({ x: 60, y: 65, width: 40, height: 35, rotation: 45 });
   });
 });
