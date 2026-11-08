@@ -63,10 +63,24 @@ type Doc struct {
 	// character IDs. It is only a validation accelerator: compacted IDs and
 	// historical operation identities remain the durable store's authority.
 	occupied map[OpID]uint32
+	// tables holds opaque experimental-table sub-CRDT payloads per block
+	// (ttable ops). State format v2 (StateVersion) persists them.
+	tables map[OpID][][]byte
 }
 
 func NewDoc() *Doc {
-	return &Doc{blocks: map[OpID]*block{Root: newBlock(Root, Root, "")}, seen: map[OpID]bool{}}
+	return &Doc{blocks: map[OpID]*block{Root: newBlock(Root, Root, "")}, seen: map[OpID]bool{}, tables: map[OpID][][]byte{}}
+}
+
+// HasTables reports whether the replica carries experimental-table payloads
+// (state v2). V1 peers cannot join such documents.
+func (d *Doc) HasTables() bool {
+	for _, list := range d.tables {
+		if len(list) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Clock returns the highest Lamport clock observed.
@@ -124,6 +138,8 @@ func (d *Doc) ready(op *Op) bool {
 		}
 	case TMark:
 		return b.chars[op.Start.Char] != nil && b.chars[op.End.Char] != nil
+	case TTable:
+		return true // readiness is the block itself, checked above
 	}
 	return true
 }
@@ -195,6 +211,10 @@ func (d *Doc) integrate(op *Op) {
 			}
 		}
 		b.marks = append(b.marks, markRec{op.ID, op.Key, op.Value, op.Start, op.End})
+	case TTable:
+		// Opaque experimental-table payload: the replica stores it per block;
+		// interpretation belongs to the table sub-CRDT (admission upstream).
+		d.tables[op.Block] = append(d.tables[op.Block], append([]byte(nil), op.Payload...))
 	}
 }
 
