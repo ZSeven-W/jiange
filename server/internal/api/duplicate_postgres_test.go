@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,6 +46,7 @@ func TestPostgresDuplicateSharedAttachmentEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	cfg.ConnConfig.RuntimeParams["application_name"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -157,4 +159,151 @@ func TestPostgresDuplicateSharedAttachmentEndToEnd(t *testing.T) {
 	if err != nil || r.StatusCode != 200 || string(body) != data {
 		t.Fatalf("copied bytes: %d %q %v", r.StatusCode, body, err)
 	}
+
+	t.Run("copy versus delete keeps the shared object", func(t *testing.T) {
+		res := post(t, owner, server.URL+"/api/docs", map[string]string{"title": "并发附件源"})
+		var src store.DocMeta
+		if err := json.NewDecoder(res.Body).Decode(&src); err != nil || res.StatusCode != http.StatusCreated {
+			t.Fatalf("create source: %d %v", res.StatusCode, err)
+		}
+		res.Body.Close()
+		const raceKey, raceBytes = "objects/copy-delete-race", "safe-copy-bytes"
+		if err := blobs.Put(ctx, raceKey, "application/octet-stream", []byte(raceBytes)); err != nil {
+			t.Fatal(err)
+		}
+		original, err := st.CreateFile(ctx, store.FileMeta{DocID: src.ID, UploaderID: ownerUser.ID, Name: "source.bin", Mime: "application/octet-stream", Size: int64(len(raceBytes)), ObjectKey: raceKey})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entered, release := make(chan struct{}), make(chan struct{})
+		released := false
+		defer func() {
+			if !released {
+				close(release)
+			}
+		}()
+		type copyResult struct {
+			doc store.DocMeta
+			err error
+		}
+		copyDone := make(chan copyResult, 1)
+		go func() {
+			doc, err := st.CopyDoc(ctx, store.DocCopy{SourceID: src.ID, UserID: ownerUser.ID, WorkspaceID: src.WorkspaceID, Title: "并发副本", FileIDs: []int64{original.ID}}, func(map[int64]int64) ([]store.RawOp, error) {
+				close(entered)
+				<-release
+				return nil, nil
+			})
+			copyDone <- copyResult{doc, err}
+		}()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("copy did not reach builder")
+		}
+		type deleteResult struct {
+			status int
+			err    error
+		}
+		deleteDone := make(chan deleteResult, 1)
+		go func() {
+			req, err := http.NewRequest(http.MethodDelete, server.URL+"/api/files/"+strconv.FormatInt(original.ID, 10), nil)
+			if err != nil {
+				deleteDone <- deleteResult{err: err}
+				return
+			}
+			res, err := owner.Do(req)
+			if err != nil {
+				deleteDone <- deleteResult{err: err}
+				return
+			}
+			res.Body.Close()
+			deleteDone <- deleteResult{status: res.StatusCode}
+		}()
+		deadline := time.Now().Add(5 * time.Second)
+		waiting := false
+		for time.Now().Before(deadline) {
+			select {
+			case result := <-deleteDone:
+				t.Fatalf("delete returned before copy committed: %+v", result)
+			default:
+			}
+			if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE 'DELETE FROM attachments%')`, schema).Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+			if waiting {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !waiting {
+			t.Fatal("attachment deletion did not wait for the copy transaction")
+		}
+		close(release)
+		released = true
+		var copied copyResult
+		select {
+		case copied = <-copyDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("copy did not complete")
+		}
+		if copied.err != nil {
+			t.Fatalf("copy: %v", copied.err)
+		}
+		select {
+		case result := <-deleteDone:
+			if result.err != nil || result.status != http.StatusNoContent {
+				t.Fatalf("delete: %+v", result)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("delete did not complete")
+		}
+		var copiedFileID int64
+		if err := pool.QueryRow(ctx, `SELECT id FROM attachments WHERE doc_id=$1 AND object_key=$2`, copied.doc.ID, raceKey).Scan(&copiedFileID); err != nil {
+			t.Fatal(err)
+		}
+		copiedRes, err := owner.Get(server.URL + "/api/files/" + strconv.FormatInt(copiedFileID, 10))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer copiedRes.Body.Close()
+		copiedBytes, err := io.ReadAll(copiedRes.Body)
+		if err != nil || copiedRes.StatusCode != http.StatusOK || string(copiedBytes) != raceBytes {
+			t.Fatalf("copied bytes: status=%d body=%q err=%v", copiedRes.StatusCode, copiedBytes, err)
+		}
+	})
+	t.Run("delete before copy rejects the missing source", func(t *testing.T) {
+		res := post(t, owner, server.URL+"/api/docs", map[string]string{"title": "已删除附件源"})
+		var src store.DocMeta
+		if err := json.NewDecoder(res.Body).Decode(&src); err != nil || res.StatusCode != http.StatusCreated {
+			t.Fatalf("create source: %d %v", res.StatusCode, err)
+		}
+		res.Body.Close()
+		const key = "objects/delete-before-copy"
+		if err := blobs.Put(ctx, key, "application/octet-stream", []byte("payload")); err != nil {
+			t.Fatal(err)
+		}
+		original, err := st.CreateFile(ctx, store.FileMeta{DocID: src.ID, UploaderID: ownerUser.ID, Name: "source.bin", Mime: "application/octet-stream", Size: 7, ObjectKey: key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deleteReq, err := http.NewRequest(http.MethodDelete, server.URL+"/api/files/"+strconv.FormatInt(original.ID, 10), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deleted, err := owner.Do(deleteReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deleted.Body.Close()
+		if deleted.StatusCode != http.StatusNoContent {
+			t.Fatalf("delete: %d", deleted.StatusCode)
+		}
+		_, err = st.CopyDoc(ctx, store.DocCopy{SourceID: src.ID, UserID: ownerUser.ID, WorkspaceID: src.WorkspaceID, Title: "无效副本", FileIDs: []int64{original.ID}}, func(map[int64]int64) ([]store.RawOp, error) { return nil, nil })
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("copy must reject deleted source: %v", err)
+		}
+		if _, err := blobs.Get(ctx, key); !errors.Is(err, blob.ErrNotFound) {
+			t.Fatalf("last unreferenced blob was not deleted: %v", err)
+		}
+	})
 }

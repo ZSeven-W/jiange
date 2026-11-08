@@ -170,13 +170,44 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		if err != nil {
 			return err
 		}
+		// Copies share immutable object keys. Lock all source attachment rows
+		// before publishing any references, in a stable order. Deletion must
+		// wait for this transaction before it counts references and removes a
+		// blob. INSERT ... SELECT by itself does not lock the selected rows.
+		uniqueFiles := make(map[int64]struct{}, len(c.FileIDs))
+		for _, id := range c.FileIDs {
+			uniqueFiles[id] = struct{}{}
+		}
+		if len(uniqueFiles) != 0 {
+			rows, e := tx.Query(ctx, `SELECT id FROM attachments WHERE doc_id=$1 AND id=ANY($2) ORDER BY id FOR SHARE`, c.SourceID, c.FileIDs)
+			if e != nil {
+				return e
+			}
+			locked := 0
+			for rows.Next() {
+				var id int64
+				if e = rows.Scan(&id); e != nil {
+					rows.Close()
+					return e
+				}
+				locked++
+			}
+			e = rows.Err()
+			rows.Close()
+			if e != nil {
+				return e
+			}
+			if locked != len(uniqueFiles) {
+				return ErrNotFound
+			}
+		}
 		mapping := make(map[int64]int64, len(c.FileIDs))
 		for _, oldID := range c.FileIDs {
 			if _, ok := mapping[oldID]; ok {
 				continue
 			}
 			var newID int64
-			err := tx.QueryRow(ctx, `INSERT INTO attachments (doc_id,uploader_id,name,mime,size,object_key)
+			err = tx.QueryRow(ctx, `INSERT INTO attachments (doc_id,uploader_id,name,mime,size,object_key)
 				SELECT $1,$2,name,mime,size,object_key FROM attachments WHERE id=$3 AND doc_id=$4 RETURNING id`, result.ID, c.UserID, oldID, c.SourceID).Scan(&newID)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
