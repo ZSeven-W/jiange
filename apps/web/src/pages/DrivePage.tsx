@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { driveApi, type DriveEntry } from "@/lib/api";
+import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, PencilIcon, PlusIcon, RotateCcwIcon, TableIcon, Trash2Icon } from "lucide-react";
+import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, PencilIcon, PlusIcon, RotateCcwIcon, StarIcon, TableIcon, Trash2Icon } from "lucide-react";
 
 type DriveSort = "name" | "updated";
 
@@ -21,6 +21,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
     queryFn: () => driveApi.ancestors(folderId!),
     enabled: folderId !== null,
   });
+  const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites });
   // 顶层空间由路由决定；目录内空间由其条目继承（子节点跟随父目录）
   const scope = folderId === null ? personalRoot : (list.data?.[0]?.personal ?? false);
   const [sort, setSort] = useState<DriveSort>("name");
@@ -183,6 +184,8 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
               <DriveRow
                 key={e.id}
                 entry={e}
+                starred={favorites.data?.some((f) => f.id === e.id) ?? false}
+                onStar={(next) => (next ? extrasApi.star(e.id) : extrasApi.unstar(e.id)).then(() => favorites.refetch())}
                 onOpen={() => (location.hash = `#/drive/${e.id}`)}
                 onMove={() => setMoving(e)}
                 onRename={async () => {
@@ -196,6 +199,8 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
               <DriveRow
                 key={e.id}
                 entry={e}
+                starred={favorites.data?.some((f) => f.id === e.id) ?? false}
+                onStar={(next) => (next ? extrasApi.star(e.id) : extrasApi.unstar(e.id)).then(() => favorites.refetch())}
                 onOpen={() => (location.hash = hrefOf({ id: e.id, kind: e.kind as "doc" | "base" }))}
                 onMove={() => setMoving(e)}
                 onRename={async () => {
@@ -214,7 +219,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
   );
 }
 
-function DriveRow({ entry, onOpen, onMove, onRename, onTrash }: { entry: DriveEntry; onOpen: () => void; onMove: () => void; onRename: () => void; onTrash: () => void }) {
+function DriveRow({ entry, starred, onStar, onOpen, onMove, onRename, onTrash }: { entry: DriveEntry; starred: boolean; onStar: (next: boolean) => void; onOpen: () => void; onMove: () => void; onRename: () => void; onTrash: () => void }) {
   const trashed = false;
   return (
     <div className="group flex cursor-pointer items-center gap-3 border-b px-4 py-2.5 last:border-b-0 hover:bg-sidebar" data-drive-row={entry.id} onClick={onOpen}>
@@ -222,6 +227,17 @@ function DriveRow({ entry, onOpen, onMove, onRename, onTrash }: { entry: DriveEn
         {entry.kind === "folder" ? <FolderIcon size={16} strokeWidth={1.7} /> : entry.kind === "base" ? <BaseIcon /> : <DocIcon />}
       </span>
       <span className="truncate text-[14px]">{entry.title || "未命名"}</span>
+      <button
+        className={cn("shrink-0 rounded p-0.5", starred ? "text-amber-400" : "text-subtle opacity-0 hover:text-amber-400 group-hover:opacity-100")}
+        title={starred ? "取消收藏" : "收藏"}
+        data-drive-star
+        onClick={(e) => {
+          e.stopPropagation();
+          onStar(!starred);
+        }}
+      >
+        <StarIcon size={14} strokeWidth={1.7} fill={starred ? "currentColor" : "none"} />
+      </button>
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {trashed ? (
           <button className="rounded p-1 text-subtle hover:text-primary" title="恢复" onClick={(e) => e.stopPropagation()}>
