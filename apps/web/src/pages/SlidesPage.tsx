@@ -21,7 +21,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const canEdit = !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
   const queue = useMemo(() => new SlidesDraftQueue(
-    (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision),
+    (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes),
     (saved) => qc.setQueryData<Page[]>(["slides", deckId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
     () => setDraftVersion((version) => version + 1),
   ), [deckId, qc]);
@@ -70,7 +70,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
     const source = queue.get(page);
     if (source.state !== "saved") return;
     setOperationError("");
-    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
+    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision, source.content.notes)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
   };
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
@@ -116,6 +116,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
               <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => queue.edit(active, { background: event.target.value })} className="sr-only" aria-label="幻灯片背景颜色" />
             </div> : <div className="flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
           </div>
+          {active && draft && <div className="border-t border-[#e5e6eb] bg-white px-4 py-2"><textarea aria-label="演示者备注" value={draft.content.notes} readOnly={!canEdit} onChange={(event) => queue.edit(active, { notes: event.target.value })} placeholder="点击添加演示者备注" className="h-14 w-full resize-y bg-transparent text-[13px] text-[#646a73] outline-none placeholder:text-[#a3aab3]" /></div>}
           <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
         </section>
       </div>

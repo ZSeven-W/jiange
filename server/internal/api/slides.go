@@ -57,10 +57,11 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title            string `json:"title"`
-		Body             string `json:"body"`
-		Background       string `json:"background"`
-		ExpectedRevision int64  `json:"expectedRevision"`
+		Title            string  `json:"title"`
+		Body             string  `json:"body"`
+		Background       string  `json:"background"`
+		Notes            *string `json:"notes"`
+		ExpectedRevision int64   `json:"expectedRevision"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -69,7 +70,7 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_title", "标题不能超过 200 字")
 		return
 	}
-	if len(in.Body) > 20000 || len(in.Background) > 200 {
+	if len(in.Body) > 20000 || len(in.Background) > 200 || (in.Notes != nil && len(*in.Notes) > 20000) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_body", "内容超出限制")
 		return
 	}
@@ -78,7 +79,7 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_id", "page id required")
 		return
 	}
-	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.ExpectedRevision)
+	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.Notes, in.ExpectedRevision)
 	if driveWriteErr(w, err, "update page") {
 		return
 	}

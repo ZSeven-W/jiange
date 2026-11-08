@@ -40,8 +40,8 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 		}
 		e := tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id, pos, title)
 			SELECT $1, COALESCE(max(pos), 0) + 1, $2 FROM slides_pages WHERE slides_id=$1
-			RETURNING id, slides_id, pos, title, body, background, revision, updated_at`, slidesID, title).
-			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Revision, &page.UpdatedAt)
+			RETURNING id, slides_id, pos, title, body, background, notes, revision, updated_at`, slidesID, title).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Revision, &page.UpdatedAt)
 		return e
 	})
 	if err != nil {
@@ -51,7 +51,7 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 }
 
 func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) (out []SlidesPage, err error) {
-	rows, err := p.Pool.Query(ctx, `SELECT sp.id, sp.slides_id, sp.pos, sp.title, sp.body, sp.background, sp.revision, sp.updated_at
+	rows, err := p.Pool.Query(ctx, `SELECT sp.id, sp.slides_id, sp.pos, sp.title, sp.body, sp.background, sp.notes, sp.revision, sp.updated_at
 		FROM slides_pages sp JOIN nodes n ON n.id = sp.slides_id`+roleJoins+`
 		WHERE sp.slides_id=$2 AND n.kind='slides' AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY sp.pos, sp.id`, userID, slidesID)
 	if err != nil {
@@ -61,7 +61,7 @@ func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) 
 	out = []SlidesPage{}
 	for rows.Next() {
 		var pg SlidesPage
-		if err = rows.Scan(&pg.ID, &pg.SlidesID, &pg.Pos, &pg.Title, &pg.Body, &pg.Background, &pg.Revision, &pg.UpdatedAt); err != nil {
+		if err = rows.Scan(&pg.ID, &pg.SlidesID, &pg.Pos, &pg.Title, &pg.Body, &pg.Background, &pg.Notes, &pg.Revision, &pg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, pg)
@@ -69,7 +69,7 @@ func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) 
 	return out, rows.Err()
 }
 
-func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, expectedRevision int64) (page SlidesPage, err error) {
+func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, expectedRevision int64) (page SlidesPage, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var slidesID int64
 		if e := tx.QueryRow(ctx, `SELECT slides_id FROM slides_pages WHERE id=$1 FOR UPDATE`, pageID).Scan(&slidesID); e != nil {
@@ -81,9 +81,9 @@ func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID 
 		if e := p.slidesAccessGuarded(ctx, tx, g, slidesID); e != nil {
 			return e
 		}
-		e := tx.QueryRow(ctx, `UPDATE slides_pages SET title=$2, body=$3, background=$4, revision=revision+1, updated_at=now() WHERE id=$1 AND revision=$5
-			RETURNING id, slides_id, pos, title, body, background, revision, updated_at`, pageID, title, body, background, expectedRevision).
-			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Revision, &page.UpdatedAt)
+		e := tx.QueryRow(ctx, `UPDATE slides_pages SET title=$2, body=$3, background=$4, notes=COALESCE($5, notes), revision=revision+1, updated_at=now() WHERE id=$1 AND revision=$6
+			RETURNING id, slides_id, pos, title, body, background, notes, revision, updated_at`, pageID, title, body, background, notes, expectedRevision).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Revision, &page.UpdatedAt)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrConflict
 		}

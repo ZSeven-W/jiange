@@ -1,6 +1,6 @@
 import { ApiError, type SlidesPage } from "@/lib/api";
 
-export type SlideContent = Pick<SlidesPage, "title" | "body" | "background">;
+export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "notes">;
 export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
 
 /** Serialise writes per page; keep the user's latest text when a write fails. */
@@ -22,7 +22,7 @@ export class SlidesDraftQueue {
     const current = this.drafts.get(page.id);
     if (current && (current.state !== "saved" || current.page.revision >= page.revision)) return current;
     if (current) this.drafts.delete(page.id);
-    return { page, content: { title: page.title, body: page.body, background: page.background }, state: "saved" };
+    return { page, content: { title: page.title, body: page.body, background: page.background, notes: page.notes }, state: "saved" };
   }
 
   edit(page: SlidesPage, patch: Partial<SlideContent>) {
@@ -42,7 +42,7 @@ export class SlidesDraftQueue {
     this.onChange();
     try {
       const saved = await this.write(base, sent);
-      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background) {
+      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background || saved.notes !== sent.notes) {
         throw new Error("unexpected slide response");
       }
       const latest = this.drafts.get(id);
@@ -51,7 +51,7 @@ export class SlidesDraftQueue {
       latest.state = "saved";
       this.onSaved(saved);
       this.onChange();
-      if (latest.content.title !== sent.title || latest.content.body !== sent.body || latest.content.background !== sent.background) void this.save(id);
+      if (latest.content.title !== sent.title || latest.content.body !== sent.body || latest.content.background !== sent.background || latest.content.notes !== sent.notes) void this.save(id);
     } catch (error) {
       const latest = this.drafts.get(id);
       if (!latest) return;

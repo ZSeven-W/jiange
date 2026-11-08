@@ -1,15 +1,18 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
+import { parseMarkdown } from "@/lib/markdown";
+import { stageStarter } from "./pendingStarter";
+import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { ArrowDownUp, ChevronDown, ChevronRight, CloudUpload, Ellipsis, Folder, FolderPlus, LayoutGrid, List, Presentation, Search, Table2 } from "lucide-react";
 
 type DriveSort = "name" | "updated";
 
 /** Cloud drive: folder navigation and file operations use the guarded drive API. */
-export function DrivePage({ folderId, personalRoot }: { folderId: number | null; personalRoot: boolean }) {
+export function DrivePage({ folderId, personalRoot, userId }: { folderId: number | null; personalRoot: boolean; userId: number }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["drive", folderId, personalRoot], queryFn: () => driveApi.children(folderId, personalRoot), refetchInterval: 15000, refetchIntervalInBackground: false });
   const crumbs = useQuery({ queryKey: ["drive-ancestors", folderId], queryFn: () => driveApi.ancestors(folderId!), enabled: folderId !== null });
@@ -25,6 +28,8 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
   const [moving, setMoving] = useState<DriveEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const importLock = useRef(false);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); void qc.invalidateQueries({ queryKey: ["drive-ancestors"] }); };
   const failure = () => { setError("操作结果未能确认，请刷新后检查。"); invalidate(); };
   const rename = useMutation({ mutationFn: ({ id, title, expected }: { id: number; title: string; expected: number }) => driveApi.rename(id, title, expected), onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); }, onError: failure });
@@ -45,6 +50,22 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
     if (!title?.trim()) return;
     if (kind === "folder") createFolder.mutate(title.trim()); else createNode.mutate({ kind, title: title.trim() });
   };
+  const importMarkdown = async (file: File) => {
+    if (importLock.current) return;
+    importLock.current = true; setImporting(true); setError("");
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error("Markdown 文件不能超过 5 MB。");
+      const markdown = await file.text();
+      if (!parseMarkdown(markdown).length) throw new Error("文件没有可导入的内容。");
+      if (hasUnsupportedImportBlocks(markdown)) throw new Error("暂不支持导入图片，请先移除图片内容。");
+      const title = file.name.replace(/\.(md|markdown)$/i, "") || "导入文档";
+      const doc = await driveApi.createNode("doc", title, folderId, scope);
+      stageStarter(userId, doc.id, markdown);
+      invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
+      location.hash = hrefOf({ id: doc.id, kind: "doc" });
+    } catch (err) { setError(err instanceof Error ? err.message : "导入未完成，请检查目录后重试。"); }
+    finally { importLock.current = false; setImporting(false); }
+  };
   const actions = (entry: DriveEntry) => ({
     onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" }); },
     onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
@@ -59,7 +80,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
         <div className="relative"><button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating} className="flex h-16 w-full items-center gap-3 rounded-lg border border-[#e5e6eb] bg-white px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#e8efff] text-[#3370ff]"><FolderPlus size={18}/></span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-[#1f2329]">新建</span><span className="hidden truncate text-[12px] text-[#8f959e] sm:block">新建文档开始协作</span></span><ChevronDown size={15} className="text-[#8f959e]"/></button>
           {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div className="absolute left-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]">{(["doc", "slides", "base", "folder"] as const).map((kind) => <button key={kind} type="button" onClick={() => void newItem(kind)} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DocIcon/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : "文件夹"}</button>)}</div></>}
         </div>
-        <button type="button" disabled title="暂不支持上传到云盘" className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left opacity-50"><span className="grid size-8 place-items-center rounded-md bg-[#fff1e6] text-[#ff8800]"><CloudUpload size={18}/></span><span><span className="block text-[14px] font-medium">上传</span><span className="hidden text-[12px] text-[#8f959e] sm:block">上传本地文件</span></span></button>
+        <label className="flex h-16 cursor-pointer items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#fff1e6] text-[#ff8800]"><CloudUpload size={18}/></span><span><span className="block text-[14px] font-medium">{importing ? "正在导入…" : "上传"}</span><span className="hidden text-[12px] text-[#8f959e] sm:block">导入 Markdown 文档</span></span><input type="file" aria-label="上传 Markdown 文件" accept=".md,.markdown,text/markdown" disabled={importing} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importMarkdown(file); }}/></label>
         <button type="button" disabled title="暂不支持添加快捷方式" className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left opacity-50"><span className="grid size-8 place-items-center rounded-md bg-[#f0eaff] text-[#8657e5]"><ChevronRight size={18}/></span><span><span className="block text-[14px] font-medium">添加</span><span className="hidden text-[12px] text-[#8f959e] sm:block">添加云文档的快捷方式</span></span></button>
         <button type="button" onClick={() => { location.hash = "#/"; }} className="flex h-16 items-center gap-3 rounded-lg border border-[#e5e6eb] px-4 text-left hover:bg-[#f7f8fa]"><span className="grid size-8 place-items-center rounded-md bg-[#fff6df] text-[#f5a623]"><Table2 size={18}/></span><span><span className="block text-[14px] font-medium">模板库</span><span className="hidden text-[12px] text-[#8f959e] sm:block">前往主页选择模板</span></span></button>
       </div>

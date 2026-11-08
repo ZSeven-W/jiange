@@ -14,28 +14,12 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
 // InitialOps returns the ops every new document starts with: a title block
 // (holding title, if any) and one empty paragraph, authored by the reserved client 0.
-func InitialOps(title string) []store.RawOp {
-	d := collab.NewDoc()
-	ops := []collab.Op{
-		d.CreateBlock(0, collab.Root, "U", "title"),
-		d.CreateBlock(0, collab.Root, "V", "paragraph"),
-	}
-	if title != "" {
-		ops = append(ops, d.InsertText(0, ops[0].ID, 0, title))
-	}
-	out := make([]store.RawOp, len(ops))
-	for i, op := range ops {
-		b, _ := collab.EncodeOps([]collab.Op{op})
-		out[i] = store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b}
-	}
-	return out
-}
+func InitialOps(title string) []store.RawOp { return store.InitialDocOps(title) }
 
 type Hub struct {
 	Store store.DocStore
