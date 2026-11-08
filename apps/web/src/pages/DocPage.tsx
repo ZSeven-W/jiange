@@ -521,6 +521,11 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       if (!canEditRef.current) return;
       try {
         const d = await docsApi.rename(id, t);
+        if (!d) {
+          void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) });
+          void qc.invalidateQueries({ queryKey: ["docs"] });
+          return;
+        }
         qc.setQueryData(docMetaKey(id, me.user.id), d);
         qc.setQueryData<DocMeta[]>(["docs"], (old) => old?.map((x) => (x.id === id ? d : x)));
       } catch { void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) }); }

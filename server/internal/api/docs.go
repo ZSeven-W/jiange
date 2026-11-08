@@ -216,34 +216,40 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, current)
 		return
 	} else {
-		u, _ := UserFrom(r.Context())
-		mutationCtx := store.WithDocumentActor(r.Context(), u.ID)
-		// Move checks for cycles before changing the parent. Do it before changing
-		// other fields so a reported cycle conflict does not change those fields.
-		if in.Move {
-			if err := s.Store.Move(mutationCtx, d.ID, in.ParentID); errors.Is(err, store.ErrConflict) {
-				httpx.Error(w, http.StatusConflict, "cycle", "cannot move a doc into its own subtree")
-				return
-			} else if err != nil {
-				s.fail(w, r, err)
-				return
-			}
-			d.ParentID = in.ParentID
+		guard, ok := s.viewGuard(w, r)
+		if !ok {
+			return
 		}
+		var cleanedTitle *string
 		if in.Title != nil {
-			if _, err := s.Store.UpdateTitle(mutationCtx, d.ID, title); err != nil {
-				s.fail(w, r, err)
-				return
-			}
+			cleanedTitle = &title
 		}
-	}
-	// UpdateTitle is a system-level store operation: its returned metadata is
-	// not scoped to the caller and lacks Role and WorkspaceName. Reload the
-	// final state through the same access check as GET, including after a move.
-	if current, ok := s.docFromPath(w, r); ok {
-		u, _ := UserFrom(r.Context())
-		current = s.sanitizeWrittenDocMeta(r.Context(), u.ID, current)
+		if err := s.Store.PatchDocMetadataGuarded(r.Context(), guard, d.ID, store.DocMetadataPatch{Title: cleanedTitle, Move: in.Move, ParentID: in.ParentID}); err != nil {
+			switch {
+			case errors.Is(err, store.ErrUnauthenticated):
+				httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+			case errors.Is(err, store.ErrForbidden), errors.Is(err, store.ErrNotFound):
+				httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有修改权限")
+			case errors.Is(err, store.ErrConflict):
+				httpx.Error(w, http.StatusConflict, "metadata_conflict", "目录或权限已变化，请刷新后重试")
+			default:
+				s.fail(w, r, err)
+			}
+			return
+		}
+		// A move can remove the caller's inherited access. A committed write is
+		// not reported as failed, and no post-revocation metadata is returned.
+		w.Header().Set("Cache-Control", "no-store")
+		current, docErr := s.Store.GetDoc(r.Context(), guard.UserID, d.ID)
+		user, sessionErr := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+		if docErr != nil || store.RoleRank(current.Role) < store.RoleRank(store.RoleView) || sessionErr != nil || user.ID != guard.UserID {
+			w.Header().Set("X-Share-Refresh-Required", "true")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		current = s.sanitizeWrittenDocMeta(r.Context(), guard.UserID, current)
 		httpx.JSON(w, http.StatusOK, current)
+		return
 	}
 }
 
