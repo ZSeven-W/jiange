@@ -285,6 +285,7 @@ export interface DriveEntry {
   id: number;
   workspaceId: number;
   creatorId?: number;
+  creatorName?: string;
   parentId: number | null;
   kind: string;
   title: string;

@@ -102,7 +102,7 @@ func (p *Postgres) CreateDriveFile(ctx context.Context, g RestoreGuard, ws int64
 			return e
 		}
 		personal = parent == nil && personal || parent != nil && parentPersonal
-		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,'file','V',$3,$4,1,$5) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,created_at,updated_at`, ws, parent, f.Name, g.UserID, personal).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt)
+		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,'file','V',$3,$4,1,$5) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, ws, parent, f.Name, g.UserID, personal).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt)
 		if e != nil {
 			return e
 		}

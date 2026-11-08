@@ -35,6 +35,9 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if root.CreatorID != owner.ID || root.CreatorName != owner.Name {
+		t.Fatalf("created folder creator: %+v", root)
+	}
 	child, err := st.CreateDriveFolder(ctx, guard, ws.ID, &root.ID, "Child", false)
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +52,10 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err = st.SetShare(ctx, root.ID, outsider.ID, store.RoleView); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = st.ListDriveChildren(ctx, other, ws.ID, &root.ID, false); err != nil {
+	if listed, err := st.ListDriveChildren(ctx, other, ws.ID, &root.ID, false); err != nil {
 		t.Fatalf("inherited viewer listing: %v", err)
+	} else if len(listed) != 1 || listed[0].CreatorID != owner.ID || listed[0].CreatorName != owner.Name {
+		t.Fatalf("inherited viewer creator: %+v", listed)
 	}
 	if _, err = st.CreateDriveFolder(ctx, other, ws.ID, &root.ID, "unauthorized", false); !errors.Is(err, store.ErrForbidden) {
 		t.Fatalf("viewer cannot create: %v", err)
@@ -109,6 +114,9 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if err != nil {
 		t.Fatalf("create drive doc: %v", err)
 	}
+	if docNode.CreatorID != owner.ID || docNode.CreatorName != owner.Name {
+		t.Fatalf("created document creator: %+v", docNode)
+	}
 	ops, err := st.OpsAfter(ctx, docNode.ID, 0, 10)
 	initial := store.InitialDocOps("Folder doc")
 	if err != nil || len(ops) != len(initial) {
@@ -133,6 +141,14 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	if docNode.Revision != 1 || docNode.Kind != "doc" || baseNode.Kind != "base" {
 		t.Fatalf("created entries: %+v %+v", docNode, baseNode)
 	}
+	fileNode, err := st.CreateDriveFile(ctx, guard, ws.ID, &root.ID, store.FileMeta{Name: "sample.txt", Mime: "text/plain", Size: 1, ObjectKey: "test-creator-object"}, false)
+	if err != nil || fileNode.CreatorID != owner.ID || fileNode.CreatorName != owner.Name {
+		t.Fatalf("created file creator: %+v %v", fileNode, err)
+	}
+	renamed, err := st.RenameDriveNode(ctx, guard, fileNode.ID, "renamed.txt", fileNode.Revision)
+	if err != nil || renamed.CreatorID != owner.ID || renamed.CreatorName != owner.Name {
+		t.Fatalf("renamed file creator: %+v %v", renamed, err)
+	}
 	if _, err = st.CreateDriveNode(ctx, other, ws.ID, &root.ID, "doc", "unauthorized", false); !errors.Is(err, store.ErrForbidden) {
 		t.Fatalf("viewer cannot create doc: %v", err)
 	}
@@ -140,6 +156,26 @@ func exerciseDriveFolders(t *testing.T, st store.Store) {
 	// 子节点继承空间；跨空间移动被拒；回收后不泄漏到他人回收站。
 	if err = st.AddWorkspaceMember(ctx, ws.ID, outsider.ID); err != nil {
 		t.Fatalf("add member: %v", err)
+	}
+	otherFolder, err := st.CreateDriveFolder(ctx, other, ws.ID, nil, "Other owner", false)
+	if err != nil {
+		t.Fatalf("member creates shared folder: %v", err)
+	}
+	if roots, e := st.ListDriveChildren(ctx, guard, ws.ID, nil, false); e != nil {
+		t.Fatalf("shared roots: %v", e)
+	} else {
+		found := false
+		for _, item := range roots {
+			if item.ID == otherFolder.ID {
+				found = true
+				if item.CreatorID != outsider.ID || item.CreatorName != outsider.Name {
+					t.Fatalf("shared folder creator is not viewer: %+v", item)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("shared folder missing from roots")
+		}
 	}
 	mine, err := st.CreateDriveFolder(ctx, guard, ws.ID, nil, "我的空间根", true)
 	if err != nil {
