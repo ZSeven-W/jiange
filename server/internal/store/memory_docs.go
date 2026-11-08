@@ -16,7 +16,7 @@ type memDoc struct {
 	meta            DocMeta
 	driveRevision   int64
 	driveTrashBatch int64
-	purged          bool // 永久删除：不可恢复，目录/回收站均不可见
+	purged          bool  // 永久删除：不可恢复，目录/回收站均不可见
 	historyEpoch    int64 // 1 起；回滚/恢复后代际 +1
 	iconRevision    int64
 	cover           DocCover
@@ -371,6 +371,7 @@ func (m *Memory) HeadVersion(_ context.Context, doc int64) (epoch, head int64, e
 	if d == nil {
 		return 0, 0, ErrNotFound
 	}
+	epoch = d.historyEpoch
 	if epoch < 1 {
 		epoch = 1 // 与迁移 0036 的默认值一致
 	}
@@ -385,6 +386,9 @@ func (m *Memory) BumpHistoryEpoch(_ context.Context, doc int64) error {
 	d := m.doc(doc)
 	if d == nil {
 		return ErrNotFound
+	}
+	if d.historyEpoch < 1 {
+		d.historyEpoch = 1
 	}
 	d.historyEpoch++
 	return nil

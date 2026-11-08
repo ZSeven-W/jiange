@@ -32,13 +32,15 @@ type conn struct {
 	room     *room
 	clientID uint64
 	acked    int64
-	// v2 marks a connection whose HELLO carried the history epoch: only these
-	// peers may carry (and receive) newer op kinds such as ttable.
-	v2 bool
-	dbAcked  int64
-	aware    string
-	owned    map[uint64]bool // replica ids this user may author ops for (read loop only)
-	closed   bool
+	// wantsV2 is explicit client capability on the WebSocket URL. Older servers
+	// ignore it and still speak v1; older clients never send it.
+	wantsV2 bool
+	// Only negotiated v2 peers may carry newer op kinds such as ttable.
+	v2      bool
+	dbAcked int64
+	aware   string
+	owned   map[uint64]bool // replica ids this user may author ops for (read loop only)
+	closed  bool
 }
 
 // send queues a frame; a client that can't keep up is disconnected rather
@@ -180,7 +182,7 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 		return err
 	}
 	c.docID.Store(doc)
-	c.v2 = m.HasEpoch
+	c.v2 = m.HasEpoch || c.wantsV2
 	id := int64(m.ClientID)
 	if id != 0 {
 		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {
@@ -205,9 +207,16 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 	c.room = c.hub.room(doc)
 	epoch, _, err := st.HeadVersion(ctx, doc)
 	if err != nil {
-		epoch = 1 // a brand-new doc still reports generation 1
+		c.fail("internal", "could not read document history generation")
+		return err
 	}
-	return c.room.join(ctx, c, int64(helloLastSeq(m.HasEpoch, m.HistoryEpoch, uint64(epoch), m.LastSeq)), m.HasEpoch, uint64(epoch))
+	if epoch < 1 {
+		c.fail("internal", "invalid document history generation")
+		return errors.New("invalid document history generation")
+	}
+	// An epoch-less client upgrading from v1 has no trustworthy sequence for
+	// this generation. Zero forces replay instead of acknowledging stale state.
+	return c.room.join(ctx, c, int64(helloLastSeq(c.v2, m.HistoryEpoch, uint64(epoch), m.LastSeq)), c.v2, uint64(epoch))
 }
 
 // helloLastSeq decides how far the server may replay for a v2 client: seqs

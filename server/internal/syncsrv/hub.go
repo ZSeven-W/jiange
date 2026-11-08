@@ -112,7 +112,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	ws.SetReadLimit(8 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate}
+	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, wantsV2: r.URL.Query().Get("protocol") == "2"}
 	wctx, stopWriter := context.WithCancel(context.Background())
 	writerDone := make(chan struct{})
 	go func() { c.writeLoop(wctx, ctx); close(writerDone) }()
