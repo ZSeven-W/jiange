@@ -72,4 +72,65 @@ describe("slide drafts", () => {
     const rotated = patchSlideShape(height, "one", { rotation: 45 });
     expect(rotated[0]).toMatchObject({ x: 60, y: 65, width: 40, height: 35, rotation: 45 });
   });
+
+  it("coalesces typing, undoes and redoes edits, and clears redo on new edits", async () => {
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { title: "A" }, "title");
+    q.edit(page, { title: "AB" }, "title");
+    q.endGroup(page.id);
+    q.edit(page, { body: "Body" }, "body");
+    q.undo(page);
+    expect(q.get(page).content).toMatchObject({ title: "AB", body: "" });
+    q.undo(page);
+    expect(q.get(page).content.title).toBe("");
+    q.redo(page);
+    expect(q.get(page).content.title).toBe("AB");
+    q.edit(page, { notes: "new" });
+    expect(q.canRedo(page)).toBe(false);
+    await tick(); await tick();
+    expect(q.get(page).state).toBe("saved");
+  });
+
+  it("serialises an undo made while the original write is in flight", async () => {
+    let finish!: () => void;
+    const write = vi.fn().mockImplementationOnce((base: SlidesPage, content: SlideContent) => new Promise<SlidesPage>((resolve) => { finish = () => resolve({ ...base, ...content, revision: 2 }); }))
+      .mockImplementationOnce((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: 3 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(page, { title: "changed" });
+    q.undo(page);
+    expect(q.get(page).content.title).toBe("");
+    finish(); await tick(); await tick();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[1][0].revision).toBe(2);
+    expect(write.mock.calls[1][1].title).toBe("");
+    expect(q.get(page).state).toBe("saved");
+  });
+
+  it("does not replay an undo when a save result is unknown", async () => {
+    const write = vi.fn().mockRejectedValue(new Error("network"));
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(page, { title: "changed" }); await tick();
+    q.undo(page); await tick();
+    expect(q.get(page)).toMatchObject({ state: "unknown", content: { title: "" } });
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears local history after observing a newer remote revision", async () => {
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { title: "local" }); await tick();
+    const remote = { ...page, title: "remote", revision: 3 };
+    expect(q.canUndo(remote)).toBe(false);
+    q.undo(remote);
+    expect(q.get(remote).content.title).toBe("remote");
+  });
+
+  it("does not record unchanged shape selections", () => {
+    const shape = { id: "one", kind: "ellipse" as const, x: 20, y: 30, color: "#3370ff" };
+    const current = { ...page, shapes: [shape] };
+    const write = vi.fn();
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(current, { shapes: [{ ...shape }] });
+    expect(q.canUndo(current)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
 });
