@@ -104,6 +104,8 @@ export class Doc {
   private clock = 0;
   private blocks = new Map<string, Block>();
   private seen = new Set<string>();
+  /** Opaque experimental-table sub-CRDT payloads per block (ttable ops). */
+  private tables = new Map<string, { id: OpId; list: Uint8Array[] }>();
   private pending: Op[] = [];
 
   constructor(client: number) {
@@ -231,7 +233,21 @@ export class Doc {
         b.marks.push({ id: op.id, key: op.key, value: op.value, start: op.start, end: op.end });
         return;
       }
+      case "ttable": {
+        // 不透明表格子 CRDT 载荷：按块保存，语义属于表格模型（准入在上游）。
+        const key = idKey(op.block);
+        const entry = this.tables.get(key) ?? { id: op.block, list: [] };
+        entry.list.push(op.payload.slice());
+        this.tables.set(key, entry);
+        return;
+      }
     }
+  }
+
+  /** 该副本是否携带表格载荷（状态 v2）；v1 对端不可加入此类文档。 */
+  hasTables(): boolean {
+    for (const e of this.tables.values()) if (e.list.length) return true;
+    return false;
   }
 
   /* ------------------------------------------------------------ text internals */
@@ -487,9 +503,11 @@ export class Doc {
   /** Encodes the full replica state (spec/PROTOCOL.md §State). */
   encodeState(): Uint8Array {
     const w = new Writer();
+    // 无表格文档保持 v1 字节不变；含表格载荷才升 v2（读取端两者皆收）。
+    const stateVersion = this.hasTables() ? 2 : 1;
     w.u8(MAGIC);
     w.u8(STATE_TAG);
-    w.u8(VERSION);
+    w.u8(stateVersion);
     w.uvar(this.clock);
     const blocks = [...this.blocks.values()].filter((b) => !eqId(b.id, ROOT)).sort((x, y) => cmpId(x.id, y.id));
     w.uvar(blocks.length);
@@ -542,6 +560,16 @@ export class Doc {
         w.u8(m.end.side);
       }
     }
+    if (stateVersion === 2) {
+      // v2 段：按块的表格载荷，块按 id 序保证字节确定性。
+      const entries = [...this.tables.values()].filter((e) => e.list.length > 0).sort((a, b) => cmpId(a.id, b.id));
+      w.uvar(entries.length);
+      for (const e of entries) {
+        w.id(e.id);
+        w.uvar(e.list.length);
+        for (const payload of e.list) w.blob(payload);
+      }
+    }
     return w.bytes();
   }
 
@@ -550,7 +578,8 @@ export class Doc {
     const d = new Doc(client);
     const r = new Reader(bytes);
     if (r.u8() !== MAGIC || r.u8() !== STATE_TAG) throw new RangeError("not a state blob");
-    if (r.u8() !== VERSION) throw new RangeError("unsupported state version");
+    const stateVersion = r.u8();
+    if (stateVersion !== 1 && stateVersion !== 2) throw new RangeError(`unsupported state version ${stateVersion}`);
     d.clock = r.uvar();
     if (!Number.isSafeInteger(d.clock)) throw new RangeError("state clock exceeds safe integer range");
     const nb = r.uvar();
@@ -596,6 +625,18 @@ export class Doc {
         b.marks.push({ id: mid, key, value, start: { char: sc, side: ss }, end: { char: ec, side: es } });
       }
       d.blocks.set(idKey(id), b);
+    }
+    if (stateVersion === 2) {
+      const nt = r.uvar();
+      for (let i = 0; i < nt; i++) {
+        const id = r.id();
+        const key = idKey(id);
+        if (!d.blocks.has(key)) throw new RangeError(`table payloads for unknown block ${key}`);
+        const np = r.uvar();
+        const list: Uint8Array[] = [];
+        for (let k = 0; k < np; k++) list.push(r.blob());
+        d.tables.set(key, { id, list });
+      }
     }
     if (!r.done) throw new RangeError("trailing bytes in state");
     return d;
