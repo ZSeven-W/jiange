@@ -7,6 +7,10 @@ export function NewDocGlyph() {
   </svg>;
 }
 
+export function DriveDocGlyph() {
+  return <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="shrink-0"><path fill="#3370FF" d="M3 1.5h10.1L17 5.4v11.1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path fill="#85A6FF" d="M13 1.5v3.2c0 .4.3.8.8.8H17z"/><path stroke="#fff" strokeLinecap="round" strokeWidth="1.3" d="M6.5 8.1h7M6.5 11h7M6.5 13.9h4.4"/></svg>;
+}
+
 export function UploadGlyph() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="17" r="6" fill="#ED6D0C"/><path fill="#FF811A" fillRule="evenodd" d="M11.07 21H6a6 6 0 0 1-.94-11.927 7.001 7.001 0 0 1 13.877-.02A8 8 0 0 0 11.07 21" clipRule="evenodd"/><path fill="#fff" d="m19.488 16.68-.816-.816v3.977a.701.701 0 1 1-1.403 0v-3.917l-.756.757a.701.701 0 1 1-.992-.992l1.983-1.984a.7.7 0 0 1 .992 0l1.984 1.984a.701.701 0 0 1-.992.992"/></svg>;
 }
