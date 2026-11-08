@@ -116,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/notifications":                            s.listNotifications,
 		"POST /api/notifications/read":                      s.markNotificationsRead,
 		"POST /api/drive/files":                             s.postDriveFile,
+		"POST /api/drive/batch/files":                       s.postDriveBatchFile,
+		"POST /api/drive/batch/folders":                     s.postDriveBatchFolder,
 		"GET /api/drive/files/{id}":                         s.getDriveFile,
 		"POST /api/drive/folders":                           s.postDriveFolder,
 		"POST /api/drive/nodes":                             s.postDriveNode,

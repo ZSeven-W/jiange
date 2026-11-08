@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, driveApi, extrasApi, type DriveEntry } from "@/lib/api";
+import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
@@ -8,13 +8,16 @@ import { parseMarkdown } from "@/lib/markdown";
 import { stageStarter } from "./pendingStarter";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
+import type { DriveUploadManager } from "./drive-upload";
 import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { ArrowDownUp, ChevronDown, ChevronRight, Ellipsis, FileInput, FileText, FileUp, Folder, FolderUp, LayoutGrid, Link2, List, ListFilter, Presentation, Search } from "lucide-react";
 
 type DriveSort = "name" | "updated";
 
 /** Cloud drive: folder navigation and file operations use the guarded drive API. */
-export function DrivePage({ folderId, personalRoot, userId }: { folderId: number | null; personalRoot: boolean; userId: number }) {
+export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderId: number | null; personalRoot: boolean; userId: number; uploads: DriveUploadManager }) {
+  const uploadState = useSyncExternalStore(uploads.subscribe, uploads.snapshot, uploads.snapshot);
+  const folderPickerSupported = typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["drive", folderId, personalRoot], queryFn: () => driveApi.children(folderId, personalRoot), refetchInterval: 15000, refetchIntervalInBackground: false });
   const crumbs = useQuery({ queryKey: ["drive-ancestors", folderId], queryFn: () => driveApi.ancestors(folderId!), enabled: folderId !== null });
@@ -88,17 +91,6 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
     } catch { setError("创建模板文档未完成，请检查目录后重试。"); }
     finally { templateLock.current = false; setTemplatePending(false); }
   };
-  const uploadDriveFile = async (file: File) => {
-    if (importLock.current) return;
-    if (file.size > 20 * 1024 * 1024) { setError("文件不能超过 20 MB。"); return; }
-    importLock.current = true; setImporting(true); setError(""); setNotice("");
-    try {
-      await driveApi.uploadFile(file, folderId, scope);
-      invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
-      setNotice(`已上传「${file.name}」。`);
-    } catch (err) { setError(err instanceof ApiError && err.status >= 400 && err.status < 500 ? err.message : "上传结果未能确认，请刷新目录后检查。"); invalidate(); }
-    finally { importLock.current = false; setImporting(false); }
-  };
   const actions = (entry: DriveEntry) => ({
     onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" | "file" }); },
     onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
@@ -116,10 +108,10 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
           {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div className="absolute left-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]">{(["doc", "slides", "base", "folder"] as const).map((kind) => <button key={kind} type="button" onClick={() => void newItem(kind)} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DocIcon/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : "文件夹"}</button>)}</div></>}
         </div>
         <div className="relative sm:w-[130px]">
-          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing} onClick={() => setUploadMenu((open) => !open)} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1 text-[14px] font-medium text-[#1f2329]">{importing ? "上传中" : "上传"}</span><ChevronDown size={15} className={cn("text-[#646a73]", uploadMenu && "rotate-180")}/></button>
+          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading"} onClick={() => setUploadMenu((open) => !open)} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1 text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" ? "上传中" : "上传"}</span><ChevronDown size={15} className={cn("text-[#646a73]", uploadMenu && "rotate-180")}/></button>
           {uploadMenu && <><div className="fixed inset-0 z-30" onClick={() => setUploadMenu(false)}/><div role="menu" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setUploadMenu(false); uploadTrigger.current?.focus(); } }} className="absolute left-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1.5 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
-            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>上传文件<input type="file" aria-label="上传云盘文件" tabIndex={-1} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void uploadDriveFile(file); }}/></label>
-            <button type="button" role="menuitem" disabled title="暂不支持上传文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button>
+            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>上传文件<input type="file" aria-label="上传云盘文件" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); if (files.length) void uploads.start(files, "files", folderId, scope); }}/></label>
+            {folderPickerSupported ? <label role="menuitem" tabIndex={0} title="浏览器选择器不包含空文件夹" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label="选择上传文件夹" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); void uploads.start(files, "folder", folderId, scope); }}/></label> : <button type="button" role="menuitem" disabled title="当前浏览器不支持选择文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button>}
             <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>导入为在线文档<input type="file" aria-label="导入 Markdown 文件" tabIndex={-1} accept=".md,.markdown,text/markdown" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
           </div></>}
         </div>

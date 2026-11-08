@@ -25,4 +25,15 @@ describe("standalone drive files", () => {
     expect(init.body.get("file").name).toBe("notes.txt");
     await expect(driveApi.uploadFile(file, null, false)).rejects.toMatchObject({ status: 503, code: "no_storage" } satisfies Partial<ApiError>);
   });
+  it("uses account-bound routes for batch mutations", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 7, kind: "folder" }), { status: 201, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+    await driveApi.create("目录", null, true, signal, 42);
+    await driveApi.uploadFile(new File(["a"], "a.txt"), 7, true, signal, 42);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/drive/batch/folders");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/drive/batch/files");
+    expect(fetchMock.mock.calls[0][1].headers["X-Jiange-User-Id"]).toBe("42");
+    expect(fetchMock.mock.calls[1][1].headers["X-Jiange-User-Id"]).toBe("42");
+  });
 });

@@ -17,6 +17,8 @@ import { PublicDoc } from "@/pages/PublicDoc";
 import { DrivePage } from "@/pages/DrivePage";
 import { SlidesDeck } from "@/pages/SlidesPage";
 import { DriveFilePage } from "@/pages/DriveFilePage";
+import { DriveUploadManager } from "@/pages/drive-upload";
+import { DriveUploadStatus } from "@/components/DriveUploadStatus";
 import { AskHost } from "@/components/ui/ask";
 
 export default function App() {
@@ -75,6 +77,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   onLogout: () => void;
 }) {
   const [sessionClient] = useState(() => createSessionQueryClient(authClient));
+  const [uploads] = useState(() => new DriveUploadManager(me.user.id, () => { void sessionClient.invalidateQueries({ queryKey: ["drive"] }); void sessionClient.invalidateQueries({ queryKey: ["drive-nav"] }); void sessionClient.invalidateQueries({ queryKey: ["docs"] }); }));
+  useEffect(() => { uploads.activate(); return () => uploads.dispose(); }, [uploads]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
   return (
@@ -84,7 +88,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <button className="fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover md:hidden" onClick={() => setSidebarOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} />}
       <div className={`${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" ? "md:hidden" : "md:static md:block"}`}>
-        <Sidebar me={me} route={route} onLogout={onLogout} />
+        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} />
         <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={() => setSidebarOpen(false)} aria-label="关闭导航"><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
@@ -94,7 +98,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "join" ? (
         <JoinLink token={route.token} />
       ) : route.page === "drive" ? (
-        <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} userId={me.user.id} />
+        <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} userId={me.user.id} uploads={uploads} />
       ) : route.page === "file" ? (
         <DriveFilePage key={route.id} id={route.id} />
       ) : route.page === "slides" ? (
@@ -110,6 +114,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : (
         <Home me={me} recent={route.page === "recent"} />
       )}
+      <DriveUploadStatus manager={uploads} />
     </div>
     </QueryClientProvider>
   );
