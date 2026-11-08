@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/share/{token}":                           s.joinLink,
 		"GET /api/shared":                                   s.sharedWithMe,
 		"POST /api/docs/{id}/files":                         s.uploadFile,
+		"POST /api/slides/{id}/images":                      s.uploadSlidesImage,
 		"GET /api/files/{id}":                               s.getFile,
 		"DELETE /api/files/{id}":                            s.deleteFile,
 		"POST /api/bases":                                   s.createBase,

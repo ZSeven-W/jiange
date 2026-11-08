@@ -152,6 +152,7 @@ func validSlideShapes(raw json.RawMessage) bool {
 		FontSize *float64 `json:"fontSize"`
 		Bold     *bool    `json:"bold"`
 		Align    *string  `json:"align"`
+		FileID   *int64   `json:"fileId"`
 	}
 	if json.Unmarshal(raw, &shapes) != nil || len(shapes) > 100 {
 		return false
@@ -169,10 +170,13 @@ func validSlideShapes(raw json.RawMessage) bool {
 		if s.Rotation != nil {
 			rotation = *s.Rotation
 		}
-		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "text") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "text" && s.Kind != "image") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
 			return false
 		}
 		if s.Kind == "text" && (s.Text == nil || utf8.RuneCountInString(*s.Text) > 1000 || (s.FontSize != nil && (*s.FontSize < 12 || *s.FontSize > 96)) || (s.Align != nil && *s.Align != "left" && *s.Align != "center" && *s.Align != "right")) {
+			return false
+		}
+		if s.Kind == "image" && (s.FileID == nil || *s.FileID <= 0) {
 			return false
 		}
 		seen[s.ID] = true
