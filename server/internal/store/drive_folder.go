@@ -24,6 +24,7 @@ type DriveEntry struct {
 	Role        string    `json:"role"`
 	Revision    int64     `json:"revision"`
 	Personal    bool      `json:"personal"`
+	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
@@ -83,20 +84,34 @@ func (m *Memory) driveValidChainLocked(d *memDoc, workspace int64, allowDeleted 
 func (m *Memory) driveFolderAncestorLocked(d *memDoc) bool {
 	seen := make(map[int64]bool)
 	for d != nil {
-		if seen[d.meta.ID] { return true }
+		if seen[d.meta.ID] {
+			return true
+		}
 		seen[d.meta.ID] = true
-		if d.meta.Kind == "folder" { return true }
-		if d.meta.ParentID == nil { return false }
+		if d.meta.Kind == "folder" {
+			return true
+		}
+		if d.meta.ParentID == nil {
+			return false
+		}
 		d = m.doc(*d.meta.ParentID)
 	}
 	return true
 }
 
 func (m *Memory) driveFolderSubtreeLocked(d *memDoc) bool {
-	if m.driveFolderAncestorLocked(d) { return true }
+	if m.driveFolderAncestorLocked(d) {
+		return true
+	}
 	children, err := m.safeDriveSubtreeLocked(d)
-	if err != nil { return true }
-	for _, child := range children { if child.meta.Kind == "folder" { return true } }
+	if err != nil {
+		return true
+	}
+	for _, child := range children {
+		if child.meta.Kind == "folder" {
+			return true
+		}
+	}
 	return false
 }
 func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, minimum string) error {
@@ -113,16 +128,19 @@ func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, mi
 	return nil
 }
 func driveMemoryEntry(m *Memory, d *memDoc, user int64) DriveEntry {
-	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, UpdatedAt: d.meta.UpdatedAt}
+	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, CreatedAt: d.meta.CreatedAt, UpdatedAt: d.meta.UpdatedAt}
 }
 
 func cloneDriveParent(parent *int64) *int64 {
-	if parent == nil { return nil }
+	if parent == nil {
+		return nil
+	}
 	value := *parent
 	return &value
 }
 
 const maxDriveRevision = int64(9007199254740991)
+
 func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64, parent *int64, title string, personal bool) (DriveEntry, error) {
 	if ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
@@ -307,6 +325,7 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	d.meta.UpdatedAt = time.Now()
 	return nil
 }
+
 // RenameDriveNode retitles a node under guard; folders bump drive_revision to
 // satisfy the fence title trigger.
 func (m *Memory) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64, title string, expected int64) (DriveEntry, error) {
@@ -357,8 +376,14 @@ func (m *Memory) TrashDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 	if err != nil {
 		return err
 	}
-	for _, item := range items { if !item.deleted && item.driveRevision >= maxDriveRevision { return ErrConflict } }
-	if m.d.driveTrashSequence >= maxDriveRevision { return ErrConflict }
+	for _, item := range items {
+		if !item.deleted && item.driveRevision >= maxDriveRevision {
+			return ErrConflict
+		}
+	}
+	if m.d.driveTrashSequence >= maxDriveRevision {
+		return ErrConflict
+	}
 	if !g.currentTime().Before(expires) {
 		return ErrUnauthenticated
 	}
@@ -405,7 +430,11 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	if err != nil {
 		return err
 	}
-	for _, item := range items { if item.deleted && item.driveTrashBatch == d.driveTrashBatch && item.driveRevision >= maxDriveRevision { return ErrConflict } }
+	for _, item := range items {
+		if item.deleted && item.driveTrashBatch == d.driveTrashBatch && item.driveRevision >= maxDriveRevision {
+			return ErrConflict
+		}
+	}
 	if !g.currentTime().Before(expires) {
 		return ErrUnauthenticated
 	}
@@ -485,7 +514,11 @@ func (m *Memory) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 func (m *Memory) safeDriveSubtreeLocked(root *memDoc) ([]*memDoc, error) {
 	seen := map[int64]bool{}
 	children := make(map[int64][]*memDoc)
-	for _, child := range m.d.docs { if child.meta.ParentID != nil { children[*child.meta.ParentID] = append(children[*child.meta.ParentID], child) } }
+	for _, child := range m.d.docs {
+		if child.meta.ParentID != nil {
+			children[*child.meta.ParentID] = append(children[*child.meta.ParentID], child)
+		}
+	}
 	queue := []*memDoc{root}
 	out := []*memDoc{}
 	for len(queue) > 0 {
@@ -518,7 +551,9 @@ func drivePGLockWorkspace(ctx context.Context, tx pgx.Tx, ws int64) error {
 	return err
 }
 func drivePGLockWorkspaceRead(ctx context.Context, tx pgx.Tx, ws int64) error {
-	if ws <= 0 { return ErrConflict }
+	if ws <= 0 {
+		return ErrConflict
+	}
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('jiange:drive:' || $1::bigint::text, 0))`, ws)
 	return err
 }
@@ -541,6 +576,7 @@ func drivePGValidChain(ctx context.Context, tx pgx.Tx, id, ws int64) error {
 	}
 	return nil
 }
+
 // drivePGDestination validates the destination and returns the parent
 // folder's personal scope (false at the workspace root).
 func drivePGDestination(ctx context.Context, tx pgx.Tx, g RestoreGuard, ws int64, parent *int64, min string) (bool, error) {
@@ -614,7 +650,7 @@ func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int
 			return e
 		}
 		personal = parent == nil && personal || parent != nil && parentPersonal
-		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,'folder','V',$3,$4,1,$5) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, ws, parent, title, g.UserID, personal).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt)
+		e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,'folder','V',$3,$4,1,$5) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,created_at,updated_at`, ws, parent, title, g.UserID, personal).Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt)
 		if e != nil {
 			return e
 		}
@@ -656,8 +692,8 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 			return e
 		}
 		personal = parent == nil && personal || parent != nil && parentPersonal
-		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,$3,'V',$4,$5,1,$6) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, ws, parent, kind, title, g.UserID, personal).
-			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt); e != nil {
+		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,$3,'V',$4,$5,1,$6) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,created_at,updated_at`, ws, parent, kind, title, g.UserID, personal).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		out.Role = RoleManage
@@ -698,14 +734,14 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,`+roleSQL+`,n.drive_revision,n.personal,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var d DriveEntry
-			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.Role, &d.Revision, &d.Personal, &d.UpdatedAt); e != nil {
+			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
 				return e
 			}
 			out = append(out, d)
@@ -771,7 +807,9 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 			return e
 		}
 		_, e = tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1`, id, parent)
-		if e != nil { return e }
+		if e != nil {
+			return e
+		}
 		return drivePGEnd(ctx, g, exp)
 	})
 	return drivePGError(err)
@@ -858,7 +896,9 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 				return e
 			}
 			_, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) UPDATE nodes SET deleted_at=now(),trash_batch_id=$2,drive_revision=drive_revision+1 WHERE id IN (SELECT id FROM t) AND deleted_at IS NULL`, id, b)
-			if e != nil { return e }
+			if e != nil {
+				return e
+			}
 			return drivePGEnd(ctx, g, exp)
 		}
 		if batch != nil {
@@ -866,7 +906,9 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 		} else {
 			_, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) UPDATE nodes SET deleted_at=NULL,drive_revision=drive_revision+1 WHERE id IN (SELECT id FROM t) AND deleted_at IS NOT NULL AND trash_batch_id IS NULL`, id)
 		}
-		if e != nil { return e }
+		if e != nil {
+			return e
+		}
 		return drivePGEnd(ctx, g, exp)
 	})
 	return drivePGError(err)
@@ -998,8 +1040,8 @@ func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64
 		if e = drivePGEnd(ctx, g, exp); e != nil {
 			return e
 		}
-		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,updated_at`, id, title).
-			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.UpdatedAt); e != nil {
+		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,drive_revision,personal,created_at,updated_at`, id, title).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		out.Role = role

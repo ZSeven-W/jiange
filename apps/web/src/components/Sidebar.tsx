@@ -191,6 +191,8 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
   const shown = [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
+  if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={() => setSearchOpen(true)} onCloseSearch={() => setSearchOpen(false)} />;
+
   return (
     <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="relative px-3 pt-4">
@@ -206,7 +208,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
-        <NavItem icon={<FolderIcon />} label="云盘" active={route.page === "drive"} onClick={() => go("#/drive")} />
+        <NavItem icon={<FolderIcon />} label="云盘" active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
@@ -269,6 +271,46 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
       {searchOpen && <GlobalSearch userId={me.user.id} onClose={closeSearch} />}
     </aside>
   );
+}
+
+function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { route: Extract<Route, { page: "drive" }>; userId: number; searchOpen: boolean; onSearch: () => void; onCloseSearch: () => void }) {
+  const qc = useQueryClient();
+  const [expanded, setExpanded] = useState({ personal: true, shared: true });
+  const [error, setError] = useState("");
+  const mine = useQuery({ queryKey: ["drive-nav", "personal", userId], queryFn: () => driveApi.children(null, true), refetchInterval: 15000, refetchIntervalInBackground: false });
+  const shared = useQuery({ queryKey: ["drive-nav", "shared", userId], queryFn: () => driveApi.children(null, false), refetchInterval: 15000, refetchIntervalInBackground: false });
+  const addFolder = async (personal: boolean) => {
+    const title = await askText("新建文件夹", "文件夹名称");
+    if (!title?.trim()) return;
+    setError("");
+    try {
+      const folder = await driveApi.create(title.trim(), null, personal);
+      await Promise.all([qc.invalidateQueries({ queryKey: ["drive-nav"] }), qc.invalidateQueries({ queryKey: ["drive"] })]);
+      go(`#/drive/${folder.id}`);
+    } catch { setError("新建结果未能确认，请刷新后检查。"); }
+  };
+  const group = (personal: boolean) => {
+    const query = personal ? mine : shared;
+    const key = personal ? "personal" : "shared";
+    const rootActive = route.folderId === null && route.personal === personal;
+    return <div className="mb-3" key={key}>
+      <div className={cn("flex h-9 items-center rounded-md px-1 text-[13px]", rootActive ? "bg-[#dce6ff] text-[#1456f0]" : "text-[#4e5969] hover:bg-[#e9eaec]")}>
+        <button type="button" aria-label={`${expanded[key] ? "收起" : "展开"}${personal ? "我的文件夹" : "共享文件夹"}`} onClick={() => setExpanded((value) => ({ ...value, [key]: !value[key] }))} className="grid size-6 place-items-center">{expanded[key] ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</button>
+        {personal ? <FolderIcon size={15}/> : <Users size={15}/>}<button type="button" onClick={() => go(personal ? "#/drive/mine" : "#/drive")} className="min-w-0 flex-1 truncate px-2 text-left">{personal ? "我的文件夹" : "共享文件夹"}</button>
+      </div>
+      {expanded[key] && <div className="space-y-0.5 pl-6">
+        {!query.isError && (query.data ?? []).filter((item) => item.kind === "folder").map((folder) => <button key={folder.id} type="button" onClick={() => go(`#/drive/${folder.id}`)} className={cn("flex h-8 w-full items-center gap-2 truncate rounded-md px-2 text-left text-[13px]", route.folderId === folder.id ? "bg-[#dce6ff] text-[#1456f0]" : "text-[#4e5969] hover:bg-[#e9eaec]")}><FolderIcon size={14}/><span className="truncate">{folder.title || "未命名文件夹"}</span></button>)}
+        <button type="button" onClick={() => void addFolder(personal)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#8f959e] hover:bg-[#e9eaec] hover:text-[#4e5969]"><Plus size={14}/>新建文件夹</button>
+      </div>}
+    </div>;
+  };
+  return <aside className="flex h-full w-[277px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7]">
+    <div className="flex h-14 items-center px-5"><Logo withText={false} className="[&>span]:size-6 [&>span]:text-[13px]"/><span className="ml-2 text-[14px] font-semibold">Jiange 云文档</span></div>
+    <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label="返回主页" onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">云盘</span></div>
+    <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索</button>
+    <nav className="min-h-0 flex-1 overflow-y-auto px-2">{group(true)}{group(false)}{error && <p role="alert" className="px-2 text-xs text-destructive">{error}</p>}</nav>
+    {searchOpen && <GlobalSearch userId={userId} onClose={onCloseSearch}/>}
+  </aside>;
 }
 
 function TreeRow({
@@ -479,4 +521,4 @@ export function DarkToggle() {
   );
 }
 
-import { ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Star, Sun, Table2, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Star, Sun, Table2, Trash2, Users } from "lucide-react";
