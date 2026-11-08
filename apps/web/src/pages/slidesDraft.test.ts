@@ -133,4 +133,21 @@ describe("slide drafts", () => {
     expect(q.canUndo(current)).toBe(false);
     expect(write).not.toHaveBeenCalled();
   });
+
+  it("saves and undoes text box content and formatting", async () => {
+    const text = { id: "text", kind: "text" as const, x: 10, y: 20, color: "#1f2329", text: "", fontSize: 24 };
+    const initial = { ...page, shapes: [text] };
+    const write = vi.fn((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {});
+    q.edit(initial, { shapes: [{ ...text, text: "协作" }] }, "text:text");
+    q.edit(initial, { shapes: [{ ...text, text: "协作计划" }] }, "text:text");
+    q.endGroup(initial.id);
+    q.edit(initial, { shapes: [{ ...text, text: "协作计划", bold: true, fontSize: 32, align: "center" }] });
+    q.undo(initial);
+    expect(q.get(initial).content.shapes[0]).toMatchObject({ text: "协作计划", fontSize: 24 });
+    q.redo(initial);
+    await tick(); await tick();
+    expect(write.mock.calls.at(-1)?.[1].shapes[0]).toMatchObject({ text: "协作计划", bold: true, fontSize: 32, align: "center" });
+    expect(q.get(initial).state).toBe("saved");
+  });
 });

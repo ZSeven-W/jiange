@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/server/internal/store"
@@ -17,12 +18,40 @@ func TestSlideShapeGeometryValidation(t *testing.T) {
 		{"overflow", `[{"id":"a","kind":"rectangle","x":41,"y":50,"width":60,"height":50,"rotation":90,"color":"#3370ff"}]`, false},
 		{"angle out of bounds", `[{"id":"a","kind":"rectangle","x":0,"y":0,"rotation":360,"color":"#3370ff"}]`, false},
 		{"duplicate ids", `[{"id":"a","kind":"ellipse","x":0,"y":0,"color":"#3370ff"},{"id":"a","kind":"ellipse","x":1,"y":1,"color":"#3370ff"}]`, false},
+		{"text box", `[{"id":"a","kind":"text","x":10,"y":20,"width":35,"height":15,"color":"#1f2329","text":"协作\n计划","fontSize":32,"bold":true,"align":"center"}]`, true},
+		{"missing text", `[{"id":"a","kind":"text","x":0,"y":0,"color":"#1f2329"}]`, false},
+		{"invalid text size", `[{"id":"a","kind":"text","x":0,"y":0,"color":"#1f2329","text":"x","fontSize":100}]`, false},
+		{"invalid text alignment", `[{"id":"a","kind":"text","x":0,"y":0,"color":"#1f2329","text":"x","align":"justify"}]`, false},
+		{"text too long", `[{"id":"a","kind":"text","x":0,"y":0,"color":"#1f2329","text":"` + strings.Repeat("文", 1001) + `"}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := validSlideShapes(json.RawMessage(tc.raw)); got != tc.valid {
 				t.Fatalf("valid=%v, want %v", got, tc.valid)
 			}
 		})
+	}
+}
+
+func TestSlideTextBoxRoundTrip(t *testing.T) {
+	ts, c := newTestServer(t, store.NewMemory(), nil)
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "text@x.com", "name": "Text", "password": "password123"})
+	var deck store.DriveEntry
+	json.NewDecoder(post(t, c, ts.URL+"/api/drive/nodes", map[string]any{"kind": "slides", "title": "文本"}).Body).Decode(&deck)
+	var pages struct{ Pages []store.SlidesPage }
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages").Body).Decode(&pages)
+	if len(pages.Pages) != 1 {
+		t.Fatal("missing initial page")
+	}
+	p := pages.Pages[0]
+	text := map[string]any{"id": "text-1", "kind": "text", "x": 12, "y": 55, "width": 35, "height": 15, "color": "#1f2329", "text": "第一行\n第二行", "fontSize": 32, "bold": true, "align": "center"}
+	res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p.ID), map[string]any{"title": "", "body": "", "background": "", "shapes": []any{text}, "expectedRevision": p.Revision})
+	if res.StatusCode != 200 {
+		t.Fatalf("save text: %d", res.StatusCode)
+	}
+	json.NewDecoder(cGet(t, c, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages").Body).Decode(&pages)
+	var shapes []map[string]any
+	if err := json.Unmarshal(pages.Pages[0].Shapes, &shapes); err != nil || len(shapes) != 1 || shapes[0]["text"] != "第一行\n第二行" || shapes[0]["align"] != "center" || shapes[0]["fontSize"] != float64(32) || shapes[0]["bold"] != true {
+		t.Fatalf("text box lost on reload: %s %v", pages.Pages[0].Shapes, err)
 	}
 }
 

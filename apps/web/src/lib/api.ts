@@ -325,7 +325,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number };
+export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "text"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right" };
 export interface SlidesPage {
   id: number;
   slidesId: number;
