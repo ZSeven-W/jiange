@@ -217,6 +217,7 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 			return ErrConflict
 		}
 		start := head
+		nodeLocked := false
 		for i, op := range ops {
 			duplicate, err := checkOperationIdentity(ctx, tx, doc, op)
 			if err != nil {
@@ -224,6 +225,16 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 			}
 			if duplicate {
 				continue
+			}
+			if !nodeLocked {
+				// Metadata writes lock the node before last-modifier attribution.
+				// The op insert trigger also touches attribution, so acquire the
+				// node first to avoid a node/attribution lock inversion.
+				var id int64
+				if err := tx.QueryRow(ctx, `SELECT id FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&id); err != nil {
+					return err
+				}
+				nodeLocked = true
 			}
 			tag, err := tx.Exec(ctx, `INSERT INTO doc_ops (doc_id, seq, client_id, clock, op) VALUES ($1,$2,$3,$4,$5)
 				ON CONFLICT (doc_id, client_id, clock) DO NOTHING`, doc, head+1, op.ClientID, op.Clock, op.Bytes)

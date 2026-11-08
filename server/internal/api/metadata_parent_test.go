@@ -161,12 +161,12 @@ func (s *failingParentStore) GetDoc(ctx context.Context, uid, id int64) (store.D
 	}
 	return s.Store.GetDoc(ctx, uid, id)
 }
-func (s *failingParentStore) UpdateTitle(ctx context.Context, id int64, title string) (store.DocMeta, error) {
-	d, err := s.Store.UpdateTitle(ctx, id, title)
+func (s *failingParentStore) PatchDocMetadataGuarded(ctx context.Context, guard store.RestoreGuard, id int64, patch store.DocMetadataPatch) error {
+	err := s.Store.PatchDocMetadataGuarded(ctx, guard, id, patch)
 	if err == nil {
 		s.fail.Store(true)
 	}
-	return d, err
+	return err
 }
 func TestParentLookupFailureDoesNotReportCommittedWriteAsFailed(t *testing.T) {
 	st := &failingParentStore{Store: store.NewMemory()}

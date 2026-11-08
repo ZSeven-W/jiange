@@ -389,7 +389,8 @@ export const docsApi = {
   listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),
   move: (id: number, parentId: number | null) => request<DocMeta>("PATCH", `/api/docs/${id}`, { move: true, parentId }),
-  rename: (id: number, title: string) => request<DocMeta>("PATCH", `/api/docs/${id}`, { title }),
+  // A committed write can return 204 if access was lost before metadata refresh.
+  rename: (id: number, title: string) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { title }),
   setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
   setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),

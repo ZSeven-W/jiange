@@ -128,6 +128,9 @@ func (g RestoreGuard) currentTime() time.Time {
 type DocStore interface {
 	ShareStore
 	BaseStore
+	// PatchDocMetadataGuarded validates the current session and role atomically
+	// with title and legacy-tree move writes.
+	PatchDocMetadataGuarded(ctx context.Context, guard RestoreGuard, docID int64, patch DocMetadataPatch) error
 	DocCoverGuarded(ctx context.Context, guard RestoreGuard, docID int64) (DocCover, error)
 	SetDocCoverGuarded(ctx context.Context, guard RestoreGuard, docID int64, cover DocCover, expectedRevision int64) (DocCover, error)
 	DocCoverSystem(ctx context.Context, docID int64) (DocCover, error)
