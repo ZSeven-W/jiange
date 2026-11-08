@@ -100,4 +100,8 @@ type ShareStore interface {
 	WorkspaceMembers(ctx context.Context, workspaceID int64) ([]User, error)
 	CreateFile(ctx context.Context, f FileMeta) (FileMeta, error)
 	GetFile(ctx context.Context, id int64) (FileMeta, error)
+	// DeleteFile removes the attachment row and reports the object key plus
+	// how many other attachments still reference that key (copies share
+	// blobs): the caller deletes the object only at zero references.
+	DeleteFile(ctx context.Context, id int64) (objectKey string, references int64, err error)
 }

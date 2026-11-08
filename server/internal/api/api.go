@@ -70,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/shared":                                   s.sharedWithMe,
 		"POST /api/docs/{id}/files":                         s.uploadFile,
 		"GET /api/files/{id}":                               s.getFile,
+		"DELETE /api/files/{id}":                          s.deleteFile,
 		"POST /api/bases":                                   s.createBase,
 		"GET /api/docs/{id}/versions":                       s.listVersions,
 		"GET /api/docs/{id}/title-consistency":              s.getTitleConsistency,
