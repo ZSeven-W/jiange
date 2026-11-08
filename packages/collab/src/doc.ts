@@ -282,6 +282,19 @@ export class Doc {
 
   /* ------------------------------------------------------------ local API */
 
+  /** Reserve `count` document-unique operation IDs for a sub-CRDT (e.g. the
+   * experimental table). Allocation advances the Lamport clock; applying
+   * remote operations already moves it past every observed ID. Validate
+   * admission limits BEFORE reserving — the table's limit errors are atomic
+   * and must not consume IDs. */
+  allocateOpIds(count = 1): OpId[] {
+    if (!Number.isSafeInteger(count) || count < 1 || count > Number.MAX_SAFE_INTEGER - this.clock) {
+      throw new RangeError("operation clock exceeds safe integer range");
+    }
+    const first = this.next(count);
+    return Array.from({ length: count }, (_, i) => ({ client: first.client, clock: first.clock + i }));
+  }
+
   /** True if the block exists and is not deleted. */
   hasBlock(id: OpId): boolean {
     const b = this.blocks.get(idKey(id));
