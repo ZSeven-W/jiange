@@ -207,6 +207,35 @@ func (s *Server) postDriveRestore(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// postDriveRename retitles a node (guarded, revision-checked).
+func (s *Server) postDriveRename(w http.ResponseWriter, r *http.Request) {
+	g, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Title    string `json:"title"`
+		Expected int64  `json:"expected"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_id", "node id required")
+		return
+	}
+	title := driveCleanTitle(w, in.Title)
+	if title == "" {
+		return
+	}
+	entry, err := s.Store.RenameDriveNode(r.Context(), g, id, title, in.Expected)
+	if driveWriteErr(w, err, "rename") {
+		return
+	}
+	httpx.JSON(w, http.StatusOK, entry)
+}
+
 // postDrivePurge permanently removes an already-trashed subtree and reclaims
 // blobs whose last attachment reference disappeared (guarded, like restore).
 func (s *Server) postDrivePurge(w http.ResponseWriter, r *http.Request) {

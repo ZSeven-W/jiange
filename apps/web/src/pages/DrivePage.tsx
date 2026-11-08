@@ -1,23 +1,43 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { driveApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { FolderIcon, FolderPlusIcon, PlusIcon, RotateCcwIcon, TableIcon, Trash2Icon } from "lucide-react";
+import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, PencilIcon, PlusIcon, RotateCcwIcon, TableIcon, Trash2Icon } from "lucide-react";
 
-/** 云盘：目录列表 + 面包屑 + 我的空间/共享空间 + 新建（文档/多维表格/文件夹）/移动/回收恢复。 */
+type DriveSort = "name" | "updated";
+
+/** 云盘：目录列表 + 真实面包屑 + 我的空间/共享空间 + 新建/重命名/排序/移动/回收恢复。 */
 export function DrivePage({ folderId, personalRoot }: { folderId: number | null; personalRoot: boolean }) {
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["drive", folderId, personalRoot],
     queryFn: () => driveApi.children(folderId, personalRoot),
   });
+  // 父链面包屑（root→当前目录），folder 页可用
+  const crumbs = useQuery({
+    queryKey: ["drive-ancestors", folderId],
+    queryFn: () => driveApi.ancestors(folderId!),
+    enabled: folderId !== null,
+  });
   // 顶层空间由路由决定；目录内空间由其条目继承（子节点跟随父目录）
   const scope = folderId === null ? personalRoot : (list.data?.[0]?.personal ?? false);
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["drive"] });
+  const [sort, setSort] = useState<DriveSort>("name");
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["drive"] });
+    qc.invalidateQueries({ queryKey: ["drive-ancestors"] });
+  };
   const [moving, setMoving] = useState<DriveEntry | null>(null);
   const [creating, setCreating] = useState(false);
+
+  const rename = useMutation({
+    mutationFn: ({ id, title, expected }: { id: number; title: string; expected: number }) => driveApi.rename(id, title, expected),
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["docs"] });
+    },
+  });
 
   const createFolder = useMutation({
     mutationFn: async (title: string) => driveApi.create(title, folderId, scope),
@@ -48,9 +68,19 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
     },
   });
 
-  const entries = list.data ?? [];
+  const entries = useMemo(() => {
+    const es = [...(list.data ?? [])];
+    es.sort((a, b) => {
+      if (a.kind === "folder" !== (b.kind === "folder")) return a.kind === "folder" ? -1 : 1; // 文件夹在前
+      if (sort === "updated") return (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+      return (a.title || "未命名").localeCompare(b.title || "未命名", "zh-CN");
+    });
+    return es;
+  }, [list.data, sort]);
   const folders = entries.filter((e) => e.kind === "folder");
   const files = entries.filter((e) => e.kind !== "folder");
+  // Ancestors 返回从直接父级到根；渲染为 根→…→父级
+  const crumbsOrdered = useMemo(() => [...(crumbs.data ?? [])].reverse(), [crumbs.data]);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -72,8 +102,30 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
             我的空间
           </a>
         </div>
-        {folderId !== null && entries.length > 0 && <span className="text-subtle">/ …</span>}
+        {folderId !== null && (
+          <nav className="ml-1 flex min-w-0 items-center gap-1 text-[13px]" data-drive-crumbs>
+            {crumbsOrdered.map((c) => (
+              <span key={c.id} className="flex min-w-0 items-center gap-1">
+                <span className="text-subtle">/</span>
+                <a href={c.kind === "folder" ? `#/drive/${c.id}` : hrefOf({ id: c.id, kind: (c.kind ?? "doc") as "doc" | "base" })} className="max-w-[10em] truncate text-muted-foreground hover:text-primary">
+                  {c.title || "未命名"}
+                </a>
+              </span>
+            ))}
+          </nav>
+        )}
         <div className="ml-auto flex items-center gap-2">
+          <div className="relative">
+            <button
+              className="flex h-8 items-center gap-1 rounded-md border px-2.5 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
+              onClick={() => setSort((v) => (v === "name" ? "updated" : "name"))}
+              title={sort === "name" ? "按名称排序（点击切换为更新时间）" : "按更新时间排序（点击切换为名称）"}
+              data-drive-sort
+            >
+              <ArrowUpDownIcon size={14} strokeWidth={1.7} />
+              {sort === "name" ? "名称" : "更新时间"}
+            </button>
+          </div>
           <div className="relative">
             <button
               className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90"
@@ -133,6 +185,10 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                 entry={e}
                 onOpen={() => (location.hash = `#/drive/${e.id}`)}
                 onMove={() => setMoving(e)}
+                onRename={async () => {
+                  const t = await askText("重命名", (e.title || "未命名"), e.title);
+                  if (t && t.trim() && t.trim() !== e.title) rename.mutate({ id: e.id, title: t.trim(), expected: e.revision });
+                }}
                 onTrash={() => void ask(`删除「${e.title}」？`, "整个文件夹会移到回收站，可恢复。").then((ok) => ok && trash.mutate(e))}
               />
             ))}
@@ -142,6 +198,10 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                 entry={e}
                 onOpen={() => (location.hash = hrefOf({ id: e.id, kind: e.kind as "doc" | "base" }))}
                 onMove={() => setMoving(e)}
+                onRename={async () => {
+                  const t = await askText("重命名", (e.title || "未命名"), e.title);
+                  if (t && t.trim() && t.trim() !== e.title) rename.mutate({ id: e.id, title: t.trim(), expected: e.revision });
+                }}
                 onTrash={() => void ask(`删除「${e.title}」？`, "会移到回收站，可恢复。").then((ok) => ok && trash.mutate(e))}
               />
             ))}
@@ -154,7 +214,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
   );
 }
 
-function DriveRow({ entry, onOpen, onMove, onTrash }: { entry: DriveEntry; onOpen: () => void; onMove: () => void; onTrash: () => void }) {
+function DriveRow({ entry, onOpen, onMove, onRename, onTrash }: { entry: DriveEntry; onOpen: () => void; onMove: () => void; onRename: () => void; onTrash: () => void }) {
   const trashed = false;
   return (
     <div className="group flex cursor-pointer items-center gap-3 border-b px-4 py-2.5 last:border-b-0 hover:bg-sidebar" data-drive-row={entry.id} onClick={onOpen}>
@@ -169,6 +229,17 @@ function DriveRow({ entry, onOpen, onMove, onTrash }: { entry: DriveEntry; onOpe
           </button>
         ) : (
           <>
+            <button
+              className="rounded p-1 text-subtle opacity-0 hover:text-primary group-hover:opacity-100"
+              title="重命名"
+              data-drive-rename
+              onClick={(e) => {
+                e.stopPropagation();
+                onRename();
+              }}
+            >
+              <PencilIcon size={14} strokeWidth={1.7} />
+            </button>
             <button
               className="rounded p-1 text-subtle opacity-0 hover:text-primary group-hover:opacity-100"
               title="移动到…"
