@@ -173,7 +173,7 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 	if kind == "folder" {
 		return m.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides") || ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
 	}
 	m.mu.Lock()
@@ -632,7 +632,7 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 	if kind == "folder" {
 		return p.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides") || ws <= 0 || !validDriveTitle(title) {
 		return out, ErrConflict
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {

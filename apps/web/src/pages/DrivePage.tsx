@@ -4,7 +4,7 @@ import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
 import { BaseIcon, DocIcon, hrefOf } from "@/components/Sidebar";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, LayoutGridIcon, ListIcon, PencilIcon, PlusIcon, RotateCcwIcon, SearchIcon, StarIcon, TableIcon, Trash2Icon } from "lucide-react";
+import { ArrowUpDownIcon, FolderIcon, FolderPlusIcon, LayoutGridIcon, ListIcon, PencilIcon, PlusIcon, PresentationIcon, RotateCcwIcon, SearchIcon, StarIcon, TableIcon, Trash2Icon } from "lucide-react";
 
 type DriveSort = "name" | "updated";
 
@@ -47,11 +47,11 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
     onSuccess: invalidate,
   });
   const createNode = useMutation({
-    mutationFn: async ({ kind, title }: { kind: "doc" | "base"; title: string }) => driveApi.createNode(kind, title, folderId, scope),
+    mutationFn: async ({ kind, title }: { kind: "doc" | "base" | "slides"; title: string }) => driveApi.createNode(kind, title, folderId, scope),
     onSuccess: (entry) => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["docs"] });
-      location.hash = hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" });
+      location.hash = hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" });
     },
   });
   const trash = useMutation({
@@ -189,6 +189,17 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-hover"
                   onClick={async () => {
                     setCreating(false);
+                    const t = await askText("新建演示文稿", "名称");
+                    if (t && t.trim()) createNode.mutate({ kind: "slides", title: t.trim() });
+                  }}
+                  data-drive-new-slides
+                >
+                  <PresentationIcon size={15} strokeWidth={1.7} /> 幻灯片
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-hover"
+                  onClick={async () => {
+                    setCreating(false);
                     const t = await askText("新建文件夹", "文件夹名称");
                     if (t && t.trim()) createFolder.mutate(t.trim());
                   }}
@@ -210,10 +221,10 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                 key={e.id}
                 className="group flex cursor-pointer flex-col gap-2 rounded-lg border p-3 hover:bg-sidebar"
                 data-drive-row={e.id}
-                onClick={() => (location.hash = e.kind === "folder" ? `#/drive/${e.id}` : hrefOf({ id: e.id, kind: e.kind as "doc" | "base" }))}
+                onClick={() => (location.hash = e.kind === "folder" ? `#/drive/${e.id}` : hrefOf({ id: e.id, kind: e.kind as "doc" | "base" | "slides" }))}
               >
                 <span className="text-primary">
-                  {e.kind === "folder" ? <FolderIcon size={28} strokeWidth={1.5} /> : e.kind === "base" ? <BaseIcon /> : <DocIcon />}
+                  {e.kind === "folder" ? <FolderIcon size={28} strokeWidth={1.5} /> : e.kind === "base" ? <BaseIcon /> : e.kind === "slides" ? <PresentationIcon size={26} strokeWidth={1.5} /> : <DocIcon />}
                 </span>
                 <span className="truncate text-[13px]">{e.title || "未命名"}</span>
                 <span className="text-[11px] text-subtle">{e.updatedAt ? new Date(e.updatedAt).toLocaleDateString("zh-CN") : ""}</span>
@@ -244,7 +255,7 @@ export function DrivePage({ folderId, personalRoot }: { folderId: number | null;
                 entry={e}
                 starred={favorites.data?.some((f) => f.id === e.id) ?? false}
                 onStar={(next) => (next ? extrasApi.star(e.id) : extrasApi.unstar(e.id)).then(() => favorites.refetch())}
-                onOpen={() => (location.hash = hrefOf({ id: e.id, kind: e.kind as "doc" | "base" }))}
+                onOpen={() => (location.hash = hrefOf({ id: e.id, kind: e.kind as "doc" | "base" | "slides" }))}
                 onMove={() => setMoving(e)}
                 onRename={async () => {
                   const t = await askText("重命名", (e.title || "未命名"), e.title);
@@ -267,7 +278,7 @@ function DriveRow({ entry, starred, onStar, onOpen, onMove, onRename, onTrash }:
   return (
     <div className="group flex cursor-pointer items-center gap-3 border-b px-4 py-2.5 last:border-b-0 hover:bg-sidebar" data-drive-row={entry.id} onClick={onOpen}>
       <span className="shrink-0 text-primary">
-        {entry.kind === "folder" ? <FolderIcon size={16} strokeWidth={1.7} /> : entry.kind === "base" ? <BaseIcon /> : <DocIcon />}
+        {entry.kind === "folder" ? <FolderIcon size={16} strokeWidth={1.7} /> : entry.kind === "base" ? <BaseIcon /> : entry.kind === "slides" ? <PresentationIcon size={16} strokeWidth={1.7} /> : <DocIcon />}
       </span>
       <span className="truncate text-[14px]">{entry.title || "未命名"}</span>
       <button

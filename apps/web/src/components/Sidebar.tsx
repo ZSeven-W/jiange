@@ -13,6 +13,7 @@ import { GlobalSearch } from "./GlobalSearch";
 
 export const hrefOf = (d: Pick<DocMeta, "id" | "kind">) => {
   if (d.kind === "base") return `#/base/${d.id}`;
+  if (d.kind === "slides") return `#/slides/${d.id}`;
   if (d.kind === "folder") return `#/drive/${d.id}`;
   // 未知资源类型不得伪装成文档：路由层会兜底显示"不支持的类型"
   return `#/doc/${d.id}`;

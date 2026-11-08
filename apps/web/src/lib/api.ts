@@ -56,7 +56,7 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base" | "folder";
+  kind?: "doc" | "base" | "folder" | "slides";
   workspaceName?: string;
   copyProtected?: boolean;
   copyMinRole?: Role;
@@ -295,7 +295,7 @@ export interface DriveEntry {
 export const driveApi = {
   create: (title: string, parentId: number | null = null, personal = false) =>
     request<DriveEntry>("POST", "/api/drive/folders", { title, parentId, scope: personal ? "personal" : "shared" }),
-  createNode: (kind: "doc" | "base" | "folder", title: string, parentId: number | null = null, personal = false) =>
+  createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
   children: (parentId: number | null = null, personal = false) =>
     request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}${personal ? `${parentId ? "&" : "?"}scope=personal` : ""}`).then((r) => r.entries),
@@ -310,6 +310,24 @@ export const driveApi = {
   purge: (id: number, expected: number) => request<void>("POST", `/api/drive/purge/${id}`, { expected }),
   // 回收站列表走既有 /api/trash（条目已带 driveRevision/trashBatchId，供乐观并发还原）
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
+};
+
+export interface SlidesPage {
+  id: number;
+  slidesId: number;
+  pos: number;
+  title: string;
+  body: string;
+  background: string;
+  updatedAt: string;
+}
+export const slidesApi = {
+  pages: (deckId: number) => request<{ pages: SlidesPage[] }>("GET", `/api/slides/${deckId}/pages`).then((r) => r.pages),
+  create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
+  update: (pid: number, title: string, body: string, background: string) =>
+    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background }),
+  remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
+  move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
 };
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {
