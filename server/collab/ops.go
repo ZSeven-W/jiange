@@ -46,6 +46,7 @@ const (
 	TTextInsert  = "tins"
 	TTextDelete  = "tdel"
 	TMark        = "mark"
+	TTable       = "ttable"
 )
 
 // Op is a tagged union mirroring the TypeScript Op type; unused fields are zero.
@@ -64,6 +65,8 @@ type Op struct {
 	Len    uint64  `json:"len"`
 	Start  Anchor  `json:"start"`
 	End    Anchor  `json:"end"`
+	// Payload carries one experimental-table sub-CRDT operation (ttable).
+	Payload []byte `json:"payload,omitempty"`
 }
 
 // Span is the number of Lamport ticks the op consumes.

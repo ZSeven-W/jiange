@@ -11,7 +11,7 @@ const (
 	Version = 1
 )
 
-var tags = map[string]byte{TBlockCreate: 1, TBlockMove: 2, TBlockSet: 3, TBlockDelete: 4, TTextInsert: 5, TTextDelete: 6, TMark: 7}
+var tags = map[string]byte{TBlockCreate: 1, TBlockMove: 2, TBlockSet: 3, TBlockDelete: 4, TTextInsert: 5, TTextDelete: 6, TMark: 7, TTable: 8}
 
 var ErrShort = errors.New("collab: unexpected end of input")
 
@@ -26,6 +26,8 @@ func (w *writer) uvar(v uint64) {
 	w.b = append(w.b, byte(v))
 }
 func (w *writer) str(s string) { w.uvar(uint64(len(s))); w.b = append(w.b, s...) }
+// blob writes length-prefixed raw bytes.
+func (w *writer) blob(b []byte) { w.uvar(uint64(len(b))); w.b = append(w.b, b...) }
 func (w *writer) id(id OpID)   { w.uvar(id.Client); w.uvar(id.Clock) }
 
 type reader struct {
@@ -73,6 +75,20 @@ func (r *reader) str() (string, error) {
 		return "", errors.New("collab: invalid utf-8")
 	}
 	return s, nil
+}
+
+// blob reads length-prefixed raw bytes.
+func (r *reader) blob() ([]byte, error) {
+	n, err := r.uvar()
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(r.b)-r.i) < n {
+		return nil, ErrShort
+	}
+	out := append([]byte(nil), r.b[r.i:r.i+int(n)]...)
+	r.i += int(n)
+	return out, nil
 }
 
 func (r *reader) id() (OpID, error) {
@@ -146,6 +162,9 @@ func EncodeOps(ops []Op) ([]byte, error) {
 			w.u8(op.Start.Side)
 			w.id(op.End.Char)
 			w.u8(op.End.Side)
+		case TTable:
+			w.id(op.Block)
+			w.blob(op.Payload)
 		}
 	}
 	return w.b, nil
@@ -261,6 +280,10 @@ func readOp(r *reader) (op Op, err error) {
 		e(rside(&op.Start.Side))
 		e(rid(&op.End.Char))
 		e(rside(&op.End.Side))
+	case 8:
+		op.T = TTable
+		e(rid(&op.Block))
+		e(func() (x error) { op.Payload, x = r.blob(); return })
 	default:
 		return op, fmt.Errorf("collab: unknown op tag %d", tag)
 	}
