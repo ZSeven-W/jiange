@@ -381,10 +381,48 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, err := s.Store.CreateFile(r.Context(), store.FileMeta{DocID: d.ID, UploaderID: u.ID, Name: hdr.Filename, Mime: mime, Size: int64(len(body)), ObjectKey: key})
 	if err != nil {
+		// 元数据写入失败时回收对象，不留无主 blob（删除幂等，尽力而为）
+		if delErr := s.Blobs.Delete(r.Context(), key); delErr != nil {
+			s.Log.Warn("blob orphaned after failed attachment insert", "key", key, "error", delErr)
+		}
 		s.fail(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, meta)
+}
+
+// deleteFile removes an attachment; edit access is rechecked on the owning
+// document (a file id alone establishes nothing). The blob dies only when no
+// other attachment — including doc copies — still references it.
+func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 || s.Blobs == nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	f, err := s.Store.GetFile(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	meta, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID)
+	if err != nil || store.RoleRank(meta.Role) < store.RoleRank(store.RoleEdit) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "需要编辑权限")
+		return
+	}
+	key, refs, err := s.Store.DeleteFile(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if refs == 0 {
+		if delErr := s.Blobs.Delete(r.Context(), key); delErr != nil {
+			// 元数据已删：残留对象由后台清扫处理，这里不吞掉删除结果
+			s.Log.Warn("blob outlived its last attachment reference", "key", key, "error", delErr)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {

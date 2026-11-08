@@ -242,10 +242,30 @@ func (m *Memory) CreateFile(_ context.Context, f FileMeta) (FileMeta, error) {
 	return f, nil
 }
 
+// DeleteFile removes the attachment row and reports remaining references to
+// its object key (copies share blobs; the object dies at zero references).
+// The slot is tombstoned so id indexing stays stable.
+func (m *Memory) DeleteFile(_ context.Context, id int64) (string, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id < 1 || int(id) > len(m.sh.files) || m.sh.files[id-1].ID == 0 {
+		return "", 0, ErrNotFound
+	}
+	key := m.sh.files[id-1].ObjectKey
+	m.sh.files[id-1] = FileMeta{}
+	var refs int64
+	for _, f := range m.sh.files {
+		if f.ID != 0 && f.ObjectKey == key {
+			refs++
+		}
+	}
+	return key, refs, nil
+}
+
 func (m *Memory) GetFile(_ context.Context, id int64) (FileMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if id < 1 || int(id) > len(m.sh.files) {
+	if id < 1 || int(id) > len(m.sh.files) || m.sh.files[id-1].ID == 0 {
 		return FileMeta{}, ErrNotFound
 	}
 	return m.sh.files[id-1], nil

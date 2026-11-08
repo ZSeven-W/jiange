@@ -24,6 +24,9 @@ var ErrSizeUnknown = errors.New("blob size unavailable")
 type Store interface {
 	Put(ctx context.Context, key, mime string, body []byte) error
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	// Delete removes the object; an already-missing object is success, so
+	// callers can always clean up on failure paths.
+	Delete(ctx context.Context, key string) error
 }
 
 // Sizer is an optional, read-only metadata capability. Callers can fall back
@@ -55,6 +58,13 @@ func (s *Memory) Get(_ context.Context, key string) (io.ReadCloser, error) {
 		return nil, ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (s *Memory) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, key)
+	return nil
 }
 
 func (s *Memory) Size(_ context.Context, key string) (int64, error) {
@@ -183,6 +193,20 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("get %s: %s", key, resp.Status)
 	}
 	return resp.Body, nil
+}
+
+// Delete removes the object; a missing object is success (idempotent cleanup).
+func (s *S3) Delete(ctx context.Context, key string) error {
+	resp, err := s.do(ctx, http.MethodDelete, key, "", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 || resp.StatusCode == 204 || resp.StatusCode == 404 {
+		return nil
+	}
+	b, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("delete %s: %s %s", key, resp.Status, b)
 }
 
 // Size performs a signed HEAD request without transferring attachment bytes.

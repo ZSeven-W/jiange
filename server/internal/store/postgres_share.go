@@ -196,6 +196,23 @@ func (p *Postgres) CreateFile(ctx context.Context, f FileMeta) (FileMeta, error)
 	return f, err
 }
 
+// DeleteFile removes the attachment row and reports remaining references to
+// its object key (copies share blobs; the object dies at zero references).
+func (p *Postgres) DeleteFile(ctx context.Context, id int64) (string, int64, error) {
+	var key string
+	if err := p.Pool.QueryRow(ctx, `DELETE FROM attachments WHERE id=$1 RETURNING object_key`, id).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, ErrNotFound
+		}
+		return "", 0, err
+	}
+	var refs int64
+	if err := p.Pool.QueryRow(ctx, `SELECT count(*) FROM attachments WHERE object_key=$1`, key).Scan(&refs); err != nil {
+		return key, 0, err
+	}
+	return key, refs, nil
+}
+
 func (p *Postgres) GetFile(ctx context.Context, id int64) (f FileMeta, err error) {
 	err = p.Pool.QueryRow(ctx, `SELECT id, doc_id, uploader_id, name, mime, size, object_key, created_at FROM attachments WHERE id=$1`, id).
 		Scan(&f.ID, &f.DocID, &f.UploaderID, &f.Name, &f.Mime, &f.Size, &f.ObjectKey, &f.CreatedAt)
