@@ -32,6 +32,9 @@ type conn struct {
 	room     *room
 	clientID uint64
 	acked    int64
+	// v2 marks a connection whose HELLO carried the history epoch: only these
+	// peers may carry (and receive) newer op kinds such as ttable.
+	v2 bool
 	dbAcked  int64
 	aware    string
 	owned    map[uint64]bool // replica ids this user may author ops for (read loop only)
@@ -177,6 +180,7 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 		return err
 	}
 	c.docID.Store(doc)
+	c.v2 = m.HasEpoch
 	id := int64(m.ClientID)
 	if id != 0 {
 		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {

@@ -248,6 +248,24 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		c.send(collab.EncodeError("internal", "room unavailable"))
 		return errors.New("room unavailable")
 	}
+	// 表格子 CRDT 载荷（ttable）：只有 v2 协商（epoch HELLO）的连接可提交，
+	// 且房间内不能有 v1 成员——v1 解码器会拒绝该字节并断线/失步。
+	// 状态集成（Doc 应用与快照版本）落地前，门控在应用之前拒绝。
+	for _, op := range ops {
+		if op.T != collab.TTable {
+			continue
+		}
+		if !c.v2 {
+			c.send(collab.EncodeError("bad_ops", "表格操作需要 v2 同步协议"))
+			return errBatchRejected
+		}
+		for member := range r.conns {
+			if !member.v2 {
+				c.send(collab.EncodeError("bad_ops", "房间内存在旧协议客户端，无法应用表格操作"))
+				return errBatchRejected
+			}
+		}
+	}
 	var accepted []collab.Op
 	var raws []store.RawOp
 	var seqs []int64
