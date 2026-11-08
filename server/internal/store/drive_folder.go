@@ -39,6 +39,10 @@ type DriveFolderStore interface {
 	MoveDriveNode(context.Context, RestoreGuard, int64, *int64, int64) error
 	TrashDriveNode(context.Context, RestoreGuard, int64, int64) error
 	RestoreDriveNode(context.Context, RestoreGuard, int64, int64) error
+	// PurgeDriveNode permanently removes an already-trashed subtree and
+	// returns object keys whose last attachment reference disappeared (the
+	// caller reclaims those blobs; copies keep shared keys alive).
+	PurgeDriveNode(context.Context, RestoreGuard, int64, int64) ([]string, error)
 }
 
 func validDriveTitle(title string) bool { return title != "" }
@@ -349,7 +353,7 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	d := m.doc(id)
 	// driveTrashBatch == 0 marks a legacy (pre-drive) deletion; the loops
 	// below then restore the subtree's still-deleted legacy rows.
-	if d == nil || !d.deleted || d.driveRevision != expected {
+	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
 		return ErrConflict
 	}
 	// 个人空间节点只有创建者能还原（空间 owner 也不行）
@@ -384,6 +388,64 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 		}
 	}
 	return nil
+}
+
+// PurgeDriveNode permanently removes an already-trashed subtree. The memory
+// rows are tombstoned (id indexing stays stable) and the object keys whose
+// last reference disappeared are returned for blob reclamation.
+func (m *Memory) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expected int64) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.driveSessionLocked(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	d := m.doc(id)
+	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
+		return nil, ErrConflict
+	}
+	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+		return nil, ErrForbidden
+	}
+	items, err := m.safeDriveSubtreeLocked(d)
+	if err != nil {
+		return nil, err
+	}
+	if !g.currentTime().Before(expires) {
+		return nil, ErrUnauthenticated
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	ids := make(map[int64]bool, len(items))
+	for _, item := range items {
+		ids[item.meta.ID] = true
+	}
+	keys := map[string]bool{}
+	for i := range m.sh.files {
+		if f := m.sh.files[i]; f.ID != 0 && ids[f.DocID] {
+			keys[f.ObjectKey] = true
+			m.sh.files[i] = FileMeta{} // tombstone：与被清文档一起消失
+		}
+	}
+	freed := []string{}
+	for key := range keys {
+		refs := false
+		for _, f := range m.sh.files {
+			if f.ID != 0 && f.ObjectKey == key {
+				refs = true
+				break
+			}
+		}
+		if !refs {
+			freed = append(freed, key)
+		}
+	}
+	sort.Strings(freed)
+	for _, item := range items {
+		item.purged = true
+	}
+	return freed, nil
 }
 func (m *Memory) safeDriveSubtreeLocked(root *memDoc) ([]*memDoc, error) {
 	seen := map[int64]bool{}
@@ -773,4 +835,89 @@ func (p *Postgres) changeDriveTrash(ctx context.Context, g RestoreGuard, id, exp
 		return drivePGEnd(ctx, g, exp)
 	})
 	return drivePGError(err)
+}
+
+// PurgeDriveNode permanently deletes an already-trashed subtree. FK cascades
+// remove ops/snapshots/base rows/attachments with the nodes; attachment keys
+// whose last reference disappeared are returned for blob reclamation.
+func (p *Postgres) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expected int64) (freed []string, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		ws, e := drivePGNodeWorkspace(ctx, tx, id)
+		if e != nil {
+			return e
+		}
+		if e = drivePGLockWorkspace(ctx, tx, ws); e != nil {
+			return e
+		}
+		exp, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		var actualWS, rev, creator int64
+		var deleted, personal bool
+		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,creator_id,deleted_at IS NOT NULL,personal FROM nodes WHERE id=$1 FOR UPDATE`, id).
+			Scan(&actualWS, &rev, &creator, &deleted, &personal)
+		if e != nil {
+			return e
+		}
+		if actualWS != ws || !deleted || rev != expected {
+			return ErrConflict
+		}
+		if personal && creator != g.UserID {
+			return ErrForbidden
+		}
+		if !personal {
+			var memberRole string
+			e = tx.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, ws, g.UserID).Scan(&memberRole)
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrForbidden
+			}
+			if e != nil {
+				return e
+			}
+			if memberRole != "owner" && memberRole != "admin" && creator != g.UserID {
+				return ErrForbidden
+			}
+		}
+		rows, e := tx.Query(ctx, `SELECT DISTINCT a.object_key FROM attachments a
+			JOIN (WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) SELECT id FROM t) s ON s.id = a.doc_id`, id)
+		if e != nil {
+			return e
+		}
+		keys := []string{}
+		for rows.Next() {
+			var k string
+			if e = rows.Scan(&k); e != nil {
+				rows.Close()
+				return e
+			}
+			keys = append(keys, k)
+		}
+		if e = rows.Err(); e != nil {
+			rows.Close()
+			return e
+		}
+		rows.Close()
+		if e = drivePGEnd(ctx, g, exp); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `WITH RECURSIVE t(id) AS (SELECT $1::bigint UNION ALL SELECT n.id FROM nodes n JOIN t ON n.parent_id=t.id) DELETE FROM nodes WHERE id IN (SELECT id FROM t)`, id); e != nil {
+			return e
+		}
+		freed = []string{}
+		for _, k := range keys {
+			var refs int64
+			if e = tx.QueryRow(ctx, `SELECT count(*) FROM attachments WHERE object_key=$1`, k).Scan(&refs); e != nil {
+				return e
+			}
+			if refs == 0 {
+				freed = append(freed, k)
+			}
+		}
+		return drivePGEnd(ctx, g, exp)
+	})
+	if err != nil {
+		return nil, drivePGError(err)
+	}
+	return freed, nil
 }

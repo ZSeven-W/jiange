@@ -16,6 +16,7 @@ type memDoc struct {
 	meta            DocMeta
 	driveRevision   int64
 	driveTrashBatch int64
+	purged          bool // 永久删除：不可恢复，目录/回收站均不可见
 	historyEpoch    int64 // 1 起；回滚/恢复后代际 +1
 	iconRevision    int64
 	cover           DocCover
@@ -475,7 +476,7 @@ func (m *Memory) ListTrash(_ context.Context, uid int64) ([]DocMeta, error) {
 	defer m.mu.Unlock()
 	out := []DocMeta{}
 	for _, d := range m.d.docs {
-		if d.deleted && m.member(uid, d.meta.WorkspaceID) && (!d.personal || d.meta.CreatorID == uid) {
+		if d.deleted && !d.purged && m.member(uid, d.meta.WorkspaceID) && (!d.personal || d.meta.CreatorID == uid) {
 			out = append(out, d.meta)
 		}
 	}

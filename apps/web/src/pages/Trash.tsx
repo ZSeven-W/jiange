@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { driveApi, type DocMeta } from "@/lib/api";
+import { ask } from "@/components/ui/ask";
 import { BaseIcon, DocIcon, docTitle } from "@/components/Sidebar";
 import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { FolderIcon } from "lucide-react";
@@ -21,6 +22,14 @@ export function Trash() {
     },
     onError: (e) => setErr(e instanceof Error && e.message ? e.message : "还原失败，请刷新后重试。"),
   });
+  const purge = useMutation({
+    mutationFn: (d: DocMeta) => driveApi.purge(d.id, d.driveRevision ?? 0),
+    onSuccess: () => {
+      setErr("");
+      qc.invalidateQueries({ queryKey: ["trash"] });
+    },
+    onError: (e) => setErr(e instanceof Error && e.message ? e.message : "删除失败，请刷新后重试。"),
+  });
   const entries = trash.data ?? [];
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -40,6 +49,15 @@ export function Trash() {
               <span className="hidden text-xs text-subtle sm:block">修改于 {new Date(d.updatedAt).toLocaleString("zh-CN", { hour12: false })}</span>
               <button className="h-7 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={() => restore.mutate(d)}>
                 还原
+              </button>
+              <button
+                className="h-7 rounded-md border px-3 text-[13px] text-destructive hover:bg-hover"
+                data-trash-purge
+                onClick={async () => {
+                  if (await ask(`永久删除「${docTitle(d)}」？`, "整个子树连同附件对象会被彻底清除，不可恢复。", true)) purge.mutate(d);
+                }}
+              >
+                永久删除
               </button>
             </div>
           ))}

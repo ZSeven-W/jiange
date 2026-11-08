@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/drive/move/{id}":                         s.postDriveMove,
 		"POST /api/drive/trash/{id}":                        s.postDriveTrash,
 		"POST /api/drive/restore/{id}":                      s.postDriveRestore,
+		"POST /api/drive/purge/{id}":                         s.postDrivePurge,
 		"GET /api/search":                                   s.searchDocs,
 		"GET /api/favorites":                                s.listFavorites,
 		"GET /api/recent":                                   s.listRecent,
