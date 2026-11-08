@@ -1,185 +1,125 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { slidesApi, type SlidesPage as Page } from "@/lib/api";
+import { docsApi, slidesApi, type SlidesPage as Page } from "@/lib/api";
+import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { CopyIcon, PlusIcon, PresentationIcon, Trash2Icon } from "lucide-react";
+import { SlidesDraftQueue } from "./slidesDraft";
+import { ChevronLeft, Copy, FilePlus2, ImageIcon, Palette, Play, Presentation, Trash2, Type } from "lucide-react";
 
-/** 幻灯片（首个纵切）：页面列表（新增/复制/删除/移动）+ 画布（标题/要点/背景色）+ 放映模式（方向键翻页）。 */
+/** Presentation editor. Drafts are kept locally while page writes are serialised. */
 export function SlidesDeck({ deckId }: { deckId: number }) {
   const qc = useQueryClient();
-  const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId) });
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [, setDraftVersion] = useState(0);
+  const shareRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const backgroundRef = useRef<HTMLInputElement>(null);
+  const meta = useQuery({ queryKey: ["slides-meta", deckId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
+  const canEdit = !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
+  const queue = useMemo(() => new SlidesDraftQueue(
+    (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision),
+    (saved) => qc.setQueryData<Page[]>(["slides", deckId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
+    () => setDraftVersion((version) => version + 1),
+  ), [deckId, qc]);
+  useEffect(() => () => queue.dispose(), [queue]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (queue.hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [queue]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["slides", deckId] });
-
-  const create = useMutation({ mutationFn: (title: string) => slidesApi.create(deckId, title), onSuccess: invalidate });
-  const update = useMutation({
-    mutationFn: ({ id, title, body, background }: { id: number; title: string; body: string; background: string }) =>
-      slidesApi.update(id, title, body, background),
-    onSuccess: invalidate,
-  });
-  const remove = useMutation({ mutationFn: (pid: number) => slidesApi.remove(pid), onSuccess: invalidate });
-
+  const create = useMutation({ mutationFn: () => slidesApi.create(deckId, "未命名页"), onSuccess: (page) => { setCurrent(page.id); void invalidate(); } });
+  const remove = useMutation({ mutationFn: (pid: number) => slidesApi.remove(pid), onSuccess: () => { setCurrent(null); void invalidate(); } });
+  const [operationError, setOperationError] = useState("");
   const list = pages.data ?? [];
-  const active = list.find((p) => p.id === current) ?? list[0] ?? null;
+  const active = list.find((page) => page.id === current) ?? list[0] ?? null;
+  const draft = active ? queue.get(active) : null;
 
-  // 放映模式：方向键翻页，Esc 退出
   useEffect(() => {
     if (!playing) return;
-    const on = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPlaying(false);
-      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-      e.preventDefault();
-      const i = active ? list.findIndex((p) => p.id === active.id) : -1;
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        if (i >= 0 && i < list.length - 1) setCurrent(list[i + 1].id);
-      } else if (i > 0) setCurrent(list[i - 1].id);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPlaying(false);
+      if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const index = active ? list.findIndex((page) => page.id === active.id) : -1;
+      if ((event.key === "ArrowRight" || event.key === "ArrowDown") && index >= 0 && index < list.length - 1) setCurrent(list[index + 1].id);
+      if ((event.key === "ArrowLeft" || event.key === "ArrowUp") && index > 0) setCurrent(list[index - 1].id);
     };
-    window.addEventListener("keydown", on);
-    return () => window.removeEventListener("keydown", on);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [playing, active, list]);
 
-  if (pages.isError) {
-    return <div className="flex flex-1 items-center justify-center text-[13px] text-subtle">无法访问该演示文稿（可能已删除或无权限）</div>;
-  }
+  if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
+  if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">无法访问该演示文稿，请确认权限后重试。</div>;
 
-  if (playing && active) {
-    return (
-      <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center px-16 text-center" style={{ background: active.background || "#111" }} data-slides-playing>
-        <h1 className="max-w-[80%] text-[44px] font-bold leading-tight text-white" data-slides-play-title>{active.title || "未命名"}</h1>
-        <ul className="mt-10 space-y-3 text-[22px] leading-relaxed text-white/90">
-          {active.body.split("\n").filter((l) => l.trim()).map((line, i) => (
-            <li key={i}>• {line}</li>
-          ))}
-        </ul>
-        <p className="absolute bottom-6 text-[12px] text-white/40">
-          ←/→ 翻页 · Esc 退出 · {list.findIndex((p) => p.id === active.id) + 1}/{list.length}
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex min-w-0 flex-1">
-      <aside className="flex w-[200px] shrink-0 flex-col border-r" data-slides-list>
-        <div className="flex items-center justify-between px-3 py-2 text-[13px] font-medium">
-          页面
-          <button
-            className="flex h-7 items-center gap-1 rounded-md bg-primary px-2 text-[12px] text-white hover:opacity-90"
-            onClick={() => create.mutate("未命名页")}
-            data-slides-add
-          >
-            <PlusIcon size={13} strokeWidth={1.8} /> 新页
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {list.map((p, i) => (
-            <div
-              key={p.id}
-              className={cn("group mb-2 flex cursor-pointer flex-col gap-1 rounded-lg border p-2 text-left", active?.id === p.id ? "border-primary" : "hover:bg-hover/60")}
-              onClick={() => setCurrent(p.id)}
-              data-slides-page={p.id}
-            >
-              <div className="flex items-center gap-1.5 text-[11px] text-subtle">
-                <span className="w-4 text-center">{i + 1}</span>
-                <span className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100">
-                  <button
-                    className="rounded p-0.5 hover:text-primary"
-                    title="上移"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (i === 0) return;
-                      slidesApi.move(p.id, (list[i - 1].pos + (i > 1 ? list[i - 2].pos : 0)) / 2).then(invalidate);
-                    }}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    className="rounded p-0.5 hover:text-primary"
-                    title="下移"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (i === list.length - 1) return;
-                      slidesApi.move(p.id, (list[i + 1].pos + (i + 2 < list.length ? list[i + 2].pos : list[i + 1].pos + 1)) / 2).then(invalidate);
-                    }}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    className="rounded p-0.5 hover:text-primary"
-                    title="复制此页"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      slidesApi.create(deckId, p.title).then((copy) => slidesApi.update(copy.id, p.title, p.body, p.background)).then(invalidate);
-                    }}
-                  >
-                    <CopyIcon size={12} strokeWidth={1.8} />
-                  </button>
-                  <button
-                    className="rounded p-0.5 hover:text-destructive"
-                    title="删除此页"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (await ask(`删除第 ${i + 1} 页？`, "不可撤销。")) remove.mutate(p.id);
-                    }}
-                  >
-                    <Trash2Icon size={12} strokeWidth={1.8} />
-                  </button>
-                </span>
-              </div>
-              <div className="line-clamp-2 min-h-[28px] rounded bg-black/80 px-2 py-1 text-[11px] text-white/90">{p.title || "未命名页"}</div>
-            </div>
-          ))}
-          {list.length === 0 && pages.isSuccess && <p className="px-2 py-6 text-center text-[12px] text-subtle">还没有页面，点「新页」开始</p>}
-        </div>
-      </aside>
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b px-5">
-          <PresentationIcon size={16} strokeWidth={1.7} className="text-primary" />
-          <span className="text-[14px] font-semibold">演示文稿</span>
-          <button
-            className="ml-auto flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
-            disabled={!active}
-            onClick={() => setPlaying(true)}
-            data-slides-play
-          >
-            <PresentationIcon size={14} strokeWidth={1.7} /> 放映
-          </button>
-        </header>
-        {active ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-            <div className="flex h-full w-full max-w-[860px] flex-col rounded-xl p-10 shadow-lg" style={{ background: active.background || "#1a1a1a" }}>
-              <input
-                value={active.title}
-                onChange={(e) => update.mutate({ id: active.id, title: e.target.value, body: active.body, background: active.background })}
-                placeholder="页面标题"
-                className="w-full bg-transparent text-[30px] font-bold text-white outline-none placeholder:text-white/30"
-                data-slides-title
-              />
-              <textarea
-                value={active.body}
-                onChange={(e) => update.mutate({ id: active.id, title: active.title, body: e.target.value, background: active.background })}
-                placeholder={"每行一个要点"}
-                className="mt-6 min-h-0 flex-1 resize-none bg-transparent text-[18px] leading-8 text-white/90 outline-none placeholder:text-white/30"
-                data-slides-body
-              />
-              <div className="mt-4 flex items-center gap-2 text-[12px] text-white/50">
-                背景色
-                <input
-                  type="color"
-                  value={active.background || "#1a1a1a"}
-                  onChange={(e) => update.mutate({ id: active.id, title: active.title, body: active.body, background: e.target.value })}
-                  className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"
-                  data-slides-bg
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-[13px] text-subtle">左侧新建第一页</div>
-        )}
-      </section>
+  if (playing && active && draft) return (
+    <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center px-8 text-center" style={{ background: draft.content.background || "#fff", color: "#1f2329" }} data-slides-playing>
+      <h1 className="max-w-[80%] text-[44px] font-semibold leading-tight">{draft.content.title || "未命名"}</h1>
+      <ul className="mt-10 space-y-3 text-[22px] leading-relaxed">{draft.content.body.split("\n").filter((line) => line.trim()).map((line, index) => <li key={index}>• {line}</li>)}</ul>
+      <button className="absolute right-5 top-5 rounded-md bg-black/10 px-3 py-2 text-sm" onClick={() => setPlaying(false)}>退出放映</button>
+      <p className="absolute bottom-6 text-[12px] opacity-50">←/→ 翻页 · Esc 退出 · {list.findIndex((page) => page.id === active.id) + 1}/{list.length}</p>
     </div>
+  );
+
+  const doMove = (page: Page, pos: number) => { setOperationError(""); void slidesApi.move(page.id, pos).then(invalidate).catch(() => setOperationError("页面顺序未能确认，请刷新后重试。")); };
+  const doCopy = (page: Page) => {
+    const source = queue.get(page);
+    if (source.state !== "saved") return;
+    setOperationError("");
+    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
+  };
+  return (
+    <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-white pl-14 pr-3 md:px-5">
+        <button type="button" onClick={() => { location.hash = "#/drive/mine"; }} aria-label="返回云盘" className="grid size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]"><ChevronLeft size={17}/></button>
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white"><Presentation size={15}/></span>
+        <div className="min-w-0"><div className="truncate text-[14px] font-semibold text-[#1f2329]">{meta.data.title || "未命名幻灯片"}</div><div className="text-[11px] text-[#8f959e]">{draft?.state === "saving" ? "正在保存…" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
+          <button type="button" disabled={!active} onClick={() => setPlaying(true)} className="flex h-8 items-center gap-1 rounded-md border border-[#d0d3d6] bg-white px-3 text-[13px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>放映</button>
+        </div>
+      </header>
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-[104px] shrink-0 flex-col border-r border-[#dee0e3] bg-white sm:w-[190px]" data-slides-list>
+          <div className="flex h-12 items-center px-2 sm:px-3"><button type="button" disabled={!canEdit || create.isPending} onClick={() => create.mutate()} className="flex h-8 w-full items-center justify-center gap-1 rounded-md border border-[#d0d3d6] bg-white text-[12px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><FilePlus2 size={14}/><span className="hidden sm:inline">新建幻灯片</span><span className="sm:hidden">新建</span></button></div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
+            {list.map((page, index) => {
+              const item = queue.get(page);
+              return <div key={page.id} className="group flex gap-1" data-slides-page={page.id}>
+                <span className="w-4 pt-1 text-right text-[11px] text-[#8f959e]">{index + 1}</span>
+                <button type="button" onClick={() => setCurrent(page.id)} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}`} className={cn("aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white p-1 text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff" }}><span className="line-clamp-2 break-all text-[8px] font-semibold text-[#1f2329]">{item.content.title || "点击添加标题"}</span></button>
+              </div>;
+            })}
+            {!list.length && pages.isSuccess && <p className="px-2 py-6 text-center text-[12px] text-[#8f959e]">暂无幻灯片</p>}
+          </div>
+        </aside>
+        <section className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
+            <button type="button" disabled={!canEdit || !active} onClick={() => titleRef.current?.focus()} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
+            <button type="button" disabled={!canEdit || !active} onClick={() => backgroundRef.current?.click()} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Palette size={16}/>背景</button>
+            <span className="mx-1 h-5 w-px bg-[#e5e6eb]" />
+            <button type="button" disabled={!canEdit || !active || draft?.state !== "saved"} onClick={() => active && doCopy(active)} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={15}/>复制页面</button>
+            <button type="button" disabled={!canEdit || !active || draft?.state !== "saved" || remove.isPending} onClick={async () => { if (active && await ask("删除此页？", "删除后不可恢复。")) remove.mutate(active.id); }} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Trash2 size={15}/>删除</button>
+            <button type="button" disabled={!canEdit || !active || list.findIndex((page) => page.id === active.id) <= 0} onClick={() => { if (!active) return; const i = list.findIndex((page) => page.id === active.id); doMove(active, (list[i - 1].pos + (i > 1 ? list[i - 2].pos : 0)) / 2); }} className="h-9 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40">上移</button>
+            <button type="button" disabled={!canEdit || !active || list.findIndex((page) => page.id === active.id) >= list.length - 1} onClick={() => { if (!active) return; const i = list.findIndex((page) => page.id === active.id); doMove(active, (list[i + 1].pos + (i + 2 < list.length ? list[i + 2].pos : list[i + 1].pos + 1)) / 2); }} className="h-9 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40">下移</button>
+          </div>
+          {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}</p>}
+          {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-8">
+            {active && draft ? <div className="aspect-video w-full max-w-[960px] shrink-0 bg-white px-[6%] py-[5%] shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ backgroundColor: draft.content.background || "#fff" }} data-slides-canvas>
+              <input ref={titleRef} value={draft.content.title} readOnly={!canEdit} onChange={(event) => queue.edit(active, { title: event.target.value })} placeholder="点击添加标题" className="w-full border border-transparent bg-transparent px-2 py-1 text-[clamp(18px,2.2vw,36px)] font-semibold leading-tight text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-title />
+              <textarea value={draft.content.body} readOnly={!canEdit} onChange={(event) => queue.edit(active, { body: event.target.value })} placeholder="点击添加正文" className="mt-[4%] h-[55%] w-full resize-none border border-transparent bg-transparent px-2 py-1 text-[clamp(13px,1.4vw,21px)] leading-relaxed text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-body />
+              <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => queue.edit(active, { background: event.target.value })} className="sr-only" aria-label="幻灯片背景颜色" />
+            </div> : <div className="flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
+          </div>
+          <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
+        </section>
+      </div>
+      {sharing && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} anchorRef={shareRef}/>}
+    </main>
   );
 }

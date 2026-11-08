@@ -46,7 +46,7 @@ func TestSlidesVerticalSlice(t *testing.T) {
 	p1u, err := store.SlidesPage{}, error(nil)
 	_ = p1u
 	_ = err
-	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111"}); res.StatusCode != 200 {
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111", "expectedRevision": p1.Revision}); res.StatusCode != 200 {
 		t.Fatalf("patch: %d", res.StatusCode)
 	} else {
 		var got store.SlidesPage
@@ -54,6 +54,9 @@ func TestSlidesVerticalSlice(t *testing.T) {
 		if got.Title != "季度汇报" || got.Body != "要点一\n要点二" || got.Background != "#111" {
 			t.Fatalf("patched: %+v", got)
 		}
+	}
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "旧内容", "body": "", "background": "#111", "expectedRevision": p1.Revision}); res.StatusCode != 409 {
+		t.Fatalf("stale patch must be rejected: %d", res.StatusCode)
 	}
 
 	// 排序：把第二页移到最前（pos 取 0.5）

@@ -67,7 +67,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   }, [anchorRef]);
   const manage = !info.isError && info.data?.role === "manage";
   const settingsKey = ["share-settings", meta.id];
-  const settings = useQuery({ queryKey: settingsKey, queryFn: () => docsApi.get(meta.id), enabled: meta.kind !== "base" && showSettings && manage && !info.isFetching, refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000, retry: false, gcTime: 0 });
+  const settings = useQuery({ queryKey: settingsKey, queryFn: () => docsApi.get(meta.id), enabled: meta.kind !== "base" && meta.kind !== "slides" && showSettings && manage && !info.isFetching, refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000, retry: false, gcTime: 0 });
   const settingsContext = useRef({ id: meta.id, canManage: false });
   settingsContext.current = { id: meta.id, canManage: !!manage && !info.isFetching && showSettings };
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
@@ -171,8 +171,8 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
           }}
         /> : <>
         <header className="flex h-[45px] items-center justify-between px-4">
-          <h2 id="share-title" className="flex items-center gap-1 text-[16px] font-semibold">分享{meta.kind === "base" ? "多维表格" : "文档"}<HelpIcon className="size-[13px] text-muted-foreground" /></h2>
-          <div className="flex items-center gap-1">{meta.kind === "base" ? <button type="button" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover" title="查看协作者及权限"><SettingIcon className="size-[14px]" />权限设置</button> : manage && <button ref={settingsButtonRef} type="button" aria-disabled={busy || info.isFetching} onClick={() => { if (busy || info.isFetching) return; setSettingsError(""); setShowSettings(true); }} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover aria-disabled:opacity-50"><SettingIcon className="size-[14px]" />权限设置</button>}<button type="button" onClick={onClose} aria-label="关闭分享" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover sm:sr-only sm:focus:not-sr-only"><X size={15}/></button></div>
+          <h2 id="share-title" className="flex items-center gap-1 text-[16px] font-semibold">分享{meta.kind === "base" ? "多维表格" : meta.kind === "slides" ? "幻灯片" : "文档"}<HelpIcon className="size-[13px] text-muted-foreground" /></h2>
+          <div className="flex items-center gap-1">{meta.kind === "base" || meta.kind === "slides" ? <button type="button" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover" title="查看协作者及权限"><SettingIcon className="size-[14px]" />协作者</button> : manage && <button ref={settingsButtonRef} type="button" aria-disabled={busy || info.isFetching} onClick={() => { if (busy || info.isFetching) return; setSettingsError(""); setShowSettings(true); }} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover aria-disabled:opacity-50"><SettingIcon className="size-[14px]" />权限设置</button>}<button type="button" onClick={onClose} aria-label="关闭分享" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover sm:sr-only sm:focus:not-sr-only"><X size={15}/></button></div>
         </header>
         {info.isPending && <p className="px-4 py-2 text-[13px] text-subtle">正在加载分享设置…</p>}
         {info.isError && <p role="alert" className="px-4 py-2 text-[13px] text-destructive">加载分享设置失败，请关闭后重试。</p>}
@@ -202,7 +202,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
             <div className="flex items-center gap-3">
               <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#1456f0] text-white"><BuildingIcon className="size-[15px]" /></span>
               <span className="min-w-0 flex-1"><span className="block truncate leading-5">{linkTitle}</span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
-              {manage ? <RoleSelect label="链接分享权限" disabled={busy || info.isFetching} value={linkRole} onChange={(r) => { void update(async () => { await docsApi.setLink(meta.id, r as "none" | "anon" | "view" | "edit"); }, "link"); }} options={meta.kind === "base" ? ["none", "view", "edit"] : ["none", "anon", "view", "edit"]} /> : <span className="text-[13px] text-muted-foreground">{ROLE_LABEL[linkRole]}</span>}
+              {manage ? <RoleSelect label="链接分享权限" disabled={busy || info.isFetching} value={linkRole} onChange={(r) => { void update(async () => { await docsApi.setLink(meta.id, r as "none" | "anon" | "view" | "edit"); }, "link"); }} options={meta.kind === "base" || meta.kind === "slides" ? ["none", "view", "edit"] : ["none", "anon", "view", "edit"]} /> : <span className="text-[13px] text-muted-foreground">{ROLE_LABEL[linkRole]}</span>}
             </div>
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
           </div>

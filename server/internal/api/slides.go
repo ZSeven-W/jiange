@@ -57,9 +57,10 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title      string `json:"title"`
-		Body       string `json:"body"`
-		Background string `json:"background"`
+		Title            string `json:"title"`
+		Body             string `json:"body"`
+		Background       string `json:"background"`
+		ExpectedRevision int64  `json:"expectedRevision"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -77,7 +78,7 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_id", "page id required")
 		return
 	}
-	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background)
+	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.ExpectedRevision)
 	if driveWriteErr(w, err, "update page") {
 		return
 	}
