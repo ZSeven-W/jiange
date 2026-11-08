@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 )
@@ -39,7 +41,7 @@ func (m *Memory) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesID 
 		}
 	}
 	m.slidesSequence++
-	page := SlidesPage{ID: m.slidesSequence, SlidesID: slidesID, Pos: pos, Title: title, Revision: 1, UpdatedAt: time.Now()}
+	page := SlidesPage{ID: m.slidesSequence, SlidesID: slidesID, Pos: pos, Title: title, Shapes: json.RawMessage(`[]`), Revision: 1, UpdatedAt: time.Now()}
 	m.slides = append(m.slides, page)
 	return page, nil
 }
@@ -54,6 +56,7 @@ func (m *Memory) ListSlidesPages(_ context.Context, uid, slidesID int64) ([]Slid
 	out := []SlidesPage{}
 	for _, p := range m.slides {
 		if p.SlidesID == slidesID {
+			p.Shapes = slices.Clone(p.Shapes)
 			out = append(out, p)
 		}
 	}
@@ -75,7 +78,7 @@ func (m *Memory) findSlidesPageLocked(pageID int64) (int, *SlidesPage) {
 	return -1, nil
 }
 
-func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, expectedRevision int64) (SlidesPage, error) {
+func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	i, p := m.findSlidesPageLocked(pageID)
@@ -92,9 +95,14 @@ func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 	if notes != nil {
 		m.slides[i].Notes = *notes
 	}
+	if shapes != nil {
+		m.slides[i].Shapes = slices.Clone(*shapes)
+	}
 	m.slides[i].Revision++
 	m.slides[i].UpdatedAt = time.Now()
-	return m.slides[i], nil
+	result := m.slides[i]
+	result.Shapes = slices.Clone(result.Shapes)
+	return result, nil
 }
 
 func (m *Memory) DeleteSlidesPage(ctx context.Context, g RestoreGuard, pageID int64) error {

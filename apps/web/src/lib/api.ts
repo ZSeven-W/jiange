@@ -313,6 +313,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
+export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle"; x: number; y: number; color: string };
 export interface SlidesPage {
   id: number;
   slidesId: number;
@@ -321,14 +322,15 @@ export interface SlidesPage {
   body: string;
   background: string;
   notes: string;
+  shapes: SlideShape[];
   revision: number;
   updatedAt: string;
 }
 export const slidesApi = {
   pages: (deckId: number) => request<{ pages: SlidesPage[] }>("GET", `/api/slides/${deckId}/pages`).then((r) => r.pages),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
-  update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string) =>
-    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }) }),
+  update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
+    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
   remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
   move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
 };

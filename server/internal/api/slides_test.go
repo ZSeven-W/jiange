@@ -46,12 +46,12 @@ func TestSlidesVerticalSlice(t *testing.T) {
 	p1u, err := store.SlidesPage{}, error(nil)
 	_ = p1u
 	_ = err
-	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111", "notes": "提醒听众", "expectedRevision": p1.Revision}); res.StatusCode != 200 {
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"title": "季度汇报", "body": "要点一\n要点二", "background": "#111", "notes": "提醒听众", "shapes": []any{map[string]any{"id": "shape-1", "kind": "ellipse", "x": 60, "y": 50, "color": "#3370ff"}}, "expectedRevision": p1.Revision}); res.StatusCode != 200 {
 		t.Fatalf("patch: %d", res.StatusCode)
 	} else {
 		var got store.SlidesPage
 		json.NewDecoder(res.Body).Decode(&got)
-		if got.Title != "季度汇报" || got.Body != "要点一\n要点二" || got.Background != "#111" || got.Notes != "提醒听众" {
+		if got.Title != "季度汇报" || got.Body != "要点一\n要点二" || got.Background != "#111" || got.Notes != "提醒听众" || !json.Valid(got.Shapes) || string(got.Shapes) == "[]" {
 			t.Fatalf("patched: %+v", got)
 		}
 	}
@@ -64,9 +64,12 @@ func TestSlidesVerticalSlice(t *testing.T) {
 	} else {
 		var got store.SlidesPage
 		json.NewDecoder(res.Body).Decode(&got)
-		if got.Notes != "提醒听众" {
+		if got.Notes != "提醒听众" || string(got.Shapes) == "[]" {
 			t.Fatalf("legacy patch lost notes: %+v", got)
 		}
+	}
+	if res := send(t, c, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(p1.ID), map[string]any{"shapes": []any{map[string]any{"id": "bad", "kind": "ellipse", "x": 900, "y": 0, "color": "#3370ff"}}, "expectedRevision": p1.Revision + 2}); res.StatusCode != 400 {
+		t.Fatalf("invalid shape must be rejected: %d", res.StatusCode)
 	}
 
 	// 排序：把第二页移到最前（pos 取 0.5）

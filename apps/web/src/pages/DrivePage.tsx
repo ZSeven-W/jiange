@@ -28,6 +28,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
   const [moving, setMoving] = useState<DriveEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [importing, setImporting] = useState(false);
   const importLock = useRef(false);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); void qc.invalidateQueries({ queryKey: ["drive-ancestors"] }); };
@@ -70,6 +71,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
     onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" }); },
     onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
     onMove: () => setMoving(entry),
+    onCopyLink: async () => { const route = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" }); try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${route}`); setNotice("链接已复制，访问者仍需具备权限。"); } catch { setError("复制失败，请检查浏览器剪贴板权限。"); } },
     onTrash: () => { void ask(`删除「${entry.title}」？`, entry.kind === "folder" ? "整个文件夹会移到回收站，可恢复。" : "会移到回收站，可恢复。").then((ok) => { if (ok) trash.mutate(entry); }); },
     onStar: (next: boolean) => { void (next ? extrasApi.star(entry.id) : extrasApi.unstar(entry.id)).then(() => favorites.refetch()).catch(failure); },
   });
@@ -93,6 +95,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
         {grid ? <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">{files.map((entry) => <FileCard key={entry.id} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div> : <div className="mt-2"><div className="flex h-10 items-center border-b border-[#dee0e3] px-2 text-[12px] text-[#8f959e]"><span className="min-w-0 flex-1">标题</span><span className="hidden w-32 sm:block">修改时间</span><span className="hidden w-32 md:block">创建时间</span><span className="w-9"/></div>{files.map((entry) => <DriveRow key={entry.id} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div>}
         {files.length === 0 && list.isSuccess && <p className="py-8 text-center text-[13px] text-[#8f959e]">{filter ? "没有匹配的文档" : "暂无文档"}</p>}
       </>}
+      {notice && <p role="status" className="mt-4 text-[12px] text-[#3370ff]">{notice}</p>}
       {error && <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p>}
     </div>
     {moving && <MoveDialog entry={moving} onDone={() => setMoving(null)}/>}
@@ -101,7 +104,7 @@ export function DrivePage({ folderId, personalRoot, userId }: { folderId: number
 
 function DriveIcon({ entry }: { entry: DriveEntry }) { return entry.kind === "folder" ? <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/> : entry.kind === "base" ? <BaseIcon/> : entry.kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : <DocIcon/>; }
 
-type EntryActions = { entry: DriveEntry; starred: boolean; onStar: (next: boolean) => void; onOpen: () => void; onMove: () => void; onRename: () => void; onTrash: () => void };
+type EntryActions = { entry: DriveEntry; starred: boolean; onStar: (next: boolean) => void; onOpen: () => void; onMove: () => void; onCopyLink: () => void; onRename: () => void; onTrash: () => void };
 
 function FolderCard(props: EntryActions) {
   return <div className="relative flex h-16 min-w-0 items-center gap-2 rounded-md border border-[#e5e6eb] px-3 hover:bg-[#f7f8fa]"><button type="button" onClick={props.onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><Folder size={24} fill="#ffcc4d" stroke="#f5a623"/><span className="truncate text-[13px] text-[#1f2329]">{props.entry.title || "未命名文件夹"}</span></button><EntryMenu {...props}/></div>;
@@ -121,11 +124,11 @@ function DriveRow(props: EntryActions) {
   </div>;
 }
 
-function EntryMenu({ entry, starred, onStar, onMove, onRename, onTrash }: EntryActions) {
+function EntryMenu({ entry, starred, onStar, onMove, onCopyLink, onRename, onTrash }: EntryActions) {
   const [menu, setMenu] = useState(false);
   return <>
     <button type="button" aria-label={`${entry.title || "文档"}更多操作`} aria-expanded={menu} onClick={() => setMenu((value) => !value)} className="grid size-8 place-items-center rounded text-[#8f959e] hover:bg-[#e9eaec]"><Ellipsis size={17}/></button>
-    {menu && <><button type="button" aria-label="关闭菜单" className="fixed inset-0 z-20 cursor-default" onClick={() => setMenu(false)}/><div className="absolute right-0 top-11 z-30 w-36 rounded-md border bg-white py-1 text-[13px] shadow-lg">{[[starred ? "取消收藏" : "收藏", () => onStar(!starred)], ["重命名", onRename], ["移动到…", onMove], ["移到回收站", onTrash]].map(([label, action]) => <button type="button" key={label as string} onClick={() => { setMenu(false); (action as () => void)(); }} className="block w-full px-4 py-2 text-left hover:bg-[#f2f3f5]">{label as string}</button>)}</div></>}
+    {menu && <><button type="button" aria-label="关闭菜单" className="fixed inset-0 z-20 cursor-default" onClick={() => setMenu(false)}/><div className="absolute right-0 top-11 z-30 w-36 rounded-md border bg-white py-1 text-[13px] shadow-lg">{[[starred ? "取消收藏" : "收藏", () => onStar(!starred)], ["复制链接", onCopyLink], ["重命名", onRename], ["移动到…", onMove], ["移到回收站", onTrash]].map(([label, action]) => <button type="button" key={label as string} onClick={() => { setMenu(false); (action as () => void)(); }} className="block w-full px-4 py-2 text-left hover:bg-[#f2f3f5]">{label as string}</button>)}</div></>}
   </>;
 }
 

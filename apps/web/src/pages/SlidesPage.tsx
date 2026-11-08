@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { docsApi, slidesApi, type SlidesPage as Page } from "@/lib/api";
+import { docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { SlidesDraftQueue } from "./slidesDraft";
-import { ChevronLeft, Copy, FilePlus2, ImageIcon, Palette, Play, Presentation, Trash2, Type } from "lucide-react";
+import { SlideShapes } from "./slides-shapes";
+import { ChevronLeft, Copy, FilePlus2, ImageIcon, Palette, Play, Presentation, Trash2, Type, Shapes } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
 export function SlidesDeck({ deckId }: { deckId: number }) {
@@ -13,6 +14,8 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [shapeMenu, setShapeMenu] = useState(false);
+  const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [, setDraftVersion] = useState(0);
   const shareRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -21,7 +24,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const canEdit = !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
   const queue = useMemo(() => new SlidesDraftQueue(
-    (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes),
+    (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes, content.shapes),
     (saved) => qc.setQueryData<Page[]>(["slides", deckId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
     () => setDraftVersion((version) => version + 1),
   ), [deckId, qc]);
@@ -38,6 +41,9 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   const list = pages.data ?? [];
   const active = list.find((page) => page.id === current) ?? list[0] ?? null;
   const draft = active ? queue.get(active) : null;
+  const chosenShape = draft?.content.shapes.find((shape) => shape.id === selectedShape);
+  const updateShape = (shape: SlideShape) => { if (active && draft) queue.edit(active, { shapes: draft.content.shapes.map((item) => item.id === shape.id ? shape : item) }); };
+  const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
 
   useEffect(() => {
     if (!playing) return;
@@ -57,11 +63,13 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
   if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">无法访问该演示文稿，请确认权限后重试。</div>;
 
   if (playing && active && draft) return (
-    <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center px-8 text-center" style={{ background: draft.content.background || "#fff", color: "#1f2329" }} data-slides-playing>
-      <h1 className="max-w-[80%] text-[44px] font-semibold leading-tight">{draft.content.title || "未命名"}</h1>
-      <ul className="mt-10 space-y-3 text-[22px] leading-relaxed">{draft.content.body.split("\n").filter((line) => line.trim()).map((line, index) => <li key={index}>• {line}</li>)}</ul>
-      <button className="absolute right-5 top-5 rounded-md bg-black/10 px-3 py-2 text-sm" onClick={() => setPlaying(false)}>退出放映</button>
-      <p className="absolute bottom-6 text-[12px] opacity-50">←/→ 翻页 · Esc 退出 · {list.findIndex((page) => page.id === active.id) + 1}/{list.length}</p>
+    <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10" data-slides-playing>
+      <div className="relative aspect-video w-full max-w-[1280px] shrink-0 overflow-hidden bg-white px-[6%] py-[5%]" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))", backgroundColor: draft.content.background || "#fff" }}>
+        <h1 className="px-2 py-1 text-[clamp(18px,3vw,44px)] font-semibold leading-tight text-[#1f2329]">{draft.content.title}</h1>
+        <div className="mt-[4%] whitespace-pre-wrap px-2 py-1 text-[clamp(13px,1.8vw,26px)] leading-relaxed text-[#1f2329]">{draft.content.body}</div>
+        <SlideShapes shapes={draft.content.shapes} editable={false} selected={null}/>
+      </div>
+      <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={list.findIndex((page) => page.id === active.id) <= 0} onClick={() => { const i = list.findIndex((page) => page.id === active.id); if (i > 0) setCurrent(list[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{list.findIndex((page) => page.id === active.id) + 1} / {list.length}</span><button type="button" disabled={list.findIndex((page) => page.id === active.id) >= list.length - 1} onClick={() => { const i = list.findIndex((page) => page.id === active.id); if (i < list.length - 1) setCurrent(list[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={() => setPlaying(false)}>退出放映</button></div>
     </div>
   );
 
@@ -70,7 +78,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
     const source = queue.get(page);
     if (source.state !== "saved") return;
     setOperationError("");
-    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision, source.content.notes)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
+    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision, source.content.notes, source.content.shapes)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
   };
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
@@ -91,7 +99,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
               const item = queue.get(page);
               return <div key={page.id} className="group flex gap-1" data-slides-page={page.id}>
                 <span className="w-4 pt-1 text-right text-[11px] text-[#8f959e]">{index + 1}</span>
-                <button type="button" onClick={() => setCurrent(page.id)} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}`} className={cn("aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white p-1 text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff" }}><span className="line-clamp-2 break-all text-[8px] font-semibold text-[#1f2329]">{item.content.title || "点击添加标题"}</span></button>
+                <button type="button" onClick={() => { setCurrent(page.id); setSelectedShape(null); }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}`} className={cn("aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white p-1 text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff" }}><span className="line-clamp-2 break-all text-[8px] font-semibold text-[#1f2329]">{item.content.title || "点击添加标题"}</span></button>
               </div>;
             })}
             {!list.length && pages.isSuccess && <p className="px-2 py-6 text-center text-[12px] text-[#8f959e]">暂无幻灯片</p>}
@@ -100,6 +108,7 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <button type="button" disabled={!canEdit || !active} onClick={() => titleRef.current?.focus()} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
+            <div className="relative shrink-0"><button type="button" disabled={!canEdit || !active} aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
             <button type="button" disabled={!canEdit || !active} onClick={() => backgroundRef.current?.click()} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Palette size={16}/>背景</button>
             <span className="mx-1 h-5 w-px bg-[#e5e6eb]" />
             <button type="button" disabled={!canEdit || !active || draft?.state !== "saved"} onClick={() => active && doCopy(active)} className="flex h-9 items-center gap-1 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={15}/>复制页面</button>
@@ -107,12 +116,15 @@ export function SlidesDeck({ deckId }: { deckId: number }) {
             <button type="button" disabled={!canEdit || !active || list.findIndex((page) => page.id === active.id) <= 0} onClick={() => { if (!active) return; const i = list.findIndex((page) => page.id === active.id); doMove(active, (list[i - 1].pos + (i > 1 ? list[i - 2].pos : 0)) / 2); }} className="h-9 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40">上移</button>
             <button type="button" disabled={!canEdit || !active || list.findIndex((page) => page.id === active.id) >= list.length - 1} onClick={() => { if (!active) return; const i = list.findIndex((page) => page.id === active.id); doMove(active, (list[i + 1].pos + (i + 2 < list.length ? list[i + 2].pos : list[i + 1].pos + 1)) / 2); }} className="h-9 rounded-md px-2 hover:bg-[#f2f3f5] disabled:opacity-40">下移</button>
           </div>
+          {shapeMenu && <div className="flex shrink-0 items-center gap-1 border-b bg-white px-4 py-2 text-[13px]" role="group" aria-label="选择图形">{([["rectangle", "矩形"], ["ellipse", "圆形"], ["triangle", "三角形"]] as const).map(([kind, label]) => <button key={kind} type="button" onClick={() => addShape(kind)} className="rounded-md px-3 py-2 hover:bg-[#f2f3f5]">{label}</button>)}<button type="button" onClick={() => setShapeMenu(false)} className="ml-auto rounded-md px-3 py-2 hover:bg-[#f2f3f5]">关闭</button></div>}
+          {chosenShape && canEdit && <div className="flex shrink-0 items-center gap-3 overflow-x-auto whitespace-nowrap border-b bg-white px-4 py-2 text-[13px] [&>*]:shrink-0"><span className="hidden sm:inline">选中图形，可拖动或用方向键移动</span><span className="sm:hidden">已选图形</span><label className="flex items-center gap-1">颜色<input type="color" aria-label="图形颜色" value={chosenShape.color} onChange={(event) => updateShape({ ...chosenShape, color: event.target.value })}/></label><button type="button" onClick={() => { if (active && draft) queue.edit(active, { shapes: draft.content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }} className="rounded px-2 py-1 text-[#d83931] hover:bg-[#f2f3f5]">删除图形</button></div>}
           {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}</p>}
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-8">
-            {active && draft ? <div className="aspect-video w-full max-w-[960px] shrink-0 bg-white px-[6%] py-[5%] shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ backgroundColor: draft.content.background || "#fff" }} data-slides-canvas>
+            {active && draft ? <div className="relative aspect-video w-full max-w-[960px] shrink-0 bg-white px-[6%] py-[5%] shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ backgroundColor: draft.content.background || "#fff" }} data-slides-canvas>
               <input ref={titleRef} value={draft.content.title} readOnly={!canEdit} onChange={(event) => queue.edit(active, { title: event.target.value })} placeholder="点击添加标题" className="w-full border border-transparent bg-transparent px-2 py-1 text-[clamp(18px,2.2vw,36px)] font-semibold leading-tight text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-title />
               <textarea value={draft.content.body} readOnly={!canEdit} onChange={(event) => queue.edit(active, { body: event.target.value })} placeholder="点击添加正文" className="mt-[4%] h-[55%] w-full resize-none border border-transparent bg-transparent px-2 py-1 text-[clamp(13px,1.4vw,21px)] leading-relaxed text-[#1f2329] outline-none placeholder:text-[#b8bec5] focus:border-[#3370ff]" data-slides-body />
+              <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} onSelect={setSelectedShape} onChange={updateShape}/>
               <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => queue.edit(active, { background: event.target.value })} className="sr-only" aria-label="幻灯片背景颜色" />
             </div> : <div className="flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
           </div>
