@@ -34,7 +34,7 @@ import {
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
-import { applyTableEdit, parseTableData } from "./model";
+import { applyTableEdit, EMPTY_TABLE, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
@@ -1182,11 +1182,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const info = tx.doc.blockInfo(b);
         if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
           tx.setProp(b, "type", "table");
-          tx.setProp(b, "tableData", JSON.stringify([["列 1", "列 2", "列 3"], ["", "", ""]]));
+          tx.setProp(b, "tableData", JSON.stringify(EMPTY_TABLE));
+          tx.setProp(b, "tableHeader", "none");
           const nb = tx.create("paragraph", b, info.parent);
           return { b: nb, o: 0 };
         }
-        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify([["列 1", "列 2", "列 3"], ["", "", ""]]) });
+        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify(EMPTY_TABLE), tableHeader: "none" });
         const nb = tx.create("paragraph", tb, info.parent);
         return { b: nb, o: 0 };
       }
@@ -2098,6 +2099,8 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
         <TableBlock
           data={props.tableData ?? ""}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
+          header={props.tableHeader !== "none"}
+          onHeader={onSetProp ? (on) => onSetProp("tableHeader", on ? "row" : "none") : undefined}
           onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}

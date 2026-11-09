@@ -27,8 +27,8 @@ export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string
 
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
 
-export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, onChange, onDelete, readOnly, initialGrip = null }: {
-  data: string; merges?: string; widths?: Widths;
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onDelete, readOnly, initialGrip = null }: {
+  data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
@@ -82,6 +82,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
         <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} />插入行</button>
         <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} />插入列</button>
+        {onHeader && <button type="button" title="标题行" aria-pressed={header} className={cn("flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header>标题行</button>}
         <span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
       </span>}
@@ -97,7 +98,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
                 const span = cov?.span;
                 const sel = inRange(selected, ri, ci);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
                     {readOnly ? <span className="block min-h-[38px] whitespace-pre-wrap px-2.5 py-[7px]">{cell}</span> : (
                       <input
                         value={cell}

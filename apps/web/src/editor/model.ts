@@ -388,5 +388,8 @@ export function parseTableData(data: string | undefined): string[][] {
   } catch {
     /* fall through */
   }
-  return [["列 1", "列 2", "列 3"], ["", "", ""]];
+  return EMPTY_TABLE.map((r) => [...r]);
 }
+
+/** 飞书新建表格：空白 3×3、无标题行。 */
+export const EMPTY_TABLE: readonly (readonly string[])[] = [["", "", ""], ["", "", ""], ["", "", ""]];
