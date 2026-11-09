@@ -40,6 +40,7 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
+import { linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import type { Merge, Widths } from "./tableOps";
@@ -2133,7 +2134,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
-        <BookmarkBlock url={props.url} name={props.name} />
+        <BookmarkBlock url={props.url} name={props.name} title={props.title} description={props.description} icon={props.icon} preview={props.preview} onProps={onSetProp} />
       ) : type === "file" ? (
         <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (
@@ -2241,17 +2242,41 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
 }
 
 
-function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
+function BookmarkBlock({ url, name, title, description, icon, preview, onProps }: { url?: string; name?: string; title?: string; description?: string; icon?: string; preview?: string; onProps?: (key: string, value: string) => void }) {
   const href = safeURL(url);
+  const [iconFailed, setIconFailed] = useState(false);
+  const asked = useRef(false);
+  const setProps = useRef(onProps);
+  setProps.current = onProps;
+  const canFetch = !!onProps;
+  const live = useRef(false);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  // 编辑者打开时补抓一次网页标题/图标（服务端代理抓取，带 SSRF 防护）；失败记为 preview=none，不再重试。
+  useEffect(() => {
+    if (!canFetch || !href || preview || title || asked.current) return;
+    asked.current = true;
+    linkApi.preview(href).then((p) => {
+      const set = setProps.current;
+      if (!live.current || !set) return;
+      if (p.title) set("title", p.title);
+      if (p.description) set("description", p.description);
+      if (p.icon) set("icon", p.icon);
+      set("preview", "ok");
+    }, () => { if (live.current) setProps.current?.("preview", "none"); });
+  }, [canFetch, href, preview, title]);
+  const iconURL = safeURL(icon);
   const content = <>
-    <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(name ?? "W").slice(0, 1).toUpperCase()}</span>
+    {iconURL && !iconFailed
+      ? <img src={iconURL} alt="" referrerPolicy="no-referrer" className="size-9 shrink-0 rounded-md border bg-surface object-contain p-1.5" onError={() => setIconFailed(true)} data-bookmark-icon />
+      : <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(name ?? "W").slice(0, 1).toUpperCase()}</span>}
     <span className="min-w-0 flex-1">
-      <span className="block truncate text-[14px] font-medium text-foreground">{name || url || "网页卡片"}</span>
+      <span className="block truncate text-[14px] font-medium text-foreground" data-bookmark-title>{title || name || url || "网页卡片"}</span>
+      {description && <span className="line-clamp-1 block text-[12px] text-muted-foreground" data-bookmark-desc>{description}</span>}
       <span className="block truncate text-[12px] text-subtle">{url}</span>
     </span>
     {href && <span className="shrink-0 text-subtle">↗</span>}
   </>;
-  const className = "my-2 flex w-full max-w-[520px] select-none items-center gap-3 rounded-lg border px-3.5 py-3 no-underline";
+  const className = "my-2 flex w-full max-w-[560px] select-none items-center gap-3 rounded-lg border border-[#DEE0E3] px-3.5 py-3 no-underline dark:border-border";
   return href
     ? <a contentEditable={false} href={href} target="_blank" rel="noopener noreferrer" className={cn(className, "hover:bg-hover")} data-bookmark>{content}</a>
     : <div contentEditable={false} className={className} data-bookmark>{content}</div>;

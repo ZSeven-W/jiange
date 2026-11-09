@@ -214,6 +214,11 @@ export interface AppNotification {
   createdAt: string;
   preview?: string;
 }
+export type LinkPreview = { url: string; title: string; description?: string; icon?: string; siteName?: string };
+export const linkApi = {
+  preview: (url: string, signal?: AbortSignal) => request<LinkPreview>("GET", `/api/link-preview?url=${encodeURIComponent(url)}`, undefined, signal),
+};
+
 export const commentsApi = {
   list: (id: number) => request<{ comments: Comment[] }>("GET", `/api/docs/${id}/comments`).then((r) => r.comments),
   create: (id: number, c: Partial<Comment> & { body: string }) => request<Comment | undefined>("POST", `/api/docs/${id}/comments`, c).then((result) => {
