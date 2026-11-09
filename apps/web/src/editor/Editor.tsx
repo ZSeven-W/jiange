@@ -39,7 +39,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
-import { BlockHandle, CONVERTIBLE, TEXT_BLOCKS } from "./BlockHandle";
+import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
 import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
 import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
@@ -192,6 +192,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const [toolbar, setToolbar] = useState<{ x: number; y: number } | null>(null);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [touchActiveBlock, setTouchActiveBlock] = useState<string | null>(null);
+  /** 跨块选区覆盖的块（文档顺序）；>1 时第一个块显示可操作全部选中块的手柄。 */
+  const [selBlocks, setSelBlocks] = useState<string[]>([]);
+  const selBlocksRef = useRef(selBlocks);
+  selBlocksRef.current = selBlocks;
+  const [toast, setToast] = useState("");
+  useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(t); }, [toast]);
   const [drag, setDrag] = useState<{
     b: OpId;
     over: OpId | null;
@@ -358,6 +364,117 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     [sync.client, run, um],
   );
 
+  /**
+   * 块菜单动作。手柄所在块属于当前跨块选区时作用于全部选中块，否则只作用于该块；
+   * 复制/剪切走与键盘相同的剪贴板路径（受复制权限约束），评论复用划词评论锚点。
+   */
+  const blockAction = useCallback(
+    (blockKey: string, action: BlockMenuAction) => {
+      const d = sync.client.doc;
+      const el = root.current;
+      if (!d || !el) return;
+      const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
+      if (!d.hasBlock(b)) return;
+      const cur = sel.current;
+      const span = selBlocksRef.current;
+      const multi = !!cur && !eqId(cur.a.b, cur.f.b) && span.length > 1 && span.includes(blockKey);
+      const whole: Sel = { a: { b, o: 0 }, f: { b, o: len(d, b) } };
+      const target: Sel = multi ? cur! : whole;
+      const end: Pos = { b, o: len(d, b) };
+      const editing = (fn: (tx: Tx, s: Sel) => void) => {
+        if (readOnlyRef.current) return;
+        sel.current = target;
+        run((tx, s) => { fn(tx, s); return multi ? undefined : end; });
+        um.seal();
+      };
+      switch (action.kind) {
+        case "insertAfter":
+          return;
+        case "delete":
+          if (!multi) return deleteBlockByKey(blockKey);
+          void ask(`删除选中的 ${span.length} 个块？`, undefined, true).then((ok) => {
+            if (!ok || readOnlyRef.current || !validEditorSelection(d, target)) return;
+            sel.current = target;
+            run((tx) => {
+              for (const x of normalize(tx.doc, target).blocks) {
+                for (const ch of tx.doc.children(x)) tx.deleteBlock(ch);
+                tx.deleteBlock(x);
+              }
+              return undefined;
+            });
+            sel.current = null;
+            setSelBlocks([]);
+            um.seal();
+          });
+          return;
+        case "convert":
+          return editing((tx, s) => setBlockType(tx, s, action.type));
+        case "indent":
+          return editing((tx, s) => {
+            for (const x of normalize(tx.doc, s).blocks) {
+              const info = tx.doc.blockInfo(x);
+              if (!TEXT_BLOCKS.has(info.type)) continue;
+              const was = Number(info.props.indent ?? "0") || 0;
+              const next = Math.max(0, Math.min(MAX_INDENT, was + action.delta));
+              if (next !== was) tx.setProp(x, "indent", String(next));
+            }
+          });
+        case "color":
+          return editing((tx, s) => {
+            for (const x of normalize(tx.doc, s).blocks) {
+              if (!COLORABLE.has(tx.doc.blockInfo(x).type) || isSourceBlock(tx.doc, x)) continue;
+              const n = len(tx.doc, x);
+              if (n) tx.format(x, 0, n, action.key, action.value);
+            }
+          });
+        case "copy":
+        case "cut": {
+          if (collapsed(target)) { setToast("此块没有可复制的文字。"); return; }
+          el.focus({ preventScroll: true });
+          sel.current = target;
+          const a = posToDom(el, target.a), f = posToDom(el, target.f);
+          const ds = document.getSelection();
+          if (!a || !f || !ds) return;
+          ds.setBaseAndExtent(a.node, a.offset, f.node, f.offset);
+          readSel();
+          if (!document.execCommand(action.kind)) setToast("浏览器阻止了剪贴板操作，请使用 Ctrl/⌘ + C。");
+          else if (action.kind === "copy") setToast(multi ? `已复制 ${span.length} 个块` : "已复制");
+          return;
+        }
+        case "link": {
+          const url = blockLink(window.location.href, blockKey);
+          const done = () => setToast("已复制块链接");
+          if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(url).then(done, () => setToast(`复制失败，请手动复制：${url}`));
+          else setToast(`请手动复制：${url}`);
+          return;
+        }
+        case "comment": {
+          if (!onComment) return;
+          const selection = commentSelection(d, whole);
+          if (!selection.ok) { setToast("此块没有可评论的文字。"); return; }
+          sel.current = whole;
+          onComment(selection.anchor);
+          return;
+        }
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sync.client, run, um, deleteBlockByKey, onComment],
+  );
+
+  // 打开带 ?block= 的块链接时滚动到该块并短暂高亮。
+  const linkedDone = useRef<string | null>(null);
+  useEffect(() => {
+    const key = linkedBlock(window.location.hash);
+    if (!key || linkedDone.current === key) return;
+    const el = root.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(key)}"]`);
+    if (!el) return;
+    linkedDone.current = key;
+    el.scrollIntoView({ block: "center" });
+    el.setAttribute("data-block-linked", "true");
+    window.setTimeout(() => el.removeAttribute("data-block-linked"), 2000);
+  });
+
   /** 流程图块：双击弹多行编辑框改写 Mermaid 源码。 */
   const editDiagramSource = useCallback(
     async (blockKey: string) => {
@@ -451,7 +568,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       return;
     }
     if (!el || !ds || ds.rangeCount === 0 || !el.contains(ds.anchorNode) || !el.contains(ds.focusNode)) {
-      if (!wrap.current?.contains(document.activeElement)) { setToolbar(null); setCommentError(null); }
+      if (!wrap.current?.contains(document.activeElement)) { setToolbar(null); setCommentError(null); setSelBlocks((prev) => prev.length ? [] : prev); }
       return;
     }
     let a = domToPos(el, ds.anchorNode!, ds.anchorOffset),
@@ -467,6 +584,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       stored.current = null;
     }
     sel.current = { a, f };
+    const spanKeys = !eqId(a.b, f.b) && !isColumnText(current, a.b) && !isColumnText(current, f.b) ? normalize(current, { a, f }).blocks.map(idKey) : [];
+    setSelBlocks((prevKeys) => prevKeys.length === spanKeys.length && prevKeys.every((key, i) => key === spanKeys[i]) ? prevKeys : spanKeys);
     const activeKey = idKey(f.b);
     setTouchActiveBlock((current) => current === activeKey ? current : activeKey);
     publish();
@@ -1302,6 +1421,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
+      {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>表格已变化，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
@@ -1385,6 +1505,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onMathSource={readOnly ? undefined : editMathSource}
                 onDiagramSource={readOnly ? undefined : editDiagramSource}
                 onDeleteBlock={readOnly ? undefined : deleteBlockByKey}
+                onBlockAction={readOnly ? undefined : blockAction}
+                selectionCount={selBlocks.length > 1 && selBlocks[0] === k ? selBlocks.length : undefined}
+                inSelection={selBlocks.length > 1 && selBlocks.includes(k)}
+                blockAbilities={readOnly ? undefined : blockAbilities(info.type, selBlocks.length > 1 && selBlocks[0] === k, !onCopyBlock, !!onComment)}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   const key = idKey(ch);
@@ -1542,6 +1666,22 @@ function wordLen(text: string, o: number, back: boolean): number {
   return n;
 }
 
+/** 块菜单在某类块上可用的动作；跨块选区（multi）时按“作用于其中适用的块”放开。 */
+export function blockAbilities(type: string, multi: boolean, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
+  const textish = COLORABLE.has(type) || type === "code";
+  return {
+    convert: multi || CONVERTIBLE.has(type),
+    color: multi || COLORABLE.has(type),
+    indent: multi || TEXT_BLOCKS.has(type),
+    copy: canCopy && (multi || textish),
+    cut: canCopy && (multi || textish),
+    link: true,
+    comment: canComment && textish,
+    insertAfter: true,
+    delete: true,
+  };
+}
+
 const BLOCK_CLASS: Record<string, string> = {
   paragraph: "text-[16px] leading-[1.75] py-[3px]",
   h1: "text-[26px] font-semibold leading-[1.4] mt-5 mb-1",
@@ -1583,6 +1723,12 @@ interface BlockProps {
   onDiagramSource?: (blockKey: string) => void;
   /** 删除整个块（媒体/公式/图表等 TEXTLESS 块的 hover ✕） */
   onDeleteBlock?: (blockKey: string) => void;
+  /** 块菜单动作（转换、颜色、缩进、复制、评论等），由编辑器决定作用于单块还是跨块选区。 */
+  onBlockAction?: (blockKey: string, action: BlockMenuAction) => void;
+  blockAbilities?: BlockMenuAbilities;
+  /** 跨块选区的第一个块：选中块数（显示常驻手柄） */
+  selectionCount?: number;
+  inSelection?: boolean;
   id: string;
   type: string;
   props: Record<string, string>;
@@ -1597,7 +1743,7 @@ interface BlockProps {
   canDownload?: boolean;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -1668,7 +1814,8 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph))}
+      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]")}
+      data-block-selected={inSelection ? "true" : undefined}
       style={{ marginLeft: indent * 24 }}
       onDragOver={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
@@ -1676,8 +1823,8 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert || handleOpen ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
-        {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock)) ? (
+      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
+        {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock && !onBlockAction)) && !((selectionCount ?? 0) > 1) ? (
           <button
             className="relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
             title="插入内容"
@@ -1686,16 +1833,22 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             onClick={onInsertAfter}
             data-insert-after
           ><AddIcon className="size-[16px]" /></button>
-        ) : (onDragStart || onDeleteBlock || onInsertAfter) ? (
+        ) : (onDragStart || onDeleteBlock || onInsertAfter || onBlockAction) ? (
           <BlockHandle
             type={type}
+            indent={indent}
+            count={selectionCount ?? 1}
             open={handleOpen}
             onOpenChange={setHandleOpen}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
-            onInsertAfter={onInsertAfter}
-            onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
-            onConvert={onSetProp && CONVERTIBLE.has(type) ? (next) => onSetProp("type", next) : undefined}
+            can={blockAbilities ?? { convert: !!onSetProp && CONVERTIBLE.has(type), insertAfter: !!onInsertAfter, delete: !!onDeleteBlock }}
+            onAction={(action) => {
+              if (action.kind === "insertAfter") return onInsertAfter?.();
+              if (onBlockAction) return onBlockAction(id, action);
+              if (action.kind === "delete") return onDeleteBlock?.(id);
+              if (action.kind === "convert" && action.type !== type) onSetProp?.("type", action.type);
+            }}
           />
         ) : null}
       </span>

@@ -160,3 +160,10 @@
     height: auto !important;
   }
 }
+
+/* 通过块链接打开时短暂高亮目标块 */
+[data-block-linked="true"] {
+  border-radius: 4px;
+  background-color: rgb(51 112 255 / 0.12);
+  transition: background-color 0.6s ease;
+}
