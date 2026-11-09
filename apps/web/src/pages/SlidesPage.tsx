@@ -9,6 +9,7 @@ import { SlideShapes } from "./slides-shapes";
 import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
+import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, FilePlus2, ImageIcon, Maximize2, Minus, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
@@ -76,6 +77,20 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     const current = queue.get(active);
     const shapes = patchSlideShape(current.content.shapes, id, patch);
     queue.edit(active, { shapes });
+  };
+  const orderShape = (id: string, action: ShapeOrderAction) => {
+    if (!active) return;
+    const shapes = moveShapeOrder(queue.get(active).content.shapes, id, action);
+    queue.edit(active, { shapes });
+  };
+  const alignShape = (id: string, alignment: ShapeAlignment) => {
+    if (!active) return;
+    const shapes = queue.get(active).content.shapes;
+    const index = shapes.findIndex((shape) => shape.id === id);
+    if (index < 0) return;
+    const next = shapes.slice();
+    next[index] = alignSlideShape(shapes[index], alignment);
+    queue.edit(active, { shapes: next });
   };
   const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = kind === "text" ? { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 12, y: 55, width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 } : { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
   const insertImage = async (file: File) => {
@@ -200,7 +215,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             <div className="ml-auto flex shrink-0 items-center gap-0.5 pl-3" role="group" aria-label="幻灯片缩放"><button type="button" aria-label="缩小幻灯片" onClick={() => setManualZoom(clampSlideZoom(zoom - 10))} className="grid size-7 place-items-center rounded-l border border-[#d0d3d6] hover:bg-[#f2f3f5]"><Minus size={14}/></button><label className="flex h-7 items-center border-y border-[#d0d3d6] text-[#646a73]"><input aria-label="幻灯片缩放比例" inputMode="decimal" value={zoomText} onFocus={(event) => { zoomEditing.current = true; event.currentTarget.select(); }} onChange={(event) => setZoomText(event.target.value)} onBlur={() => { if (!zoomEditing.current) return; zoomEditing.current = false; const value = parseSlideZoom(zoomText); if (value !== null) { setManualZoom(value); setZoomText(String(value)); } else setZoomText(String(zoom)); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { zoomEditing.current = false; setZoomText(String(zoom)); event.currentTarget.blur(); } }} className="w-9 bg-transparent text-right text-[12px] outline-none"/><span className="pr-1">%</span></label><button type="button" aria-label="放大幻灯片" onClick={() => setManualZoom(clampSlideZoom(zoom + 10))} className="grid size-7 place-items-center rounded-r border border-[#d0d3d6] hover:bg-[#f2f3f5]"><Plus size={14}/></button><button type="button" aria-label="适合屏幕" title="适合屏幕" onClick={() => setManualZoom(null)} className="ml-1 grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Maximize2 size={14}/></button></div>
           </div>
           {shapeMenu && <div className="flex shrink-0 items-center gap-1 border-b bg-white px-4 py-2 text-[13px]" role="group" aria-label="选择图形">{([["rectangle", "矩形"], ["ellipse", "圆形"], ["triangle", "三角形"]] as const).map(([kind, label]) => <button key={kind} type="button" onClick={() => addShape(kind)} className="rounded-md px-3 py-2 hover:bg-[#f2f3f5]">{label}</button>)}<button type="button" onClick={() => setShapeMenu(false)} className="ml-auto rounded-md px-3 py-2 hover:bg-[#f2f3f5]">关闭</button></div>}
-          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
+          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
           {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}</p>}
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto">
