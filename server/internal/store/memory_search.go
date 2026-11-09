@@ -114,3 +114,52 @@ func (m *Memory) Ancestors(_ context.Context, uid, doc int64) ([]DocMeta, error)
 }
 
 var _ = sort.Ints
+
+// ListPins returns pinned (置顶) docs, newest pin first.
+func (m *Memory) ListPins(_ context.Context, uid int64) ([]DocMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []DocMeta{}
+	ids := m.pins[uid]
+	for i := len(ids) - 1; i >= 0; i-- {
+		if d := m.doc(ids[i]); d != nil && !d.deleted {
+			role := m.roleLocked(uid, d)
+			if RoleRank(role) < RoleRank(RoleView) {
+				continue
+			}
+			meta := d.meta
+			meta.Role = role
+			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
+			out = append(out, meta)
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) AddPin(_ context.Context, uid, doc int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pins == nil {
+		m.pins = map[int64][]int64{}
+	}
+	for _, id := range m.pins[uid] {
+		if id == doc {
+			return nil
+		}
+	}
+	m.pins[uid] = append(m.pins[uid], doc)
+	return nil
+}
+
+func (m *Memory) RemovePin(_ context.Context, uid, doc int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []int64{}
+	for _, id := range m.pins[uid] {
+		if id != doc {
+			out = append(out, id)
+		}
+	}
+	m.pins[uid] = out
+	return nil
+}
