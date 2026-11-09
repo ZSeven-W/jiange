@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Cell, Field, FieldType } from "@/lib/api";
+import type { Cell, Field, FieldType, User } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,9 @@ export function FieldForm({
   onSubmit,
   onCancel,
   onAcknowledge,
+  members = [],
 }: {
+  members?: User[];
   initial?: Field;
   onSubmit: (f: Partial<Field>) => void | Promise<void>;
   onCancel: () => void;
@@ -28,7 +30,7 @@ export function FieldForm({
   const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
   const [dflt, setDflt] = useState<string>(() => {
     const v = initial?.defaultValue;
-    return v === undefined || v === null ? "" : typeof v === "boolean" ? (v ? "true" : "") : String(v);
+    return v === undefined || v === null ? "" : typeof v === "boolean" ? (v ? "true" : "") : Array.isArray(v) ? JSON.stringify(v) : String(v);
   });
   const [typesOpen, setTypesOpen] = useState(false);
   const [typeQuery, setTypeQuery] = useState("");
@@ -142,9 +144,29 @@ export function FieldForm({
         </div>
       )}
       {DEFAULT_KINDS[type] && (
-        <label className="block space-y-1.5" data-field-default>
+        <div role="group" aria-label="默认值" className="block space-y-1.5" data-field-default>
           <span className="flex items-center gap-1 text-[12px] text-muted-foreground">默认值<span title="新建记录时自动填入，之后可修改" className="text-subtle"><Info size={12} /></span></span>
-          {DEFAULT_KINDS[type] === "select" ? (
+          {DEFAULT_KINDS[type] === "multi" ? (
+            <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-multi>
+              {names.length === 0 && <span className="text-[12px] text-subtle">先添加选项</span>}
+              {names.map((n, i) => {
+                const picked = parseMulti(dflt).includes(n);
+                const [bg, fg] = PALETTE[(colors[i] ?? -1) >= 0 ? colors[i] : i % PALETTE.length] ?? PALETTE[0];
+                return (
+                  <button key={n} type="button" aria-pressed={picked} onClick={() => { const cur = parseMulti(dflt); setDflt(JSON.stringify(picked ? cur.filter((x) => x !== n) : names.filter((x) => x === n || cur.includes(x)))); }}
+                    className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[12px] font-medium", picked ? "ring-1 ring-primary" : "opacity-60 hover:opacity-100")} style={{ background: bg, color: fg }}>
+                    {picked && <Check size={11} />}{n}
+                  </button>
+                );
+              })}
+            </div>
+          ) : DEFAULT_KINDS[type] === "person" ? (
+            <select value={dflt} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary" data-default-person>
+              <option value="">无</option>
+              {dflt && !members.some((m) => String(m.id) === dflt) && <option value={dflt}>成员 #{dflt}</option>}
+              {members.map((m) => <option key={m.id} value={String(m.id)}>{m.name}</option>)}
+            </select>
+          ) : DEFAULT_KINDS[type] === "select" ? (
             <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
               <option value="">无</option>
               {names.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -154,7 +176,7 @@ export function FieldForm({
           ) : (
             <input type={DEFAULT_KINDS[type]} value={dflt} onChange={(e) => setDflt(e.target.value)} placeholder="请输入默认值" className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" />
           )}
-        </label>
+        </div>
       )}
       <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">字段描述（可选）</span><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="添加字段说明" className="h-9 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" data-field-desc /></label>
       {!initial && (
@@ -199,7 +221,8 @@ export function FieldForm({
 
 /** Header dropdown: edit field / delete field. */
 /** Field types that accept a 默认值, and the input used to edit it. */
-const DEFAULT_KINDS: Partial<Record<FieldType, "text" | "number" | "date" | "select" | "checkbox">> = {
+const DEFAULT_KINDS: Partial<Record<FieldType, "text" | "number" | "date" | "select" | "checkbox" | "multi" | "person">> = {
+  multi_select: "multi", person: "person",
   text: "text", url: "text", phone: "text", email: "text", number: "number", rating: "number", date: "date", select: "select", checkbox: "checkbox",
 };
 
@@ -211,7 +234,13 @@ export function defaultCell(type: FieldType, raw: string, options: string[]): Ce
   if (kind === "number") { const n = Number(v); return Number.isFinite(n) ? n : null; }
   if (kind === "checkbox") return v === "true" ? true : null;
   if (kind === "select") return options.includes(v) ? v : null;
+  if (kind === "multi") { const picked = options.filter((o) => parseMulti(v).includes(o)); return picked.length ? picked : null; }
+  if (kind === "person") { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; }
   return v;
+}
+
+function parseMulti(raw: string): string[] {
+  try { const v = JSON.parse(raw); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []; } catch { return []; }
 }
 
 export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter" | "insert-left" | "insert-right" | "freeze" | "unfreeze" | "hide";

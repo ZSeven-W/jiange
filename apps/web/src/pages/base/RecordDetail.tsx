@@ -181,7 +181,7 @@ export function RecordDetail({
         {canEdit && (
           <div className="relative py-1">
             <button type="button" className="flex h-9 items-center gap-1.5 rounded-md px-1 text-[14px] text-muted-foreground hover:text-foreground" onClick={() => setAddingField((v) => !v)} disabled={ledger.blocked("field:create")} data-detail-add-field><Plus size={16} strokeWidth={1.7} />新增字段</button>
-            {addingField && <FieldForm onCancel={() => setAddingField(false)} onAcknowledge={() => ledger.discardKey("field:create")} onSubmit={async (patch) => {
+            {addingField && <FieldForm members={members} onCancel={() => setAddingField(false)} onAcknowledge={() => ledger.discardKey("field:create")} onSubmit={async (patch) => {
               const op = ledger.begin("新增字段", cellDraft(patch), "field:create");
               if (op === null) throw new Error("previous result unresolved");
               try { await baseApi.addField(baseId, patch); ledger.complete(op); setAddingField(false); }
