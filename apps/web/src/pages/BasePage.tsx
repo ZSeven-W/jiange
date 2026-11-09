@@ -27,7 +27,7 @@ import { refreshWrites, useWriteLedger, WriteIssues } from "./base/writeSafety";
 import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronRight, ClipboardList, Eye, Filter, Home, Images, KanbanSquare, ListFilter, Plus, Search, Share2, Table2, Zap } from "lucide-react";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, KanbanSquare, LayoutPanelTop, ListFilter, Plus, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -227,10 +227,10 @@ export function BasePage({ id }: { id: number }) {
       {!directDetailOpen && !gridDetailOpen && <WriteIssues ledger={ledger} issues={issues} />}
       {q.data.writeRestricted && <div role="status" className="border-b bg-[#fff8e8] px-4 py-2 text-[12px] text-[#8f6200]">此表启用了权限视图，当前暂不支持在受限权限下编辑。你可以查看允许访问的数据。</div>}
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[237px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
-          <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索记录" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
+        <aside className="hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
+          <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
           <div className="flex h-9 items-center gap-2 rounded-md bg-[#edf2ff] px-2.5 text-[13px] font-medium text-primary dark:bg-accent"><Table2 size={16} strokeWidth={1.7} />数据表</div>
-          {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Zap size={16} strokeWidth={1.7} />自动化</button>}
+          {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />工作流</button>}
           {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>新建视图</button>}
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -249,35 +249,42 @@ export function BasePage({ id }: { id: number }) {
         )}
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title="无法确认视图是否已保存，请检查后重试" className="min-w-0 max-w-28 truncate text-xs text-destructive">无法确认视图是否已保存，请检查后重试</span>}
+        <span className="ml-auto" aria-hidden />
         {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
-      <div className="flex min-h-11 shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap border-b px-4 py-1 text-[13px]" data-base-toolbar>
-        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />添加记录</button>}
+      <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
+        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />添加记录<ChevronDown size={13} className="opacity-70" aria-hidden /></button>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">筛选结果不可用，请重试</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">正在加载筛选结果…</span>}
         {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">筛选仅覆盖当前加载的记录，更多记录可能未显示。</span>}
         {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
-        {current?.type === "grid" && <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />}
+        {current?.type === "kanban" && (
+          <label className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-hover">
+            <CircleChevronDown size={15} strokeWidth={1.7} aria-hidden />
+            <span>分组依据</span>
+            <select
+              className="cursor-pointer bg-transparent text-foreground outline-none"
+              value={cfg.group ?? ""}
+              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+              aria-label="分组依据"
+              data-group-field
+            >
+              <option value="">选择字段</option>
+              {fields.filter((f) => f.type === "select").map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
-        {current?.type === "grid" && (
+        {(current?.type === "grid" || current?.type === "kanban") && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
         )}
-        {current?.type === "kanban" && (
-          <select
-            className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
-            value={cfg.group ?? ""}
-            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-            data-group-field
-          >
-            <option value="">选择分组字段</option>
-            {fields.filter((f) => f.type === "select").map((f) => (
-              <option key={f.id} value={f.id}>
-                按「{f.name}」分组
-              </option>
-            ))}
-          </select>
-        )}
+        <span className="ml-auto" aria-hidden />
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
         {current?.type === "calendar" && (
           <select
@@ -305,10 +312,10 @@ export function BasePage({ id }: { id: number }) {
         ) : (
           <a href={`/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>导出 CSV</a>
         )}
-        <label className="ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索记录" className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
-        <span className="text-subtle">
+        <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索记录" className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
+        {current?.type !== "grid" && <span className="px-2 text-subtle">
           {records.length === source.length ? `${records.length} 条记录` : `${records.length} / ${source.length} 条记录`}
-        </span>
+        </span>}
       </div>
       {current?.type === "gallery" && (
         <Gallery
@@ -366,7 +373,14 @@ export function BasePage({ id }: { id: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} />
+        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+          if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
+          else if (action === "group") setCfg({ ...cfg, group: field.id });
+          else {
+            const filters = cfg.filters ?? { conj: "and" as const, rules: [] };
+            setCfg({ ...cfg, filters: { ...filters, rules: [...filters.rules, { f: field.id, op: opsFor(field.type)[0], v: "" }] } });
+          }
+        }} />
       ) : null}
           </div>
         </div>
@@ -413,7 +427,7 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {label.startsWith("筛选") ? <Filter size={15} /> : label.startsWith("排序") ? <ArrowDownUp size={15} /> : label.startsWith("分组") ? <ListFilter size={15} /> : <Eye size={15} />} {label}
+        {label.startsWith("筛选") ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith("排序") ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith("分组") ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />} {label}
       </button>
       {open && position && createPortal(
         <div ref={body} style={position} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>

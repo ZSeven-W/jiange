@@ -32,7 +32,7 @@ function optIndex(options: string[], v: unknown): number {
 
 export const REGISTRY: Record<FieldType, FieldTypeDef> = {
   text: {
-    icon: Type,
+    icon: LetterText,
     label: "文本",
     width: 240,
     parse: (t) => (t === "" ? null : t),
@@ -42,7 +42,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
   number: {
     icon: Hash,
     label: "数字",
-    width: 120,
+    width: 180,
     parse: (t) => {
       if (t.trim() === "") return null;
       const n = Number(t);
@@ -52,9 +52,9 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     compare: (a, b) => Number(a) - Number(b),
   },
   select: {
-    icon: CircleDot,
+    icon: CircleChevronDown,
     label: "单选",
-    width: 130,
+    width: 180,
     hasOptions: true,
     parse: (t, f) => (t === "" ? null : (f.options ?? []).includes(t) ? t : undefined),
     format: (v) => String(v ?? ""),
@@ -93,7 +93,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
   date: {
     icon: CalendarDays,
     label: "日期",
-    width: 140,
+    width: 180,
     parse: (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
     format: (v) => String(v ?? ""),
     compare: (a, b) => String(a).localeCompare(String(b)),
@@ -391,4 +391,4 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
 }
 
 import { evalFormula, FormulaError, formulaRefs, type FormulaEnv, type FormulaValue } from "./formula";
-import { ArrowLeftRight, CalendarDays, CircleDot, CircleEllipsis, Clock3, FunctionSquare, Hash, Link2, Mail, Paperclip, PenLine, Phone, Search, SquareCheck, Star, Type, User as UserIcon } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, CircleChevronDown, CircleEllipsis, Clock3, FunctionSquare, Hash, Link2, Mail, Paperclip, PenLine, Phone, Search, SquareCheck, Star, LetterText, User as UserIcon } from "lucide-react";
