@@ -68,6 +68,10 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.Kind == "base" && isRecordComment(c) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_anchor", "记录评论请使用记录评论接口")
+		return
+	}
 	u, _ := UserFrom(r.Context())
 	c.DocID = d.ID
 	c.UserID = u.ID
@@ -99,6 +103,16 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	}
 	if cs == nil {
 		cs = []store.Comment{}
+	}
+	if d.Kind == "base" {
+		// Record comments are served per record after a visibility check.
+		kept := cs[:0]
+		for _, c := range cs {
+			if !isRecordComment(c) {
+				kept = append(kept, c)
+			}
+		}
+		cs = kept
 	}
 	if err := s.checkCommentReadAccess(r.Context(), guard, d.ID); err != nil {
 		s.commentMutationError(w, r, err)

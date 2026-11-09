@@ -105,6 +105,10 @@ func (s *Server) addCommentAttempt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.Kind == "base" && isRecordComment(c) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_anchor", "记录评论请使用记录评论接口")
+		return
+	}
 	c.DocID, c.UserID = d.ID, in.ExpectedUserID
 	guard, ok := s.viewGuard(w, r)
 	if !ok {

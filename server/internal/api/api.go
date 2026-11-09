@@ -91,6 +91,8 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/bases/{id}/records/{rid}":               func(w http.ResponseWriter, r *http.Request) { s.mutateRecordGuarded(w, r, "update") },
 		"PATCH /api/bases/{id}/records/{rid}/compare-cells": s.compareDateCells,
 		"GET /api/bases/{id}/records/{rid}/history":         s.recordHistory,
+		"GET /api/bases/{id}/records/{rid}/comments":        s.listRecordComments,
+		"POST /api/bases/{id}/records/{rid}/comments":       s.addRecordComment,
 		"PATCH /api/bases/{id}/records/{rid}/kanban-move":   s.moveKanbanCard,
 		"DELETE /api/bases/{id}/records/{rid}":              func(w http.ResponseWriter, r *http.Request) { s.mutateRecordGuarded(w, r, "delete") },
 		"POST /api/bases/{id}/views":                        s.addView,
