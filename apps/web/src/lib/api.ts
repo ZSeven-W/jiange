@@ -376,9 +376,10 @@ export const docsApi = {
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
-  upload: async (id: number, f: File): Promise<FileMeta> => {
+  upload: async (id: number, f: File, onProgress?: (percent: number) => void): Promise<FileMeta> => {
     const fd = new FormData();
     fd.append("file", f);
+    if (onProgress && typeof XMLHttpRequest !== "undefined") return uploadWithProgress(`/api/docs/${id}/files`, fd, onProgress);
     const res = await fetch(`/api/docs/${id}/files`, {
       method: "POST",
       body: fd,
@@ -402,3 +403,22 @@ export const docsApi = {
   setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
 };
+
+/** 带进度的上传（fetch 无上传进度事件）。错误格式与 request 一致。 */
+function uploadWithProgress(url: string, body: FormData, onProgress: (percent: number) => void): Promise<FileMeta> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("X-Jiange-Upload", "1");
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.min(99, (e.loaded / e.total) * 100)); };
+    xhr.onerror = () => reject(new ApiError(0, "network", "网络错误"));
+    xhr.onload = () => {
+      let data: { error?: string; message?: string } & Partial<FileMeta> = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* 非 JSON */ }
+      if (xhr.status < 200 || xhr.status >= 300) return reject(new ApiError(xhr.status, data.error ?? "error", data.message ?? xhr.statusText));
+      onProgress(100);
+      resolve(data as FileMeta);
+    };
+    xhr.send(body);
+  });
+}
