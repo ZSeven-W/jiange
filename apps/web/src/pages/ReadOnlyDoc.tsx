@@ -1,4 +1,5 @@
 import { calloutStyle } from "@/editor/blockStyles";
+import { codeLangLabel } from "@/editor/CodeBlockHeader";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
 import { DiagramView } from "@/editor/DiagramView";
@@ -106,7 +107,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "h6": content = <h6 className="mt-2.5 text-[16px] font-semibold leading-[1.6]">{rich}</h6>; break;
         case "bullet": case "ordered": case "todo": content = <div className="flex gap-2 py-[2px] text-[16px] leading-[1.75]"><span className={cn("min-w-[18px] text-center", block.type !== "todo" && "text-primary")}>{block.type === "bullet" ? ["•", "◦", "▪"][indent % 3] : block.type === "ordered" ? `${number}.` : block.props.checked === "true" ? "☑" : "☐"}</span><span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", block.type === "todo" && block.props.checked === "true" && "text-subtle line-through")}>{rich}</span></div>; break;
         case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[2px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
-        case "code": content = <div className="my-2 overflow-hidden rounded-lg border border-[#e5e7eb] dark:border-[#3c4043]"><div className="border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 text-[12px] text-muted-foreground dark:border-[#3c4043] dark:bg-[#23262a]">{block.props.lang || "plain"}</div><pre className="whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">{rich}</pre></div>; break;
+        case "code": content = <div className="my-2 rounded-md bg-[#F5F6F7] dark:bg-[#23262a]"><div className="px-3.5 pt-2 text-[12px] text-subtle">{codeLangLabel(block.props.lang)}</div><pre className={cn("px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", block.props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>{rich}</pre></div>; break;
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-3" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
