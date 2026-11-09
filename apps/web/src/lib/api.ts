@@ -392,6 +392,10 @@ export const extrasApi = {
   favorites: () => request<{ docs: DocMeta[] }>("GET", "/api/favorites").then((r) => r.docs),
   star: (id: number) => request<void>("PUT", `/api/docs/${id}/star`),
   unstar: (id: number) => request<void>("DELETE", `/api/docs/${id}/star`),
+  /** 置顶文档 (per user, independent of 收藏). */
+  pins: () => request<{ docs: DocMeta[] }>("GET", "/api/pins").then((r) => r.docs),
+  pin: (id: number) => request<void>("PUT", `/api/docs/${id}/pin`),
+  unpin: (id: number) => request<void>("DELETE", `/api/docs/${id}/pin`),
   ancestors: (id: number) => request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
 };
 export const docsApi = {
