@@ -1,5 +1,21 @@
 # 飞书文档界面核验记录
 
+## 2026-11-09（第二轮）：块菜单、多块选择、目录形态、工具栏对齐
+
+![标题字号、引用与高亮块配色、56px 顶栏](screenshots/document-heading-scale-20261109b.jpg)
+
+![块菜单：颜色、缩进、剪切/复制/复制链接/评论](screenshots/document-block-menu-colors-20261109.jpg)
+
+![跨块选区共用一个手柄](screenshots/document-multi-block-20261109.jpg)
+
+![取消固定后的迷你目录](screenshots/document-outline-unpinned-20261109.jpg)
+
+![浮动工具栏「对齐」](screenshots/document-toolbar-align-20261109.jpg)
+
+![浮动工具栏「更多」](screenshots/document-toolbar-more-20261109.jpg)
+
+环境同上一轮（1440×900 无头 Chromium、合成账号、临时 PostgreSQL 16 + Go 服务，无 MinIO）。已在浏览器验证：块菜单设置字体色并恢复默认、缩进 24px 后减少缩进、复制写入剪贴板并提示「已复制」、复制链接得到 `#/doc/1?block=…` 且新开页面高亮目标块、评论打开评论面板；拖选 4 个块后只出现一个显示「4」的手柄，批量增加/减少缩进作用于 4 个块；斜杠网格 → 再 ↓ 从「正文」移动到「H6」；目录折叠子标题、取消固定后悬停展开；工具栏居中对齐后恢复左对齐、清除格式去掉加粗、复制段落链接。前端 100 个测试文件 596 项、协同模块 173 项、TypeScript、生产构建与 Go 测试通过。仍**未**在用户登录的飞书中逐像素对照。
+
 ## 2026-11-09：文档页外观（目录、块手柄、斜杠菜单、侧面板、顶栏星标）
 
 ![左侧目录与正文](screenshots/document-outline-desktop-20261109.jpg)
