@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
+import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type FillRule, type RowHeight, type User } from "@/lib/api";
+import { rowFill, rowHeightPx } from "./fill";
+import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu, type FieldMenuAction } from "./fields";
@@ -7,7 +9,7 @@ import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
-import { ChevronRight, Expand, Lock, Pencil } from "lucide-react";
+import { ChevronRight, Expand, Lock, Pencil, Trash2, X } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
@@ -46,6 +48,9 @@ export function Grid({
   onMutate,
   onDetailVisibilityChange,
   onFieldAction,
+  rowHeight,
+  fills,
+  frozen,
 }: {
   baseId: number;
   canEdit: boolean;
@@ -67,6 +72,12 @@ export function Grid({
   onDetailVisibilityChange?: (visible: boolean) => void;
   /** Field header menu shortcuts that change the view config (sort/group/filter). */
   onFieldAction?: (action: FieldMenuAction, field: Field) => void;
+  /** Feishu 行高 preset from the view config. */
+  rowHeight?: RowHeight;
+  /** Feishu 填色 rules from the view config. */
+  fills?: FillRule[];
+  /** Leading visible fields kept frozen (sticky) while scrolling; default 1. */
+  frozen?: number;
 }) {
   const { ledger } = useWriteLedger(baseId);
   const [edit, setEditState] = useState<Edit | null>(null);
@@ -77,6 +88,10 @@ export function Grid({
     setEditState(value);
   };
   const [newField, setNewField] = useState(false);
+  /** 向左/右插入字段: the anchor header and the position for the new field. */
+  const [insertAt, setInsertAt] = useState<{ fid: number; position: number } | null>(null);
+  /** 勾选的记录（表头复选框 / 行复选框）。 */
+  const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editField, setEditField] = useState<Field | null>(null);
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
   const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
@@ -98,6 +113,14 @@ export function Grid({
     }
   });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setChecked((prev) => {
+      if (!prev.size) return prev;
+      const live = new Set(records.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [records]);
   const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
   const current = useRef({ baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, fields, allFields });
@@ -169,9 +192,10 @@ export function Grid({
     // with virtualization the cell may not be mounted: first bring the target
     // into the scroll window, then let scrollIntoView fine-tune
     const headerHeight = el.querySelector("thead")?.getBoundingClientRect().height ?? 36;
-    const targetTop = headerHeight + r * 32;
+    const rowH = rowHeightPx(rowHeight);
+    const targetTop = headerHeight + r * rowH;
     if (targetTop < el.scrollTop + headerHeight) el.scrollTop = Math.max(0, targetTop - headerHeight);
-    else if (targetTop + 32 > el.scrollTop + el.clientHeight) el.scrollTop = targetTop + 32 - el.clientHeight;
+    else if (targetTop + rowH > el.scrollTop + el.clientHeight) el.scrollTop = targetTop + rowH - el.clientHeight;
     const rec = records[r];
     const fld = fields[f];
     if (!rec || !fld) return;
@@ -317,6 +341,22 @@ export function Grid({
     try { await baseApi.deleteRecord(baseId, rec.id); ledger.complete(op); }
     catch { ledger.fail(op, "无法确认是否删除。请刷新并核对记录。"); }
     finally { refreshWrites(onMutate); }
+  };
+
+  const deleteChecked = async () => {
+    const targets = records.filter((r) => checked.has(r.id));
+    if (!targets.length || !(await ask(`删除选中的 ${targets.length} 条记录？`, "删除后可在记录历史中查看，但无法直接撤销。"))) return;
+    for (const rec of targets) await deleteRecord(rec);
+    setChecked(new Set());
+  };
+
+  /** Position between f and its neighbour in the full field order (left or right). */
+  const insertPosition = (f: Field, side: "left" | "right") => {
+    const order = [...(allFields ?? fields)].sort((a, b) => a.position - b.position);
+    const i = order.findIndex((x) => x.id === f.id);
+    const other = side === "left" ? order[i - 1] : order[i + 1];
+    if (!other) return side === "left" ? f.position - 1 : f.position + 1;
+    return (f.position + other.position) / 2;
   };
 
   const deleteField = async (f: Field) => {
@@ -511,28 +551,44 @@ export function Grid({
   const idxOf = new Map(records.map((r, i) => [r.id, i]));
 
   // --- virtualization: render only the visible window (plus overscan) ---
-  const ROW_H = 32; // h-8
+  const ROW_H = rowHeightPx(rowHeight);
+  const tall = ROW_H > 32;
   const OVERSCAN = 6;
   const r0 = Math.max(0, Math.floor(vp.top / ROW_H) - OVERSCAN);
   const r1 = Math.min(rows, Math.ceil((vp.top + vp.h) / ROW_H) + OVERSCAN);
   const colOffsets = fields.reduce<number[]>((acc, f, i) => [...acc, (acc[i - 1] ?? 0) + width(f)], []);
   const totalW = colOffsets[cols - 1] ?? 0;
-  let c0 = 0;
-  while (c0 < cols && colOffsets[c0] < vp.left - 200) c0++;
-  c0 = Math.max(0, c0 - 2);
+  // 冻结列: the first N visible fields stay rendered and sticky; only the rest is windowed.
+  const nFrozen = Math.max(0, Math.min(cols, frozen ?? 1));
+  const frozenW = nFrozen > 0 ? colOffsets[nFrozen - 1] : 0;
+  let c0 = nFrozen;
+  while (c0 < cols && colOffsets[c0] < vp.left + frozenW - 200) c0++;
+  c0 = Math.max(nFrozen, c0 - 2);
   let c1 = c0;
   while (c1 < cols && colOffsets[c1] < vp.left + vp.w + 200) c1++;
   c1 = Math.min(cols, c1 + 2);
-  const leadW = c0 > 0 ? colOffsets[c0 - 1] : 0;
+  const leadW = (c0 > 0 ? colOffsets[c0 - 1] : 0) - frozenW;
   const tailW = c1 < cols ? totalW - (colOffsets[c1 - 1] ?? 0) : 0;
-  const winFields = fields.slice(c0, c1);
+  const winFields = [...fields.slice(0, nFrozen), ...fields.slice(c0, c1)];
+  /** column index in `fields` for the wi-th rendered field */
+  const wjSpacer = (w: number, rendered: number) => w > 0 && rendered <= nFrozen;
+  const colOf = (wi: number) => (wi < nFrozen ? wi : c0 + wi - nFrozen);
+  const stickyLeft = (j: number) => 56 + (j > 0 ? colOffsets[j - 1] : 0);
+  const isFrozen = (j: number) => j < nFrozen;
+  const lastFrozen = (j: number) => j === nFrozen - 1;
+  const allChecked = records.length > 0 && records.every((r) => checked.has(r.id));
+  const toggleChecked = (id: number) => setChecked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
-  const renderRow = (rec: BaseRecord, i: number) => (
-            <tr key={rec.id} className="group h-8">
-              <td className="sticky left-0 z-10 w-14 border border-x-0 bg-surface px-2.5 text-[12px] text-subtle [@media(hover:none)]:px-1">
-                <div className="flex h-[31px] items-center justify-center">
-                <span className="group-hover:hidden [@media(hover:none)]:inline">{i + 1}</span>
-                <span className="hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex">
+  const renderRow = (rec: BaseRecord, i: number) => {
+            const fill = rowFill(rec, allFields ?? fields, fills, members);
+            const isChecked = checked.has(rec.id);
+            return (
+            <tr key={rec.id} className={cn("group", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill}>
+              <td className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1.5 text-[12px] text-subtle [@media(hover:none)]:px-1", tall && "align-top")} style={fill ? { background: fill } : undefined}>
+                <div className="flex h-[31px] items-center justify-center gap-1">
+                <span className={cn("group-hover:hidden [@media(hover:none)]:inline", isChecked && "hidden")}>{i + 1}</span>
+                <input type="checkbox" checked={isChecked} onChange={() => toggleChecked(rec.id)} aria-label={`选择记录 ${i + 1}`} className={cn("size-3.5 cursor-pointer accent-primary group-hover:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
+                <span className={cn("hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex")}>
                   <button type="button" className="grid size-6 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:size-8" aria-label={`展开记录 ${i + 1}`} title="展开记录" onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
                     <Expand size={14} strokeWidth={1.7} />
                   </button>
@@ -544,17 +600,22 @@ export function Grid({
                 </span>
                 </div>
               </td>
-              {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {winFields.map((f, wj) => {
-                const j = c0 + wj;
+                const j = colOf(wj);
                 const editing = edit?.rid === rec.id && edit.fid === f.id;
                 const ro = REGISTRY[f.type].readonly;
+                const selected = !editing && inRange(i, j);
                 return (
+                  <Fragment key={f.id}>
+                  {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
                   <td
-                    key={f.id}
+                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !selected && !editing ? { background: fill } : {}) }}
                     className={cn(
                       "relative border px-2.5",
-                      f.isPrimary && "border-l-0 border-r-[#BBBFC4]",
+                      tall && "align-top",
+                      isFrozen(j) && "z-10 bg-surface",
+                      j === 0 && "border-l-0",
+                      lastFrozen(j) && "border-r-[#BBBFC4]",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
@@ -580,7 +641,7 @@ export function Grid({
                         onCancel={() => setEdit(null)}
                         onInvalid={(raw) => { const op = ledger.begin(`记录 #${rec.id} · ${f.name}`, raw, `cell:${rec.id}:${f.id}`, editRef.current?.authorization, false, editRef.current?.authored ?? false); if (op !== null) ledger.fail(op, "输入格式无效，未保存；请复制后修改。"); }}
                       />
-                    ) : <div className="flex h-[31px] min-w-0 items-center overflow-hidden" data-grid-cell-content>
+                    ) : <div className={cn("flex min-w-0 overflow-hidden", tall ? "items-start pt-[5px] [&_*]:whitespace-normal" : "h-[31px] items-center")} style={tall ? { height: ROW_H - 1 } : undefined} data-grid-cell-content>
                       <CellView
                         field={f}
                         record={rec}
@@ -593,16 +654,26 @@ export function Grid({
                       {canEdit && detailAccessReady && selectionAccessReady && isCursor(i, j) && !ro && f.type !== "checkbox" && f.type !== "link" && f.type !== "lookup" && !ledger.blocked("batch") && !ledger.blocked(`cell:${rec.id}:${f.id}`) && <button type="button" data-touch-edit className="absolute right-0 top-0 hidden size-8 touch-manipulation items-center justify-center rounded bg-surface text-primary shadow-sm [@media(hover:none)]:inline-flex" aria-label={`编辑记录 ${i + 1} 的${f.name}`} onClick={(event) => { event.stopPropagation(); startEdit(i, j); }}><Pencil size={14} strokeWidth={1.7} /></button>}
                     </div>}
                   </td>
+                  </Fragment>
                 );
               })}
+              {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
-              {canEdit && <td className="border" />}
+              {canEdit && <td className="border" style={fill ? { background: fill } : undefined} />}
             </tr>
               );
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
     {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
+    {checked.size > 0 && (
+      <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px]" role="toolbar" aria-label="批量操作" data-batch-bar>
+        <span>已选择 <b className="font-medium text-primary">{checked.size}</b> 条记录</span>
+        {canEdit && <button type="button" className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />删除</button>}
+        <button type="button" className="ml-auto grid size-7 place-items-center rounded-md text-subtle hover:bg-white" aria-label="取消选择" onClick={() => setChecked(new Set())}><X size={15} /></button>
+      </div>
+    )}
     <div
       ref={gridRef}
       className="min-h-0 flex-1 overflow-auto outline-none"
@@ -640,15 +711,19 @@ export function Grid({
       >
         <thead>
           <tr className="h-9 bg-surface text-left text-[13px] text-foreground">
-            <th className="sticky left-0 top-0 z-40 w-14 border border-x-0 bg-surface px-2.5 font-normal" />
-            {leadW > 0 && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
+            <th className="sticky left-0 top-0 z-40 w-14 border border-x-0 bg-surface px-1.5 font-normal">
+              <div className="flex items-center justify-center">
+                <input type="checkbox" checked={allChecked} ref={(el) => { if (el) el.indeterminate = !allChecked && checked.size > 0; }} onChange={() => setChecked(allChecked ? new Set() : new Set(records.map((r) => r.id)))} aria-label="全选记录" className="size-3.5 cursor-pointer accent-primary" data-check-all />
+              </div>
+            </th>
             {winFields.map((f, wi) => {
-              const i = c0 + wi;
+              const i = colOf(wi);
               return (
+              <Fragment key={f.id}>
+              {wi === nFrozen && leadW > 0 && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
               <th
-                key={f.id}
-                className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", f.isPrimary && "border-l-0 border-r-[#BBBFC4]", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
-                style={{ width: width(f), minWidth: width(f) }}
+                className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", isFrozen(i) && "z-40", i === 0 && "border-l-0", lastFrozen(i) && "border-r-[#BBBFC4]", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
+                style={{ width: width(f), minWidth: width(f), ...(isFrozen(i) ? { left: stickyLeft(i) } : {}) }}
                 draggable={canEdit && !!allFields && !f.isPrimary}
                 data-th={f.id}
                 onContextMenu={(e) => {
@@ -684,15 +759,21 @@ export function Grid({
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
-                        <FieldMenu field={f} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} onDuplicate={() => void saveField({ name: `${f.name} 副本`, type: f.type, options: f.options, optionColors: f.optionColors, formula: f.formula, description: f.description }).catch(() => undefined)} onAction={onFieldAction ? (action) => onFieldAction(action, f) : undefined} />
+                        <FieldMenu field={f} frozen={isFrozen(i) && lastFrozen(i)} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} onDuplicate={() => void saveField({ name: `${f.name} 副本`, type: f.type, options: f.options, optionColors: f.optionColors, formula: f.formula, description: f.description, position: insertPosition(f, "right") }).catch(() => undefined)} onAction={(action) => {
+                          if (action === "insert-left" || action === "insert-right") setInsertAt({ fid: f.id, position: insertPosition(f, action === "insert-left" ? "left" : "right") });
+                          else onFieldAction?.(action, f);
+                        }} />
                       </span>
                     )}
                   </div>
                 {editField?.id === f.id && <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
+                {insertAt?.fid === f.id && <FieldForm onCancel={() => setInsertAt(null)} onSubmit={(patch) => saveField({ ...patch, position: insertAt.position }).then(() => setInsertAt(null))} onAcknowledge={() => ledger.discardKey("field:create")} />}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
+              </Fragment>
               );
             })}
+            {wjSpacer(leadW, winFields.length) && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
             {tailW > 0 && <th style={{ width: tailW }} className="border p-0" aria-hidden />}
             {canEdit && (
               <th
@@ -771,14 +852,15 @@ export function Grid({
         <tfoot>
           <tr className="group/stats sticky bottom-0 z-10 h-8 bg-surface text-[12px] text-muted-foreground" data-stats-row>
             <td className="sticky left-0 z-10 w-14 border-x-0 border-b-0 border-t bg-surface px-2.5" />
-            {leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
-            {winFields.map((f) => {
+            {winFields.map((f, wi) => {
               const fn = stats[f.id] ?? "";
               const [bg, fg] = fn && groupField && groupField.type === "select" ? (["", ""] as [string, string]) : (["", ""] as [string, string]);
               void bg;
               void fg;
               return (
-                <td key={f.id} className="border-x-0 border-b-0 border-t px-2.5" style={{ width: width(f) }}>
+                <Fragment key={f.id}>
+                {wi === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
+                <td className={cn("border-x-0 border-b-0 border-t px-2.5", isFrozen(colOf(wi)) && "sticky z-10 bg-surface")} style={{ width: width(f), ...(isFrozen(colOf(wi)) ? { left: stickyLeft(colOf(wi)) } : {}) }}>
                   <div className={cn("flex items-center gap-1", f.isPrimary && "justify-end")}>
                     {f.isPrimary && !fn && <span data-record-count>{records.length} 条记录</span>}
                     <select
@@ -798,8 +880,10 @@ export function Grid({
                     {fn && <span className="tabular-nums">{statValue(f, fn, records)}</span>}
                   </div>
                 </td>
+                </Fragment>
               );
             })}
+            {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
             {tailW > 0 && <td style={{ width: tailW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
             {canEdit && <td className="border-x-0 border-b-0 border-t" />}
           </tr>
