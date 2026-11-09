@@ -55,7 +55,7 @@ export function OutlinePanel({
   const minLevel = items.reduce((m, it) => Math.min(m, it.level), 6);
   return (
     <aside
-      className={cn("fixed bottom-0 right-0 top-16 z-30 flex w-72 flex-col border-l bg-surface shadow-xl xl:sticky xl:top-0 xl:z-10 xl:h-[calc(100vh-64px)] xl:w-[248px] xl:shrink-0 xl:self-start xl:border-0 xl:bg-transparent xl:shadow-none", yieldToSidePanel && "hidden min-[1680px]:flex")}
+      className={cn("fixed bottom-0 right-0 top-14 z-30 flex w-72 flex-col border-l bg-surface shadow-xl xl:sticky xl:top-0 xl:z-10 xl:h-[calc(100vh-56px)] xl:w-[248px] xl:shrink-0 xl:self-start xl:border-0 xl:bg-transparent xl:shadow-none", yieldToSidePanel && "hidden min-[1680px]:flex")}
       aria-label="目录"
       data-outline-panel
     >
