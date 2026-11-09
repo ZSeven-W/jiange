@@ -5,7 +5,7 @@ import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
-import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { ArrowDownAZ, ArrowDownZA, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
 import { popupPosition } from "./popupPosition";
 
 /** Shared form for creating and editing a field. */
@@ -167,7 +167,9 @@ export function FieldForm({
 }
 
 /** Header dropdown: edit field / delete field. */
-export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: () => void; onDelete: () => void }) {
+export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter";
+
+export function FieldMenu({ field, onEdit, onDelete, onDuplicate, onAction }: { field: Field; onEdit: () => void; onDelete: () => void; onDuplicate?: () => void; onAction?: (action: FieldMenuAction) => void }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -177,7 +179,7 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
     if (!open) return;
     const place = () => {
       const rect = trigger.current?.getBoundingClientRect();
-      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 160, 112));
+      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 224, 340));
     };
     const close = (e: PointerEvent) => {
       const target = e.target as Node;
@@ -217,29 +219,39 @@ export function FieldMenu({ field, onEdit, onDelete }: { field: Field; onEdit: (
         <ChevronDown size={15} strokeWidth={1.7} />
       </button>
       {open && position && createPortal(
-        <div ref={menu} role="menu" style={position} className="fixed z-[101] overflow-y-auto rounded-lg border bg-surface py-1 text-[13px] font-normal shadow-lg" data-field-menu-pop onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); setOpen(false); trigger.current?.focus(); } }} onPaste={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            role="menuitem"
-            className="block min-h-10 w-full px-3 py-1.5 text-left hover:bg-hover"
-            onClick={() => {
-              setOpen(false);
-              onEdit();
-            }}
-          >
-            编辑字段
-          </button>
-          {!field.isPrimary && <button
-            type="button"
-            role="menuitem"
-            className="block min-h-10 w-full px-3 py-1.5 text-left text-destructive hover:bg-hover"
-            onClick={async () => {
-              setOpen(false);
-              if (await ask(`删除字段「${field.name}」？`, "字段及其所有值将被删除。")) onDelete();
-            }}
-          >
-            删除字段
-          </button>}
+        <div ref={menu} role="menu" style={position} className="fixed z-[101] w-56 overflow-y-auto rounded-lg border bg-surface p-1 text-[13px] font-normal text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-field-menu-pop onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); setOpen(false); trigger.current?.focus(); } }} onPaste={(e) => e.stopPropagation()}>
+          {([
+            ["edit", "修改字段/列", Pencil],
+            ["describe", "编辑字段/列描述", Info],
+            ...(onDuplicate ? [["duplicate", "复制字段/列", Copy]] : []),
+            ...(onAction ? [
+              ["sep1"],
+              ["sort-asc", field.type === "number" ? "按 1 → 9 排序" : "按 A 到 Z 排序", ArrowDownAZ],
+              ["sort-desc", field.type === "number" ? "按 9 → 1 排序" : "按 Z 到 A 排序", ArrowDownZA],
+              ["sep2"],
+              ["group", `按 ${field.name} 分组`, LayoutPanelTop],
+              ["filter", `按 ${field.name} 筛选`, Filter],
+            ] : []),
+            ...(!field.isPrimary ? [["sep3"], ["delete", "删除字段/列", Trash2]] : []),
+          ] as [string, string?, React.ComponentType<{ size?: number; strokeWidth?: number }>?][]).map(([key, label, Icon]) => !label || !Icon ? <div key={key} className="mx-1 my-1 h-px bg-border" role="separator" /> : (
+            <button
+              key={key}
+              type="button"
+              role="menuitem"
+              className={cn("flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover", key === "delete" && "text-destructive")}
+              data-field-action={key}
+              onClick={async () => {
+                setOpen(false);
+                if (key === "edit" || key === "describe") onEdit();
+                else if (key === "duplicate") onDuplicate?.();
+                else if (key === "delete") { if (await ask(`删除字段「${field.name}」？`, "字段及其所有值将被删除。")) onDelete(); }
+                else onAction?.(key as FieldMenuAction);
+              }}
+            >
+              <span className="shrink-0 text-muted-foreground"><Icon size={16} strokeWidth={1.6} /></span>
+              <span className="truncate">{label}</span>
+            </button>
+          ))}
         </div>, document.body
       )}
     </div>

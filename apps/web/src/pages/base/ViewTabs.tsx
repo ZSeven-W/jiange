@@ -124,7 +124,7 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
   const selected = views.find((view) => view.id === menu);
   const selectedIndex = selected ? views.findIndex((view) => view.id === selected.id) : -1;
   return <>
-    <div className="flex min-w-0 flex-1 items-center overflow-x-auto" role="tablist" aria-label="视图">
+    <div className="flex min-w-0 shrink items-center overflow-x-auto" role="tablist" aria-label="视图">
       {views.map((view) => <div key={view.id} className={`group/view flex h-10 shrink-0 items-center rounded-t-md ${view.id === activeId ? "bg-surface font-medium text-foreground shadow-[0_-1px_4px_rgba(31,35,41,0.05)]" : "text-muted-foreground hover:bg-hover hover:text-foreground"}`}
         draggable={canEdit && !busy && !ledger.blocked("view:write")}
         onDragStart={(event) => { dragging.current = { baseId, source: view.id, order: views.map((item) => item.id) }; event.dataTransfer.setData("application/x-jiange-view", String(view.id)); event.dataTransfer.effectAllowed = "move"; }}

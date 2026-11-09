@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
-import { FieldForm, FieldMenu } from "./fields";
+import { FieldForm, FieldMenu, type FieldMenuAction } from "./fields";
 import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
@@ -45,6 +45,7 @@ export function Grid({
   groupBy,
   onMutate,
   onDetailVisibilityChange,
+  onFieldAction,
 }: {
   baseId: number;
   canEdit: boolean;
@@ -64,6 +65,8 @@ export function Grid({
   groupBy?: number | null;
   onMutate: () => void;
   onDetailVisibilityChange?: (visible: boolean) => void;
+  /** Field header menu shortcuts that change the view config (sort/group/filter). */
+  onFieldAction?: (action: FieldMenuAction, field: Field) => void;
 }) {
   const { ledger } = useWriteLedger(baseId);
   const [edit, setEditState] = useState<Edit | null>(null);
@@ -526,8 +529,8 @@ export function Grid({
 
   const renderRow = (rec: BaseRecord, i: number) => (
             <tr key={rec.id} className="group h-8">
-              <td className="sticky left-0 z-10 w-14 border bg-surface px-2.5 text-[12px] text-subtle [@media(hover:none)]:px-1">
-                <div className="flex h-[31px] items-center justify-between">
+              <td className="sticky left-0 z-10 w-14 border border-x-0 bg-surface px-2.5 text-[12px] text-subtle [@media(hover:none)]:px-1">
+                <div className="flex h-[31px] items-center justify-center">
                 <span className="group-hover:hidden [@media(hover:none)]:inline">{i + 1}</span>
                 <span className="hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex">
                   <button type="button" className="grid size-6 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:size-8" aria-label={`展开记录 ${i + 1}`} title="展开记录" onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
@@ -551,6 +554,7 @@ export function Grid({
                     key={f.id}
                     className={cn(
                       "relative border px-2.5",
+                      f.isPrimary && "border-l-0 border-r-[#BBBFC4]",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
@@ -635,18 +639,24 @@ export function Grid({
         style={{ width: 56 + totalW + (canEdit ? 44 : 0) }}
       >
         <thead>
-          <tr className="h-9 bg-surface text-left text-[13px] text-muted-foreground">
-            <th className="sticky left-0 top-0 z-40 w-14 border bg-surface px-2.5 font-normal" />
+          <tr className="h-9 bg-surface text-left text-[13px] text-foreground">
+            <th className="sticky left-0 top-0 z-40 w-14 border border-x-0 bg-surface px-2.5 font-normal" />
             {leadW > 0 && <th style={{ width: leadW }} className="border p-0" aria-hidden />}
             {winFields.map((f, wi) => {
               const i = c0 + wi;
               return (
               <th
                 key={f.id}
-                className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
+                className={cn("group/th sticky top-0 z-30 border bg-surface px-2.5 font-normal", f.isPrimary && "border-l-0 border-r-[#BBBFC4]", drag.at === i && drag.fid && drag.fid !== f.id && "border-l-2 border-l-primary")}
                 style={{ width: width(f), minWidth: width(f) }}
                 draggable={canEdit && !!allFields && !f.isPrimary}
                 data-th={f.id}
+                onContextMenu={(e) => {
+                  const trigger = e.currentTarget.querySelector<HTMLButtonElement>("[data-field-menu]");
+                  if (!trigger) return;
+                  e.preventDefault();
+                  trigger.click();
+                }}
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/field", String(f.id));
                   e.dataTransfer.effectAllowed = "move";
@@ -670,11 +680,11 @@ export function Grid({
                       ⠿
                     </span>}
                     {f.isPrimary && <Lock size={13} className="shrink-0 text-subtle" aria-label="主字段" />}
-                    <span className="mr-1.5 text-subtle"><TypeGlyph t={f.type} /></span>
+                    <span className="mr-1 text-muted-foreground"><TypeGlyph t={f.type} size={14} /></span>
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
-                        <FieldMenu field={f} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} />
+                        <FieldMenu field={f} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} onDuplicate={() => void saveField({ name: `${f.name} 副本`, type: f.type, options: f.options, optionColors: f.optionColors, formula: f.formula, description: f.description }).catch(() => undefined)} onAction={onFieldAction ? (action) => onFieldAction(action, f) : undefined} />
                       </span>
                     )}
                   </div>
@@ -759,21 +769,22 @@ export function Grid({
           )}
         </tbody>
         <tfoot>
-          <tr className="sticky bottom-0 z-10 h-8 bg-sidebar text-[12px] text-muted-foreground" data-stats-row>
-            <td className="sticky left-0 z-10 w-14 border bg-sidebar px-2.5" />
-            {leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
+          <tr className="group/stats sticky bottom-0 z-10 h-8 bg-surface text-[12px] text-muted-foreground" data-stats-row>
+            <td className="sticky left-0 z-10 w-14 border-x-0 border-b-0 border-t bg-surface px-2.5" />
+            {leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
             {winFields.map((f) => {
               const fn = stats[f.id] ?? "";
               const [bg, fg] = fn && groupField && groupField.type === "select" ? (["", ""] as [string, string]) : (["", ""] as [string, string]);
               void bg;
               void fg;
               return (
-                <td key={f.id} className="border px-2.5" style={{ width: width(f) }}>
-                  <div className="flex items-center gap-1">
+                <td key={f.id} className="border-x-0 border-b-0 border-t px-2.5" style={{ width: width(f) }}>
+                  <div className={cn("flex items-center gap-1", f.isPrimary && "justify-end")}>
+                    {f.isPrimary && !fn && <span data-record-count>{records.length} 条记录</span>}
                     <select
                       value={fn}
                       onChange={(e) => saveStat(f.id, e.target.value)}
-                      className="cursor-pointer bg-transparent text-[12px] outline-none"
+                      className={cn("cursor-pointer bg-transparent text-[12px] outline-none", !fn && "opacity-0 focus:opacity-100 group-hover/stats:opacity-100", f.isPrimary && !fn && "w-4")}
                       title="列统计"
                       data-stat={f.id}
                     >
@@ -789,8 +800,8 @@ export function Grid({
                 </td>
               );
             })}
-            {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
-            {canEdit && <td className="border" />}
+            {tailW > 0 && <td style={{ width: tailW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
+            {canEdit && <td className="border-x-0 border-b-0 border-t" />}
           </tr>
         </tfoot>
       </table>
