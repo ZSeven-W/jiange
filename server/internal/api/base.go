@@ -126,6 +126,18 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshotMembers := slices.Clone(members)
+	// People the base is shared with can be picked in person cells and
+	// defaults too (names only; emails stay with the workspace directory).
+	shares, err := s.Store.ListShares(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	for _, sh := range shares {
+		if !slices.ContainsFunc(members, func(m store.User) bool { return m.ID == sh.UserID }) {
+			members = append(members, store.User{ID: sh.UserID, Name: sh.Name})
+		}
+	}
 	isMember := false
 	for _, ws := range workspaces {
 		if ws.ID == read.meta.WorkspaceID {
@@ -334,6 +346,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &f) {
 		return
 	}
+	if !s.validPersonDefault(w, r, b, in, f) {
+		return
+	}
 	fields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -387,6 +402,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	old := fields[i]
 	f := old
 	if !in.apply(w, &f) {
+		return
+	}
+	if !s.validPersonDefault(w, r, b, in, f) {
 		return
 	}
 	if f.Type == "formula" && f.Formula != "" && !validateFormula(w, fields, f.ID, f.Formula) {
@@ -699,4 +717,27 @@ func validCell(f store.Field, v json.RawMessage) bool {
 		return json.Unmarshal(v, &n) == nil && n >= 1 && n <= 5 && n == float64(int(n))
 	}
 	return false
+}
+
+// validPersonDefault requires a person 默认值 to be one of the base's
+// collaborators: a workspace member or someone the base is shared with.
+func (s *Server) validPersonDefault(w http.ResponseWriter, r *http.Request, b store.DocMeta, in fieldInput, f store.Field) bool {
+	if len(in.DefaultValue) == 0 || f.Type != "person" || f.DefaultValue == nil {
+		return true
+	}
+	var id int64
+	if json.Unmarshal(f.DefaultValue, &id) != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
+		return false
+	}
+	names, err := s.collaboratorNames(r.Context(), b)
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	if _, ok := names[id]; !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认人员必须是此表格的协作者")
+		return false
+	}
+	return true
 }
