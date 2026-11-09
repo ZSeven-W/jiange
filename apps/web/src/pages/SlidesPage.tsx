@@ -5,6 +5,7 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { SlidesDraftQueue } from "./slidesDraft";
+import { copyErrorMessage } from "./documentCopy";
 import { SlideShapes } from "./slides-shapes";
 import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
@@ -20,6 +21,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [sharing, setSharing] = useState(false);
   const [shapeMenu, setShapeMenu] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [copyingDeck, setCopyingDeck] = useState(false);
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [showSlideList, setShowSlideList] = useState(true);
   const [fitZoom, setFitZoom] = useState(100);
@@ -51,6 +53,20 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     return () => window.removeEventListener("beforeunload", warn);
   }, [queue]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["slides", deckId] });
+  // 整份复制只携带已保存内容；未保存草稿先行保存完成后才可点击。
+  const duplicateDeck = async () => {
+    if (!meta.data || copyingDeck || queue.hasUnsaved()) return;
+    setCopyingDeck(true);
+    setOperationError("");
+    try {
+      const nd = await docsApi.duplicate(deckId);
+      location.hash = `#/slides/${nd.id}`;
+    } catch (error) {
+      setOperationError(copyErrorMessage(error));
+    } finally {
+      setCopyingDeck(false);
+    }
+  };
   const create = useMutation({ mutationFn: () => slidesApi.create(deckId, ""), onSuccess: (page) => { setCurrent(page.id); void invalidate(); } });
   const remove = useMutation({ mutationFn: (pid: number) => slidesApi.remove(pid), onSuccess: () => { setCurrent(null); void invalidate(); } });
   const [operationError, setOperationError] = useState("");
@@ -176,6 +192,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white"><Presentation size={15}/></span>
         <div className="min-w-0"><div className="truncate text-[14px] font-semibold text-[#1f2329]">{meta.data.title || "未命名幻灯片"}</div><div className="text-[11px] text-[#8f959e]">{draft?.state === "saving" ? "正在保存…" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <button type="button" aria-label="创建整份幻灯片副本" title={queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={copyingDeck || queue.hasUnsaved()} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <button type="button" disabled={!active} onClick={() => setPlaying(true)} className="flex h-8 items-center gap-1 rounded-md border border-[#3370ff] bg-white px-3 text-[13px] text-[#3370ff] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>演示</button>
         </div>

@@ -174,3 +174,120 @@ func (m *Memory) MoveSlidesPage(ctx context.Context, g RestoreGuard, pageID int6
 }
 
 func isFinitePos(p float64) bool { return p >= 0 && p < 1e308 }
+
+// CopySlidesDeck publishes the new slides node, remapped image references and
+// every source page as one critical section, mirroring the Postgres
+// implementation. Image blobs are shared by object key.
+func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta, []SlidesPage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var expiry time.Time
+	if c.Guard != nil {
+		guard := c.Guard
+		session, ok := m.sessions[string(guard.SessionHash)]
+		if !ok || guard.UserID != c.UserID || session.userID != c.UserID || !guard.currentTime().Before(session.expires) {
+			return DocMeta{}, nil, ErrUnauthenticated
+		}
+		expiry = session.expires
+	}
+	source := m.doc(c.SourceID)
+	if source == nil || source.deleted || source.purged {
+		return DocMeta{}, nil, ErrNotFound
+	}
+	if source.meta.Kind != "slides" {
+		return DocMeta{}, nil, ErrConflict
+	}
+	if RoleRank(m.roleLocked(c.UserID, source)) < RoleRank(RoleView) {
+		return DocMeta{}, nil, ErrNotFound
+	}
+	if !DocumentDownloadAllowed(source.meta, m.roleLocked(c.UserID, source)) {
+		return DocMeta{}, nil, ErrCopyProtected
+	}
+	if c.UserID < 1 || c.UserID > int64(len(m.users)) || !m.member(c.UserID, c.WorkspaceID) {
+		return DocMeta{}, nil, ErrForbidden
+	}
+	personal := source.personal
+	var parentID *int64
+	if c.ParentID != nil {
+		parent := m.doc(*c.ParentID)
+		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != c.WorkspaceID || RoleRank(m.roleLocked(c.UserID, parent)) < RoleRank(RoleView) {
+			return DocMeta{}, nil, ErrNotFound
+		}
+		personal = parent.personal
+		id := *c.ParentID
+		parentID = &id
+	}
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, nil, err
+	}
+	pages := []SlidesPage{}
+	for _, p := range m.slides {
+		if p.SlidesID == c.SourceID {
+			p.Shapes = slices.Clone(p.Shapes)
+			pages = append(pages, p)
+		}
+	}
+	sort.Slice(pages, func(i, j int) bool {
+		if pages[i].Pos == pages[j].Pos {
+			return pages[i].ID < pages[j].ID
+		}
+		return pages[i].Pos < pages[j].Pos
+	})
+	var imageIDs []int64
+	seen := map[int64]bool{}
+	for _, page := range pages {
+		ids, err := slideImageIDs(page.Shapes)
+		if err != nil {
+			return DocMeta{}, nil, err
+		}
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				imageIDs = append(imageIDs, id)
+			}
+		}
+	}
+	now := time.Now()
+	newID := int64(len(m.d.docs) + 1)
+	mapping := make(map[int64]int64, len(imageIDs))
+	files := make([]FileMeta, 0, len(imageIDs))
+	for _, oldID := range imageIDs {
+		if oldID < 1 || oldID > int64(len(m.sh.files)) {
+			return DocMeta{}, nil, ErrNotFound
+		}
+		original := m.sh.files[oldID-1]
+		if original.ID != oldID || original.DocID != c.SourceID {
+			return DocMeta{}, nil, ErrNotFound
+		}
+		if !slideImageMIME(original.Mime) {
+			return DocMeta{}, nil, ErrConflict
+		}
+		clone := original
+		clone.ID = int64(len(m.sh.files) + len(files) + 1)
+		clone.DocID, clone.UploaderID, clone.CreatedAt = newID, c.UserID, now
+		mapping[oldID] = clone.ID
+		files = append(files, clone)
+	}
+	if c.Guard != nil && !c.Guard.currentTime().Before(expiry) {
+		return DocMeta{}, nil, ErrUnauthenticated
+	}
+	meta := DocMeta{ID: newID, Kind: "slides", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}
+	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
+	m.sh.files = append(m.sh.files, files...)
+	m.d.docs = append(m.d.docs, d)
+	copied := make([]SlidesPage, 0, len(pages))
+	for _, page := range pages {
+		shapes, err := remapSlideShapes(page.Shapes, mapping)
+		if err != nil {
+			return DocMeta{}, nil, err
+		}
+		m.slidesSequence++
+		next := SlidesPage{ID: m.slidesSequence, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Notes: page.Notes, Shapes: shapes, Revision: 1, UpdatedAt: now}
+		m.slides = append(m.slides, next)
+		copied = append(copied, next)
+	}
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, nil, err
+	}
+	return meta, copied, nil
+}

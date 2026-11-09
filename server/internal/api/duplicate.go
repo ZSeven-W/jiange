@@ -41,10 +41,6 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "unsupported", "多维表格暂不支持复制")
 		return
 	}
-	if d.Kind == "slides" {
-		httpx.Error(w, http.StatusBadRequest, "unsupported", "幻灯片暂不支持整份复制，可在编辑器中复制页面")
-		return
-	}
 	if !store.DocumentDownloadAllowed(d, d.Role) {
 		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
 		return
@@ -118,13 +114,17 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	} else if workspaceID == d.WorkspaceID {
 		parentID = d.ParentID
 	}
-	if parentID != nil {
-		parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
-		if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
-			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
+		if parentID != nil {
+			parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
+			if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
+				httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
+				return
+			}
+		}
+		if d.Kind == "slides" {
+			s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
 			return
 		}
-	}
 
 	src, _, err := StateAtHead(r.Context(), s.Store, d.ID)
 	if err != nil {
@@ -216,11 +216,88 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// duplicateSlidesDeck copies a whole presentation. Pages and image references
+// are remapped inside the store transaction; the source deck stays untouched.
+func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, title string) {
+	if title == "" {
+		// Mirror the document copy: derive the title from the source. Keep the
+		// result within the drive title limit after the suffix.
+		base := strings.TrimSpace(d.Title)
+		if base == "" {
+			base = "未命名幻灯片"
+		}
+		runes := []rune(base)
+		if len(runes) > 96 {
+			base = strings.TrimSpace(string(runes[:96]))
+		}
+		title = base + " 副本"
+	}
+	pages, err := s.Store.ListSlidesPages(r.Context(), userID, d.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var fileIDs []int64
+	seen := map[int64]bool{}
+	for _, page := range pages {
+		ids, err := store.SlideImageIDs(page.Shapes)
+		if err != nil {
+			httpx.Error(w, http.StatusConflict, "invalid_shapes", "幻灯片图形数据无效，无法创建副本")
+			return
+		}
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				fileIDs = append(fileIDs, id)
+			}
+		}
+	}
+	if len(fileIDs) > maxCopyAttachments {
+		httpx.Error(w, http.StatusUnprocessableEntity, "copy_attachment_limit", "幻灯片中的不同图片超过 1000 张，暂无法一次创建副本")
+		return
+	}
+	if len(fileIDs) > 0 && s.Blobs == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "no_storage", "图片存储未配置，无法创建完整副本")
+		return
+	}
+	if err := s.verifyCopyFiles(r.Context(), d.ID, fileIDs); err != nil {
+		if errors.Is(err, errCopyAttachment) {
+			httpx.Error(w, http.StatusConflict, "invalid_attachment", "幻灯片中的图片不可用，未创建副本")
+		} else if errors.Is(err, errCopyStorage) {
+			httpx.Error(w, http.StatusServiceUnavailable, "storage_unavailable", "图片存储暂不可用，未创建副本，请稍后重试")
+		} else {
+			s.fail(w, r, err)
+		}
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	nd, _, err := s.Store.CopySlidesDeck(r.Context(), store.SlidesDeckCopy{SourceID: d.ID, UserID: userID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, Guard: &guard})
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrCopyProtected):
+		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "无权在目标空间创建文档")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "幻灯片或图片不存在，或已无权访问")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "copy_conflict", "幻灯片状态已改变，未创建副本，请重试")
+	case err != nil:
+		s.fail(w, r, err)
+	default:
+		nd = s.sanitizeWrittenDocMeta(r.Context(), userID, nd)
+		httpx.JSON(w, http.StatusCreated, nd)
+	}
+}
+
 // Shared immutable object keys avoid copying blobs outside the database
 // transaction. Verify every source object is readable before creating the
 // target; future blob GC must account for all references to an object key.
-func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {
-	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
+func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
 	defer cancelAll()
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
