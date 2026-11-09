@@ -21,6 +21,7 @@ import { hasUnsupportedImportBlocks, insertStarterTemplate, isEmptyStarterDocume
 import { peekStarter, takeStarter } from "./pendingStarter";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
 import { go } from "@/lib/route";
+import { docWidthClass, readDocWide, writeDocWide } from "@/lib/docWidth";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
@@ -146,6 +147,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [history, setHistory] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
+  const [wide, setWide] = useState(() => readDocWide(me.user.id, id));
+  useEffect(() => { setWide(readDocWide(me.user.id, id)); }, [me.user.id, id]);
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
   const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
@@ -659,6 +662,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onExport={downloadAllowed ? exportMd : undefined}
           onImport={canEditContent ? importMd : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
+          wide={wide}
+          onToggleWide={() => setWide((w) => { writeDocWide(me.user.id, id, !w); return !w; })}
           readOnly={!canEditRole}
           allowContentCopy={contentCopyAllowed}
           allowDocumentPrint={downloadAllowed}
@@ -716,7 +721,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             />
           )}
           <div className="min-w-0 flex-1">
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full max-w-[960px] px-7 sm:px-16", hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={wide ? "true" : undefined} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(wide), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -929,6 +934,8 @@ function TopBar({
   onExport,
   onImport,
   onOutline,
+  wide,
+  onToggleWide,
   readOnly,
   allowContentCopy,
   allowDocumentPrint,
@@ -944,6 +951,8 @@ function TopBar({
   onCreate: () => void;
   creating: boolean;
   onOutline: () => void;
+  wide: boolean;
+  onToggleWide: () => void;
   onHistory: () => void;
   onTitleCheck: () => void;
   onExport?: () => void;
@@ -1003,7 +1012,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
+        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} wide={wide} onToggleWide={onToggleWide} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1071,6 +1080,8 @@ function DocMenu({
   onExport,
   onImport,
   onOutline,
+  wide,
+  onToggleWide,
   onComments,
   onFind,
   onPrint,
@@ -1082,6 +1093,8 @@ function DocMenu({
   onExport?: () => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
+  wide?: boolean;
+  onToggleWide?: () => void;
   onPrint: () => void;
   onComments: () => void;
   onFind: () => void;
@@ -1177,6 +1190,16 @@ function DocMenu({
           <button className={item} onClick={() => { close(); onOutline(); }} data-outline>
             目录
           </button>
+          {onToggleWide && (
+            <div className="flex items-center justify-between px-3 py-1.5 text-[13px]" data-doc-width>
+              <span>页面宽度</span>
+              <span className="flex rounded-md bg-hover p-0.5 text-[12px]">
+                {([[false, "标准"], [true, "全宽"]] as const).map(([w, label]) => (
+                  <button key={label} type="button" aria-pressed={!!wide === w} onClick={() => { if (!!wide !== w) onToggleWide(); }} className={cn("rounded px-2 py-0.5", !!wide === w ? "bg-surface font-medium text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")} data-doc-width-option={w ? "wide" : "standard"}>{label}</button>
+                ))}
+              </span>
+            </div>
+          )}
           {onImport && (
             <label className={cn(item, "block cursor-pointer")} data-import-md>
               导入 Markdown
