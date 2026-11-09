@@ -22,12 +22,13 @@ type Memory struct {
 	d                memDocs
 	sh               memShare
 	b                memBase
-	slides          []SlidesPage
-	slidesSequence  int64
+	slides           []SlidesPage
+	slidesSequence   int64
 	comments         []Comment
 	commentSequence  int64
 	notifications    []Notification
 	favorites        map[int64][]int64
+	pins             map[int64][]int64
 	recent           map[[2]int64]time.Time // (user, doc) -> last visit
 	links            map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
 	automations      []Automation

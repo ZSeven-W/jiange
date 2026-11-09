@@ -223,3 +223,57 @@ func (s *Server) getAncestors(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ancestors": chain})
 }
+
+// pinStore is implemented by stores that support 置顶文档 (Postgres, Memory).
+type pinStore interface {
+	ListPins(ctx context.Context, userID int64) ([]store.DocMeta, error)
+	AddPin(ctx context.Context, userID, docID int64) error
+	RemovePin(ctx context.Context, userID, docID int64) error
+}
+
+func (s *Server) listPins(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	ps, ok := s.Store.(pinStore)
+	if !ok {
+		httpx.JSON(w, http.StatusOK, map[string]any{"docs": []store.DocMeta{}})
+		return
+	}
+	docs, err := ps.ListPins(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if docs == nil {
+		docs = []store.DocMeta{}
+	}
+	docs, err = s.sanitizeDocList(r.Context(), u.ID, docs)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"docs": docs})
+}
+
+func (s *Server) putPin(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+	ps, ok := s.Store.(pinStore)
+	if !ok {
+		httpx.Error(w, http.StatusNotImplemented, "unsupported", "置顶不可用")
+		return
+	}
+	d, ok := s.docFromPath(w, r)
+	if !ok {
+		return
+	}
+	var err error
+	if r.Method == http.MethodDelete {
+		err = ps.RemovePin(r.Context(), u.ID, d.ID)
+	} else {
+		err = ps.AddPin(r.Context(), u.ID, d.ID)
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

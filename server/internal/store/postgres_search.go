@@ -34,9 +34,29 @@ func (p *Postgres) SearchDocs(ctx context.Context, uid int64, q string) ([]DocMe
 }
 
 func (p *Postgres) ListFavorites(ctx context.Context, uid int64) ([]DocMeta, error) {
+	return p.listMarked(ctx, uid, "favorites")
+}
+
+// ListPins returns the caller's pinned (置顶) docs, newest pin first.
+func (p *Postgres) ListPins(ctx context.Context, uid int64) ([]DocMeta, error) {
+	return p.listMarked(ctx, uid, "pins")
+}
+
+func (p *Postgres) AddPin(ctx context.Context, uid, doc int64) error {
+	_, err := p.Pool.Exec(ctx, `INSERT INTO pins (user_id, node_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, uid, doc)
+	return err
+}
+
+func (p *Postgres) RemovePin(ctx context.Context, uid, doc int64) error {
+	_, err := p.Pool.Exec(ctx, `DELETE FROM pins WHERE user_id=$1 AND node_id=$2`, uid, doc)
+	return err
+}
+
+// listMarked lists visible docs in a (user_id,node_id,created_at) table; table is a constant.
+func (p *Postgres) listMarked(ctx context.Context, uid int64, table string) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision
 		FROM nodes n`+roleJoins+`
-		JOIN favorites f ON f.node_id = n.id AND f.user_id = $1
+		JOIN `+table+` f ON f.node_id = n.id AND f.user_id = $1
 		WHERE n.deleted_at IS NULL AND (`+roleSQL+`) <> '' ORDER BY f.created_at DESC, n.id DESC`, uid)
 	if err != nil {
 		return nil, err
