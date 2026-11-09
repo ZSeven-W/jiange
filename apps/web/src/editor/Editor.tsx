@@ -36,6 +36,7 @@ import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
+import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
@@ -2029,31 +2030,11 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
         </div>
       ) : type === "callout" ? (
         <div className={cn("flex gap-2 rounded-lg border px-3.5 py-3", prefix && "flex gap-2")} style={calloutStyle(props.color)} data-callout-color={Number(props.color ?? 0)}>
-          <span contentEditable={false} className="select-none pt-0.5 text-[15px] leading-6">
-            <button
-              className="rounded px-0.5 hover:bg-black/5"
-              title="更换图标"
-              disabled={!onSetProp}
-              onClick={() => onSetProp?.("emoji", CALLOUT_EMOJI[(CALLOUT_EMOJI.indexOf(props.emoji ?? "💡") + 1) % CALLOUT_EMOJI.length])}
-              data-callout-emoji
-            >
-              {props.emoji ?? "💡"}
-            </button>
-          </span>
+          <CalloutEmoji emoji={props.emoji} onPick={onSetProp ? (e) => onSetProp("emoji", e) : undefined} />
           <div data-text className="min-w-0 flex-1 whitespace-pre-wrap break-words">
             {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
           </div>
-          {onSetProp && <span contentEditable={false} className="ml-auto flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" data-callout-colors>
-            {CALLOUT_BG.map((bg, i) => (
-              <button
-                key={i}
-                className={cn("h-3.5 w-3.5 rounded-full border", Number(props.color ?? 0) === i && "ring-1 ring-primary ring-offset-1")}
-                style={{ background: bg }}
-                title={`颜色 ${i + 1}`}
-                onClick={() => onSetProp?.("color", String(i))}
-              />
-            ))}
-          </span>}
+          {onSetProp && <CalloutColorBar color={props.color} onPick={(i) => onSetProp("color", String(i))} />}
         </div>
       ) : (
         <div className={cn(prefix && "flex gap-2")}>
@@ -2080,8 +2061,6 @@ const CODE_LANGS: [string, string][] = [
   ["python", "Python"], ["rust", "Rust"], ["java", "Java"], ["sql", "SQL"], ["json", "JSON"],
   ["bash", "Bash"], ["css", "CSS"], ["html", "HTML"],
 ];
-const CALLOUT_BG = CALLOUT_COLORS.map(([bg]) => bg);
-const CALLOUT_EMOJI = ["💡", "📌", "⚠️", "✅", "🔥", "📝", "❓", "🎯"];
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */
 function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { data: string; widths?: number[]; onWidths?: (w: number[]) => void; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
