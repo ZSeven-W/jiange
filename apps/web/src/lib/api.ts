@@ -187,7 +187,9 @@ export const baseApi = {
   /** 记录历史：字段级变更（新→旧），按当前读者的权限视图过滤 */
   recordHistory: (id: number, rid: number) => request<{ entries: RecordHistoryEntry[] }>("GET", `/api/bases/${id}/records/${rid}/history`).then((r) => r.entries),
   recordComments: (id: number, rid: number) => request<{ comments: Comment[] }>("GET", `/api/bases/${id}/records/${rid}/comments`).then((r) => r.comments),
-  addRecordComment: (id: number, rid: number, body: string) => request<Comment>("POST", `/api/bases/${id}/records/${rid}/comments`, { body }),
+  addRecordComment: (id: number, rid: number, body: string, opts: { mentions?: number[]; parentId?: number } = {}) => request<Comment>("POST", `/api/bases/${id}/records/${rid}/comments`, { body, ...opts }),
+  patchRecordComment: (id: number, rid: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment | undefined>("PATCH", `/api/bases/${id}/records/${rid}/comments/${cid}`, p),
+  deleteRecordComment: (id: number, rid: number, cid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}/comments/${cid}`),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   reorderFields: (id: number, expectedFieldIds: number[], desiredFieldIds: number[]) => request<void>("POST", `/api/bases/${id}/fields/reorder`, { expectedFieldIds, desiredFieldIds }),
