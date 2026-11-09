@@ -8,6 +8,9 @@ import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
 import { ChevronDown, ChevronUp, MessageSquare, Plus, X } from "lucide-react";
 import { FieldForm } from "./fields";
+import { historyActorName, historyHeadline } from "./historyActor";
+import { Avatar } from "@/components/brand";
+import { colorFor } from "@/lib/presence";
 
 const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Feishu-style empty-value hints in the record detail. */
@@ -308,7 +311,6 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
     const text = REGISTRY[f.type].format(displayValue({ ...record, cells: { [f.id]: v } }, f, members), f);
     return text || "空";
   };
-  const who = (id?: number) => members.find((m) => m.id === id)?.name;
   return (
     <div className="flex-1 overflow-y-auto px-10 py-4" data-record-history>
       {q.isPending ? <p className="text-[13px] text-subtle">加载中…</p> : q.isError ? <p role="alert" className="text-[13px] text-destructive">无法加载历史记录。</p> : q.data.length === 0 ? <p className="text-[13px] text-subtle">暂无历史记录</p> : (
@@ -317,7 +319,10 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
             <li key={e.seq} className="relative" data-history-entry={e.seq}>
               <span className="absolute -left-[25px] top-1.5 size-2 rounded-full bg-primary/70" />
               <div className="text-[13px]">
-                <span className="font-medium">{e.op === "add" ? `${who(e.by) ?? "有人"} 创建了记录` : "修改了记录"}</span>
+                {historyActorName(e, members) && (e.actor?.kind === "form"
+                  ? <span className="mr-1.5 inline-grid size-5 place-items-center rounded-full bg-[#ffe4ba] align-middle text-[11px] text-[#d25f00]" data-history-avatar>表</span>
+                  : <span className="mr-1.5 inline-block align-middle" data-history-avatar><Avatar name={historyActorName(e, members)} color={colorFor((e.actor?.id ?? e.by ?? 1) - 1)} size={20} /></span>)}
+                <span className="font-medium" data-history-headline>{historyHeadline(e, members)}</span>
                 {e.at && <span className="ml-2 text-[12px] text-subtle">{new Date(e.at).toLocaleString("zh-CN", { hour12: false })}</span>}
               </div>
               <ul className="mt-1.5 space-y-1 text-[13px]">
