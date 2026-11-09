@@ -283,10 +283,20 @@ func (m *Memory) MapFieldCells(_ context.Context, base, field int64, fn func(jso
 	return nil
 }
 
-func (m *Memory) AppendBtEvent(_ context.Context, base int64, body json.RawMessage) (int64, error) {
+func (m *Memory) AppendBtEvent(ctx context.Context, base int64, body json.RawMessage) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.appendBtEventLocked(base, body), nil
+	return m.appendBtEventActorLocked(ctx, base, body), nil
+}
+
+// appendBtEventActorLocked appends a record-bearing event tagged with ctx's actor.
+func (m *Memory) appendBtEventActorLocked(ctx context.Context, base int64, body json.RawMessage) int64 {
+	seq := m.appendBtEventLocked(base, body)
+	if a, ok := ActorFrom(ctx); ok {
+		evs := m.b.events[base]
+		evs[len(evs)-1].actor = a
+	}
+	return seq
 }
 
 // appendBtEventLocked appends to one base while the caller holds m.mu.

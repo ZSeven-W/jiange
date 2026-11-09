@@ -298,7 +298,8 @@ func (p *Postgres) AppendBtEvent(ctx context.Context, base int64, body json.RawM
 		if err := lockBaseNode(ctx, tx, base); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO bt_events (base_id, body) VALUES ($1, $2) RETURNING id`, base, body).Scan(&seq)
+		aid, akind := actorArgs(ctx)
+		return tx.QueryRow(ctx, `INSERT INTO bt_events (base_id, body, actor_id, actor_kind) VALUES ($1, $2, $3, $4) RETURNING id`, base, body, aid, akind).Scan(&seq)
 	})
 	return seq, err
 }

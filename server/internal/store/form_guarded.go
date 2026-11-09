@@ -254,7 +254,7 @@ func (m *Memory) SubmitPublicForm(ctx context.Context, baseID, viewID int64, has
 		return Record{}, err
 	}
 	m.b.records = append(m.b.records, rec)
-	m.appendBtEventLocked(baseID, body)
+	m.appendBtEventActorLocked(WithActor(ctx, Actor{Kind: "form"}), baseID, body)
 	return rec, nil
 }
 
@@ -515,7 +515,7 @@ func (p *Postgres) SubmitPublicForm(ctx context.Context, baseID, viewID int64, h
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body) VALUES ($1,$2)`, baseID, body)
+		_, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body,actor_kind) VALUES ($1,$2,'form')`, baseID, body)
 		return err
 	})
 	if err != nil {

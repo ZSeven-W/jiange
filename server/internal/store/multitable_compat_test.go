@@ -101,7 +101,7 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 		CREATE VIEW base_records WITH (security_barrier=true) AS SELECT id,base_id,cells,position,creator_id,created_at,updated_at FROM base_records_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_views WITH (security_barrier=true) AS SELECT id,base_id,type,name,config,pos FROM bt_views_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_links WITH (security_barrier=true) AS SELECT id,base_id,field_id,from_record,to_record FROM bt_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
-		CREATE VIEW bt_events WITH (security_barrier=true) AS SELECT id,base_id,body,at FROM bt_events_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW bt_events WITH (security_barrier=true) AS SELECT id,base_id,body,at,actor_id,actor_kind FROM bt_events_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_automations WITH (security_barrier=true) AS SELECT id,base_id,name,enabled,trigger_kind,config,last_fired_at FROM bt_automations_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_public_form_links WITH (security_barrier=true) AS SELECT view_id,base_id,token_hash,revision,window_started,window_count FROM bt_public_form_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE OR REPLACE FUNCTION revoke_form_link_on_type_change() RETURNS trigger LANGUAGE plpgsql
