@@ -346,7 +346,7 @@ export function Grid({
 
   const deleteChecked = async () => {
     const targets = records.filter((r) => checked.has(r.id));
-    if (!targets.length || !(await ask(`删除选中的 ${targets.length} 条记录？`, "删除后可在记录历史中查看，但无法直接撤销。"))) return;
+    if (!targets.length || !(await ask(`删除选中的 ${targets.length} 条记录？`, "删除后无法直接撤销。"))) return;
     for (const rec of targets) await deleteRecord(rec);
     setChecked(new Set());
   };
