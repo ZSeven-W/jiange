@@ -12,16 +12,16 @@ const recs: BaseRecord[] = [
 ];
 
 describe("kanban grouping", () => {
-  it("columns follow the option order, empties and unknowns go to 未分组", () => {
+  it("columns follow the option order, empties and unknowns go to 未分类 first", () => {
     const cols = groupRecords(recs, field);
-    expect(cols.map((c) => c.key)).toEqual(["待办", "进行中", "完成", ""]);
-    expect(cols[0].records.map((r) => r.id)).toEqual([2]);
-    expect(cols[1].records.map((r) => r.id)).toEqual([1]);
-    expect(cols[3].records.map((r) => r.id)).toEqual([3, 5]);
+    expect(cols.map((c) => c.key)).toEqual(["", "待办", "进行中", "完成"]);
+    expect(cols[1].records.map((r) => r.id)).toEqual([2]);
+    expect(cols[2].records.map((r) => r.id)).toEqual([1]);
+    expect(cols[0].records.map((r) => r.id)).toEqual([3, 5]);
   });
   it("keeps in-column order by record position", () => {
     const cols = groupRecords([...recs].reverse(), field);
-    expect(cols[3].records.map((r) => r.id)).toEqual([3, 5]);
+    expect(cols[0].records.map((r) => r.id)).toEqual([3, 5]);
   });
 });
 

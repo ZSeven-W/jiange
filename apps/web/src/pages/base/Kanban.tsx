@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { MoreHorizontal, Plus } from "lucide-react";
+import { askText } from "@/components/ui/ask";
 import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { CellView, Tag } from "./cells";
+import { CellView, TAG_COLORS, Tag } from "./cells";
 import { displayValue, recordTitle, recordTitleField, REGISTRY } from "./registry";
 
 export interface KanbanColumn {
@@ -10,9 +12,10 @@ export interface KanbanColumn {
   records: BaseRecord[];
 }
 
-/** Group records by a select field; unknown/empty values land in 未分组. */
+/** Group records by a select field; unknown/empty values land in 未分类 (first column). */
 export function groupRecords(records: BaseRecord[], field: Field): KanbanColumn[] {
-  const cols: KanbanColumn[] = [...(field.options ?? []).map((o) => ({ key: o, records: [] })), { key: "", records: [] }];
+  // Feishu lists the 未分类 bucket first, then one column per option.
+  const cols: KanbanColumn[] = [{ key: "", records: [] }, ...(field.options ?? []).map((o) => ({ key: o, records: [] }))];
   for (const r of records) {
     const v = r.cells[field.id];
     const key = typeof v === "string" && (field.options ?? []).includes(v) ? v : "";
@@ -79,15 +82,29 @@ export function Kanban({
     onMutate();
   };
 
+  const addGroup = async () => {
+    const name = (await askText("新建分组", "分组名称"))?.trim();
+    if (!name || (field.options ?? []).includes(name)) return;
+    await baseApi.patchField(baseId, field.id, { options: [...(field.options ?? []), name] }).catch(() => {});
+    onMutate();
+  };
+  const tint = (key: string) => {
+    if (!key) return "#F5F6F7";
+    const [bg] = TAG_COLORS[Math.max(0, (field.options ?? []).indexOf(key)) % TAG_COLORS.length];
+    return `color-mix(in srgb, ${bg} 40%, white)`;
+  };
+
   return (
-    <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-4" data-kanban>
+    <div className="flex min-h-0 flex-1 items-start gap-2 overflow-x-auto px-5 py-1" data-kanban>
       {cols.map((col) => (
         <div
           key={col.key || "__ungrouped"}
+          style={{ background: tint(col.key) }}
           className={cn(
-            "flex h-full w-64 shrink-0 flex-col rounded-lg bg-sidebar/70",
+            "flex max-h-full w-[256px] shrink-0 flex-col rounded-lg",
             over?.col === col.key && over.index === col.records.length && "outline outline-2 outline-primary/50",
           )}
+          data-kanban-col={col.key}
           onDragOver={(e) => {
             e.preventDefault();
             setOver({ col: col.key, index: col.records.length });
@@ -97,20 +114,12 @@ export function Kanban({
             void drop(col.key, over?.index ?? col.records.length, Number(e.dataTransfer.getData("text/rid")) || undefined);
           }}
         >
-          <div className="flex items-center gap-2 px-3 pb-2 pt-3 text-[13px] font-medium text-muted-foreground">
-            {col.key ? <Tag colorIndex={(field.options ?? []).indexOf(col.key)} value={col.key} /> : <span className="rounded bg-accent px-2 py-0.5 text-subtle">未分组</span>}
+          <div className="flex h-11 shrink-0 items-center gap-2 px-3 text-[13px] text-muted-foreground">
+            {col.key ? <Tag colorIndex={(field.options ?? []).indexOf(col.key)} value={col.key} /> : <span className="rounded bg-[#E4E5E7] px-2 py-0.5 text-[12px] font-medium text-[#646A73]">未分类</span>}
             <span className="text-subtle">{col.records.length}</span>
-            {canEdit && col.key !== "" && (
-              <button
-                className="ml-auto text-subtle hover:text-foreground"
-                title="添加卡片"
-                onClick={() => baseApi.addRecord(baseId, { [field.id]: col.key }).then(onMutate)}
-              >
-                +
-              </button>
-            )}
+            <MoreHorizontal size={16} className="ml-auto text-subtle" aria-hidden />
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto px-2 pb-2">
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2">
             {col.records.map((rec, i) => (
               <div
                 key={rec.id}
@@ -136,13 +145,16 @@ export function Kanban({
                   void drop(col.key, over?.index ?? i, Number(e.dataTransfer.getData("text/rid")) || undefined);
                 }}
                 className={cn(
-                  "cursor-grab rounded-lg border bg-surface p-2.5 text-[13px] shadow-sm hover:shadow",
+                  "cursor-grab rounded-md border border-[#DEE0E3] bg-white px-3 py-[11px] text-[14px] hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)]",
                   drag?.rid === rec.id && "opacity-40",
                   over?.col === col.key && over.index === i && "border-t-2 border-t-primary",
                 )}
                 data-card={rec.id}
               >
-                <div className="truncate font-medium">{recordTitle(rec, fields, members) || "未命名"}</div>
+                {(() => {
+                  const t = recordTitle(rec, fields, members);
+                  return <div className={cn("truncate leading-[22px]", t ? "font-medium" : "text-subtle")}>{t || "未命名记录"}</div>;
+                })()}
                 {extra.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-muted-foreground">
                     {extra.map((f) => (
@@ -156,8 +168,26 @@ export function Kanban({
             ))}
             {over?.col === col.key && over.index === col.records.length && <div className="h-1.5 rounded bg-primary/40" />}
           </div>
+          {canEdit ? (
+            <button
+              className="mx-2 my-1.5 grid h-8 shrink-0 place-items-center rounded-md text-subtle hover:bg-black/5 hover:text-foreground"
+              title="添加卡片"
+              aria-label="添加卡片"
+              data-kanban-add={col.key}
+              onClick={() => baseApi.addRecord(baseId, col.key ? { [field.id]: col.key } : {}).then(onMutate)}
+            >
+              <Plus size={16} />
+            </button>
+          ) : (
+            <div className="h-2 shrink-0" />
+          )}
         </div>
       ))}
+      {canEdit && (
+        <button className="flex h-11 shrink-0 items-center gap-1 rounded-md px-3 text-[14px] text-muted-foreground hover:bg-hover" onClick={addGroup} data-kanban-add-group>
+          <Plus size={16} /> 新建分组
+        </button>
+      )}
     </div>
   );
 }
