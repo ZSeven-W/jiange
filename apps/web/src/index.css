@@ -167,3 +167,15 @@
   background-color: rgb(51 112 255 / 0.12);
   transition: background-color 0.6s ease;
 }
+
+/* 飞书文档选区：浅蓝底、保留原文字颜色 */
+[data-editor] ::selection,
+[data-editor]::selection,
+[data-readonly-doc] ::selection {
+  background: rgba(51, 112, 255, 0.24);
+  color: inherit;
+}
+.dark [data-editor] ::selection,
+.dark [data-editor]::selection {
+  background: rgba(76, 136, 255, 0.36);
+}
