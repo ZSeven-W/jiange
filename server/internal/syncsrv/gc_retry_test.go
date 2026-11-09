@@ -72,7 +72,7 @@ func TestCompactedPartialOverlapRejectsMixedBatch(t *testing.T) {
 					state.Apply(op)
 				}
 			}
-			if state.Compact() != 2 {
+			if state.CompactLegacyTombstones() != 2 {
 				t.Fatal("expected both original characters to be compacted")
 			}
 			head, err := st.Head(ctx, doc.ID)
@@ -238,7 +238,7 @@ func (s *racedLookupStore) ExistingOpIDs(ctx context.Context, doc int64, ops []s
 	return result, err
 }
 
-func TestCompactedRetryDoesNotResurrectOrAuthorizeDependencies(t *testing.T) {
+func TestLegacyCompactedRetryDoesNotResurrectAndResolvesFromLog(t *testing.T) {
 	for _, mode := range []string{"duplicate", "mixed", "dependent"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
@@ -277,7 +277,7 @@ func TestCompactedRetryDoesNotResurrectOrAuthorizeDependencies(t *testing.T) {
 					state.Apply(op)
 				}
 			}
-			if n := state.Compact(); n == 0 {
+			if n := state.CompactLegacyTombstones(); n == 0 {
 				t.Fatal("fixture did not compact deleted character")
 			}
 			head, _ := st.Head(ctx, doc.ID)
@@ -295,26 +295,19 @@ func TestCompactedRetryDoesNotResurrectOrAuthorizeDependencies(t *testing.T) {
 			if mode != "duplicate" {
 				next := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 7, Clock: 12}, Block: paragraph, Parent: collab.Root, Side: 1, Text: "新"}
 				if mode == "dependent" {
+					// The legacy snapshot dropped the deleted character, but
+					// the full log still has it: the room rebuilds losslessly
+					// and accepts an insert whose origin is that tombstone.
 					next.Parent = ins.ID
-				} else {
-					want = "新"
 				}
+				want = "新"
 				batch = append(batch, next)
 			}
-			err = r.handleOps(ctx, c, batch)
-			if mode == "dependent" && err != errBatchRejected {
-				t.Fatalf("dependent op accepted: %v", err)
-			}
-			if mode != "dependent" && err != nil {
+			if err := r.handleOps(ctx, c, batch); err != nil {
 				t.Fatal(err)
 			}
 			if got := r.doc.Text(paragraph); got != want {
 				t.Fatalf("room text=%q, want %q", got, want)
-			}
-			if mode == "dependent" {
-				if got, _ := st.Head(ctx, doc.ID); got != head {
-					t.Fatalf("dependent op persisted at head %d", got)
-				}
 			}
 			if err := r.snapshot(ctx); err != nil {
 				t.Fatal(err)
@@ -385,5 +378,79 @@ func TestOperationLookupCannotRaceAnotherWriter(t *testing.T) {
 	}
 	if got := restarted.doc.Text(paragraph); got != "新" {
 		t.Fatalf("restarted text=%q", got)
+	}
+}
+
+// Doc 9: the legacy tombstone GC wrote a snapshot without the deleted slash
+// query, and the tail inserts the block text with that query as its origin.
+// Loading must rebuild losslessly from the log, persist a repaired snapshot
+// and keep every character; if the log cannot resolve it either, the error is
+// surfaced instead of dropping content.
+func TestLegacySnapshotRepairedFromFullLog(t *testing.T) {
+	ctx := context.Background()
+	for _, broken := range []bool{false, true} {
+		st := store.NewMemory()
+		u, ws, err := st.CreateUser(ctx, fmt.Sprintf("repair-%v@test.dev", broken), "r", "hash")
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := st.CreateDoc(ctx, ws.ID, u.ID, nil, "test", InitialOps(""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := func(op collab.Op) store.RawOp {
+			b, _ := collab.EncodeOps([]collab.Op{op})
+			return store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: b}
+		}
+		q := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 7, Clock: 10}, Block: paragraph, Parent: collab.Root, Side: 1, Text: "/gl"}
+		del := collab.Op{T: collab.TTextDelete, ID: collab.OpID{Client: 7, Clock: 13}, Block: paragraph, Target: q.ID, Len: 3}
+		if _, err := st.AppendOps(ctx, doc.ID, []store.RawOp{raw(q), raw(del)}); err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := st.OpsAfter(ctx, doc.ID, 0, 0)
+		legacy := collab.NewDoc()
+		for _, row := range rows {
+			ops, _ := collab.DecodeOps(row.Bytes)
+			for _, op := range ops {
+				legacy.Apply(op)
+			}
+		}
+		if legacy.CompactLegacyTombstones() == 0 {
+			t.Fatal("fixture did not compact")
+		}
+		snapSeq, _ := st.Head(ctx, doc.ID)
+		if err := st.SaveSnapshot(ctx, doc.ID, snapSeq, legacy.EncodeState()); err != nil {
+			t.Fatal(err)
+		}
+		parent := q.ID
+		if broken {
+			parent = collab.OpID{Client: 99, Clock: 1} // in no state and no log
+		}
+		tail := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 7, Clock: 20}, Block: paragraph, Parent: parent, Side: 0, Text: "注意"}
+		if _, err := st.AppendOps(ctx, doc.ID, []store.RawOp{raw(tail)}); err != nil {
+			t.Fatal(err)
+		}
+		r := &room{hub: &Hub{Store: st, SnapshotEvery: 1000, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, id: doc.ID, conns: map[*conn]struct{}{}}
+		err = r.load(ctx)
+		if broken {
+			if !errors.Is(err, errUnresolved) {
+				t.Fatalf("unresolvable history must surface an error, got %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.doc.Text(paragraph); got != "注意" {
+			t.Fatalf("repaired text %q", got)
+		}
+		seq, state, err := st.LatestSnapshot(ctx, doc.ID)
+		if err != nil || seq != snapSeq+1 {
+			t.Fatalf("repaired snapshot at %d (want %d): %v", seq, snapSeq+1, err)
+		}
+		fixed, _ := collab.DecodeState(state)
+		if fixed.Text(paragraph) != "注意" {
+			t.Fatalf("repaired snapshot text %q", fixed.Text(paragraph))
+		}
 	}
 }

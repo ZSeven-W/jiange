@@ -1,6 +1,7 @@
 package syncsrv
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -479,8 +480,8 @@ func TestSnapshotsAndCompaction(t *testing.T) {
 			full.Apply(op)
 		}
 	}
-	if len(state) >= len(full.EncodeState()) {
-		t.Fatalf("snapshot not compacted: %d >= %d", len(state), len(full.EncodeState()))
+	if !bytes.Equal(state, full.EncodeState()) {
+		t.Fatalf("snapshot is not lossless: %d bytes vs %d from log replay", len(state), len(full.EncodeState()))
 	}
 	j1, _ := json.Marshal(snap.View())
 	j2, _ := json.Marshal(full.View())
@@ -505,6 +506,81 @@ func TestSnapshotsAndCompaction(t *testing.T) {
 	d.edit(typeAt("!", func(int) int { return 0 }))
 	waitFor(t, "ack", d.idle)
 	converge(t, st, doc, d)
+}
+
+// The editor's slash command: the query is typed and deleted, then the block
+// text is typed with the deleted query's first character as its Fugue origin.
+// The two halves are separate batches so a snapshot can fall between them.
+func slashQuery(q *collab.Op) func(d *collab.Doc, id uint64) []collab.Op {
+	return func(d *collab.Doc, id uint64) []collab.Op {
+		n := len([]rune(d.Text(paragraph)))
+		*q = d.InsertText(id, paragraph, n, "/q")
+		return append([]collab.Op{*q}, d.DeleteText(id, paragraph, n, 2)...)
+	}
+}
+
+func afterTombstone(q *collab.Op, word string) func(d *collab.Doc, id uint64) []collab.Op {
+	return func(d *collab.Doc, id uint64) []collab.Op {
+		ins := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: id, Clock: d.Clock() + 1}, Block: paragraph, Parent: q.ID, Side: 0, Text: word}
+		d.Apply(ins)
+		return []collab.Op{ins}
+	}
+}
+
+// Regression for doc 9: live replicas keep editing next to tombstones across
+// several snapshots; the stored snapshot plus its tail must resolve completely
+// and cold loads (new client, restarted hub) must reproduce the live state.
+func TestSnapshotTailReferencingTombstones(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	e := newEnv(t, st, 20)
+	doc := e.newDoc()
+	a, b := e.client(0, doc), e.client(1, doc)
+	var q collab.Op
+	for i := 0; i < 40; i++ {
+		a.edit(slashQuery(&q))
+		b.edit(typeAt("乙", func(int) int { return 0 }))
+		converge(t, st, doc, a, b) // acks move the horizon past the deletion
+		a.edit(afterTombstone(&q, "甲"))
+	}
+	v := converge(t, st, doc, a, b)
+	seq, state, err := st.LatestSnapshot(ctx, doc)
+	if err != nil || seq < 100 {
+		t.Fatalf("expected several snapshots, latest %d: %v", seq, err)
+	}
+	cold, err := collab.DecodeState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := st.OpsAfter(ctx, doc, seq, 0)
+	for _, row := range rows {
+		ops, _ := collab.DecodeOps(row.Bytes)
+		for _, op := range ops {
+			cold.Apply(op)
+		}
+	}
+	if cold.Pending() != 0 {
+		t.Fatalf("snapshot@%d + tail leaves %d unresolved operations", seq, cold.Pending())
+	}
+	if j, _ := json.Marshal(cold.View()); string(j) != v {
+		t.Fatal("snapshot + tail differs from the live state")
+	}
+	c := e.client(1, doc)
+	if !c.gotSnap {
+		t.Fatal("new client should start from the snapshot")
+	}
+	if converge(t, st, doc, a, b, c) != v {
+		t.Fatal("view changed")
+	}
+	hub := &Hub{Store: st, SnapshotEvery: 20, PingInterval: time.Hour}
+	srv2 := httptest.NewServer(e.handler(hub))
+	defer srv2.Close()
+	d := &client{t: t, user: 0, docID: doc, peers: map[uint64]string{}}
+	d.connect(srv2.URL)
+	defer d.disconnect()
+	if got := converge(t, st, doc, d); got != v {
+		t.Fatalf("cold load diverged:\n%s\n%s", got, v)
+	}
 }
 
 func TestAuthorization(t *testing.T) {

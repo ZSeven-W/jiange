@@ -437,13 +437,34 @@ func decodeBlock(r *reader, d *Doc) error {
 	return nil
 }
 
-// Compact garbage-collects tombstones. It must only be called on a state that
-// every live client has acknowledged (the server's horizon), see PROTOCOL.md §GC.
-//   - deleted blocks lose their text, marks and props (except type);
-//   - deleted characters that have no children and are not a mark anchor are removed (repeatedly).
+// Compact strips payload that no operation can observe from a state about to
+// be saved as a snapshot: deleted blocks lose their marks and every prop except
+// type. Character tombstones are always retained, in live and deleted blocks.
 //
-// Returns the number of characters removed.
+// Tombstones cannot be garbage-collected at the acknowledged horizon: a replica
+// that has acknowledged a deletion still holds the tombstone and keeps using it
+// as a Fugue origin (typing after a removed slash query, after a converted
+// Markdown prefix, after any deletion), as a delete target for concurrent
+// deletes, or as a mark anchor. Dropping it made every such later op unresolved
+// for replicas that cold-load the snapshot (see PROTOCOL.md §11).
+//
+// Returns the number of characters removed, which is always 0.
 func (d *Doc) Compact() int {
+	for id, b := range d.blocks {
+		if id == Root || !b.deleted {
+			continue
+		}
+		t := b.props["type"]
+		b.props = map[string]propReg{"type": t}
+		b.marks = nil
+	}
+	return 0
+}
+
+// CompactLegacyTombstones is the tombstone GC that servers ran before
+// 2026-11-09. It is unsafe (see Compact) and kept only so tests can build the
+// lossy snapshots those servers persisted and verify the lossless recovery.
+func (d *Doc) CompactLegacyTombstones() int {
 	removed := 0
 	for id, b := range d.blocks {
 		if id == Root {

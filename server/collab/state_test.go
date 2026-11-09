@@ -76,31 +76,52 @@ func TestCompactPreservesViewAndFutureOps(t *testing.T) {
 			for _, op := range s.Ops[cut:] {
 				restored.Apply(op)
 			}
-			if restored.Pending() == 0 && canon(t, restored.View()) != want {
+			if restored.Pending() != 0 || canon(t, restored.View()) != want {
 				t.Fatal("ops after compaction diverged")
 			}
 		})
 	}
 }
 
-func TestCompactRemovesTombstones(t *testing.T) {
-	d := NewDoc()
-	b := d.CreateBlock(1, Root, "V", "paragraph")
-	d.InsertText(1, b.ID, 0, "hello world")
-	d.DeleteText(1, b.ID, 5, 6) // trailing tombstones are leaves of the Fugue tree
-	before := len(d.EncodeState())
-	n := d.Compact()
-	if n != 6 || d.Text(b.ID) != "hello" {
-		t.Fatalf("compact removed %d, text %q", n, d.Text(b.ID))
+// Regression (doc 9): a slash query is typed and deleted, the snapshot is
+// compacted, then the live replica (which still holds the tombstones) types
+// the block text with a deleted query character as its Fugue origin. A cold
+// load from the snapshot plus the tail must resolve it exactly.
+func TestCompactRetainsTombstonesReferencedLater(t *testing.T) {
+	live := NewDoc()
+	b := live.CreateBlock(1, Root, "V", "callout")
+	q := live.InsertText(1, b.ID, 0, "/gl")
+	live.DeleteText(1, b.ID, 0, 3)
+	snap, err := DecodeState(live.EncodeState())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(d.EncodeState()) >= before {
-		t.Fatal("state did not shrink")
+	legacy, _ := DecodeState(live.EncodeState())
+	if n := snap.Compact(); n != 0 {
+		t.Fatalf("compact removed %d tombstones", n)
 	}
-	d.InsertText(1, b.ID, 0, ">")
-	if d.Text(b.ID) != ">hello" {
-		t.Fatal(d.Text(b.ID))
+	if legacy.CompactLegacyTombstones() == 0 {
+		t.Fatal("fixture: legacy GC removed nothing")
+	}
+	tail := []Op{
+		{T: TTextInsert, ID: OpID{Client: 1, Clock: 50}, Block: b.ID, Parent: q.ID, Side: 0, Text: "注意"},
+		{T: TTextDelete, ID: OpID{Client: 2, Clock: 60}, Block: b.ID, Target: OpID{Client: q.ID.Client, Clock: q.ID.Clock + 2}, Len: 1},
+		{T: TMark, ID: OpID{Client: 1, Clock: 70}, Block: b.ID, Key: "bold", Value: ptr("true"), Start: Anchor{Char: q.ID, Side: 0}, End: Anchor{Char: OpID{Client: 1, Clock: 51}, Side: 1}},
+	}
+	for _, op := range tail {
+		live.Apply(op)
+		snap.Apply(op)
+		legacy.Apply(op)
+	}
+	if snap.Pending() != 0 || canon(t, snap.View()) != canon(t, live.View()) || snap.Text(b.ID) != "注意" {
+		t.Fatalf("cold load diverged: pending %d text %q", snap.Pending(), snap.Text(b.ID))
+	}
+	if legacy.Pending() == 0 {
+		t.Fatal("legacy GC no longer reproduces the unresolved dependency")
 	}
 }
+
+func ptr(s string) *string { return &s }
 
 func TestTryApply(t *testing.T) {
 	d := NewDoc()
