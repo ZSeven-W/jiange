@@ -132,6 +132,9 @@ func (s *Server) patchComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.notRecordComment(w, r, d) {
+		return
+	}
 	var in commentPatch
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -184,6 +187,9 @@ func (s *Server) commentResultAfterMutation(w http.ResponseWriter, r *http.Reque
 func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
+		return
+	}
+	if !s.notRecordComment(w, r, d) {
 		return
 	}
 	guard, ok := s.viewGuard(w, r)
@@ -360,4 +366,22 @@ func (s *Server) docMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"members": out})
+}
+
+// notRecordComment keeps record comments off the generic doc comment routes,
+// which do not apply the per-record locked-view check.
+func (s *Server) notRecordComment(w http.ResponseWriter, r *http.Request, d store.DocMeta) bool {
+	if d.Kind != "base" {
+		return true
+	}
+	c, found, err := s.recordComment(r.Context(), d.ID, pathID(r, "cid"))
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	if found && isRecordComment(c) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "comment not found")
+		return false
+	}
+	return true
 }
