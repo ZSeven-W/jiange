@@ -11,6 +11,7 @@ import {
   Heading6,
   Image as ImageIcon,
   Lightbulb,
+  Minus,
   Link2,
   List,
   ListOrdered,
@@ -49,14 +50,15 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   bookmark: Link2,
   table: Table2,
   columns: Columns2,
+  divider: Minus,
   doc: FileText, // @ 提及文档
 };
 
 /** 渲染斜杠菜单项 icon；未知 id 回退自绘占位。 */
-export function MenuGlyph({ id, fallback }: { id: string; fallback?: string }) {
+export function MenuGlyph({ id, fallback, size = 14 }: { id: string; fallback?: string; size?: number }) {
   const key = id.startsWith("doc:") ? "doc" : id;
   const Icon = MENU_ICONS[key];
-  if (Icon) return <Icon size={14} strokeWidth={1.7} />;
+  if (Icon) return <Icon size={size} strokeWidth={1.7} />;
   return <span className="text-[11px] font-semibold">{fallback ?? id}</span>;
 }
 
