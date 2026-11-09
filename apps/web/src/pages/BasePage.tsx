@@ -4,7 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, type FillRule, type FilterRule, type RowHeight, type ViewConfig } from "@/lib/api";
 import { ROW_HEIGHT_LABEL } from "./base/fill";
 import { Dashboard } from "./base/Dashboard";
-import { PALETTE } from "./base/registry";
+import { PALETTE, REGISTRY } from "./base/registry";
+import { TypeGlyph } from "./base/cells";
 import { Grid } from "./base/Grid";
 import { Kanban } from "./base/Kanban";
 import { Gallery } from "./base/Gallery";
@@ -286,6 +287,7 @@ export function BasePage({ id }: { id: number }) {
             </select>
           </label>
         )}
+        {current?.type === "kanban" && <CardConfigBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
         {(current?.type === "grid" || current?.type === "kanban") && <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {(current?.type === "grid" || current?.type === "kanban") && (
@@ -384,6 +386,8 @@ export function BasePage({ id }: { id: number }) {
           records={records}
           members={members}
           groupFieldId={cfg.group}
+          cardFields={cfg.card?.fields}
+          coverField={cfg.card?.cover}
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
@@ -729,6 +733,41 @@ function FillBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
             <Plus size={16} strokeWidth={1.7} /> 添加条件
           </button>
           {rules.length > 0 && <button type="button" className="text-subtle hover:text-foreground" onClick={() => set([])}>清空</button>}
+        </div>
+      </div>
+    </Popover>
+  );
+}
+
+function CardConfigBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const primary = fields.find((f) => f.isPrimary);
+  const group = cfg.group ?? fields.find((f) => f.type === "select")?.id;
+  const candidates = fields.filter((f) => f.id !== primary?.id && f.id !== group);
+  const shown = cfg.card?.fields ?? candidates.filter((f) => !REGISTRY[f.type].readonly).slice(0, 2).map((f) => f.id);
+  const attachments = fields.filter((f) => f.type === "attachment");
+  const setCard = (card: NonNullable<ViewConfig["card"]>) => onChange({ ...cfg, card });
+  return (
+    <Popover label="卡片配置" icon={<Settings2 size={15} strokeWidth={1.7} />} active={!!cfg.card} width={300}>
+      <div className="space-y-3 p-1" data-card-config>
+        <div className="text-[14px] text-foreground">卡片配置</div>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">封面</span>
+          <select className="h-8 w-40 rounded-md border bg-surface px-2" value={cfg.card?.cover ?? ""} onChange={(e) => setCard({ fields: cfg.card?.fields, cover: Number(e.target.value) || null })} data-card-cover-select>
+            <option value="">无封面</option>
+            {attachments.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </label>
+        <div>
+          <div className="mb-1 flex items-center justify-between text-muted-foreground"><span>卡片显示字段</span><span className="text-[12px] text-subtle">标题始终显示「{primary?.name ?? "主字段"}」</span></div>
+          <div className="max-h-56 space-y-0.5 overflow-y-auto">
+            {candidates.map((f) => (
+              <label key={f.id} className="flex h-8 cursor-pointer items-center gap-2 rounded px-1.5 hover:bg-hover">
+                <input type="checkbox" className="accent-primary" checked={shown.includes(f.id)} onChange={(e) => setCard({ cover: cfg.card?.cover, fields: e.target.checked ? [...shown, f.id] : shown.filter((id) => id !== f.id) })} data-card-field={f.id} />
+                <span className="text-muted-foreground"><TypeGlyph t={f.type} size={14} /></span>{f.name}
+              </label>
+            ))}
+            {candidates.length === 0 && <p className="px-1.5 text-[12px] text-subtle">没有其它字段</p>}
+          </div>
         </div>
       </div>
     </Popover>
