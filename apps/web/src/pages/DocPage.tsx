@@ -745,7 +745,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
-                upload={canEditContent ? (f) => docsApi.upload(id, f) : undefined}
+                upload={canEditContent ? (f, progress) => docsApi.upload(id, f, progress) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}
                 activeThread={activeThread}
                 onActivateThread={(cid) => {

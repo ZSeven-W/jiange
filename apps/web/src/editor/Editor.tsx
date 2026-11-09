@@ -39,6 +39,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { LinkCard } from "./LinkCard";
+import { ImageBlock } from "./ImageBlock";
 import { ask, askText } from "@/components/ui/ask";
 import { Columns3, Copy, MessageCircle, Play, Plus, Rows3, Trash2, X } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
@@ -97,7 +98,7 @@ interface Props {
   /** workspace members offered by the @ menu（@人提及） */
   people?: { id: number; name: string }[];
   /** stores a file and returns its id; enables image/file blocks */
-  upload?: (f: File) => Promise<Uploaded>;
+  upload?: (f: File, onProgress?: (percent: number) => void) => Promise<Uploaded>;
   me: Presence;
   /** unresolved comments anchor-highlighted in the text */
   comments?: Comment[];
@@ -200,6 +201,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const selBlocksRef = useRef(selBlocks);
   selBlocksRef.current = selBlocks;
   const [toast, setToast] = useState("");
+  /** 正在上传的附件：在插入位置的块下方显示占位与进度（不写入文档）。 */
+  const [uploading, setUploading] = useState<{ anchor: string; name: string; percent: number; index: number; total: number } | null>(null);
   const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos; docTitle?: string } | null>(null);
   const linkHide = useRef<number | null>(null);
   const keepLinkCard = () => { if (linkHide.current) { window.clearTimeout(linkHide.current); linkHide.current = null; } };
@@ -377,6 +380,23 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
    * 块菜单动作。手柄所在块属于当前跨块选区时作用于全部选中块，否则只作用于该块；
    * 复制/剪切走与键盘相同的剪贴板路径（受复制权限约束），评论复用划词评论锚点。
    */
+  const replaceFile = useCallback(async (b: OpId, f: File, progress: (p: number) => void) => {
+    if (!upload || readOnlyRef.current) throw new Error("readonly");
+    const client = sync.client;
+    const asset = await upload(f, progress);
+    const d = client.doc;
+    if (!mounted.current || readOnlyRef.current || sync.client !== client || !d || !d.hasBlock(b)) throw new Error("changed");
+    const tx = new Tx(d);
+    tx.setProp(b, "fileId", String(asset.id));
+    tx.setProp(b, "name", asset.name);
+    tx.setProp(b, "mime", asset.mime);
+    tx.setProp(b, "size", String(asset.size));
+    um.record(tx, sel.current, sel.current, "prop");
+    client.push(tx.ops);
+    force((x) => x + 1);
+    publish();
+    um.seal();
+  }, [upload, sync.client, um]);
   const copyBlockLink = useCallback(async (blockKey: string) => {
     const url = blockLink(window.location.href, blockKey);
     if (!navigator.clipboard?.writeText) return setToast(`请手动复制：${url}`);
@@ -958,11 +978,15 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       for (const f of files) {
         if (!mounted.current) return;
         if (readOnlyRef.current || currentClient.current !== client || client.doc !== captured.doc) { setColumnNotice("文档内容或编辑权限已变化，附件未插入；原文已保留。"); return; }
-        assets.push(await upload(f));
+        const index = assets.length;
+        setUploading({ anchor: idKey(captured.anchor), name: f.name, percent: 0, index, total: files.length });
+        assets.push(await upload(f, (percent) => { if (mounted.current) setUploading((u) => u && u.index === index ? { ...u, percent } : u); }));
       }
     } catch {
-      if (mounted.current) setColumnNotice("上传失败，原文未修改。请检查网络后重试。");
+      if (mounted.current) { setUploading(null); setColumnNotice("上传失败，原文未修改。请检查网络后重试。"); }
       return;
+    } finally {
+      if (mounted.current) setUploading(null);
     }
     if (!mounted.current) return;
     if (readOnlyRef.current || currentClient.current !== client || client.doc !== captured.doc || !uploadTargetUnchanged(captured, context.type, context.parent, context.boundaryIds)) { setColumnNotice("文档内容或编辑权限已变化，附件未插入；原文已保留。"); return; }
@@ -1624,6 +1648,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onDragEnd={readOnly ? undefined : () => setDrag(null)}
                 canCopy={!onCopyBlock}
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
+                onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
+                uploadNotice={uploading?.anchor === k ? uploading : null}
               />
             );
           })}
@@ -1848,9 +1874,11 @@ interface BlockProps {
   onDragEnd?: () => void;
   canCopy?: boolean;
   canDownload?: boolean;
+  onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
+  uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -2020,7 +2048,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <InlineImage key={props.fileId} fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) : undefined} onWidth={(p) => onSetProp?.("imageWidth", String(p ?? ""))} version={syncVersion} status={syncStatus} disableFileDownloads={!canDownload} onPreviewImage={onPreviewImage} />
+        <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
@@ -2077,6 +2105,10 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           </div>
         </div>
       )}
+      {uploadNotice && <div contentEditable={false} role="status" className="my-2 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border border-dashed bg-sidebar/50 px-3.5 py-2.5 text-[13px]" data-upload-placeholder>
+        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-[11px] font-semibold text-primary">{Math.round(uploadNotice.percent)}%</span>
+        <span className="min-w-0 flex-1"><span className="block truncate text-foreground">正在上传 {uploadNotice.name}{uploadNotice.total > 1 ? `（${uploadNotice.index + 1}/${uploadNotice.total}）` : ""}</span><span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-border"><span className="block h-full rounded-full bg-primary transition-[width]" style={{ width: `${uploadNotice.percent}%` }} /></span></span>
+      </div>}
     </div>
   );
 }
@@ -2246,37 +2278,6 @@ function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
     : <div contentEditable={false} className={className} data-bookmark>{content}</div>;
 }
 
-function InlineImage({ fileId, name, mime, width, onWidth, version, status, disableFileDownloads = false, onPreviewImage }: { fileId?: string; name?: string; mime?: string; width?: number; onWidth?: (p?: number) => void; version: number; status: SyncDoc["status"]; disableFileDownloads?: boolean; onPreviewImage?: (src: string, alt: string, mime?: string) => void }) {
-  const [failure, setFailure] = useState<ImageFailure | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const [automatic, setAutomatic] = useState(0);
-  const src = `/api/files/${fileId}`;
-  useEffect(() => {
-    if (!failure || !shouldRetryImage(failure, version, status, automatic)) return;
-    setFailure(null);
-    setAutomatic((n) => n + 1);
-    setAttempt((n) => n + 1);
-  }, [failure, version, status, automatic]);
-  return (
-    <figure contentEditable={false} className="group/img my-2 select-none">
-      {failure ? <button type="button" className="rounded border px-3 py-2 text-[13px] text-subtle hover:bg-hover" onClick={() => { setFailure(null); setAttempt((n) => n + 1); }}>图片暂不可用，点击重试</button> : <img key={attempt} src={src} alt={name} style={width ? { width: `${width}%` } : undefined} className={cn("max-h-[480px] max-w-full cursor-zoom-in rounded-lg border object-contain", !width && "h-auto")} draggable={false} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onClick={() => onPreviewImage?.(src, name ?? "图片", mime)} onError={() => setFailure({ version, status })} data-preview-image />}
-      {onWidth && (
-        <span className="mt-1 hidden items-center justify-center gap-1 group-hover/img:flex" data-img-sizes>
-          {[25, 50, 75, 100].map((p2) => (
-            <button
-              key={p2}
-              className={cn("rounded border px-1.5 py-0.5 text-[11px] text-subtle hover:bg-hover hover:text-foreground", width === p2 && "border-primary text-primary")}
-              onClick={() => onWidth(width === p2 ? undefined : p2)}
-              title={`宽度 ${p2}%`}
-            >
-              {p2}%
-            </button>
-          ))}
-        </span>
-      )}
-    </figure>
-  );
-}
 
 
 /** 公式块：LaTeX 源码渲染视图，点击编辑源码。 */

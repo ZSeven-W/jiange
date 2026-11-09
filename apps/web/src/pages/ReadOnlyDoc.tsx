@@ -1,5 +1,6 @@
 import { calloutStyle } from "@/editor/blockStyles";
 import { codeLangLabel } from "@/editor/CodeBlockHeader";
+import { imageAlign } from "@/editor/ImageBlock";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
 import { DiagramView } from "@/editor/DiagramView";
@@ -53,7 +54,9 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
   const src = fileURL(block.props.fileId, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
   if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
-  return <figure className="my-2"><img src={src} alt={block.props.name || "图片"} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} className="max-h-[480px] max-w-full rounded-lg border" onError={() => setFailed(true)} /></figure>;
+  const align = imageAlign(block.props.align);
+  const width = Number(block.props.imageWidth) || undefined;
+  return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}><img src={src} alt={block.props.caption || block.props.name || "图片"} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={width ? { width: `${Math.min(100, width)}%` } : undefined} className="max-h-[640px] max-w-full rounded-[4px] object-contain" onError={() => setFailed(true)} />{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
 function ReadOnlyTable({ data }: { data?: string }) {
