@@ -22,8 +22,11 @@ describe("empty document insertion affordance", () => {
   });
 
   it("uses the normal hover affordance for nonempty or multiple paragraphs and hides it in read-only mode", () => {
-    expect(render("内容")).toMatch(/<span class="[^"]*\bhidden\b[^"]*group-hover:flex[^"]*"[^>]*><button[^>]*data-insert-after/);
+    // 非空块悬停显示飞书式块手柄（类型图标 + 拖拽点），“在下方添加”收进块菜单。
+    expect(render("内容")).toMatch(/<span class="[^"]*\bhidden\b[^"]*group-hover:flex[^"]*"[^>]*><span[^>]*><button[^>]*data-block-handle/);
+    expect(render("内容")).not.toContain("data-insert-after");
     expect(render("", false, true)).toMatch(/<span class="[^"]*\bhidden\b[^"]*group-hover:flex[^"]*"[^>]*><button[^>]*data-insert-after/);
     expect(render("", true)).not.toContain("data-insert-after");
+    expect(render("内容", true)).not.toContain("data-block-handle");
   });
 });

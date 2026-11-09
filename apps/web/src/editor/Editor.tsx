@@ -39,6 +39,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
+import { BlockHandle, CONVERTIBLE, TEXT_BLOCKS } from "./BlockHandle";
 import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
 import { askArea } from "@/components/ui/ask";
@@ -1639,6 +1640,8 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     }
     return makeRuns(ch.spans, flags, ch.anchors).map(renderAnchoredRun);
   };
+  const [handleOpen, setHandleOpen] = useState(false);
+  const emptyText = spans.length === 0 && TEXT_BLOCKS.has(type);
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
   if (type === "ordered") prefix = <span className="select-none tabular-nums text-primary">{number}.</span>;
@@ -1669,30 +1672,28 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
-        {onInsertAfter && (
+      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert || handleOpen ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
+        {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock)) ? (
           <button
-            className="relative grid size-7 place-items-center rounded-md border bg-surface text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
+            className="relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
             title="插入内容"
             aria-label="插入内容"
             onMouseDown={(event) => event.preventDefault()}
             onClick={onInsertAfter}
             data-insert-after
-          ><AddIcon className="size-[14px]" /></button>
-        )}
-        <span contentEditable={false} className="absolute -left-8 top-1/2 hidden -translate-y-1/2 flex-col items-center gap-0.5 group-hover:flex">
-          {onDeleteBlock && (
-            <button
-              className="grid h-5 w-5 place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover hover:text-destructive"
-              title="删除此块"
-              onClick={() => onDeleteBlock(id)}
-              data-delete-block
-            >
-              ✕
-            </button>
-          )}
-          {onDragStart && <span draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onDragStart(); }} onDragEnd={onDragEnd} title="拖动以移动" className="grid h-6 w-4 cursor-grab place-items-center rounded text-[12px] leading-none text-subtle hover:bg-hover">⋮⋮</span>}
-        </span>
+          ><AddIcon className="size-[16px]" /></button>
+        ) : (onDragStart || onDeleteBlock || onInsertAfter) ? (
+          <BlockHandle
+            type={type}
+            open={handleOpen}
+            onOpenChange={setHandleOpen}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onInsertAfter={onInsertAfter}
+            onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+            onConvert={onSetProp && CONVERTIBLE.has(type) ? (next) => onSetProp("type", next) : undefined}
+          />
+        ) : null}
       </span>
       {type === "diagram" ? (
         <div
