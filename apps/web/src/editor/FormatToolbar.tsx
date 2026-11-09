@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Baseline, Bold, ChevronDown, Code2, Highlighter, Italic, Link2, MessageSquarePlus, Strikethrough, Underline } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Baseline, Bold, ChevronDown, Code2, Eraser, Highlighter, Italic, Link, Link2, MessageSquarePlus, MoreHorizontal, Strikethrough, Underline } from "lucide-react";
 
 const TYPES: [string, string][] = [["paragraph", "正文"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS = [
@@ -11,11 +11,24 @@ const MARKS = [
   { key: "code", label: "行内代码", Icon: Code2 },
 ] as const;
 
+export const ALIGNS = [
+  { value: "left", label: "左对齐", Icon: AlignLeft },
+  { value: "center", label: "居中对齐", Icon: AlignCenter },
+  { value: "right", label: "右对齐", Icon: AlignRight },
+] as const;
+export type Align = (typeof ALIGNS)[number]["value"];
+/** 只接受已知对齐值，其余（含缺省）按左对齐处理。 */
+export const blockAlign = (value: string | undefined): Align => (value === "center" || value === "right" ? value : "left");
+
 /** 飞书风格文本色板：文字色（上排）与背景高亮（下排同色浅版）。 */
 const PALETTE = ["#212121", "#F54A45", "#FF8800", "#FFC60A", "#00B42A", "#3370FF", "#7B61FF", "#E63995"];
 
-export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, onComment, readOnly, commentError }: {
+export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, onType, onAlign, onClearFormat, onCopyLink, onComment, readOnly, commentError }: {
   x: number; y: number; marks: Record<string, string>; blockType: string;
+  align?: string;
+  onAlign?: (align: Align) => void;
+  onClearFormat?: () => void;
+  onCopyLink?: () => void;
   onMark: (key: string, value?: string) => void; onLink: (url: string) => void; onType: (t: string) => void;
   onComment?: () => void;
   readOnly?: boolean;
@@ -26,6 +39,8 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
   const typeMenuRef = useRef<HTMLDivElement>(null);
   const paletteRef = useRef<HTMLDivElement>(null);
   const [palette, setPalette] = useState<"color" | "bg" | null>(null);
+  const [pop, setPop] = useState<"align" | "more" | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState(false);
   const [placement, setPlacement] = useState<{ left: number; top: number; maxWidth: number } | null>(null);
 
@@ -91,7 +106,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
       if (rect.top + dy < top + 8) dy = top + 8 - rect.top;
       element.style.transform = `translate(${dx}px, ${dy}px)`;
     };
-    const update = () => { fit(typeMenuRef.current); fit(paletteRef.current); };
+    const update = () => { fit(typeMenuRef.current); fit(paletteRef.current); fit(popRef.current); };
     update();
     window.addEventListener("resize", update);
     window.visualViewport?.addEventListener("resize", update);
@@ -101,7 +116,10 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
     };
-  }, [palette, menu, placement]);
+  }, [palette, menu, pop, placement]);
+  const current = blockAlign(align);
+  const AlignIcon = ALIGNS.find((a) => a.value === current)!.Icon;
+  const more = !readOnly && (onClearFormat || onCopyLink);
   const label = TYPES.find(([t]) => t === blockType)?.[1] ?? "正文";
   return (
     <div
@@ -119,7 +137,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
       ) : (
         <>
           <div className="relative">
-            <button className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 text-[13px] hover:bg-hover" onClick={() => setMenu((m) => !m)}>
+            <button className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 text-[13px] hover:bg-hover" onClick={() => { setMenu((m) => !m); setPalette(null); setPop(null); }}>
               {label} <ChevronDown size={12} className="text-subtle" />
             </button>
             {menu && (
@@ -144,7 +162,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
           <span className="relative flex">
             <button
               title="文字颜色"
-              onClick={() => setPalette((p) => (p === "color" ? null : "color"))}
+              onClick={() => { setPalette((p) => (p === "color" ? null : "color")); setMenu(false); setPop(null); }}
               className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.color && "bg-accent")}
               data-color-btn
             >
@@ -153,7 +171,7 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
             </button>
             <button
               title="背景高亮"
-              onClick={() => setPalette((p) => (p === "bg" ? null : "bg"))}
+              onClick={() => { setPalette((p) => (p === "bg" ? null : "bg")); setMenu(false); setPop(null); }}
               className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.bg && "bg-accent")}
               data-bg-btn
             >
@@ -193,6 +211,19 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
               </div>
             )}
           </span>
+          {onAlign && <span className="relative flex">
+            <span className="mx-1 my-auto h-4 w-px bg-border" />
+            <button type="button" title="对齐" aria-label="对齐" aria-haspopup="menu" aria-expanded={pop === "align"} onClick={() => { setPop((p) => (p === "align" ? null : "align")); setMenu(false); setPalette(null); }} className={cn("flex h-7 items-center gap-0.5 rounded px-1 hover:bg-hover", pop === "align" && "bg-hover")} data-align-btn>
+              <AlignIcon size={15} strokeWidth={1.8} /><ChevronDown size={11} className="text-subtle" />
+            </button>
+            {pop === "align" && <div ref={popRef} role="menu" className="absolute left-2 top-9 z-40 flex gap-0.5 rounded-lg border bg-surface p-1 shadow-lg" data-align-pop>
+              {ALIGNS.map(({ value, label: alignLabel, Icon }) => (
+                <button key={value} type="button" role="menuitemradio" aria-checked={current === value} title={alignLabel} aria-label={alignLabel} onClick={() => { onAlign(value); setPop(null); }} className={cn("grid size-7 place-items-center rounded hover:bg-hover", current === value && "bg-primary/10 text-primary")} data-align={value}>
+                  <Icon size={15} strokeWidth={1.8} />
+                </button>
+              ))}
+            </div>}
+          </span>}
         </>
       ))}
       {onComment && (
@@ -200,6 +231,15 @@ export function FormatToolbar({ x, y, marks, blockType, onMark, onLink, onType, 
           <MessageSquarePlus size={15} strokeWidth={1.7} />
         </button>
       )}
+      {more && <span className="relative flex">
+        <button type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded={pop === "more"} onClick={() => { setPop((p) => (p === "more" ? null : "more")); setMenu(false); setPalette(null); }} className={cn("grid size-7 place-items-center rounded hover:bg-hover", pop === "more" && "bg-hover")} data-more-btn>
+          <MoreHorizontal size={15} strokeWidth={1.8} />
+        </button>
+        {pop === "more" && <div ref={popRef} role="menu" className="absolute right-0 top-9 z-40 w-40 rounded-lg border bg-surface p-1 text-[13px] shadow-lg" data-more-pop>
+          {onClearFormat && <button type="button" role="menuitem" onClick={() => { onClearFormat(); setPop(null); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-hover" data-clear-format><Eraser size={14} strokeWidth={1.7} className="text-muted-foreground" />清除格式</button>}
+          {onCopyLink && <button type="button" role="menuitem" onClick={() => { onCopyLink(); setPop(null); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-hover" data-copy-block-link><Link size={14} strokeWidth={1.7} className="text-muted-foreground" />复制段落链接</button>}
+        </div>}
+      </span>}
       {commentError && <span role="alert" className="max-w-52 px-2 text-[12px] text-destructive">{commentError}</span>}
     </div>
   );

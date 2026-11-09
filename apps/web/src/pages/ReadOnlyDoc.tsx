@@ -125,7 +125,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         }
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
-      return <div key={block.id} data-readonly-block={block.type} style={{ marginLeft: indent * 24 }}>{content}{block.type !== "columns" && nested}</div>;
+      return <div key={block.id} data-readonly-block={block.type} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{block.type !== "columns" && nested}</div>;
     });
   }
   return <div data-readonly-doc>{renderChildren("0:0")}</div>;
