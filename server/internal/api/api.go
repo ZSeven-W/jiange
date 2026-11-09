@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
+	"net/netip"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,6 +33,8 @@ type Server struct {
 	BtHub         *btsync.Hub  // nil disables base realtime
 	Blobs         blob.Store   // nil disables attachments
 	WebUI         http.Handler // embedded frontend; nil serves nothing at /
+	// PreviewAllow overrides the link-preview address check (tests only).
+	PreviewAllow func(netip.Addr) bool
 }
 
 func (s *Server) now() time.Time {
@@ -52,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
+	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
 	mux.Handle("POST /api/docs", s.requireUser(http.HandlerFunc(s.createDoc)))
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
