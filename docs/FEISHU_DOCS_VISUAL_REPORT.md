@@ -1,5 +1,39 @@
 # 飞书文档界面核验记录
 
+## 2026-11-09（第四轮）：本地对象存储、图片块、@成员名片、表格行列与合并、真实鼠标拖动、附件卡片、选区色、页面宽度
+
+![图片悬停工具栏](screenshots/document-image-toolbar-20261109.jpg)
+
+![图片图注](screenshots/document-image-caption-20261109.jpg)
+
+![上传占位与进度](screenshots/document-upload-progress-20261109.jpg)
+
+![@成员名片](screenshots/document-member-card-20261109.jpg)
+
+![表格行菜单](screenshots/document-table-row-menu-20261109.jpg)
+
+![合并单元格](screenshots/document-table-merge-20261109.jpg)
+
+![真实鼠标多块拖动](screenshots/document-mouse-drag-20261109.jpg)
+
+![飞书浅蓝选区](screenshots/document-selection-color-20261109.jpg)
+
+![页面宽度 标准/全宽](screenshots/document-width-menu-20261109.jpg)
+
+![附件卡片](screenshots/document-file-card-20261109.jpg)
+
+环境：1440×900 无头 Chromium（全宽演示用 1920×1000）、合成账号、临时 PostgreSQL 16 + Go 服务，本轮新增本地 MinIO（127.0.0.1:9000，服务端配置 `JIANGE_S3_ENDPOINT/ACCESS_KEY/SECRET_KEY`），图片与附件为真实上传到 MinIO。已在浏览器验证：
+
+- 图片块：悬停工具栏（左/中/右对齐、原始大小/50%/75%/适应宽度、替换、下载、删除），左右拖拽手柄改宽度，图注失焦/回车写入 `caption` 属性；替换与插入时显示上传占位和进度（以 40KB/s 节流截到 21%/26%）；删除走确认框。图片「评论」暂未接入（评论锚定文字，图片无文字锚点）。
+- @成员：悬停提及显示名片（头像、姓名、邮箱、所有者/协作者、发邮件、复制邮箱，本人显示「我」）。
+- 表格：首行/首列灰色握把选中整列/整行，菜单含 在上/下方插入行、在左/右侧插入列、清空、删除（最后一行/列禁用）；Shift+点击选区后「合并单元格」，合并单元格内「拆分单元格」。合并信息存于新块属性 `tableMerges`，表格结构变化与合并在同一事务写入 `tableData`+`tableMerges`，**未改协同线协议**；插入行、合并、拆分三步 Ctrl+Z 依次恢复，表格内容复原。只读页同步渲染合并。
+- 拖动：用 Playwright `mouse.down/move/up` 驱动真实拖动时发现块手柄 `mousedown` 的 `preventDefault` 会阻止 Chromium 发起原生拖放（真实用户同样受影响）；去掉后单块与 3 块选区均能用真实鼠标拖动，撤销恢复，块选区与菜单不受影响。
+- 附件卡片：按类型着色图标（PDF 红/DOC 蓝/XLS 绿/PPT 橙/压缩包紫等）、「大小 · 类型」、悬停「预览/下载」，只读页共用。
+- 选区色：编辑区与只读页改为飞书浅蓝底并保留原文字颜色。
+- 页面宽度：「更多」菜单新增「页面宽度 标准/全宽」，按用户+文档记在本地，刷新保持。
+
+前端 110 个测试文件 636 项、协同模块 173 项、TypeScript、生产构建与 Go 测试通过。仍**未**在用户登录的飞书中逐像素对照；分隔线样式、表格插入/删除列时列宽不随之平移、图片评论尚未实现。
+
 ## 2026-11-09（第三轮）：顶栏元信息、多块拖动、只读手柄、高亮块/代码块/表格、链接卡片、评论卡片
 
 ![顶栏「最近修改」](screenshots/document-header-meta-20261109.jpg)
