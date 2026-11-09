@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, commentsApi, type Comment, type User } from "@/lib/api";
 import { scrollToCommentThread } from "@/editor/commentAnchor";
+import { Avatar } from "@/components/brand";
+import { colorFor } from "@/lib/presence";
 import { commentListKey, commentMembersKey, type SavedCommentDraft } from "./commentAccess";
 import { isDocAccessDenied } from "./docMetaState";
 import { CommentAttemptStore, matchesUnresolvedDraft, type CommentAttempt } from "./commentAttempts";
@@ -239,61 +241,48 @@ export function CommentsPanel({
         {threads.map((t) => (
           <div
             key={t.id}
-            className={`mb-2 cursor-pointer rounded-lg border p-3 text-[13px] ${activeThread === t.id ? "border-primary" : ""} ${t.resolved ? "opacity-55" : ""}`}
+            className={`group/thread mb-2.5 cursor-pointer rounded-lg border bg-surface p-3 text-[14px] leading-[1.6] transition-shadow hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)] ${activeThread === t.id ? "border-primary shadow-[0_2px_8px_rgba(31,35,41,0.08)]" : ""} ${t.resolved ? "opacity-55" : ""}`}
             onClick={() => onActivate(activeThread === t.id ? null : t.id)}
             data-thread={t.id}
           >
-            {t.quote && <div className="mb-2 border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t.quote}</div>}
-            <CommentBody c={t} members={visibleMembers} />
-            <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
-              {t.userName} · {new Date(t.createdAt).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-              <span className="ml-auto flex items-center gap-2">
-                {t.resolved && <span className="rounded bg-[#E1EAFF] px-1.5 py-0.5 font-medium text-primary">已解决</span>}
-                {canEdit && (
-                  <>
-                    <button
-                      className="hover:text-primary"
-                      disabled={!canSubmit}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (replyTo !== null) onComposerSuspended();
-                        setReplyTo(replyTo === t.id ? null : t.id);
-                      }}
-                    >
-                      回复
-                    </button>
-                    <button
-                      className="hover:text-primary"
-                      disabled={actionPending || !canSubmit}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void runAction(() => commentsApi.update(id, t.id, { resolved: !t.resolved }));
-                      }}
-                    >
-                      {t.resolved ? "重新打开" : "解决"}
-                    </button>
-                    {(t.userId === meId || canManage) && (
-                      <button disabled={actionPending || !canSubmit} className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>
-                        删除
-                      </button>
-                    )}
-                  </>
-                )}
-              </span>
-            </div>
+            {t.quote && <div className="mb-2.5 truncate border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle" data-thread-quote data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t.quote}</div>}
+            <CommentAuthor name={t.userName} userId={t.userId} at={t.createdAt} badge={t.resolved ? <span className="rounded bg-[#E1EAFF] px-1.5 py-px text-[11px] font-medium text-primary">已解决</span> : null} />
+            <div className="mt-1 pl-8"><CommentBody c={t} members={visibleMembers} /></div>
             {(replies.get(t.id) ?? []).map((rp) => (
-              <div key={rp.id} className="mt-2 rounded-md bg-sidebar/70 p-2">
-                <CommentBody c={rp} members={visibleMembers} />
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
-                  {rp.userName}
-                  {canEdit && (rp.userId === meId || canManage) && (
-                    <button disabled={actionPending || !canSubmit} className="ml-auto hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>
-                      删除
-                    </button>
-                  )}
-                </div>
+              <div key={rp.id} className="mt-3" data-comment-reply={rp.id}>
+                <CommentAuthor name={rp.userName} userId={rp.userId} at={rp.createdAt} />
+                <div className="mt-1 pl-8"><CommentBody c={rp} members={visibleMembers} /></div>
+                {canEdit && (rp.userId === meId || canManage) && (
+                  <div className={`mt-0.5 flex justify-end pl-8 text-[12px] text-subtle ${activeThread === t.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`}>
+                    <button disabled={actionPending || !canSubmit} className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>删除</button>
+                  </div>
+                )}
               </div>
             ))}
+            {canEdit && (
+              <div className={`mt-2 flex items-center gap-1 pl-8 text-[12px] text-subtle ${activeThread === t.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`} data-thread-actions>
+                <button
+                  className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-primary"
+                  disabled={!canSubmit}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (replyTo !== null) onComposerSuspended();
+                    setReplyTo(replyTo === t.id ? null : t.id);
+                  }}
+                >回复</button>
+                <button
+                  className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-primary"
+                  disabled={actionPending || !canSubmit}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void runAction(() => commentsApi.update(id, t.id, { resolved: !t.resolved }));
+                  }}
+                >{t.resolved ? "重新打开" : "解决"}</button>
+                {(t.userId === meId || canManage) && (
+                  <button disabled={actionPending || !canSubmit} className="ml-auto rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>删除</button>
+                )}
+              </div>
+            )}
             {replyTo === t.id && canEdit && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                 <Composer key={`${id}:${meId}:${session}:${t.id}`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={null} parentId={t.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
@@ -304,6 +293,25 @@ export function CommentsPanel({
       </div>
     </aside>
   );
+}
+
+/** 飞书评论卡片头部：头像 + 姓名 + 时间。 */
+function CommentAuthor({ name, userId, at, badge }: { name: string; userId: number; at: string; badge?: React.ReactNode }) {
+  return <div className="flex min-w-0 items-center gap-2" data-comment-author>
+    <Avatar name={name} color={colorFor(userId - 1)} size={24} />
+    <span className="truncate text-[13px] font-medium text-foreground">{name}</span>
+    <span className="shrink-0 text-[12px] text-subtle">{formatCommentTime(at)}</span>
+    {badge && <span className="ml-auto shrink-0">{badge}</span>}
+  </div>;
+}
+
+/** 评论时间：今天 16:53 / 11月8日 09:05。 */
+export function formatCommentTime(iso: string, now = new Date()) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return `今天 ${hm}`;
+  return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 /** Renders a comment body with @人 highlighted. */
