@@ -1,5 +1,20 @@
 # 飞书文档界面核验记录
 
+## 2026-11-09：文档页外观（目录、块手柄、斜杠菜单、侧面板、顶栏星标）
+
+![左侧目录与正文](screenshots/document-outline-desktop-20261109.jpg)
+
+![块手柄与块菜单](screenshots/document-block-menu-20261109.jpg)
+
+![斜杠菜单图标网格](screenshots/document-slash-grid-20261109.jpg)
+
+![评论面板停靠在顶栏下方](screenshots/document-comments-docked-20261109.jpg)
+
+![标题旁收藏星标](screenshots/document-header-star-20261109.jpg)
+
+环境：1440×900 无头 Chromium，合成账号与文档，隔离的临时 PostgreSQL 16 与 Go 服务（未配置 MinIO，附件/封面上传未覆盖）。参考为飞书公开帮助与开放平台文档组件配置，**未**在用户登录的飞书中逐像素对照。已在浏览器验证：目录随滚动高亮、点击跳转；块菜单转换 H2→H3 并撤销恢复；斜杠菜单方向键高亮与拼音搜索回落为列表；评论面板不再遮挡顶栏且正文重排；星标切换收藏。390×844 模拟移动视口下目录不默认展开、正文无横向溢出。前端 98 个测试文件 582 项、协同模块 173 项、TypeScript 与 Go 测试通过（Go 未连接一次性 PostgreSQL 集成库）。
+
+
 ## 2026-11-07：封面与全局搜索
 
 ![桌面文档封面](screenshots/document-cover-desktop-20261107.jpg)
