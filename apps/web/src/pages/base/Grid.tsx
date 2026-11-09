@@ -770,8 +770,8 @@ export function Grid({
                       </span>
                     )}
                   </div>
-                {editField?.id === f.id && <FieldForm initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
-                {insertAt?.fid === f.id && <FieldForm onCancel={() => setInsertAt(null)} onSubmit={(patch) => saveField({ ...patch, position: insertAt.position }).then(() => setInsertAt(null))} onAcknowledge={() => ledger.discardKey("field:create")} />}
+                {editField?.id === f.id && <FieldForm members={members} initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
+                {insertAt?.fid === f.id && <FieldForm members={members} onCancel={() => setInsertAt(null)} onSubmit={(patch) => saveField({ ...patch, position: insertAt.position }).then(() => setInsertAt(null))} onAcknowledge={() => ledger.discardKey("field:create")} />}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
               </Fragment>
@@ -791,7 +791,7 @@ export function Grid({
                 <button className="size-full text-[16px] text-subtle hover:text-foreground" onClick={() => setNewField((v) => !v)} aria-label="添加字段" disabled={ledger.blocked("field:create")}>
                   +
                 </button>
-                {newField && <FieldForm onCancel={() => setNewField(false)} onSubmit={(f) => saveField(f)} onAcknowledge={() => ledger.discardKey("field:create")} />}
+                {newField && <FieldForm members={members} onCancel={() => setNewField(false)} onSubmit={(f) => saveField(f)} onAcknowledge={() => ledger.discardKey("field:create")} />}
               </th>
             )}
           </tr>

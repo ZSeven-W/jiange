@@ -12,5 +12,11 @@ describe("field 默认值 input", () => {
     expect(defaultCell("date", "2026-11-09", [])).toBe("2026-11-09");
     expect(defaultCell("formula", "x", [])).toBeNull();
     expect(defaultCell("text", "   ", [])).toBeNull();
+    expect(defaultCell("multi_select", '["乙","甲","旧"]', ["甲", "乙"])).toEqual(["甲", "乙"]);
+    expect(defaultCell("multi_select", "[]", ["甲"])).toBeNull();
+    expect(defaultCell("multi_select", "not json", ["甲"])).toBeNull();
+    expect(defaultCell("person", "7", [])).toBe(7);
+    expect(defaultCell("person", "", [])).toBeNull();
+    expect(defaultCell("person", "-1", [])).toBeNull();
   });
 });
