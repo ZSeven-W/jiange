@@ -154,6 +154,7 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 	defer r.mu.Unlock()
 	if err := r.load(ctx); err != nil {
 		r.doc = nil
+		r.hub.Log.Error("load document", "doc", r.id, "err", err)
 		c.send(collab.EncodeError("internal", "could not load document"))
 		return err
 	}
