@@ -39,6 +39,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { LinkCard } from "./LinkCard";
+import { FileCard, fmtSize } from "./FileCard";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import type { Merge } from "./tableOps";
@@ -2094,20 +2095,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "bookmark" ? (
         <BookmarkBlock url={props.url} name={props.name} />
       ) : type === "file" ? (
-        <div
-          contentEditable={false}
-          className={cn("my-1 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border px-3.5 py-2.5", onPreviewImage && isPreviewable(props.mime) && "cursor-zoom-in hover:bg-hover")}
-          onClick={() => {
-            if (onPreviewImage && isPreviewable(props.mime)) onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime);
-          }}
-          data-file-card
-        >
-          <span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(props.name?.split(".").pop() ?? "FILE").slice(0, 4).toUpperCase()}</span>
-          <span className="min-w-0">
-            {canDownload ? <a href={`/api/files/${props.fileId}`} className="block truncate text-[14px] font-medium hover:underline">{props.name}</a> : <span className="block truncate text-[14px] font-medium">{props.name}</span>}
-            <span className="block text-[12px] text-subtle">{canDownload ? fmtSize(Number(props.size ?? 0)) : "下载已关闭"}</span>
-          </span>
-        </div>
+        <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (
         <div className="rounded-md bg-[#F5F6F7] dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
           <CodeBlockHeader
@@ -2212,9 +2200,6 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
   return Object.keys(marks).length ? <span className={cls} style={style}>{text}</span> : <>{text}</>;
 }
 
-function fmtSize(n: number) {
-  return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
-}
 
 function BookmarkBlock({ url, name }: { url?: string; name?: string }) {
   const href = safeURL(url);

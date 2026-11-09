@@ -1,6 +1,7 @@
 import { calloutStyle } from "@/editor/blockStyles";
 import { codeLangLabel } from "@/editor/CodeBlockHeader";
 import { imageAlign } from "@/editor/ImageBlock";
+import { FileCard } from "@/editor/FileCard";
 import { coverMap, parseMerges } from "@/editor/tableOps";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
@@ -126,7 +127,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
-          content = <div className="my-1 flex w-[360px] max-w-full items-center gap-3 rounded-lg border px-3.5 py-2.5"><span className="grid size-8 place-items-center rounded-md bg-[#FFF3E8] text-[10px] font-bold text-[#FF8800]">{(block.props.name?.split(".").pop() || "FILE").slice(0, 4).toUpperCase()}</span><span className="min-w-0">{href ? <a href={href} rel="noreferrer" className="block truncate text-[14px] font-medium hover:underline">{block.props.name || "附件"}</a> : <span className="block truncate text-[14px] font-medium">{block.props.name || "附件"}</span>}<span className="block text-[12px] text-subtle">{disableFileDownloads ? "下载已关闭" : formatSize(block.props.size)}</span></span></div>; break;
+          content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;
         }
         case "video": content = <ReadOnlyVideo url={block.props.url} name={block.props.name} disableFileDownloads={disableFileDownloads} />; break;
         case "bookmark": {
