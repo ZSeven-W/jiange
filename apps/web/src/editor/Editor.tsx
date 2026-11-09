@@ -34,7 +34,7 @@ import {
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
-import { applyTableEdit, EMPTY_TABLE, parseTableData } from "./model";
+import { applyTableEdit, CLIPPABLE_BLOCKS, EMPTY_TABLE, parseTableData, type ClipBlock } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
@@ -470,6 +470,24 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           });
         case "copy":
         case "cut": {
+          const info = d.blockInfo(b);
+          if (!multi && CLIPPABLE_BLOCKS.has(info.type)) {
+            // 图片/附件/表格等整块复制：经一次性 copy 事件写入块剪贴板数据。
+            const clip: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [] }];
+            const plain = info.props.caption || info.props.name || info.props.url || "";
+            const write = (ev: ClipboardEvent) => { ev.preventDefault(); ev.clipboardData?.setData("text/plain", plain); ev.clipboardData?.setData(CLIP_MIME, JSON.stringify(clip)); };
+            document.addEventListener("copy", write, { once: true, capture: true });
+            const ok = document.execCommand("copy");
+            document.removeEventListener("copy", write, { capture: true });
+            if (!ok) { setToast("浏览器阻止了剪贴板操作。"); return; }
+            if (action.kind === "cut" && !readOnlyRef.current) {
+              sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+              run((tx) => { tx.deleteBlock(b); return undefined; });
+              um.seal();
+              setToast("已剪切");
+            } else setToast("已复制");
+            return;
+          }
           if (collapsed(target)) { setToast("此块没有可复制的文字。"); return; }
           el.focus({ preventScroll: true });
           sel.current = target;
@@ -1828,8 +1846,8 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     convert: multi || CONVERTIBLE.has(type),
     color: multi || COLORABLE.has(type),
     indent: multi || TEXT_BLOCKS.has(type),
-    copy: canCopy && (multi || textish),
-    cut: canCopy && (multi || textish),
+    copy: canCopy && (multi || textish || CLIPPABLE_BLOCKS.has(type)),
+    cut: canCopy && (multi || textish || CLIPPABLE_BLOCKS.has(type)),
     link: true,
     comment: canComment && (textish || (!multi && COMMENTABLE_BLOCKS.has(type))),
     insertAfter: true,
@@ -1867,7 +1885,7 @@ function dragGroup(doc: Doc | null, body: OpId[], keys: string[]): OpId[] {
 /** 只读或仅评论的读者：块手柄只提供复制、复制链接和评论（受复制保护与评论权限约束）。 */
 export function readOnlyBlockAbilities(type: string, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
   const textish = COLORABLE.has(type) || type === "code";
-  return { convert: false, color: false, indent: false, copy: canCopy && textish, cut: false, link: true, comment: canComment && (textish || COMMENTABLE_BLOCKS.has(type)), insertAfter: false, delete: false };
+  return { convert: false, color: false, indent: false, copy: canCopy && (textish || CLIPPABLE_BLOCKS.has(type)), cut: false, link: true, comment: canComment && (textish || COMMENTABLE_BLOCKS.has(type)), insertAfter: false, delete: false };
 }
 
 const BLOCK_CLASS: Record<string, string> = {

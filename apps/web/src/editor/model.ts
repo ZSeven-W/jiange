@@ -13,6 +13,8 @@ export interface Sel {
 export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
 /** These blocks carry source text in the CRDT, but expose no editable text in the document. */
 export const SOURCE_BLOCK_TYPES = new Set(["math", "diagram"]);
+/** 无文字、可整块复制/剪切/粘贴的块。 */
+export const CLIPPABLE_BLOCKS = new Set(["image", "file", "table", "divider", "bookmark", "video"]);
 export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns", ...SOURCE_BLOCK_TYPES]);
 export const isSourceBlock = (doc: Doc, b: OpId) => doc.hasBlock(b) && SOURCE_BLOCK_TYPES.has(doc.blockInfo(b).type);
 /** Legacy column contents are paragraph children of the columns block. */
@@ -349,6 +351,16 @@ export function pasteBlocks(tx: Tx, pos: Pos, clip: ClipBlock[]): Pos {
   pos = snapMathPos(doc, pos);
   if (clip.length === 0) return pos;
   const first = clip[0];
+  if (clip.length === 1 && CLIPPABLE_BLOCKS.has(first.type)) {
+    // 单个图片/附件/表格等：空正文行原地替换，否则插在其后；光标落到其后的正文行。
+    const info = doc.blockInfo(pos.b);
+    let target = pos.b;
+    if (info.type === "paragraph" && len(doc, pos.b) === 0) {
+      tx.setProp(pos.b, "type", first.type);
+      for (const [k, v] of Object.entries(first.props)) if (k !== "type") tx.setProp(pos.b, k, v);
+    } else target = tx.create(first.type, pos.b, info.parent, first.props);
+    return { b: tx.create("paragraph", target, info.parent), o: 0 };
+  }
   if (clip.length === 1) {
     const n = insertClip(tx, pos.b, pos.o, first.chars);
     return { b: pos.b, o: pos.o + n };
