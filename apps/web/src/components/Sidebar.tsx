@@ -141,6 +141,11 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             expandable={has}
             open={isOpen}
             starred={favorites.data?.some((f) => f.id === d.id)}
+            pinned={pins.data?.some((f) => f.id === d.id)}
+            onPin={() => {
+              const pinned = pins.data?.some((f) => f.id === d.id);
+              (pinned ? extrasApi.unpin(d.id) : extrasApi.pin(d.id)).then(() => qc.invalidateQueries({ queryKey: ["pins"] }));
+            }}
             onToggle={() => setOpen((o) => ({ ...o, [d.id]: !isOpen }))}
             onClick={() => go(hrefOf(d))}
             onAdd={() => {
@@ -185,6 +190,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </div>
       );
     });
+  const pins = useQuery({ queryKey: ["pins"], queryFn: extrasApi.pins, refetchInterval: 30000, refetchIntervalInBackground: false });
   const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
   const shown = [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
@@ -213,9 +219,11 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-6 px-3">
-        <div className="px-2 pb-1 text-xs font-medium text-subtle">收藏文档</div>
-        {(favorites.data ?? []).slice(0, 4).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
-        {favorites.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">暂无收藏</p>}
+        <div className="px-2 pb-1 text-xs font-medium text-subtle">置顶文档</div>
+        <div data-pinned-docs>
+          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+        </div>
+        {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">在文档的「⋯」菜单中选择置顶</p>}
       </div>
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
         <span>我的文档库</span>
@@ -325,6 +333,8 @@ function TreeRow({
   icon,
   starred,
   onStar,
+  pinned,
+  onPin,
   onRename,
   onCopyLink,
   onDelete,
@@ -342,6 +352,8 @@ function TreeRow({
   onAdd: () => void;
   starred?: boolean;
   onStar?: () => void;
+  pinned?: boolean;
+  onPin?: () => void;
   onRename?: () => void;
   onCopyLink?: () => void;
   onDelete?: () => void;
@@ -411,7 +423,7 @@ function TreeRow({
             {starred ? "★" : "☆"}
           </button>
         )}
-        <RowMenu onRename={onRename} onCopyLink={onCopyLink} onDelete={onDelete} onAdd={onAdd} />
+        <RowMenu onRename={onRename} onCopyLink={onCopyLink} onDelete={onDelete} onAdd={onAdd} pinned={pinned} onPin={onPin} />
       </span>
       </div>
     </div>
@@ -456,7 +468,7 @@ export const Chevron = ({ className }: { className?: string }) => <ChevronDown s
 export const BaseIcon = (props: React.ComponentProps<typeof Table2>) => <Table2 size={16} strokeWidth={1.7} {...props} />;
 
 /** ⋯ hover menu for tree rows: add child / rename / copy link / delete. */
-function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void; onRename?: () => void; onCopyLink?: () => void; onDelete?: () => void }) {
+function RowMenu({ onAdd, onRename, onCopyLink, onDelete, pinned, onPin }: { onAdd?: () => void; onRename?: () => void; onCopyLink?: () => void; onDelete?: () => void; pinned?: boolean; onPin?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -490,6 +502,7 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete }: { onAdd?: () => void
       {open && (
         <div className="absolute right-0 top-6 z-30 w-32 rounded-lg border bg-surface py-1 text-[13px] shadow-lg" data-row-menu-pop>
           {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>新建子文档</button>}
+          {onPin && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" data-row-pin onClick={(e) => { e.stopPropagation(); setOpen(false); onPin(); }}>{pinned ? "取消置顶" : "置顶"}</button>}
           {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>重命名</button>}
           {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>复制链接</button>}
           {onDelete && <button className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}>删除</button>}
