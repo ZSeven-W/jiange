@@ -740,7 +740,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 </>
               )}
             </div>
-            <div ref={body} className="mt-8 pl-1" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
+            <div ref={body} className="mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
@@ -998,6 +998,7 @@ function TopBar({
         ))}
         <span className="text-subtle">/</span>
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
+        {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
       <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={status}><span className="size-1.5 rounded-full" style={{ background: s.color }} />{status === "synced" ? "已经保存到云端" : s.label}</span>
       </div>
@@ -1013,7 +1014,6 @@ function TopBar({
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
-        {metadataVerified && meta && <StarButton docId={meta.id} />}
         <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
           {peers.slice(0, 5).map((p) => <Avatar key={p.clientId} name={p.state.name} color={p.state.color} size={26} ring />)}
@@ -1049,14 +1049,16 @@ function StarButton({ docId }: { docId: number }) {
   const starred = favs.data?.some((d) => d.id === docId) ?? false;
   return (
     <button
-      className={cn("hidden size-8 place-items-center rounded-md hover:bg-hover sm:grid", starred ? "text-amber-400" : "text-muted-foreground hover:text-foreground")}
+      className={cn("hidden size-6 shrink-0 place-items-center rounded hover:bg-hover sm:grid", starred ? "text-[#ffc60a]" : "text-subtle hover:text-foreground")}
       title={starred ? "取消收藏" : "收藏"}
+      aria-label={starred ? "取消收藏" : "收藏"}
+      aria-pressed={starred}
       onClick={() => {
         (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] }));
       }}
       data-star-doc
     >
-      <Star size={16} strokeWidth={1.7} fill={starred ? "currentColor" : "none"} />
+      <Star size={15} strokeWidth={1.7} fill={starred ? "currentColor" : "none"} />
     </button>
   );
 }
