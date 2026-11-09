@@ -27,7 +27,7 @@ import { refreshWrites, useWriteLedger, WriteIssues } from "./base/writeSafety";
 import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, KanbanSquare, LayoutPanelTop, ListFilter, Plus, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutPanelTop, ListFilter, Plus, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -398,7 +398,7 @@ function ViewIcon({ type }: { type: import("@/lib/api").View["type"] }) {
 }
 
 /** Toolbar popover: the label button toggles; outside clicks close; inner clicks stay. */
-function Popover({ label, active, children }: { label: string; active?: boolean; children: React.ReactNode | ((close: () => void) => React.ReactNode) }) {
+function Popover({ label, active, width = 320, children }: { label: string; active?: boolean; width?: number; children: React.ReactNode | ((close: () => void) => React.ReactNode) }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -408,7 +408,7 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
     const place = () => {
       const rect = ref.current?.getBoundingClientRect();
       if (!rect) return;
-      setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 320));
+      setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, width));
     };
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node) && !body.current?.contains(e.target as Node)) setOpen(false);
@@ -418,7 +418,7 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => { document.removeEventListener("mousedown", close); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
-  }, [open]);
+  }, [open, width]);
   return (
     <div ref={ref} className="relative">
       <button
@@ -430,7 +430,7 @@ function Popover({ label, active, children }: { label: string; active?: boolean;
         {label.startsWith("筛选") ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith("排序") ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith("分组") ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />} {label}
       </button>
       {open && position && createPortal(
-        <div ref={body} style={position} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
+        <div ref={body} style={{ ...position, width }} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
           {typeof children === "function" ? children(() => setOpen(false)) : children}
         </div>, document.body
       )}
@@ -467,8 +467,12 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
     onChange({ ...cfg, filters: rules.length ? { conj, rules } : undefined });
   const noValue = (op: string) => op === "empty" || op === "not_empty" || op === "checked" || op === "unchecked";
   return (
-    <Popover label={`筛选${filters.rules.length ? ` · ${filters.rules.length}` : ""}`} active={!!filters.rules.length}>
-      <div className="space-y-2">
+    <Popover label={`筛选${filters.rules.length ? ` · ${filters.rules.length}` : ""}`} active={!!filters.rules.length} width={516}>
+      <div className="space-y-2 p-1">
+        <div className="flex items-center gap-1 pb-1 text-[14px] text-foreground" data-filter-title>
+          设置筛选条件
+          <span title="只显示满足条件的记录；条件对所有协作者生效" className="text-subtle"><Info size={14} strokeWidth={1.7} /></span>
+        </div>
         {filters.rules.length > 1 && (
           <div className="flex items-center gap-2">
             满足
@@ -536,9 +540,9 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
             </div>
           );
         })}
-        <div className="flex justify-between border-t pt-2">
-          <button className="text-primary hover:underline" onClick={() => setRules([...filters.rules, { f: fields[0]?.id ?? 0, op: opsFor(fields[0]?.type ?? "text")[0], v: "" }])}>
-            + 添加条件
+        <div className={cn("flex items-center justify-between", filters.rules.length > 0 && "border-t pt-2")}>
+          <button className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => setRules([...filters.rules, { f: fields[0]?.id ?? 0, op: opsFor(fields[0]?.type ?? "text")[0], v: "" }])}>
+            <Plus size={16} strokeWidth={1.7} /> 添加条件
           </button>
           {filters.rules.length > 0 && (
             <button className="text-subtle hover:text-foreground" onClick={() => setRules([])}>
