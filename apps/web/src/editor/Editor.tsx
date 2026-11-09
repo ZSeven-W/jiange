@@ -40,9 +40,11 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { LinkCard } from "./LinkCard";
 import { ImageBlock } from "./ImageBlock";
+import { TableBlock } from "./TableBlock";
+import type { Merge } from "./tableOps";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
-import { Columns3, Copy, MessageCircle, Play, Plus, Rows3, Trash2, X } from "lucide-react";
+import { MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
 import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
 import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
@@ -1673,6 +1675,17 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 canCopy={!onCopyBlock}
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
+                onTableChange={readOnly ? undefined : (rows, merges) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
+                  const tx = new Tx(doc);
+                  tx.setProp(b, "tableData", JSON.stringify(rows));
+                  tx.setProp(b, "tableMerges", JSON.stringify(merges));
+                  um.record(tx, sel.current, sel.current, "prop");
+                  sync.client.push(tx.ops);
+                  um.seal();
+                  force((x) => x + 1);
+                  publish();
+                }}
                 uploadNotice={uploading?.anchor === k ? uploading : null}
               />
             );
@@ -1899,10 +1912,11 @@ interface BlockProps {
   canCopy?: boolean;
   canDownload?: boolean;
   onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
+  onTableChange?: (rows: string[][], merges: Merge[]) => void;
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, uploadNotice }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -2065,7 +2079,9 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           data={props.tableData ?? ""}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
           onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
+          merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
+          onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}
         />
@@ -2139,92 +2155,6 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
 
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */
-function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { data: string; widths?: number[]; onWidths?: (w: number[]) => void; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
-  const rows = parseTableData(data);
-  const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
-  const startResize = (e: React.MouseEvent, ci: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const base = widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9));
-    const move = (ev: MouseEvent) => onWidths?.(Array.from({ length: rows[0].length }, (_, k) => (k === ci ? Math.max(70, Math.round(base + ev.clientX - startX)) : widths?.[k] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9)))));
-    const up = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  };
-  return (
-    <div contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "pb-4 pr-4")} data-table-block>
-      {!readOnly && <span className="absolute -top-[34px] right-4 z-20 hidden items-center gap-0.5 rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] group-hover/t:flex" data-table-toolbar>
-        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onAddRow()}><Rows3 size={14} strokeWidth={1.7} />插入行</button>
-        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onAddCol()}><Columns3 size={14} strokeWidth={1.7} />插入列</button>
-        <span className="mx-0.5 h-4 w-px bg-border" />
-        <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
-      </span>}
-      <div className="max-w-full overflow-x-auto">
-      <table className="border-collapse text-[14px] leading-[1.6]">
-        <colgroup>
-          {rows[0].map((_, ci) => (
-            <col key={ci} style={{ width: widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9)) }} />
-          ))}
-        </colgroup>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="group/row">
-              {row.map((cell, ci) => (
-                <td key={ci} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>
-                  {readOnly ? (
-                    <span className="block px-2.5 py-[7px]">{cell}</span>
-                  ) : (
-                    <input
-                      value={cell}
-                      onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
-                      className="w-full bg-transparent px-2.5 py-[7px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
-                      data-table-cell={`${ri}:${ci}`}
-                    />
-                  )}
-                  {!readOnly && ri === 0 && (
-                    <div
-                      className="absolute -right-[3px] top-0 z-10 h-full w-[6px] cursor-col-resize hover:bg-primary/40"
-                      onMouseDown={(e) => startResize(e, ci)}
-                      data-table-resize={ci}
-                    />
-                  )}
-                </td>
-              ))}
-              {!readOnly && (
-                <td className="w-6 border-0 p-0 align-middle">
-                  <button type="button" className="invisible grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-destructive group-hover/row:visible" title="删除此行" aria-label="删除此行" onClick={() => onDeleteRow(ri)} data-table-del-row={ri}>
-                    <X size={12} />
-                  </button>
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      </div>
-      {!readOnly && <>
-        <button type="button" title="添加一行" aria-label="添加一行" className="absolute bottom-0 left-0 right-10 hidden h-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => onAddRow()} data-table-add-row><Plus size={11} strokeWidth={2.2} /></button>
-        <button type="button" title="添加一列" aria-label="添加一列" className="absolute bottom-4 right-0 top-0 hidden w-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => onAddCol()} data-table-add-col><Plus size={11} strokeWidth={2.2} /></button>
-      </>}
-    </div>
-  );
-
-  function onAddRow() {
-    const width = rows[0].length;
-    onEdit(-1, width, "");
-  }
-  function onAddCol() {
-    onEdit(-2, rows[0].length, "");
-  }
-  function onDeleteRow(ri: number) {
-    onEdit(-3, ri, "");
-  }
-}
-
 function sameMarks(a: Record<string, string>, b: Record<string, string>) {
   const ka = Object.keys(a),
     kb = Object.keys(b);
