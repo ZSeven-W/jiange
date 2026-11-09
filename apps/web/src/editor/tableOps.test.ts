@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTableOp, coverMap, expandRange, mergeCells, parseMerges, splitCell, type Merge } from "./tableOps";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, remapWidths, splitCell, type Merge } from "./tableOps";
 
 const grid = () => [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]];
 
@@ -43,5 +43,26 @@ describe("merge and split cells", () => {
     expect(map.get("0:0")).toEqual({ span: [2, 2] });
     expect(map.get("1:1")).toBe("hidden");
     expect(map.has("2:2")).toBe(false);
+  });
+});
+
+describe("table column widths and moves", () => {
+  const rows = [["a", "b", "c"], ["d", "e", "f"]];
+  it("remaps widths on insert, delete and move", () => {
+    expect(remapWidths([100, 200, 300], { kind: "insertCol", at: 1 }, 3)).toEqual([100, null, 200, 300]);
+    expect(remapWidths([100, 200, 300], { kind: "deleteCol", index: 0 }, 3)).toEqual([200, 300]);
+    expect(remapWidths([100, 200, 300], { kind: "moveCol", index: 2, to: 1 }, 3)).toEqual([100, 300, 200]);
+    expect(remapWidths([100], { kind: "insertCol", at: 3 }, 3)).toEqual([100, null, null, null]);
+    expect(remapWidths(undefined, { kind: "insertCol", at: 0 }, 3)).toBeUndefined();
+    expect(remapWidths([1, 2, 3], { kind: "insertRow", at: 0 }, 3)).toBeUndefined();
+  });
+  it("swaps adjacent rows and columns, refusing to split merges", () => {
+    expect(applyTableOp(rows, [], { kind: "moveCol", index: 0, to: 1 }).rows).toEqual([["b", "a", "c"], ["e", "d", "f"]]);
+    expect(applyTableOp(rows, [], { kind: "moveRow", index: 1, to: 0 }).rows).toEqual([["d", "e", "f"], ["a", "b", "c"]]);
+    const merged: Merge[] = [[0, 1, 1, 2]];
+    expect(canMove(rows, merged, { kind: "moveCol", index: 0, to: 1 })).toBe(false);
+    expect(applyTableOp(rows, merged, { kind: "moveCol", index: 0, to: 1 }).rows).toBe(rows);
+    expect(applyTableOp(rows, merged, { kind: "moveRow", index: 0, to: 1 }).merges).toEqual([[1, 1, 1, 2]]);
+    expect(canMove(rows, [], { kind: "moveCol", index: 2, to: 3 })).toBe(false);
   });
 });

@@ -1,21 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Columns3, Combine, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
-import { applyTableOp, coverMap, expandRange, mergeCells, normRange, parseMerges, splitCell, type CellRange, type Merge, type TableOp } from "./tableOps";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./tableOps";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
 /** 行/列菜单项（飞书：上方/下方插入行、左侧/右侧插入列、删除、清空）。 */
-export function gripMenu(sel: GripSel, rows: number, cols: number): { label: string; op: TableOp; danger?: boolean; disabled?: boolean }[] {
+export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string[][] = [], merges: Merge[] = []): { label: string; op: TableOp; danger?: boolean; disabled?: boolean }[] {
   return sel.kind === "row" ? [
     { label: "在上方插入行", op: { kind: "insertRow", at: sel.index } },
     { label: "在下方插入行", op: { kind: "insertRow", at: sel.index + 1 } },
+    { label: "上移一行", op: { kind: "moveRow", index: sel.index, to: sel.index - 1 }, disabled: !canMove(cells.length ? cells : Array.from({ length: rows }, () => []), merges, { kind: "moveRow", index: sel.index, to: sel.index - 1 }) },
+    { label: "下移一行", op: { kind: "moveRow", index: sel.index, to: sel.index + 1 }, disabled: !canMove(cells.length ? cells : Array.from({ length: rows }, () => []), merges, { kind: "moveRow", index: sel.index, to: sel.index + 1 }) },
     { label: "清空本行", op: { kind: "clearRow", index: sel.index } },
     { label: "删除本行", op: { kind: "deleteRow", index: sel.index }, danger: true, disabled: rows <= 1 },
   ] : [
     { label: "在左侧插入列", op: { kind: "insertCol", at: sel.index } },
     { label: "在右侧插入列", op: { kind: "insertCol", at: sel.index + 1 } },
+    { label: "左移一列", op: { kind: "moveCol", index: sel.index, to: sel.index - 1 }, disabled: !canMove(cells.length ? cells : [Array.from({ length: cols }, () => "")], merges, { kind: "moveCol", index: sel.index, to: sel.index - 1 }) },
+    { label: "右移一列", op: { kind: "moveCol", index: sel.index, to: sel.index + 1 }, disabled: !canMove(cells.length ? cells : [Array.from({ length: cols }, () => "")], merges, { kind: "moveCol", index: sel.index, to: sel.index + 1 }) },
     { label: "清空本列", op: { kind: "clearCol", index: sel.index } },
     { label: "删除本列", op: { kind: "deleteCol", index: sel.index }, danger: true, disabled: cols <= 1 },
   ];
@@ -24,11 +28,11 @@ export function gripMenu(sel: GripSel, rows: number, cols: number): { label: str
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
 
 export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, onChange, onDelete, readOnly, initialGrip = null }: {
-  data: string; merges?: string; widths?: number[];
+  data: string; merges?: string; widths?: Widths;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
-  onChange?: (rows: string[][], merges: Merge[]) => void;
+  onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
   onDelete: () => void; readOnly: boolean;
   initialGrip?: GripSel | null;
 }) {
@@ -66,7 +70,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
   const selected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range ? expandRange(range, merges) : null;
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
-  const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges); setGrip(null); setRange(null); };
+  const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols)); setGrip(null); setRange(null); };
   const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); };
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
@@ -124,7 +128,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
       </div>
       {editable && grip && (
         <div role="menu" style={{ left: menuAt?.x ?? 16, top: menuAt?.y ?? 16 }} className="absolute z-40 w-36 rounded-lg border bg-surface p-1 text-[13px] font-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-table-grip-menu={grip.kind}>
-          {gripMenu(grip, rows.length, nCols).map((it) => <button key={it.label} type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button>)}
+          {gripMenu(grip, rows.length, nCols, rows, merges).map((it) => <Fragment key={it.label}>{(it.danger || it.op.kind === "moveRow" && it.label === "上移一行" || it.op.kind === "moveCol" && it.label === "左移一列") && <div className="my-1 border-t" />}<button type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button></Fragment>)}
         </div>
       )}
       {!readOnly && <>
