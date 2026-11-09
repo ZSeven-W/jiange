@@ -358,6 +358,7 @@ export function BasePage({ id }: { id: number }) {
       )}
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
+        const at = records.findIndex((r) => r.id === detailRecord);
         return rec ? (
           <RecordDetail
             baseId={id}
@@ -368,6 +369,9 @@ export function BasePage({ id }: { id: number }) {
             members={members}
             onClose={() => setDetailRecord(null)}
             onMutate={refresh}
+            position={at >= 0 ? { index: at + 1, total: records.length } : undefined}
+            onPrev={at > 0 ? () => setDetailRecord(records[at - 1].id) : undefined}
+            onNext={at >= 0 && at < records.length - 1 ? () => setDetailRecord(records[at + 1].id) : undefined}
           />
         ) : null;
       })()}

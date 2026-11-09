@@ -99,6 +99,7 @@ export function Grid({
   const [sel, setSel] = useState<GridSelection | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const detail = authorizedDetailRecord(detailId, authorizedRecords ?? records, detailAccessReady);
+  const detailIndex = detailId === null ? -1 : records.findIndex((r) => r.id === detailId);
   useEffect(() => {
     if (detailId === null || !detailAccessReady || detail) return;
     setDetailId(null);
@@ -702,6 +703,9 @@ export function Grid({
           members={members}
           onClose={() => { setDetailId(null); onDetailVisibilityChange?.(false); }}
           onMutate={onMutate}
+          position={detailIndex >= 0 ? { index: detailIndex + 1, total: records.length } : undefined}
+          onPrev={detailIndex > 0 ? () => setDetailId(records[detailIndex - 1].id) : undefined}
+          onNext={detailIndex >= 0 && detailIndex < records.length - 1 ? () => setDetailId(records[detailIndex + 1].id) : undefined}
         />
       )}
       <table

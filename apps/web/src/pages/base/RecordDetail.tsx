@@ -6,7 +6,8 @@ import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
 import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, MessageSquare, Plus, X } from "lucide-react";
+import { FieldForm } from "./fields";
 
 const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Feishu-style empty-value hints in the record detail. */
@@ -30,6 +31,9 @@ export function RecordDetail({
   members,
   onClose,
   onMutate,
+  onPrev,
+  onNext,
+  position,
 }: {
   baseId: number;
   canEdit: boolean;
@@ -39,7 +43,14 @@ export function RecordDetail({
   members: User[];
   onClose: () => void;
   onMutate: () => void;
+  /** Feishu ↑/↓: open the previous/next record of the current view. */
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** 1-based index and total in the current view, for the header. */
+  position?: { index: number; total: number };
 }) {
+  const [tab, setTab] = useState<"detail" | "history">("detail");
+  const [addingField, setAddingField] = useState(false);
   const { ledger, issues } = useWriteLedger(baseId);
   type DetailEdit = { rid: number; fid: number; draft: Cell | null; dirty: boolean; authorization: string | null; authored: boolean };
   const [editing, setEditingState] = useState<DetailEdit | null>(null);
@@ -99,8 +110,10 @@ export function RecordDetail({
 
   return (
     <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-[800px] flex-col border-l bg-surface shadow-[-6px_0_24px_rgba(31,35,41,0.08)] md:top-16" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-5 text-[13px] text-muted-foreground">
-        <span className="text-[12px] text-subtle">记录 #{row.id}</span>
+      <header className="flex h-14 shrink-0 items-center gap-1 border-b px-5 text-[13px] text-muted-foreground">
+        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onPrev} disabled={!onPrev} aria-label="上一条记录" title="上一条记录" data-record-prev><ChevronUp size={18} strokeWidth={1.7} /></button>
+        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onNext} disabled={!onNext} aria-label="下一条记录" title="下一条记录" data-record-next><ChevronDown size={18} strokeWidth={1.7} /></button>
+        <span className="ml-1 text-[12px] text-subtle">{position ? `${position.index} / ${position.total}` : null}<span className="ml-2">记录 #{row.id}</span></span>
         <button className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
           <X size={18} strokeWidth={1.7} />
         </button>
@@ -108,11 +121,12 @@ export function RecordDetail({
       <div className="shrink-0 px-10 pt-6">
         <h2 className="truncate text-[24px] font-semibold leading-8 text-foreground" data-record-title>{recordTitle(row, fields, members) || "未命名记录"}</h2>
         <div className="mt-4 flex h-9 items-end gap-6 border-b text-[14px]" role="tablist" aria-label="记录详情">
-          <span role="tab" aria-selected="true" className="border-b-2 border-primary pb-2 font-medium text-primary">详情</span>
+          {(["detail", "history"] as const).map((t) => <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={cn("-mb-px border-b-2 pb-2", tab === t ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground")} data-record-tab={t}>{t === "detail" ? "详情" : "历史"}</button>)}
         </div>
       </div>
       <WriteIssues ledger={ledger} issues={issues} />
-      <div className="flex-1 overflow-y-auto px-10 py-3" data-detail-fields>
+      {tab === "history" ? <RecordHistory baseId={baseId} record={row} fields={fields} members={members} /> : <div className="flex-1 overflow-y-auto" data-record-scroll>
+      <div className="px-10 py-3" data-detail-fields>
         {fields.map((f) => {
           const def = REGISTRY[f.type];
           const editingThis = editing?.rid === row.id && editing.fid === f.id;
@@ -160,8 +174,22 @@ export function RecordDetail({
             </div>
           );
         })}
+        {canEdit && (
+          <div className="relative py-1">
+            <button type="button" className="flex h-9 items-center gap-1.5 rounded-md px-1 text-[14px] text-muted-foreground hover:text-foreground" onClick={() => setAddingField((v) => !v)} disabled={ledger.blocked("field:create")} data-detail-add-field><Plus size={16} strokeWidth={1.7} />新增字段</button>
+            {addingField && <FieldForm onCancel={() => setAddingField(false)} onAcknowledge={() => ledger.discardKey("field:create")} onSubmit={async (patch) => {
+              const op = ledger.begin("新增字段", cellDraft(patch), "field:create");
+              if (op === null) throw new Error("previous result unresolved");
+              try { await baseApi.addField(baseId, patch); ledger.complete(op); setAddingField(false); }
+              catch (error) { ledger.fail(op, "无法确认字段是否创建。请刷新并核对字段列表。"); throw error; }
+              finally { refreshWrites(onMutate); }
+            }} />}
+          </div>
+        )}
       </div>
       <ReverseLinks baseId={baseId} recordId={record.id} />
+      <RecordComments baseId={baseId} recordId={record.id} />
+      </div>}
       <footer className="flex items-center gap-3 border-t px-10 py-2.5 text-[12px] text-subtle">
         <span>创建于 {row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
         <span>修改于 {row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
@@ -268,5 +296,86 @@ function ReverseLinks({ baseId, recordId }: { baseId: number; recordId: number }
         </div>
       ))}
     </div>
+  );
+}
+
+
+/** 记录历史 tab: field-level changes from the server's event log. */
+function RecordHistory({ baseId, record, fields, members }: { baseId: number; record: BaseRecord; fields: Field[]; members: User[] }) {
+  const q = useQuery({ queryKey: ["record-history", baseId, record.id, record.updatedAt], queryFn: () => baseApi.recordHistory(baseId, record.id) });
+  const show = (f: Field, v: Cell | undefined) => {
+    if (v === undefined || v === null) return "空";
+    const text = REGISTRY[f.type].format(displayValue({ ...record, cells: { [f.id]: v } }, f, members), f);
+    return text || "空";
+  };
+  const who = (id?: number) => members.find((m) => m.id === id)?.name;
+  return (
+    <div className="flex-1 overflow-y-auto px-10 py-4" data-record-history>
+      {q.isPending ? <p className="text-[13px] text-subtle">加载中…</p> : q.isError ? <p role="alert" className="text-[13px] text-destructive">无法加载历史记录。</p> : q.data.length === 0 ? <p className="text-[13px] text-subtle">暂无历史记录</p> : (
+        <ol className="relative space-y-5 border-l border-[#dee0e3] pl-5">
+          {q.data.map((e) => (
+            <li key={e.seq} className="relative" data-history-entry={e.seq}>
+              <span className="absolute -left-[25px] top-1.5 size-2 rounded-full bg-primary/70" />
+              <div className="text-[13px]">
+                <span className="font-medium">{e.op === "add" ? `${who(e.by) ?? "有人"} 创建了记录` : "修改了记录"}</span>
+                {e.at && <span className="ml-2 text-[12px] text-subtle">{new Date(e.at).toLocaleString("zh-CN", { hour12: false })}</span>}
+              </div>
+              <ul className="mt-1.5 space-y-1 text-[13px]">
+                {e.changes.map((c) => {
+                  const f = fields.find((x) => x.id === c.f);
+                  if (!f) return null;
+                  return (
+                    <li key={c.f} className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+                      <TypeGlyph t={f.type} size={13} /><span>{f.name}</span>
+                      {e.op === "update" && <><span className="max-w-[240px] truncate rounded bg-[#f2f3f5] px-1.5 text-subtle line-through">{show(f, c.before)}</span><span>→</span></>}
+                      <span className="max-w-[280px] truncate rounded bg-[#e1eaff] px-1.5 text-foreground">{show(f, c.after)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** 记录评论: thread at the bottom of the detail panel. */
+function RecordComments({ baseId, recordId }: { baseId: number; recordId: number }) {
+  const q = useQuery({ queryKey: ["record-comments", baseId, recordId], queryFn: () => baseApi.recordComments(baseId, recordId) });
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const send = async () => {
+    const text = body.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setError("");
+    try { await baseApi.addRecordComment(baseId, recordId, text); setBody(""); await q.refetch(); }
+    catch { setError("评论未能确认发送，请刷新后核对。"); }
+    finally { setSending(false); }
+  };
+  return (
+    <section className="border-t px-10 py-4" data-record-comments>
+      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />评论{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}</h3>
+      <div className="space-y-3">
+        {(q.data ?? []).map((c) => (
+          <div key={c.id} className="flex gap-2.5 text-[13px]" data-record-comment={c.id}>
+            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#8d6cdf] text-[12px] text-white">{c.userName.slice(0, 1)}</span>
+            <div className="min-w-0">
+              <div><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span></div>
+              <p className="mt-0.5 whitespace-pre-wrap break-words">{c.body}</p>
+            </div>
+          </div>
+        ))}
+        {q.isError && <p role="alert" className="text-[12px] text-destructive">无法加载评论。</p>}
+      </div>
+      <div className="mt-3 flex items-end gap-2 rounded-lg border px-3 py-2 focus-within:border-primary">
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} rows={1} maxLength={2000} placeholder="输入评论，Enter 发送" className="max-h-28 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none" data-record-comment-input />
+        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">发送</button>
+      </div>
+      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
+    </section>
   );
 }

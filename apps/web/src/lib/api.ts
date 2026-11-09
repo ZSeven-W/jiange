@@ -127,6 +127,13 @@ export interface FilterRule {
   op: string;
   v?: string | number | boolean;
 }
+export interface RecordHistoryEntry {
+  seq: number;
+  op: "add" | "update";
+  at?: string;
+  by?: number;
+  changes: { f: number; before?: Cell; after?: Cell }[];
+}
 export interface ViewConfig {
   /** Form-specific fields. An explicit selection is required before sharing. */
   title?: string;
@@ -173,6 +180,10 @@ export const baseApi = {
   /** 双向关联：反向引用列表 */
   reverse: (id: number) =>
     request<{ expansions?: { reverse?: { sourceBase: number; fieldId: number; from: Record<string, number[]>; titles: Record<string, string> }[] } }>("GET", `/api/bases/${id}`).then((r) => r.expansions?.reverse ?? []),
+  /** 记录历史：字段级变更（新→旧），按当前读者的权限视图过滤 */
+  recordHistory: (id: number, rid: number) => request<{ entries: RecordHistoryEntry[] }>("GET", `/api/bases/${id}/records/${rid}/history`).then((r) => r.entries),
+  recordComments: (id: number, rid: number) => request<{ comments: Comment[] }>("GET", `/api/bases/${id}/records/${rid}/comments`).then((r) => r.comments),
+  addRecordComment: (id: number, rid: number, body: string) => request<Comment>("POST", `/api/bases/${id}/records/${rid}/comments`, { body }),
   addField: (id: number, f: Partial<Field>) => request<Field>("POST", `/api/bases/${id}/fields`, f),
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   reorderFields: (id: number, expectedFieldIds: number[], desiredFieldIds: number[]) => request<void>("POST", `/api/bases/${id}/fields/reorder`, { expectedFieldIds, desiredFieldIds }),
