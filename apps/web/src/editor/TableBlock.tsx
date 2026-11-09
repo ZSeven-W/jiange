@@ -85,7 +85,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
         <span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
       </span>}
-      <div className={cn("max-w-full overflow-x-auto", editable && "pl-4 pt-4")}>
+      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")}>
       <table className="border-collapse text-[14px] leading-[1.6]">
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
         <tbody>
@@ -98,7 +98,7 @@ export function TableBlock({ data, merges: rawMerges, widths, onWidths, onEdit, 
                 const sel = inRange(selected, ri, ci);
                 return (
                   <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
-                    {readOnly ? <span className="block whitespace-pre-wrap px-2.5 py-[7px]">{cell}</span> : (
+                    {readOnly ? <span className="block min-h-[38px] whitespace-pre-wrap px-2.5 py-[7px]">{cell}</span> : (
                       <input
                         value={cell}
                         onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}

@@ -2243,7 +2243,7 @@ function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
   return (
     <div
       contentEditable={false}
-      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed", onSource && "cursor-pointer hover:bg-hover")}
+      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed", onSource && "cursor-pointer hover:bg-hover")}
       onDoubleClick={onSource}
       data-math
       title={onSource ? "双击编辑公式" : undefined}
