@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, baseApi, docsApi, type FilterRule, type ViewConfig } from "@/lib/api";
+import { ApiError, baseApi, docsApi, type FillRule, type FilterRule, type RowHeight, type ViewConfig } from "@/lib/api";
+import { ROW_HEIGHT_LABEL } from "./base/fill";
+import { Dashboard } from "./base/Dashboard";
+import { PALETTE } from "./base/registry";
 import { Grid } from "./base/Grid";
 import { Kanban } from "./base/Kanban";
 import { Gallery } from "./base/Gallery";
@@ -27,7 +30,7 @@ import { refreshWrites, useWriteLedger, WriteIssues } from "./base/writeSafety";
 import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutPanelTop, ListFilter, Plus, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Rows3, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -76,6 +79,7 @@ export function BasePage({ id }: { id: number }) {
   const [cfg, setCfgState] = useState<ViewConfig>(EMPTY_CONFIG);
   const configDrafts = useRef(new Map<string, ViewConfig>());
   const [filter, setFilter] = useState("");
+  const [pane, setPane] = useState<"table" | "dashboard">("table");
   const refresh = () => qc.invalidateQueries({ queryKey: ["base", id] });
 
   useEffect(() => {
@@ -229,11 +233,13 @@ export function BasePage({ id }: { id: number }) {
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
           <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
-          <div className="flex h-9 items-center gap-2 rounded-md bg-[#edf2ff] px-2.5 text-[13px] font-medium text-primary dark:bg-accent"><Table2 size={16} strokeWidth={1.7} />数据表</div>
+          <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />数据表</button>
+          <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />仪表盘</button>
           {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />工作流</button>}
           {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>新建视图</button>}
         </aside>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
+        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", pane === "dashboard" && "hidden")}>
           <div className="flex min-h-0 flex-1 flex-col bg-surface">
       {/* 视图导航 */}
       <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 whitespace-nowrap border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
@@ -259,6 +265,7 @@ export function BasePage({ id }: { id: number }) {
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">正在加载筛选结果…</span>}
         {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">筛选仅覆盖当前加载的记录，更多记录可能未显示。</span>}
         {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
+        {current?.type === "grid" && <ViewSettingsBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "kanban" && (
           <label className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-hover">
             <CircleChevronDown size={15} strokeWidth={1.7} aria-hidden />
@@ -284,7 +291,10 @@ export function BasePage({ id }: { id: number }) {
         {(current?.type === "grid" || current?.type === "kanban") && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
         )}
+        {current?.type === "grid" && <RowHeightBar cfg={cfg} onChange={setCfg} />}
+        {current?.type === "grid" && <FillBar fields={fields} cfg={cfg} onChange={setCfg} />}
         <span className="ml-auto" aria-hidden />
+        {(current?.type === "grid" || current?.type === "kanban") && <ToolbarSearch value={filter} onChange={setFilter} />}
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
         {current?.type === "calendar" && (
           <select
@@ -373,10 +383,13 @@ export function BasePage({ id }: { id: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
-          else {
+          else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });
+          else if (action === "unfreeze") setCfg({ ...cfg, frozen: field.isPrimary ? 0 : undefined });
+          else if (action === "hide") setCfg({ ...cfg, hidden: [...new Set([...(cfg.hidden ?? []), field.id])] });
+          else if (action === "filter") {
             const filters = cfg.filters ?? { conj: "and" as const, rules: [] };
             setCfg({ ...cfg, filters: { ...filters, rules: [...filters.rules, { f: field.id, op: opsFor(field.type)[0], v: "" }] } });
           }
@@ -398,7 +411,7 @@ function ViewIcon({ type }: { type: import("@/lib/api").View["type"] }) {
 }
 
 /** Toolbar popover: the label button toggles; outside clicks close; inner clicks stay. */
-function Popover({ label, active, width = 320, children }: { label: string; active?: boolean; width?: number; children: React.ReactNode | ((close: () => void) => React.ReactNode) }) {
+function Popover({ label, active, width = 320, icon, children }: { label: string; active?: boolean; width?: number; icon?: React.ReactNode; children: React.ReactNode | ((close: () => void) => React.ReactNode) }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -427,7 +440,7 @@ function Popover({ label, active, width = 320, children }: { label: string; acti
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {label.startsWith("筛选") ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith("排序") ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith("分组") ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />} {label}
+        {icon ?? (label.startsWith("筛选") ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith("排序") ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith("分组") ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />)} {label}
       </button>
       {open && position && createPortal(
         <div ref={body} style={{ ...position, width }} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
@@ -627,6 +640,108 @@ function HiddenBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
         ))}
       </div>
     </Popover>
+  );
+}
+
+function ViewSettingsBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const frozen = Math.min(cfg.frozen ?? 1, fields.length);
+  return (
+    <Popover label="视图配置" icon={<PanelsTopLeft size={15} strokeWidth={1.7} />} width={280}>
+      <div className="space-y-3 p-1" data-view-settings>
+        <div className="text-[14px] text-foreground">视图配置</div>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">冻结列</span>
+          <select className="h-8 w-36 rounded-md border bg-surface px-2" value={frozen} onChange={(e) => onChange({ ...cfg, frozen: Number(e.target.value) === 1 ? undefined : Number(e.target.value) })} data-frozen-select>
+            <option value={0}>不冻结</option>
+            {fields.slice(0, 6).map((f, i) => <option key={f.id} value={i + 1}>冻结至「{f.name}」</option>)}
+          </select>
+        </label>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">行高</span>
+          <div className="flex rounded-md border p-0.5">
+            {(Object.keys(ROW_HEIGHT_LABEL) as RowHeight[]).map((h) => <button key={h} type="button" onClick={() => onChange({ ...cfg, rowHeight: h === "low" ? undefined : h })} className={cn("h-7 rounded px-2 text-[12px]", (cfg.rowHeight ?? "low") === h ? "bg-accent text-primary" : "text-muted-foreground hover:bg-hover")}>{ROW_HEIGHT_LABEL[h]}</button>)}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">填色规则</span>
+          <span className="text-subtle">{cfg.fills?.length ? `${cfg.fills.length} 条` : "无"}</span>
+        </div>
+      </div>
+    </Popover>
+  );
+}
+
+function RowHeightBar({ cfg, onChange }: { cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const current = cfg.rowHeight ?? "low";
+  return (
+    <Popover label="行高" icon={<Rows3 size={15} strokeWidth={1.7} />} active={current !== "low"} width={160}>
+      {(close) => <div role="menu" aria-label="行高" className="space-y-0.5" data-row-height-menu>
+        {(Object.keys(ROW_HEIGHT_LABEL) as RowHeight[]).map((h) => (
+          <button key={h} type="button" role="menuitemradio" aria-checked={current === h} onClick={() => { onChange({ ...cfg, rowHeight: h === "low" ? undefined : h }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover" data-row-height={h}>
+            {ROW_HEIGHT_LABEL[h]}{current === h && <Check size={15} className="text-primary" />}
+          </button>
+        ))}
+      </div>}
+    </Popover>
+  );
+}
+
+function FillBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const rules = cfg.fills ?? [];
+  const set = (next: FillRule[]) => onChange({ ...cfg, fills: next.length ? next : undefined });
+  const noValue = (op: string) => op === "empty" || op === "not_empty" || op === "checked" || op === "unchecked";
+  return (
+    <Popover label={`填色${rules.length ? ` · ${rules.length}` : ""}`} icon={<PaintBucket size={15} strokeWidth={1.7} />} active={rules.length > 0} width={560}>
+      <div className="space-y-2 p-1" data-fill-panel>
+        <div className="text-[14px] text-foreground">设置填色条件 <span className="text-[12px] text-subtle">满足条件的记录整行填充颜色，按顺序取第一条</span></div>
+        {rules.map((rule, i) => {
+          const f = fields.find((x) => x.id === rule.f) ?? fields[0];
+          const patch = (p: Partial<FillRule>) => set(rules.map((r, j) => (j === i ? { ...r, ...p } : r)));
+          return (
+            <div key={i} className="flex items-center gap-1.5" data-fill-rule={i}>
+              <div className="flex shrink-0 gap-0.5">
+                {PALETTE.slice(0, 6).map(([bg, fg], c) => <button key={c} type="button" title="填充颜色" aria-label={`颜色 ${c + 1}`} onClick={() => patch({ color: c })} className={cn("size-5 rounded border", rule.color === c ? "ring-2 ring-primary ring-offset-1" : "border-transparent")} style={{ background: bg, borderColor: fg + "33" }} />)}
+              </div>
+              <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.f} onChange={(e) => { const nf = fields.find((x) => x.id === Number(e.target.value))!; patch({ f: nf.id, op: opsFor(nf.type)[0], v: "" }); }}>
+                {fields.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.op} onChange={(e) => patch({ op: e.target.value })}>
+                {opsFor(f?.type ?? "text").map((op) => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
+              </select>
+              {!noValue(rule.op) && (f?.type === "select" ? (
+                <select className="h-7 min-w-0 flex-1 rounded border bg-surface px-1" value={String(rule.v ?? "")} onChange={(e) => patch({ v: e.target.value })}>
+                  <option value="">选择选项</option>
+                  {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : (
+                <input className="h-7 min-w-0 flex-1 rounded border px-2 outline-none focus:border-primary" type={f?.type === "number" ? "number" : f?.type === "date" ? "date" : "text"} value={String(rule.v ?? "")} placeholder="请输入" onChange={(e) => patch({ v: f?.type === "number" ? Number(e.target.value) : e.target.value })} />
+              ))}
+              <button type="button" className="px-1 text-subtle hover:text-destructive" aria-label="删除填色条件" onClick={() => set(rules.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          );
+        })}
+        <div className={cn("flex items-center justify-between", rules.length > 0 && "border-t pt-2")}>
+          <button type="button" className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => fields[0] && set([...rules, { f: fields[0].id, op: opsFor(fields[0].type)[0], v: "", color: rules.length % 6 }])} data-fill-add>
+            <Plus size={16} strokeWidth={1.7} /> 添加条件
+          </button>
+          {rules.length > 0 && <button type="button" className="text-subtle hover:text-foreground" onClick={() => set([])}>清空</button>}
+        </div>
+      </div>
+    </Popover>
+  );
+}
+
+function ToolbarSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(!!value);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (open) input.current?.focus(); }, [open]);
+  if (!open) return <button type="button" className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover" title="搜索" aria-label="搜索表格" onClick={() => setOpen(true)} data-toolbar-search><Search size={16} strokeWidth={1.7} /></button>;
+  return (
+    <label className="flex h-8 w-56 shrink-0 items-center gap-1.5 rounded-md border px-2 text-subtle focus-within:border-primary">
+      <Search size={14} />
+      <input ref={input} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { onChange(""); setOpen(false); } }} placeholder="搜索表格内容" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" data-toolbar-search-input />
+      <button type="button" aria-label="关闭搜索" onClick={() => { onChange(""); setOpen(false); }} className="text-subtle hover:text-foreground">✕</button>
+    </label>
   );
 }
 

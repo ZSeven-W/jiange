@@ -139,6 +139,19 @@ export interface ViewConfig {
   hidden?: number[];
   /** 管理视图：filters 强制生效、hidden 字段对非 manage 角色剔除/写保护 */
   locked?: boolean;
+  /** Grid row height preset (Feishu 行高). */
+  rowHeight?: RowHeight;
+  /** Conditional row fill (Feishu 填色); first matching rule wins. Evaluated client-side on visible data. */
+  fills?: FillRule[];
+  /** Number of leading visible grid fields kept frozen while scrolling horizontally (default 1 = primary). */
+  frozen?: number;
+  /** Kanban/gallery card presentation (Feishu 卡片配置). */
+  card?: { fields?: number[]; cover?: number | null };
+}
+export type RowHeight = "low" | "medium" | "high" | "xhigh";
+export interface FillRule extends FilterRule {
+  /** palette index (see PALETTE) */
+  color: number;
 }
 export interface View {
   id: number;

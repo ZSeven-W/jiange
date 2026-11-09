@@ -5,7 +5,7 @@ import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
-import { ArrowDownAZ, ArrowDownZA, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
+import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Snowflake, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
 import { popupPosition } from "./popupPosition";
 
 /** Shared form for creating and editing a field. */
@@ -179,9 +179,9 @@ export function FieldForm({
 }
 
 /** Header dropdown: edit field / delete field. */
-export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter";
+export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter" | "insert-left" | "insert-right" | "freeze" | "unfreeze" | "hide";
 
-export function FieldMenu({ field, onEdit, onDelete, onDuplicate, onAction }: { field: Field; onEdit: () => void; onDelete: () => void; onDuplicate?: () => void; onAction?: (action: FieldMenuAction) => void }) {
+export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onAction }: { field: Field; /** this column is the last frozen one */ frozen?: boolean; onEdit: () => void; onDelete: () => void; onDuplicate?: () => void; onAction?: (action: FieldMenuAction) => void }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -191,7 +191,7 @@ export function FieldMenu({ field, onEdit, onDelete, onDuplicate, onAction }: { 
     if (!open) return;
     const place = () => {
       const rect = trigger.current?.getBoundingClientRect();
-      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 224, 340));
+      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 224, 480));
     };
     const close = (e: PointerEvent) => {
       const target = e.target as Node;
@@ -237,6 +237,11 @@ export function FieldMenu({ field, onEdit, onDelete, onDuplicate, onAction }: { 
             ["describe", "编辑字段/列描述", Info],
             ...(onDuplicate ? [["duplicate", "复制字段/列", Copy]] : []),
             ...(onAction ? [
+              ["sep0"],
+              ...(!field.isPrimary ? [["insert-left", "向左插入字段/列", ArrowLeftToLine]] : []),
+              ["insert-right", "向右插入字段/列", ArrowRightToLine],
+              frozen ? ["unfreeze", "取消冻结", Snowflake] : ["freeze", "冻结至此列", Snowflake],
+              ...(!field.isPrimary ? [["hide", "隐藏字段/列", EyeOff]] : []),
               ["sep1"],
               ["sort-asc", field.type === "number" ? "按 1 → 9 排序" : "按 A 到 Z 排序", ArrowDownAZ],
               ["sort-desc", field.type === "number" ? "按 9 → 1 排序" : "按 Z 到 A 排序", ArrowDownZA],
