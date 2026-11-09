@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BlockHandle, blockLink, CONVERT_TARGETS, linkedBlock } from "./BlockHandle";
-import { blockAbilities, readOnlyBlockAbilities } from "./Editor";
+import { blockAbilities, dropPlan, readOnlyBlockAbilities } from "./Editor";
 
 const noop = () => {};
 const all = blockAbilities("h2", false, true, true);
@@ -43,7 +43,7 @@ describe("Feishu-style block handle", () => {
     expect(html).not.toContain("data-block-link");
     expect(html).not.toContain("data-block-comment");
     expect(html).not.toContain("data-insert-after");
-    expect(html).toContain('draggable="false"');
+    expect(html).toContain('draggable="true"');
   });
 });
 
@@ -68,5 +68,26 @@ describe("read-only block handle", () => {
     expect(html).toContain("data-block-link");
     expect(html).not.toContain("data-block-copy");
     expect(html).not.toContain("data-block-comment");
+  });
+});
+
+describe("dragging several selected blocks", () => {
+  const id = (clock: number) => ({ client: 1, clock });
+  const body = [1, 2, 3, 4, 5].map(id);
+  const keys = (p: ReturnType<typeof dropPlan>) => p && { moving: p.moving.map((x) => x.clock), target: p.target?.clock ?? null };
+  it("moves the whole group after the drop target, keeping document order", () => {
+    expect(keys(dropPlan(body, [id(3), id(2)], id(5), true))).toEqual({ moving: [2, 3], target: 5 });
+    expect(keys(dropPlan(body, [id(4), id(5)], id(1), false))).toEqual({ moving: [4, 5], target: null });
+    expect(keys(dropPlan(body, [id(1), id(2)], id(4), false))).toEqual({ moving: [1, 2], target: 3 });
+  });
+  it("ignores drops onto the group itself or back into its current place", () => {
+    expect(dropPlan(body, [id(2), id(3)], id(3), true)).toBeNull();
+    expect(dropPlan(body, [id(2), id(3)], id(1), true)).toBeNull();
+    expect(dropPlan(body, [id(2), id(3)], id(4), false)).toBeNull();
+    expect(dropPlan(body, [], id(4), false)).toBeNull();
+  });
+  it("lets the multi-block handle be dragged", () => {
+    const html = renderToStaticMarkup(<BlockHandle type="paragraph" count={2} open={false} onOpenChange={noop} onDragStart={noop} can={blockAbilities("paragraph", true, true, true)} />);
+    expect(html).toContain('draggable="true"');
   });
 });

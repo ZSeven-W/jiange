@@ -200,6 +200,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(t); }, [toast]);
   const [drag, setDrag] = useState<{
     b: OpId;
+    /** 跨块选区整体拖动时的全部块（文档顺序）；单块拖动时只有 b。 */
+    group: OpId[];
     over: OpId | null;
     after: boolean;
   } | null>(null);
@@ -1399,16 +1401,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     if (!drag || readOnlyRef.current) return;
     e.preventDefault();
     const d = sync.client.doc!;
-    const { b, over, after } = drag;
+    const { b, over, after, group } = drag;
     setDrag(null);
-    if (!over || eqId(over, b)) return;
+    if (!over) return;
     const bs = bodyBlocks(d);
-    const i = bs.findIndex((x) => eqId(x, over));
-    const target = after ? over : i > 0 ? bs[i - 1] : null;
-    if (target && eqId(target, b)) return;
+    const plan = dropPlan(bs, group.filter((x) => d.hasBlock(x)), over, after);
+    if (!plan) return;
     const s0 = sel.current;
-    sel.current = s0 ?? { a: { b, o: 0 }, f: { b, o: 0 } };
-    run((tx) => tx.move(b, target, d.blockInfo(b).parent));
+    sel.current = s0 && validEditorSelection(d, s0) ? s0 : { a: { b, o: 0 }, f: { b, o: 0 } };
+    const parent = d.blockInfo(b).parent;
+    run((tx) => {
+      let prev = plan.target;
+      for (const x of plan.moving) { tx.move(x, prev, parent); prev = x; }
+    });
+    um.seal();
   };
 
   const tb = sel.current && doc && validEditorSelection(doc, sel.current) && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
@@ -1566,7 +1572,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 }}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={readOnly ? undefined : () => toggleTodo(b)}
-                onDragStart={readOnly ? undefined : () => setDrag({ b, over: null, after: false })}
+                onDragStart={readOnly ? undefined : () => {
+                  const leader = selBlocks.length > 1 && selBlocks[0] === k;
+                  const group = leader ? dragGroup(doc, bodyBlocks(doc), selBlocks) : [b];
+                  setDrag({ b, group: group.length ? group : [b], over: null, after: false });
+                }}
                 onDragOver={readOnly ? undefined : (after) => drag && setDrag({ ...drag, over: b, after })}
                 onDragEnd={readOnly ? undefined : () => setDrag(null)}
                 canCopy={!onCopyBlock}
@@ -1701,6 +1711,33 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     insertAfter: true,
     delete: true,
   };
+}
+
+/**
+ * 整体拖动：被拖的块（按文档顺序）与落点。落在被拖块自身上视为无操作；
+ * 目标前驱若也在被拖块中，向前找到第一个不在其中的块。
+ */
+export function dropPlan(body: OpId[], group: OpId[], over: OpId, after: boolean): { moving: OpId[]; target: OpId | null } | null {
+  const inGroup = (x: OpId) => group.some((g) => eqId(g, x));
+  if (!group.length || inGroup(over)) return null;
+  const moving = body.filter(inGroup);
+  if (!moving.length) return null;
+  let i = body.findIndex((x) => eqId(x, over));
+  if (i < 0) return null;
+  if (!after) i -= 1;
+  while (i >= 0 && inGroup(body[i])) i -= 1;
+  const target = i >= 0 ? body[i] : null;
+  // 已在原位（目标紧挨在整组之前且整组连续）时不产生移动。
+  const first = body.findIndex((x) => eqId(x, moving[0]));
+  const contiguous = moving.every((x, j) => eqId(body[first + j], x));
+  if (contiguous && (first === 0 ? target === null : target !== null && eqId(body[first - 1], target))) return null;
+  return { moving, target };
+}
+
+/** 选区覆盖的顶层正文块（按文档顺序）；不在正文顶层的块不参与整体拖动。 */
+function dragGroup(doc: Doc | null, body: OpId[], keys: string[]): OpId[] {
+  if (!doc) return [];
+  return body.filter((x) => keys.includes(idKey(x)));
 }
 
 /** 只读或仅评论的读者：块手柄只提供复制、复制链接和评论（受复制保护与评论权限约束）。 */

@@ -96,16 +96,16 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   return <span ref={root} className="relative" contentEditable={false}>
     <button
       type="button"
-      draggable={!!onDragStart && !multi}
-      onDragStart={(e) => { if (!onDragStart || multi) return; e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onOpenChange(false); onDragStart(); }}
+      draggable={!!onDragStart}
+      onDragStart={(e) => { if (!onDragStart) return; e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onOpenChange(false); onDragStart(); }}
       onDragEnd={onDragEnd}
       onMouseDown={keep}
       onClick={() => onOpenChange(!open)}
-      title={multi ? `已选择 ${count} 个块` : onDragStart ? "点击打开菜单，拖动以移动" : "块菜单"}
+      title={multi ? (onDragStart ? `已选择 ${count} 个块，点击打开菜单，拖动以整体移动` : `已选择 ${count} 个块`) : onDragStart ? "点击打开菜单，拖动以移动" : "块菜单"}
       aria-label={multi ? `${count} 个块的菜单` : "块菜单"}
       aria-haspopup="menu"
       aria-expanded={open}
-      className={cn("flex h-6 items-center gap-px rounded-md px-1 text-subtle transition-colors hover:bg-hover hover:text-foreground", onDragStart && !multi && "cursor-grab active:cursor-grabbing", (open || multi) && "bg-hover text-foreground", multi && "bg-primary/10 text-primary")}
+      className={cn("flex h-6 items-center gap-px rounded-md px-1 text-subtle transition-colors hover:bg-hover hover:text-foreground", onDragStart && "cursor-grab active:cursor-grabbing", (open || multi) && "bg-hover text-foreground", multi && "bg-primary/10 text-primary")}
       data-block-handle
     >
       {multi ? <span className="min-w-[15px] text-center text-[12px] font-medium tabular-nums">{count}</span> : <TypeGlyph type={type} size={15} />}
