@@ -96,7 +96,18 @@ func exerciseBaseCommentRecipients(t *testing.T, st store.Store) {
 	if _, err := st.AddCommentGuarded(ctx, guard, store.Comment{DocID: base.ID, UserID: manager.ID, Body: "base mention", Mentions: []int64{guest.ID, guest.ID, 999999}}); err != nil {
 		t.Fatal(err)
 	}
+	// Base comments now follow doc semantics: no notice without view access.
 	notes, err := st.Notifications(ctx, guest.ID, 50)
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("base mention reached a user without access: %+v %v", notes, err)
+	}
+	if err := st.SetShare(ctx, base.ID, guest.ID, store.RoleView); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddCommentGuarded(ctx, guard, store.Comment{DocID: base.ID, UserID: manager.ID, Body: "base mention 2", Mentions: []int64{guest.ID, guest.ID, 999999}}); err != nil {
+		t.Fatal(err)
+	}
+	notes, err = st.Notifications(ctx, guest.ID, 50)
 	if err != nil || len(notes) != 1 || notes[0].Kind != "mention" {
 		t.Fatalf("base mention: %+v %v", notes, err)
 	}

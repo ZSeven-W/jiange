@@ -125,7 +125,7 @@ func (m *Memory) AddCommentAttemptGuarded(ctx context.Context, guard RestoreGuar
 	now := time.Now()
 	c.CreatedAt, c.UpdatedAt = now, now
 	c.Mentions = append([]int64(nil), c.Mentions...)
-	items := m.commentNotificationsLocked(c, guard.UserID, parentAuthor, false)
+	items := m.commentNotificationsLocked(ctx, c, guard.UserID, parentAuthor, false)
 	if err = ctx.Err(); err != nil {
 		return CommentAttemptResult{}, err
 	}
