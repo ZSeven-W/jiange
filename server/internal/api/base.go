@@ -213,7 +213,12 @@ type fieldInput struct {
 	// OptionRenames maps old→new select option names so a rename keeps the
 	// records that held the old value (otherwise removed options are cleared).
 	OptionRenames map[string]string `json:"optionRenames"`
+	// DefaultValue sets (or with null clears) the field's 默认值.
+	DefaultValue json.RawMessage `json:"defaultValue"` // absent = keep; null = clear
 }
+
+// defaultableTypes may carry a 默认值; derived, link and attachment fields cannot.
+var defaultableTypes = map[string]bool{"text": true, "number": true, "select": true, "multi_select": true, "checkbox": true, "date": true, "url": true, "phone": true, "email": true, "rating": true, "person": true}
 
 func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	if in.Name != nil {
@@ -255,6 +260,20 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	}
 	if in.Position != nil {
 		f.Position = *in.Position
+	}
+	if len(in.DefaultValue) > 0 {
+		v := in.DefaultValue
+		if len(v) == 0 || string(v) == "null" || string(v) == `""` || string(v) == "[]" {
+			f.DefaultValue = nil
+		} else if !defaultableTypes[f.Type] || !validCell(*f, v) || len(v) > 2000 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
+			return false
+		} else {
+			f.DefaultValue = v
+		}
+	} else if f.DefaultValue != nil && (!defaultableTypes[f.Type] || !validCell(*f, f.DefaultValue)) {
+		// A type or option change invalidated the old default; drop it.
+		f.DefaultValue = nil
 	}
 	return true
 }

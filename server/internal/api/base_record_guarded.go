@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -39,10 +40,22 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		return
 	}
 	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
+	if operation == "add" && in.Cells == nil {
+		in.Cells = map[string]json.RawMessage{}
+	}
 	mutation := store.BaseRecordMutation{Operation: operation, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position}
 	record, affected, err := s.Store.MutateRecordGuarded(r.Context(), guard, b.ID, mutation, func(fields []store.Field) error {
 		if msg := checkCells(fields, in.Cells); msg != "" {
 			return invalidRecordCells{msg}
+		}
+		if operation == "add" {
+			// 默认值: fill omitted cells from the field defaults read in this transaction.
+			for _, f := range fields {
+				k := strconv.FormatInt(f.ID, 10)
+				if _, given := in.Cells[k]; !given && len(f.DefaultValue) > 0 && defaultableTypes[f.Type] && validCell(f, f.DefaultValue) {
+					in.Cells[k] = f.DefaultValue
+				}
+			}
 		}
 		return nil
 	})

@@ -25,6 +25,8 @@ type Field struct {
 	// IsPrimary is the durable identity of the record's main field. It is not
 	// inferred from the first visible field, which may change by view or access.
 	IsPrimary bool `json:"isPrimary"`
+	// DefaultValue (Feishu 默认值) fills this field when a new record omits it.
+	DefaultValue json.RawMessage `json:"defaultValue,omitempty"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.
