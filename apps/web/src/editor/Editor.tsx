@@ -368,6 +368,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
    * 块菜单动作。手柄所在块属于当前跨块选区时作用于全部选中块，否则只作用于该块；
    * 复制/剪切走与键盘相同的剪贴板路径（受复制权限约束），评论复用划词评论锚点。
    */
+  const copyBlockLink = useCallback(async (blockKey: string) => {
+    const url = blockLink(window.location.href, blockKey);
+    if (!navigator.clipboard?.writeText) return setToast(`请手动复制：${url}`);
+    try { await navigator.clipboard.writeText(url); setToast("已复制块链接"); } catch { setToast(`复制失败，请手动复制：${url}`); }
+  }, []);
   const blockAction = useCallback(
     (blockKey: string, action: BlockMenuAction) => {
       const d = sync.client.doc;
@@ -441,13 +446,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           else if (action.kind === "copy") setToast(multi ? `已复制 ${span.length} 个块` : "已复制");
           return;
         }
-        case "link": {
-          const url = blockLink(window.location.href, blockKey);
-          const done = () => setToast("已复制块链接");
-          if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(url).then(done, () => setToast(`复制失败，请手动复制：${url}`));
-          else setToast(`请手动复制：${url}`);
-          return;
-        }
+        case "link":
+          return void copyBlockLink(blockKey);
         case "comment": {
           if (!onComment) return;
           const selection = commentSelection(d, whole);
@@ -1411,6 +1411,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   const tb = sel.current && doc && validEditorSelection(doc, sel.current) && !collapsed(sel.current) ? activeMarks(doc, sel.current) : {};
   const curType = sel.current && doc?.hasBlock(sel.current.f.b) ? doc.blockInfo(sel.current.f.b).type : "paragraph";
+  const curAlign = sel.current && doc?.hasBlock(sel.current.f.b) ? doc.blockInfo(sel.current.f.b).props.align : undefined;
   const slashRange = slash?.query && doc ? resolveSlashQuery(doc, slash.query) : null;
   const slashAt = slashRange && slash ? { b: slash.at.b, o: slashRange.start } : slash?.at;
   const slashPos = slash && (slash.fromButton || slashRange) && slashAt && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slashAt) : null;
@@ -1599,7 +1600,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           y={toolbar.y}
           marks={tb}
           blockType={curType}
+          align={curAlign}
           readOnly={readOnly}
+          onAlign={(a) => run((tx, s) => {
+            for (const b of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(b).type) && !isColumnText(tx.doc, b)) tx.setProp(b, "align", a);
+          })}
+          onClearFormat={() => run((tx, s) => {
+            const { start, end, blocks } = normalize(tx.doc, s);
+            for (const b of blocks) {
+              const from = eqId(b, start.b) ? start.o : 0;
+              const to = eqId(b, end.b) ? end.o : len(tx.doc, b);
+              if (to > from) for (const key of CLEARABLE_MARKS) tx.format(b, from, to, key, null);
+            }
+          })}
+          onCopyLink={() => { const s = sel.current; if (s) void copyBlockLink(`${s.f.b.client}:${s.f.b.clock}`); }}
           commentError={commentError}
           onMark={(key, value) =>
             run((tx, s) => {
@@ -1667,6 +1681,11 @@ function wordLen(text: string, o: number, back: boolean): number {
 }
 
 /** 块菜单在某类块上可用的动作；跨块选区（multi）时按“作用于其中适用的块”放开。 */
+/** 可设置段落对齐的块（与飞书一致：文本类块，不含代码块）。 */
+export const ALIGNABLE = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout"]);
+/** “清除格式”移除的行内样式。 */
+export const CLEARABLE_MARKS = ["bold", "italic", "underline", "strike", "code", "color", "bg", "link"] as const;
+
 export function blockAbilities(type: string, multi: boolean, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
   const textish = COLORABLE.has(type) || type === "code";
   return {
@@ -1816,7 +1835,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       data-type={type}
       className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]")}
       data-block-selected={inSelection ? "true" : undefined}
-      style={{ marginLeft: indent * 24 }}
+      style={{ marginLeft: indent * 24, textAlign: props.align === "center" || props.align === "right" ? props.align : undefined }}
       onDragOver={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
         onDragOver?.(e.clientY > r.top + r.height / 2);
