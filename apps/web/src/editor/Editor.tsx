@@ -1960,7 +1960,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     marks.bold && "font-semibold",
     marks.italic && "italic",
     (marks.underline || marks.strike) && [marks.underline && "underline", marks.strike && "line-through"],
-    marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]",
+    marks.code && "mx-px rounded-[4px] border border-border bg-sidebar px-[3px] py-px font-mono text-[0.875em] text-foreground",
     href && "cursor-pointer text-primary underline-offset-2 hover:underline",
   );
   const style = marks.color || marks.bg ? { color: marks.color || undefined, background: marks.bg || undefined } : undefined;
