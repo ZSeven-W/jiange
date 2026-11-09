@@ -18,7 +18,22 @@ export function outlineOf(blocks: { id: string; type: string; spans: { text: str
   return out;
 }
 
-/** 飞书式目录面板：标题层级列表，点击滚动到对应块。 */
+/** 当前阅读位置对应的目录项：最后一个顶部越过阅读线的标题；都未越过时取第一个。 */
+export function activeOutlineId(items: OutlineItem[], tops: Record<string, number>, readingLine: number): string | null {
+  let active: string | null = null;
+  for (const it of items) {
+    const top = tops[it.id];
+    if (top === undefined) continue;
+    if (top <= readingLine) active = it.id;
+    else break;
+  }
+  return active ?? items[0]?.id ?? null;
+}
+
+/**
+ * 飞书式目录：宽屏（≥1280px）时作为正文左侧的常驻目录随页面吸顶，不遮挡顶栏；
+ * 窄屏时退化为顶栏下方的右侧抽屉。层级缩进 16px，当前阅读位置以主色和左侧指示条标出。
+ */
 export function OutlinePanel({
   items,
   activeId,
@@ -34,30 +49,42 @@ export function OutlinePanel({
   onJump: (id: string) => void;
   onClose: () => void;
 }) {
+  const minLevel = items.reduce((m, it) => Math.min(m, it.level), 6);
   return (
-    <aside className="fixed inset-y-0 right-0 z-30 flex w-72 flex-col border-l bg-surface shadow-xl" data-outline-panel>
-      <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
+    <aside
+      className="fixed bottom-0 right-0 top-16 z-30 flex w-72 flex-col border-l bg-surface shadow-xl xl:sticky xl:top-0 xl:z-10 xl:h-[calc(100vh-64px)] xl:w-[248px] xl:shrink-0 xl:self-start xl:border-0 xl:bg-transparent xl:shadow-none"
+      aria-label="目录"
+      data-outline-panel
+    >
+      <header className="flex h-11 shrink-0 items-center pl-6 pr-3 pt-2 text-[14px] font-medium text-foreground xl:h-auto xl:pt-[58px] xl:text-[13px] xl:text-muted-foreground">
         目录
-        <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
-          ✕
+        <button type="button" className="ml-auto grid size-6 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭目录" title="关闭目录">
+          <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" /></svg>
         </button>
       </header>
-      <nav className="flex-1 overflow-y-auto p-2 text-[13px]" data-outline-list data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
-        {items.length === 0 && <p className="px-2 py-8 text-center text-subtle">在文档中使用标题即可生成目录</p>}
-        {items.map((it) => (
-          <button
-            key={it.id}
-            className={cn(
-              "block w-full truncate rounded px-2 py-1.5 text-left hover:bg-hover",
-              activeId === it.id ? "bg-accent font-medium text-accent-foreground" : "text-foreground",
-            )}
-            style={{ paddingLeft: 8 + (it.level - 1) * 14 }}
-            onClick={() => onJump(it.id)}
-            data-outline-item={it.id}
-          >
-            {it.text}
-          </button>
-        ))}
+      <nav className="min-h-0 flex-1 overflow-y-auto py-2 pl-4 pr-3 text-[14px] xl:pr-2" data-outline-list data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
+        {items.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">在文档中使用标题即可生成目录</p>}
+        {items.map((it) => {
+          const active = activeId === it.id;
+          return (
+            <button
+              key={it.id}
+              type="button"
+              className={cn(
+                "relative block w-full truncate rounded-md py-[5px] pr-2 text-left leading-[22px] transition-colors hover:bg-hover",
+                active ? "font-medium text-primary" : it.level === minLevel ? "text-foreground" : "text-muted-foreground",
+              )}
+              style={{ paddingLeft: 8 + (it.level - minLevel) * 16 }}
+              title={it.text}
+              aria-current={active ? "location" : undefined}
+              onClick={() => onJump(it.id)}
+              data-outline-item={it.id}
+            >
+              {active && <span aria-hidden className="absolute inset-y-[7px] left-0 w-[2px] rounded-full bg-primary" />}
+              {it.text}
+            </button>
+          );
+        })}
       </nav>
     </aside>
   );

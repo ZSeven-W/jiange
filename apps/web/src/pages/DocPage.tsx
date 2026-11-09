@@ -36,7 +36,7 @@ import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftS
 import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
 import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./commentAttemptApi";
 import { CommentAttemptRecovery } from "./CommentAttemptRecovery";
-import { OutlinePanel, outlineOf, type OutlineItem } from "./OutlinePanel";
+import { OutlinePanel, activeOutlineId, outlineOf, type OutlineItem } from "./OutlinePanel";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -144,7 +144,10 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
-  const [outlineOpen, setOutlineOpen] = useState(false);
+  // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
+  const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
+  const [outlineActive, setOutlineActive] = useState<string | null>(null);
+  const scrollArea = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<{ src: string; alt: string; mime?: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
@@ -333,6 +336,26 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     const view = d.view();
     return outlineOf(view.blocks.map((b) => ({ id: b.id, type: b.type, spans: b.spans })));
   }, [sync.client.doc, sync.version, outlineOpen]);
+  // 没有标题时不占用正文左侧空间（与飞书一致）；手动打开的抽屉仍显示空态提示。
+  const outlineVisible = outlineOpen && (outline.length > 0 || (typeof window !== "undefined" && typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 1280px)").matches));
+  const outlineFrame = useRef(0);
+  const onBodyScroll = useCallback(() => {
+    if (!outlineVisible || outlineFrame.current) return;
+    outlineFrame.current = requestAnimationFrame(() => {
+      outlineFrame.current = 0;
+      const area = scrollArea.current;
+      if (!area) return;
+      const base = area.getBoundingClientRect().top;
+      const tops: Record<string, number> = {};
+      for (const it of outline) {
+        const el = area.querySelector<HTMLElement>(`[data-block="${it.id}"]`);
+        if (el) tops[it.id] = el.getBoundingClientRect().top - base;
+      }
+      setOutlineActive(activeOutlineId(outline, tops, 96));
+    });
+  }, [outline, outlineVisible]);
+  useEffect(() => { onBodyScroll(); }, [onBodyScroll]);
+  useEffect(() => () => { if (outlineFrame.current) cancelAnimationFrame(outlineFrame.current); }, []);
 
   const wordCount = useMemo(() => {
     const d = sync.client.doc;
@@ -670,7 +693,24 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto" onScroll={onBodyScroll} data-doc-scroll>
+          <div className="flex min-h-full">
+          {outlineVisible && (
+            <OutlinePanel
+              items={outline}
+              activeId={outlineActive}
+              allowCopy={contentCopyAllowed}
+              allowPrint={downloadAllowed}
+              onClose={() => setOutlineOpen(false)}
+              onJump={(bid) => {
+                setOutlineActive(bid);
+                const area = scrollArea.current;
+                const el = document.querySelector<HTMLElement>(`[data-block="${bid}"]`);
+                if (area && el) area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
+              }}
+            />
+          )}
+          <div className="min-w-0 flex-1">
           <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full max-w-[960px] px-7 sm:px-16", hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
@@ -745,6 +785,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
           </article>}</DocumentCover>
+          </div>
+          </div>
         </div>
         {findOpen && <div ref={findPanel}>
           <FindReplacePanel
@@ -766,18 +808,6 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           />
         </div>}
       </div>
-      {outlineOpen && (
-        <OutlinePanel
-          items={outline}
-          activeId={null}
-          allowCopy={contentCopyAllowed}
-          allowPrint={downloadAllowed}
-          onClose={() => setOutlineOpen(false)}
-          onJump={(bid) => {
-            document.querySelector(`[data-block="${bid}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-          }}
-        />
-      )}
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}

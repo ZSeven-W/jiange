@@ -63,3 +63,17 @@ describe("version diff", () => {
     expect(rows.map((r) => r.kind)).toEqual(["same", "removed"]);
   });
 });
+
+import { activeOutlineId } from "./OutlinePanel";
+
+describe("outline reading position", () => {
+  const items = [{ id: "a", level: 2, text: "A" }, { id: "b", level: 3, text: "B" }, { id: "c", level: 2, text: "C" }];
+  it("highlights the last heading above the reading line", () => {
+    expect(activeOutlineId(items, { a: -300, b: 40, c: 600 }, 96)).toBe("b");
+    expect(activeOutlineId(items, { a: -300, b: -100, c: 20 }, 96)).toBe("c");
+  });
+  it("falls back to the first heading before any heading is reached", () => {
+    expect(activeOutlineId(items, { a: 200, b: 400, c: 600 }, 96)).toBe("a");
+    expect(activeOutlineId([], {}, 96)).toBeNull();
+  });
+});
