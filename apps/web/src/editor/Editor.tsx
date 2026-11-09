@@ -33,7 +33,7 @@ import {
 } from "./model";
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
-import { SlashMenu } from "./SlashMenu";
+import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { ask, askText } from "@/components/ui/ask";
@@ -1057,11 +1057,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     if (slash && !slashItems.length && e.key === "Enter") { e.preventDefault(); return; }
     if (slash && slashItems.length) {
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const n = slashItems.length;
-        changeSlash((current) => current ? { ...current, index: (current.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n } : null);
-        return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const grid = slashGridSize(slashItems, slash.fromButton ? slash.buttonQuery : undefined);
+        const next = nextSlashIndex(slash.index, e.key, slashItems.length, grid);
+        if (next !== null) {
+          e.preventDefault();
+          changeSlash((current) => current ? { ...current, index: next } : null);
+          return;
+        }
       }
       if (e.key === "Enter") {
         e.preventDefault();

@@ -10,6 +10,44 @@ import { MenuGlyph } from "./menuIcons";
  */
 /** 在无搜索词时以图标网格展示的分组。 */
 const GRID_GROUPS = new Set(["基础", "列表"]);
+/** 图标网格列数。 */
+export const SLASH_GRID_COLS = 5;
+
+/** 无搜索词且基础/列表块齐全时，返回网格中的项数（它们位于 items 开头）；否则为 0。 */
+export function slashGridSize(items: MenuItem[], query?: string): number {
+  if (query) return 0;
+  if (!SLASH_ITEMS.filter((it) => GRID_GROUPS.has(it.group)).every((it) => items.some((x) => x.id === it.id))) return 0;
+  let n = 0;
+  while (n < items.length && GRID_GROUPS.has(items[n].group)) n++;
+  return n;
+}
+
+/**
+ * 斜杠菜单方向键：网格内 ←/→ 逐个、↑/↓ 按行移动，越过网格底部进入下方列表，
+ * 列表顶部按 ↑ 回到网格最后一行；列表中 ←/→ 不处理（返回 null，交给光标）。
+ */
+export function nextSlashIndex(index: number, key: string, n: number, grid: number, cols = SLASH_GRID_COLS): number | null {
+  if (n <= 0) return null;
+  const i = Math.max(0, Math.min(index, n - 1));
+  const inGrid = i < grid;
+  if (key === "ArrowLeft" || key === "ArrowRight") return inGrid ? (i + (key === "ArrowRight" ? 1 : n - 1)) % n : null;
+  if (key !== "ArrowDown" && key !== "ArrowUp") return null;
+  const down = key === "ArrowDown";
+  if (!inGrid) {
+    if (down) return i + 1 < n ? i + 1 : 0;
+    if (i - 1 >= grid) return i - 1;
+    return grid > 0 ? Math.floor((grid - 1) / cols) * cols : n - 1;
+  }
+  if (down) {
+    if (i + cols < grid) return i + cols;
+    if (grid < n) return grid;
+    return i % cols;
+  }
+  if (i - cols >= 0) return i - cols;
+  if (grid < n) return n - 1;
+  const lastRow = Math.floor((grid - 1) / cols) * cols;
+  return Math.min(lastRow + (i % cols), grid - 1);
+}
 
 export function SlashMenu({
   x,
@@ -96,8 +134,7 @@ export function SlashMenu({
     else if (item.bottom > bounds.bottom) list.scrollTop += item.bottom - bounds.bottom;
   }, [index, items]);
   // 飞书式：无搜索词时“基础/列表”类块以图标网格平铺在顶部，其余以列表展示；搜索时全部为列表。
-  const browsing = !query && SLASH_ITEMS.filter((it) => GRID_GROUPS.has(it.group)).every((it) => items.some((x) => x.id === it.id));
-  const gridItems = browsing ? items.filter((it) => GRID_GROUPS.has(it.group)) : [];
+  const gridItems = items.slice(0, slashGridSize(items, query));
   const listItems = items.filter((it) => !gridItems.includes(it));
   const groups = [...new Set(listItems.map((i) => i.group))];
   const selectedGrid = gridItems.find((it) => items.indexOf(it) === index);
@@ -109,7 +146,7 @@ export function SlashMenu({
         {gridItems.length > 0 && (
           <div className="px-1 pb-1 pt-1" data-slash-grid>
             <div className="flex h-6 items-center px-1.5 text-[12px] text-subtle">基础{selectedGrid && <span className="ml-auto text-muted-foreground" aria-live="polite">{selectedGrid.label}</span>}</div>
-            <div className="grid grid-cols-5 gap-1 px-0.5">
+            <div className="grid gap-1 px-0.5" style={{ gridTemplateColumns: `repeat(${SLASH_GRID_COLS}, minmax(0, 1fr))` }}>
               {gridItems.map((it) => {
                 const gi = items.indexOf(it);
                 const selected = gi === index;
