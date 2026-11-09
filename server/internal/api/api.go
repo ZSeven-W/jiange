@@ -241,7 +241,9 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "session expired")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+		ctx := context.WithValue(r.Context(), userKey, u)
+		ctx = store.WithActor(ctx, store.Actor{UserID: u.ID, Kind: "user"})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

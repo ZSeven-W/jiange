@@ -216,11 +216,12 @@ func (m *Memory) MoveKanbanCard(ctx context.Context, guard BaseWriteGuard, baseI
 		return Record{}, false, err
 	}
 	m.b.records[index] = record
-	m.appendBtEventLocked(baseID, event)
+	m.appendBtEventActorLocked(ctx, baseID, event)
 	return record, true, nil
 }
 
 func (p *Postgres) MoveKanbanCard(ctx context.Context, guard BaseWriteGuard, baseID, recordID int64, move KanbanMove) (record Record, changed bool, err error) {
+	aid, akind := actorArgs(ctx)
 	if err = validateKanbanMove(move, recordID); err != nil {
 		return Record{}, false, err
 	}
@@ -287,7 +288,7 @@ func (p *Postgres) MoveKanbanCard(ctx context.Context, guard BaseWriteGuard, bas
 			if err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body) VALUES ($1,$2)`, baseID, event); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body,actor_id,actor_kind) VALUES ($1,$2,$3,$4)`, baseID, event, aid, akind); err != nil {
 				return err
 			}
 		}

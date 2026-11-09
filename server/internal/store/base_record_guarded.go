@@ -127,6 +127,7 @@ func pgRecordNeighbors(ctx context.Context, tx pgx.Tx, recordID int64) ([]int64,
 }
 
 func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, mutation BaseRecordMutation, validate BaseRecordValidator) (result Record, affected []int64, err error) {
+	aid, akind := actorArgs(ctx)
 	if validate == nil {
 		return Record{}, nil, ErrInvalidBaseRecord
 	}
@@ -273,7 +274,7 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 			if id != baseID {
 				body = []byte(`{"kind":"reload"}`)
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO bt_events(base_id,body) VALUES ($1,$2)`, id, body); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO bt_events(base_id,body,actor_id,actor_kind) VALUES ($1,$2,$3,$4)`, id, body, aid, akind); err != nil {
 				return err
 			}
 		}
@@ -511,7 +512,7 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 		if id != baseID {
 			body = []byte(`{"kind":"reload"}`)
 		}
-		m.appendBtEventLocked(id, body)
+		m.appendBtEventActorLocked(ctx, id, body)
 	}
 	return result, affected, nil
 }

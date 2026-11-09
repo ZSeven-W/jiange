@@ -14,12 +14,15 @@ type RecordEvent struct {
 	Seq  int64
 	At   time.Time
 	Body json.RawMessage
+	// ActorID / ActorKind are empty for events written before migration 0045.
+	ActorID   int64
+	ActorKind string
 }
 
 // RecordEvents returns up to limit events for record rid in base, newest first.
 // It reads the existing bt_events log; no new audit table is introduced.
 func (p *Postgres) RecordEvents(ctx context.Context, base, rid int64, limit int) ([]RecordEvent, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT id, at, body FROM bt_events
+	rows, err := p.Pool.Query(ctx, `SELECT id, at, body, COALESCE(actor_id, 0), COALESCE(actor_kind, '') FROM bt_events
 		WHERE base_id=$1 AND body->>'kind'='record'
 		  AND (body->'record'->>'id' = $2 OR body->>'rid' = $2)
 		ORDER BY id DESC LIMIT $3`, base, strconv.FormatInt(rid, 10), limit)
@@ -29,7 +32,7 @@ func (p *Postgres) RecordEvents(ctx context.Context, base, rid int64, limit int)
 	out := []RecordEvent{}
 	for rows.Next() {
 		var e RecordEvent
-		if err := rows.Scan(&e.Seq, &e.At, &e.Body); err != nil {
+		if err := rows.Scan(&e.Seq, &e.At, &e.Body, &e.ActorID, &e.ActorKind); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -56,7 +59,7 @@ func (m *Memory) RecordEvents(_ context.Context, base, rid int64, limit int) ([]
 			continue
 		}
 		if probe.RID == rid || (probe.Record != nil && probe.Record.ID == rid) {
-			out = append(out, RecordEvent{Seq: events[i].Seq, Body: slices.Clone(events[i].Body)})
+			out = append(out, RecordEvent{Seq: events[i].Seq, Body: slices.Clone(events[i].Body), ActorID: events[i].actor.UserID, ActorKind: events[i].actor.Kind})
 		}
 	}
 	return out, nil

@@ -28,7 +28,17 @@ type historyEntry struct {
 	Op      string          `json:"op"` // add | update
 	At      *time.Time      `json:"at,omitempty"`
 	By      *int64          `json:"by,omitempty"`
+	Actor   *historyActor   `json:"actor,omitempty"`
 	Changes []historyChange `json:"changes"`
+}
+
+// historyActor is who made a history entry. Kind "user" carries the member's
+// id and name (empty name when they are no longer a member); kind "form" is an
+// anonymous public form submission. Legacy events have no actor.
+type historyActor struct {
+	Kind string `json:"kind"`
+	ID   int64  `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // historyFieldTypes are the field types whose raw cells may appear in a
@@ -78,13 +88,18 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 			allowed[strconv.FormatInt(f.ID, 10)] = true
 		}
 	}
-	entries := buildRecordHistory(events, allowed)
+	names, err := s.collaboratorNames(r.Context(), read.meta)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	entries := buildRecordHistory(events, allowed, names)
 	httpx.JSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 // buildRecordHistory turns newest-first record events into diffs. Only
 // fields in allowed are compared; an update that changes nothing visible is dropped.
-func buildRecordHistory(events []store.RecordEvent, allowed map[string]bool) []historyEntry {
+func buildRecordHistory(events []store.RecordEvent, allowed map[string]bool, names map[int64]string) []historyEntry {
 	type snap struct {
 		e   store.RecordEvent
 		op  string
@@ -147,6 +162,15 @@ func buildRecordHistory(events []store.RecordEvent, allowed map[string]bool) []h
 		if op == "add" {
 			entry.By = sn.rec.CreatorID
 		}
+		switch {
+		case sn.e.ActorKind == "form":
+			entry.Actor = &historyActor{Kind: "form"}
+		case sn.e.ActorID != 0:
+			entry.Actor = &historyActor{Kind: "user", ID: sn.e.ActorID, Name: names[sn.e.ActorID]}
+		case op == "add" && sn.rec.CreatorID != nil && *sn.rec.CreatorID != 0:
+			// legacy create events: the record's creator made it
+			entry.Actor = &historyActor{Kind: "user", ID: *sn.rec.CreatorID, Name: names[*sn.rec.CreatorID]}
+		}
 		out = append(out, entry)
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
@@ -173,4 +197,26 @@ func compactJSON(v json.RawMessage) []byte {
 		return v
 	}
 	return buf.Bytes()
+}
+
+// collaboratorNames maps the base's workspace members and direct share
+// recipients to display names (no emails). History and comments show who
+// acted, as Feishu does, to anyone who can read the record.
+func (s *Server) collaboratorNames(ctx context.Context, d store.DocMeta) (map[int64]string, error) {
+	names := map[int64]string{}
+	ms, err := s.Store.WorkspaceMembers(ctx, d.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range ms {
+		names[m.ID] = m.Name
+	}
+	shares, err := s.Store.ListShares(ctx, d.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, sh := range shares {
+		names[sh.UserID] = sh.Name
+	}
+	return names, nil
 }

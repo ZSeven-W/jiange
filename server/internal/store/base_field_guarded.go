@@ -409,7 +409,7 @@ func (m *Memory) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, c
 	for _, id := range result.Notify {
 		if id == change.BaseID {
 			for _, event := range events {
-				m.appendBtEventLocked(id, event)
+				m.appendBtEventActorLocked(ctx, id, event)
 			}
 		} else {
 			m.appendBtEventLocked(id, fieldReload())
@@ -438,6 +438,7 @@ func pgViews(ctx context.Context, tx pgx.Tx, baseID int64) ([]View, error) {
 }
 
 func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, change FieldMutation) (result FieldMutationResult, err error) {
+	aid, akind := actorArgs(ctx)
 	ids, err := fieldMutationTargets(change)
 	if err != nil {
 		return result, err
@@ -573,7 +574,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 				bodies = events
 			}
 			for _, body := range bodies {
-				if _, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body) VALUES ($1,$2)`, id, body); err != nil {
+				if _, err = tx.Exec(ctx, `INSERT INTO bt_events (base_id,body,actor_id,actor_kind) VALUES ($1,$2,$3,$4)`, id, body, aid, akind); err != nil {
 					return err
 				}
 			}

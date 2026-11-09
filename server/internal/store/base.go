@@ -73,6 +73,8 @@ type LinkFieldRef struct {
 type BtEvent struct {
 	Seq  int64           `json:"seq"`
 	Body json.RawMessage `json:"body"`
+	// actor is kept by the in-memory store only; Postgres has bt_events.actor_*.
+	actor Actor
 }
 
 // View is a saved grid/kanban configuration (filters, sorts, group, hidden).
