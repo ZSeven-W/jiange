@@ -757,7 +757,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
                 onPreviewImage={(src, alt, mime) => setPreview({ src, alt, mime })}
-                people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name }))}
+                people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? "所有者" : "协作者" }))}
                 onMentionPerson={(uid, name) => {
                   // 文档内 @人 → 通知中心（mention）
                   fetch("/api/docs/" + id + "/comments", {
