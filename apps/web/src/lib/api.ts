@@ -105,6 +105,8 @@ export interface Field {
   /** expression for type=formula (see base/formula.ts) */
   formula?: string;
   position: number;
+  /** 默认值: applied by the server to omitted cells of new records; null clears. */
+  defaultValue?: Cell | null;
 }
 export interface AttachmentRef {
   id: number;

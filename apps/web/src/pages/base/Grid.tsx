@@ -763,7 +763,7 @@ export function Grid({
                     <span className="truncate">{f.name}</span>
                     {canEdit && (
                       <span className="ml-auto">
-                        <FieldMenu field={f} frozen={isFrozen(i) && lastFrozen(i)} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} onDuplicate={() => void saveField({ name: `${f.name} 副本`, type: f.type, options: f.options, optionColors: f.optionColors, formula: f.formula, description: f.description, position: insertPosition(f, "right") }).catch(() => undefined)} onAction={(action) => {
+                        <FieldMenu field={f} frozen={isFrozen(i) && lastFrozen(i)} onEdit={() => setEditField(f)} onDelete={() => void deleteField(f)} onDuplicate={() => void saveField({ name: `${f.name} 副本`, type: f.type, options: f.options, optionColors: f.optionColors, formula: f.formula, description: f.description, defaultValue: f.defaultValue ?? null, position: insertPosition(f, "right") }).catch(() => undefined)} onAction={(action) => {
                           if (action === "insert-left" || action === "insert-right") setInsertAt({ fid: f.id, position: insertPosition(f, action === "insert-left" ? "left" : "right") });
                           else onFieldAction?.(action, f);
                         }} />
