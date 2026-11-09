@@ -24,3 +24,15 @@ describe("link hover card", () => {
     expect(ed).toContain('value="https://a.dev"');
   });
 });
+
+describe("document mention card", () => {
+  it("shows the document title instead of a URL and has no edit button", () => {
+    const html = renderToStaticMarkup(<LinkCard href="#/doc/1" docTitle="产品需求文档" x={0} y={0} onOpen={noop} onCopy={noop} onEdit={noop} onUnlink={noop} />);
+    expect(html).toContain("data-link-card-doc");
+    expect(html).toContain("产品需求文档");
+    expect(html).toContain("云文档");
+    expect(html).toContain('title="打开文档"');
+    expect(html).not.toContain("data-link-edit");
+    expect(html).not.toContain("data-link-card-url");
+  });
+});
