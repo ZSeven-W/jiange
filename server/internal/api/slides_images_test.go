@@ -92,8 +92,19 @@ func TestSlidesImageAccessAndReferences(t *testing.T) {
 		return d
 	}
 	deck, other := create(), create()
-	if res := post(t, owner, ts.URL+"/api/docs/"+strconv64(deck.ID)+"/duplicate", nil); res.StatusCode != 400 {
-		t.Fatalf("deck copy must not create a partial document: %d", res.StatusCode)
+	var deckCopy store.DocMeta
+	if res := post(t, owner, ts.URL+"/api/docs/"+strconv64(deck.ID)+"/duplicate", nil); res.StatusCode != 201 {
+		t.Fatalf("deck copy must publish a full copy: %d", res.StatusCode)
+	} else if err := json.NewDecoder(res.Body).Decode(&deckCopy); err != nil || deckCopy.ID == deck.ID || deckCopy.Kind != "slides" {
+		t.Fatalf("deck copy meta: %+v %v", deckCopy, err)
+	}
+	var deckPages, copyPages struct {
+		Pages []store.SlidesPage
+	}
+	_ = json.NewDecoder(cGet(t, owner, ts.URL+"/api/slides/"+strconv64(deck.ID)+"/pages").Body).Decode(&deckPages)
+	_ = json.NewDecoder(cGet(t, owner, ts.URL+"/api/slides/"+strconv64(deckCopy.ID)+"/pages").Body).Decode(&copyPages)
+	if len(copyPages.Pages) != len(deckPages.Pages) || len(copyPages.Pages) == 0 || copyPages.Pages[0].ID == deckPages.Pages[0].ID {
+		t.Fatalf("deck copy pages: %+v vs %+v", copyPages.Pages, deckPages.Pages)
 	}
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
 	upload := func(c *http.Client, deckID, uid int64, content []byte) (*http.Response, store.FileMeta) {
@@ -171,6 +182,45 @@ func TestSlidesImageAccessAndReferences(t *testing.T) {
 	}
 	if res := patch(shape(image.ID), p.Revision+2); res.StatusCode != 200 {
 		t.Fatalf("restore image: %d", res.StatusCode)
+	}
+	// 附图后的整份复制：新文稿获得自己的附件行，图片引用重映射，blob 共享。
+	var withImage store.DocMeta
+	if res := post(t, owner, ts.URL+"/api/docs/"+strconv64(deck.ID)+"/duplicate", nil); res.StatusCode != 201 {
+		t.Fatalf("deck copy with image: %d", res.StatusCode)
+	} else if err := json.NewDecoder(res.Body).Decode(&withImage); err != nil {
+		t.Fatal(err)
+	}
+	var imgPages struct {
+		Pages []store.SlidesPage
+	}
+	_ = json.NewDecoder(cGet(t, owner, ts.URL+"/api/slides/"+strconv64(withImage.ID)+"/pages").Body).Decode(&imgPages)
+	if len(imgPages.Pages) != 1 {
+		t.Fatalf("copy with image pages: %+v", imgPages.Pages)
+	}
+	var imgShapes []map[string]any
+	if err := json.Unmarshal(imgPages.Pages[0].Shapes, &imgShapes); err != nil || len(imgShapes) != 1 {
+		t.Fatalf("copy shapes: %s %v", imgPages.Pages[0].Shapes, err)
+	}
+	remapped := int64(imgShapes[0]["fileId"].(float64))
+	if remapped == image.ID {
+		t.Fatal("copy still references the source image row")
+	}
+	original, err := st.GetFile(context.Background(), image.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloned, err := st.GetFile(context.Background(), remapped)
+	if err != nil || cloned.DocID != withImage.ID || cloned.ObjectKey != original.ObjectKey || cloned.Mime != original.Mime || cloned.Size != original.Size {
+		t.Fatalf("remapped attachment: %+v %v", cloned, err)
+	}
+	copyPatch := func(fileID int64, revision int64) *http.Response {
+		return send(t, owner, "PATCH", ts.URL+"/api/slides/pages/"+strconv64(imgPages.Pages[0].ID), map[string]any{"title": "", "body": "", "background": "", "shapes": shape(fileID), "expectedRevision": revision})
+	}
+	if res := copyPatch(image.ID, imgPages.Pages[0].Revision); res.StatusCode != 409 {
+		t.Fatalf("copy accepted source image: %d", res.StatusCode)
+	}
+	if res := copyPatch(remapped, imgPages.Pages[0].Revision); res.StatusCode != 200 {
+		t.Fatalf("copy edit own image: %d", res.StatusCode)
 	}
 	if res := send(t, owner, "PUT", ts.URL+"/api/docs/"+strconv64(deck.ID)+"/shares", map[string]string{"email": "slide-image-viewer@test.dev", "role": ""}); res.StatusCode != 200 {
 		t.Fatalf("revoke: %d", res.StatusCode)

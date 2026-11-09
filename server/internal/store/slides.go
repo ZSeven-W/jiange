@@ -34,6 +34,20 @@ type SlidesStore interface {
 	// MoveSlidesPage repositions a page (pos ordering; the client sends the
 	// midpoint between neighbours).
 	MoveSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, pos float64) error
+	// CopySlidesDeck publishes a full deck copy — node, remapped image
+	// references and every page — as one critical section. It returns the new
+	// node metadata and the copied pages with their fresh ids.
+	CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta, []SlidesPage, error)
+}
+
+// SlidesDeckCopy carries the caller-verified destination for a full deck copy.
+// Guard is required by authenticated request handlers; a nil guard is reserved
+// for trusted internal callers.
+type SlidesDeckCopy struct {
+	SourceID, UserID, WorkspaceID int64
+	ParentID                      *int64
+	Title                         string
+	Guard                         *RestoreGuard
 }
 
 // slideImageIDs is also checked in the write transaction, so a client cannot
@@ -60,6 +74,41 @@ func slideImageIDs(shapes json.RawMessage) ([]int64, error) {
 		}
 	}
 	return ids, nil
+}
+
+// SlideImageIDs extracts the distinct image attachment ids referenced by a
+// shapes payload, for callers outside the store package.
+func SlideImageIDs(shapes json.RawMessage) ([]int64, error) { return slideImageIDs(shapes) }
+
+// remapSlideShapes rewrites image fileIds through mapping while preserving
+// every other field of the payload.
+func remapSlideShapes(shapes json.RawMessage, mapping map[int64]int64) (json.RawMessage, error) {
+	if len(mapping) == 0 {
+		return shapes, nil
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(shapes, &items); err != nil {
+		return nil, ErrConflict
+	}
+	for _, item := range items {
+		if kind, _ := item["kind"].(string); kind != "image" {
+			continue
+		}
+		raw, ok := item["fileId"].(float64)
+		if !ok || raw <= 0 {
+			return nil, ErrConflict
+		}
+		mapped, ok := mapping[int64(raw)]
+		if !ok {
+			return nil, ErrNotFound
+		}
+		item["fileId"] = mapped
+	}
+	out, err := json.Marshal(items)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func slideImageMIME(mime string) bool {
