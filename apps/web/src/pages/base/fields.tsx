@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
 import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Snowflake, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
 import { popupPosition } from "./popupPosition";
+import { Avatar } from "@/components/brand";
+import { colorFor } from "@/lib/presence";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -161,11 +163,17 @@ export function FieldForm({
               })}
             </div>
           ) : DEFAULT_KINDS[type] === "person" ? (
-            <select value={dflt} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary" data-default-person>
-              <option value="">无</option>
-              {dflt && !members.some((m) => String(m.id) === dflt) && <option value={dflt}>成员 #{dflt}</option>}
-              {members.map((m) => <option key={m.id} value={String(m.id)}>{m.name}</option>)}
-            </select>
+            <div role="radiogroup" aria-label="默认人员" className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person>
+              {[{ id: 0, name: "无" }, ...members, ...(dflt && !members.some((m) => String(m.id) === dflt) ? [{ id: Number(dflt), name: `成员 #${dflt}` }] : [])].map((m) => {
+                const picked = m.id === 0 ? !dflt : String(m.id) === dflt;
+                return (
+                  <button key={m.id} type="button" role="radio" aria-checked={picked} onClick={() => setDflt(m.id === 0 ? "" : String(m.id))}
+                    className={cn("flex h-6 items-center gap-1 rounded-full pl-0.5 pr-2 text-[12px]", m.id === 0 && "pl-2", picked ? "bg-accent text-primary ring-1 ring-primary" : "bg-hover text-muted-foreground hover:text-foreground")} data-person-option={m.id}>
+                    {m.id !== 0 && <Avatar name={m.name} color={colorFor(m.id - 1)} size={20} />}{m.name}
+                  </button>
+                );
+              })}
+            </div>
           ) : DEFAULT_KINDS[type] === "select" ? (
             <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
               <option value="">无</option>
