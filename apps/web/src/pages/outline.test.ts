@@ -77,3 +77,19 @@ describe("outline reading position", () => {
     expect(activeOutlineId([], {}, 96)).toBeNull();
   });
 });
+
+import { visibleOutline } from "./OutlinePanel";
+
+describe("collapsible outline", () => {
+  const items = [
+    { id: "a", level: 2, text: "A" }, { id: "a1", level: 3, text: "A1" }, { id: "a1x", level: 4, text: "A1x" },
+    { id: "b", level: 2, text: "B" }, { id: "b1", level: 3, text: "B1" },
+  ];
+  it("marks headings that have deeper headings after them", () => {
+    expect(visibleOutline(items, new Set()).map((r) => [r.item.id, r.hasChildren])).toEqual([["a", true], ["a1", true], ["a1x", false], ["b", true], ["b1", false]]);
+  });
+  it("hides every descendant of a folded heading until a sibling level returns", () => {
+    expect(visibleOutline(items, new Set(["a"])).map((r) => r.item.id)).toEqual(["a", "b", "b1"]);
+    expect(visibleOutline(items, new Set(["a1", "b"])).map((r) => r.item.id)).toEqual(["a", "a1", "b"]);
+  });
+});

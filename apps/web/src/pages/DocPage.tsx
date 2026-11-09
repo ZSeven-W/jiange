@@ -36,7 +36,7 @@ import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftS
 import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
 import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./commentAttemptApi";
 import { CommentAttemptRecovery } from "./CommentAttemptRecovery";
-import { OutlinePanel, activeOutlineId, outlineOf, type OutlineItem } from "./OutlinePanel";
+import { OutlinePanel, activeOutlineId, loadOutlinePinned, outlineOf, saveOutlinePinned, type OutlineItem } from "./OutlinePanel";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -147,6 +147,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
+  const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
   const scrollArea = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<{ src: string; alt: string; mime?: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
@@ -700,6 +701,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               items={outline}
               activeId={outlineActive}
               yieldToSidePanel={(commentsAvailable && commentsOpen) || history}
+              pinned={outlinePinned}
+              onPinnedChange={(next) => { setOutlinePinned(next); saveOutlinePinned(next); }}
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
               onClose={() => setOutlineOpen(false)}
