@@ -27,7 +27,65 @@ type room struct {
 	doc     *collab.Doc // nil until loaded
 	head    int64       // last seq integrated into doc and fanned out
 	snapSeq int64
+	// fullLog is set when doc was rebuilt from the complete operation log in
+	// this room's lifetime, so it holds every tombstone ever created.
+	fullLog bool
 	conns   map[*conn]struct{}
+}
+
+// errUnresolved reports operations whose dependencies are missing from the
+// state they were replayed onto.
+var errUnresolved = errors.New("operations have unresolved dependencies")
+
+// replayLog rebuilds a replica from the complete operation log (seq 1..upTo)
+// without fanning anything out. Operations are never pruned, so this is the
+// lossless authority when a snapshot written by the legacy tombstone GC
+// cannot resolve later operations. Anything still unresolved is reported,
+// never dropped.
+func (r *room) replayLog(ctx context.Context, upTo int64) (*collab.Doc, error) {
+	d := collab.NewDoc()
+	var from int64
+	for from < upTo {
+		rows, err := r.hub.Store.OpsAfter(ctx, r.id, from, int(min(upTo-from, catchUpChunk)))
+		if err != nil {
+			return nil, err
+		}
+		if err := validateLogRows(r.id, from, upTo, rows); err != nil {
+			return nil, err
+		}
+		_, ops, err := joinRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		for _, op := range ops {
+			d.Apply(op)
+		}
+		from = rows[len(rows)-1].Seq
+	}
+	if d.Pending() != 0 {
+		return nil, fmt.Errorf("replay %d: %d %w in the full log at seq %d", r.id, d.Pending(), errUnresolved, upTo)
+	}
+	return d, nil
+}
+
+// repairFromLog replaces the room replica with a full-log replay at r.head and
+// persists it as a lossless snapshot so later joins and cold loads use it.
+func (r *room) repairFromLog(ctx context.Context, cause error) error {
+	d, err := r.replayLog(ctx, r.head)
+	if err != nil {
+		r.hub.Log.Error("document history cannot be resolved", "doc", r.id, "cause", cause, "err", err)
+		return err
+	}
+	r.hub.Log.Warn("rebuilt document from full operation log", "doc", r.id, "seq", r.head, "snapshot", r.snapSeq, "cause", cause)
+	r.doc, r.fullLog = d, true
+	if r.head > r.snapSeq {
+		if err := r.hub.Store.SaveSnapshot(ctx, r.id, r.head, d.EncodeState()); err != nil {
+			r.hub.Log.Error("save repaired snapshot", "doc", r.id, "err", err)
+		} else {
+			r.snapSeq = r.head
+		}
+	}
+	return nil
 }
 
 func (r *room) load(ctx context.Context) error {
@@ -48,7 +106,14 @@ func (r *room) load(ctx context.Context) error {
 	default:
 		return err
 	}
-	return r.catchUp(ctx)
+	r.fullLog = r.snapSeq == 0
+	err = r.catchUp(ctx)
+	if errors.Is(err, errUnresolved) && !r.fullLog {
+		// A snapshot from the legacy tombstone GC lacks characters that
+		// later operations reference. Rebuild losslessly from the log.
+		return r.repairFromLog(ctx, err)
+	}
+	return err
 }
 
 // catchUp integrates ops persisted (by any instance) after r.head and fans
@@ -83,7 +148,7 @@ func (r *room) catchUp(ctx context.Context) error {
 		r.head = rows[len(rows)-1].Seq
 	}
 	if r.doc.Pending() != 0 {
-		return fmt.Errorf("catch up %d: %d operations have unresolved dependencies at seq %d", r.id, r.doc.Pending(), target)
+		return fmt.Errorf("catch up %d: %d %w at seq %d", r.id, r.doc.Pending(), errUnresolved, target)
 	}
 	return nil
 }
@@ -326,6 +391,17 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 				rejected++
 			}
 		}
+		if rejected > 0 && !r.fullLog {
+			// The replica came from a snapshot that may have been written by
+			// the legacy tombstone GC, so a dependency may only be missing
+			// there. Rebuild losslessly from the log and re-check the batch.
+			tx.Rollback()
+			if err := r.repairFromLog(ctx, fmt.Errorf("%d ops depend on unknown ops", rejected)); err != nil {
+				r.reset()
+				return err
+			}
+			continue
+		}
 		if len(raws) == 0 {
 			tx.Rollback()
 			// A concurrently committed dependency may have arrived since
@@ -508,10 +584,10 @@ func (r *room) handleAware(c *conn, state string) {
 	}
 }
 
-// snapshot persists a compacted state at the GC horizon: the highest seq
-// every recently active replica has acknowledged. Tombstones at or below it
-// can no longer be referenced by ops still to come (clients resend unacked
-// ops before acknowledging new ones), so Compact may drop them.
+// snapshot persists the state at the horizon: the highest seq every recently
+// active replica has acknowledged. Compact keeps every character tombstone,
+// because replicas that acknowledged a deletion still reference its tombstone
+// in later ops (PROTOCOL.md §11), so the snapshot is lossless.
 func (r *room) snapshot(ctx context.Context) error {
 	st := r.hub.Store
 	for c := range r.conns {
@@ -572,7 +648,11 @@ func (r *room) snapshot(ctx context.Context) error {
 	// Pending operations are not encoded by Doc.EncodeState. Saving now would
 	// silently discard unresolved content while advancing the snapshot seq.
 	if base.Pending() != 0 {
-		return fmt.Errorf("snapshot %d: %d operations have unresolved dependencies at seq %d", r.id, base.Pending(), horizon)
+		// The previous snapshot was written by the legacy tombstone GC.
+		// Rebuild this one from the complete log instead.
+		if base, err = r.replayLog(ctx, horizon); err != nil {
+			return fmt.Errorf("snapshot %d: %w", r.id, err)
+		}
 	}
 	removed := base.Compact()
 	if err := st.SaveSnapshot(ctx, r.id, horizon, base.EncodeState()); err != nil {

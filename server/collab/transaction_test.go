@@ -91,7 +91,7 @@ func TestOccupiedIndexFollowsSnapshotApplyAndCompaction(t *testing.T) {
 		t.Fatalf("replayed overlap: %v", err)
 	}
 	loaded.Apply(Op{T: TTextDelete, ID: OpID{Client: 4, Clock: 1}, Block: other, Target: OpID{Client: 3, Clock: 2}, Len: 1})
-	if loaded.Compact() == 0 || loaded.occupied[OpID{Client: 3, Clock: 2}] != 0 {
+	if loaded.CompactLegacyTombstones() == 0 || loaded.occupied[OpID{Client: 3, Clock: 2}] != 0 {
 		t.Fatal("compaction retained the removed character in index")
 	}
 	// The accelerator may now allow this ID; the durable log still rejects
