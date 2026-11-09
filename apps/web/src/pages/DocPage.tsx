@@ -1191,7 +1191,7 @@ function DocMenu({
             目录
           </button>
           {onToggleWide && (
-            <div className="flex items-center justify-between px-3 py-1.5 text-[13px]" data-doc-width>
+            <div className="hidden items-center justify-between px-3 py-1.5 text-[13px] lg:flex" data-doc-width>
               <span>页面宽度</span>
               <span className="flex rounded-md bg-hover p-0.5 text-[12px]">
                 {([[false, "标准"], [true, "全宽"]] as const).map(([w, label]) => (
