@@ -32,7 +32,7 @@ describe("Feishu-style block handle", () => {
     const html = renderToStaticMarkup(<BlockHandle type="image" open onOpenChange={noop} can={blockAbilities("image", false, true, true)} />);
     expect(html).not.toContain("data-convert-to");
     expect(html).not.toContain("data-block-colors");
-    expect(html).not.toContain("data-block-copy");
+    expect(html).toContain("data-block-copy");
     expect(html).toContain("data-delete-block");
   });
   it("shows the selected-block count and bulk actions for a multi-block selection", () => {

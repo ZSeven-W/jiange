@@ -1,4 +1,4 @@
-import { parseText, TEXTLESS, type ClipBlock } from "./model";
+import { CLIPPABLE_BLOCKS, parseText, TEXTLESS, type ClipBlock } from "./model";
 
 function stringRecord(value: unknown): value is Record<string, string> {
   return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string");
@@ -19,7 +19,7 @@ export function clipboardBlocks(raw: string, plain: string): ClipBlock[] | null 
         const blocks = value as ClipBlock[];
         // pasteBlocks merges a single block as text regardless of its type;
         // a textless image/divider would otherwise only delete the selection.
-        if (blocks.length > 1 || blocks[0].chars.length > 0) return blocks;
+        if (blocks.length > 1 || blocks[0].chars.length > 0 || CLIPPABLE_BLOCKS.has(blocks[0].type)) return blocks;
       }
     } catch { /* Use plain text if the custom data is invalid. */ }
   }

@@ -4,7 +4,7 @@ import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
 import { deleteRange, mathSpans, pasteBlocks } from "./model";
 
 describe("clipboard payload validation", () => {
-  it.each(["", "null", "{}", "[]", '[{"type":"paragraph","props":{}}]', '[{"type":"paragraph","props":{},"chars":[{}]}]', '[{"type":"paragraph","props":{},"chars":[{"ch":"ab","marks":{}}]}]', '[{"type":"image","props":{"fileId":"7"},"chars":[]}]', '[{"type":"divider","props":{},"chars":[]}]'])("keeps selected text when payload is unusable: %s", (raw) => {
+  it.each(["", "null", "{}", "[]", '[{"type":"paragraph","props":{}}]', '[{"type":"paragraph","props":{},"chars":[{}]}]', '[{"type":"paragraph","props":{},"chars":[{"ch":"ab","marks":{}}]}]'])("keeps selected text when payload is unusable: %s", (raw) => {
     const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
     tx.insert(block, 0, "原文保留");
     const clip = clipboardBlocks(raw, "");
@@ -15,6 +15,21 @@ describe("clipboard payload validation", () => {
     }
     expect(clip).toBeNull();
     expect(doc.text(block)).toBe("原文保留");
+  });
+
+  it("pastes a single copied image block after the caret, or in place of an empty paragraph", () => {
+    const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
+    tx.insert(block, 0, "正文");
+    const clip = clipboardBlocks('[{"type":"image","props":{"fileId":"7","caption":"图"},"chars":[]}]', "")!;
+    expect(clip).toHaveLength(1);
+    const caret = pasteBlocks(new Tx(doc), { b: block, o: 2 }, clip);
+    const types = doc.view().blocks.filter((b) => b.parent !== undefined).map((b) => b.type);
+    expect(types).toContain("image");
+    expect(doc.text(block)).toBe("正文");
+    expect(doc.blockInfo(caret.b).type).toBe("paragraph");
+    const empty = new Tx(doc).create("paragraph", caret.b, ROOT);
+    pasteBlocks(new Tx(doc), { b: empty, o: 0 }, clipboardBlocks('[{"type":"divider","props":{},"chars":[]}]', "")!);
+    expect(doc.blockInfo(empty).type).toBe("divider");
   });
 
   it("falls back to literal plain text for invalid custom data", () => {
