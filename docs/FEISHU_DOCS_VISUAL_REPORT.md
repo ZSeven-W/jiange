@@ -1,5 +1,25 @@
 # 飞书文档界面核验记录
 
+## 2026-11-09（第三轮）：顶栏元信息、多块拖动、只读手柄、高亮块/代码块/表格、链接卡片、评论卡片
+
+![顶栏「最近修改」](screenshots/document-header-meta-20261109.jpg)
+
+![只读读者的块菜单](screenshots/document-readonly-block-menu-20261109.jpg)
+
+![多块整体拖动的落点线](screenshots/document-multi-block-drag-20261109.jpg)
+
+![高亮块图标面板](screenshots/document-callout-emoji-20261109.jpg)
+
+![代码块语言搜索与操作](screenshots/document-code-header-20261109.jpg)
+
+![表格网格与浮动工具栏](screenshots/document-table-toolbar-20261109.jpg)
+
+![链接悬停卡片](screenshots/document-link-card-20261109.jpg)
+
+![评论卡片](screenshots/document-comment-card-20261109.jpg)
+
+环境同前（1440×900 无头 Chromium、合成账号、临时 PostgreSQL 16 + Go 服务，无 MinIO）。已在浏览器验证：打开文档时顶栏显示「最近修改：今天 16:19」，输入后变为「已经保存到云端」；选中 2 个块后用合成 DragEvent 拖到「执行计划」之后，两块按原顺序整体移动，Ctrl+Z 一次恢复（Playwright 原生拖放在无头环境不触发，单块拖动同样受限）；以只读读者身份打开块菜单仅有 复制/复制链接/评论，三者均生效；高亮块切换为蓝色与 🚀 后恢复；代码块复制得到原文并显示「已复制」，搜索「go」回车切换语言，自动换行开关往返；表格悬停增行、增列后两次撤销恢复；链接卡片复制、编辑地址、取消链接；文档提及卡片「打开文档」跳转；评论卡片回复后显示两层头像头部。前端 105 个测试文件 616 项、协同模块 173 项、TypeScript、生产构建与 Go 测试通过。仍**未**在用户登录的飞书中逐像素对照。
+
 ## 2026-11-09（第二轮）：块菜单、多块选择、目录形态、工具栏对齐
 
 ![标题字号、引用与高亮块配色、56px 顶栏](screenshots/document-heading-scale-20261109b.jpg)
