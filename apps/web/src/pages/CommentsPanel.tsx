@@ -207,7 +207,7 @@ export function CommentsPanel({
   }, [comments]);
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl" data-comments-panel>
+    <aside className="fixed bottom-0 right-0 top-16 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl xl:z-20 xl:shadow-none" data-comments-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         评论
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
