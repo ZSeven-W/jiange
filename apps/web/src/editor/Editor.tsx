@@ -38,6 +38,7 @@ import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
+import { LinkCard } from "./LinkCard";
 import { ask, askText } from "@/components/ui/ask";
 import { Columns3, Copy, MessageCircle, Play, Plus, Rows3, Trash2, X } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
@@ -199,6 +200,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const selBlocksRef = useRef(selBlocks);
   selBlocksRef.current = selBlocks;
   const [toast, setToast] = useState("");
+  const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos } | null>(null);
+  const linkHide = useRef<number | null>(null);
+  const keepLinkCard = () => { if (linkHide.current) { window.clearTimeout(linkHide.current); linkHide.current = null; } };
+  const hideLinkCard = () => { keepLinkCard(); linkHide.current = window.setTimeout(() => setLinkCard(null), 250); };
   useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(t); }, [toast]);
   const [drag, setDrag] = useState<{
     b: OpId;
@@ -1431,7 +1436,42 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   }, [readOnly]);
 
   return (
-    <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop}>
+    <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop} onMouseOver={(e) => {
+      const a = (e.target as HTMLElement).closest?.<HTMLAnchorElement>("a[data-link]");
+      const r = root.current, w = wrap.current;
+      if (!a || !r || !w || !r.contains(a)) { if (linkCard && !(e.target as HTMLElement).closest?.("[data-link-card]")) hideLinkCard(); return; }
+      keepLinkCard();
+      const href = a.getAttribute("href") ?? "";
+      if (linkCard?.href === href) return;
+      const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length);
+      if (!from || !to) return;
+      const ar = a.getBoundingClientRect(), wr = w.getBoundingClientRect();
+      setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, from, to });
+    }} onMouseLeave={hideLinkCard}>
+      {linkCard && <LinkCard
+        key={`${linkCard.href}@${linkCard.x},${linkCard.y}`}
+        href={linkCard.href}
+        x={linkCard.x}
+        y={linkCard.y}
+        onEnter={keepLinkCard}
+        onLeave={hideLinkCard}
+        onOpen={() => { window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
+        onCopy={() => { void navigator.clipboard?.writeText(linkCard.href).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
+        onEdit={readOnly ? undefined : (url) => {
+          const { from, to } = linkCard;
+          setLinkCard(null);
+          sel.current = { a: from, f: to };
+          run((tx) => { if (eqId(from.b, to.b) && to.o > from.o) tx.format(from.b, from.o, to.o, "link", url); return to; });
+          um.seal();
+        }}
+        onUnlink={readOnly ? undefined : () => {
+          const { from, to } = linkCard;
+          setLinkCard(null);
+          sel.current = { a: from, f: to };
+          run((tx) => { if (eqId(from.b, to.b) && to.o > from.o) tx.format(from.b, from.o, to.o, "link", null); return to; });
+          um.seal();
+        }}
+      />}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
@@ -2175,7 +2215,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     );
   if (href)
     return (
-      <a style={style} href={href} className={cls} onClick={(e) => {
+      <a style={style} href={href} className={cls} data-link onClick={(e) => {
         e.preventDefault();
         if (e.metaKey || e.ctrlKey) window.open(href, "_blank", "noopener,noreferrer");
       }}>
