@@ -737,7 +737,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
-              className="text-[32px] font-semibold leading-[1.3] tracking-tight [&_textarea]:font-semibold [&_textarea]:leading-[1.3]"
+              className="text-[32px] font-medium leading-[1.3] tracking-tight [&_textarea]:font-medium [&_textarea]:leading-[1.3]"
             /></DocumentIconEditor></div>
             <div ref={body} className="mt-6" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor

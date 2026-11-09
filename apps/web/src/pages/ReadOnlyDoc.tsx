@@ -109,21 +109,21 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
       const nested = children.has(block.id) ? <div className="pl-6">{renderChildren(block.id)}</div> : null;
       let content: ReactNode;
       switch (block.type) {
-        case "h1": content = <h1 className="mb-1 mt-5 text-[26px] font-semibold leading-[1.4]">{rich}</h1>; break;
-        case "h2": content = <h2 className="mb-0.5 mt-4 text-[22px] font-semibold leading-[1.4]">{rich}</h2>; break;
-        case "h3": content = <h3 className="mt-3.5 text-[20px] font-semibold leading-[1.45]">{rich}</h3>; break;
-        case "h4": content = <h4 className="mt-3 text-[18px] font-semibold leading-[1.5]">{rich}</h4>; break;
-        case "h5": content = <h5 className="mt-2.5 text-[16px] font-semibold leading-[1.6]">{rich}</h5>; break;
-        case "h6": content = <h6 className="mt-2.5 text-[16px] font-semibold leading-[1.6]">{rich}</h6>; break;
-        case "bullet": case "ordered": case "todo": content = <div className="flex gap-2 py-[2px] text-[16px] leading-[1.75]"><span className={cn("min-w-[18px] text-center", block.type !== "todo" && "text-primary")}>{block.type === "bullet" ? ["•", "◦", "▪"][indent % 3] : block.type === "ordered" ? `${number}.` : block.props.checked === "true" ? "☑" : "☐"}</span><span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", block.type === "todo" && block.props.checked === "true" && "text-subtle line-through")}>{rich}</span></div>; break;
-        case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[2px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
+        case "h1": content = <h1 className="mb-1 mt-5 text-[26px] font-medium leading-[1.4]">{rich}</h1>; break;
+        case "h2": content = <h2 className="mb-0.5 mt-4 text-[22px] font-medium leading-[1.4]">{rich}</h2>; break;
+        case "h3": content = <h3 className="mt-3.5 text-[20px] font-medium leading-[1.45]">{rich}</h3>; break;
+        case "h4": content = <h4 className="mt-3 text-[18px] font-medium leading-[1.5]">{rich}</h4>; break;
+        case "h5": content = <h5 className="mt-2.5 text-[16px] font-medium leading-[1.6]">{rich}</h5>; break;
+        case "h6": content = <h6 className="mt-2.5 text-[16px] font-medium leading-[1.6]">{rich}</h6>; break;
+        case "bullet": case "ordered": case "todo": content = <div className="flex gap-2 py-[3px] text-[16px] leading-[1.75]"><span className={cn("min-w-[18px] text-center", block.type !== "todo" && "text-primary")}>{block.type === "bullet" ? ["•", "◦", "▪"][indent % 3] : block.type === "ordered" ? `${number}.` : block.props.checked === "true" ? "☑" : "☐"}</span><span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", block.type === "todo" && block.props.checked === "true" && "text-subtle line-through")}>{rich}</span></div>; break;
+        case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[3px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
         case "code": content = <div className="my-2 rounded-md bg-[#F5F6F7] dark:bg-[#23262a]"><div className="px-3.5 pt-2 text-[12px] text-subtle">{codeLangLabel(block.props.lang)}</div><pre className={cn("px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", block.props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>{rich}</pre></div>; break;
-        case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-3" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
+        case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-[15px]" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "table": content = <ReadOnlyTable data={block.props.tableData} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
-        case "divider": content = <hr className="my-3 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
+        case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
