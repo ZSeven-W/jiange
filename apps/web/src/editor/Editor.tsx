@@ -40,6 +40,7 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { LinkCard } from "./LinkCard";
 import { ImageBlock } from "./ImageBlock";
+import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { Columns3, Copy, MessageCircle, Play, Plus, Rows3, Trash2, X } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
@@ -96,7 +97,7 @@ interface Props {
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
   /** workspace members offered by the @ menu（@人提及） */
-  people?: { id: number; name: string }[];
+  people?: MemberInfo[];
   /** stores a file and returns its id; enables image/file blocks */
   upload?: (f: File, onProgress?: (percent: number) => void) => Promise<Uploaded>;
   me: Presence;
@@ -203,10 +204,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const [toast, setToast] = useState("");
   /** 正在上传的附件：在插入位置的块下方显示占位与进度（不写入文档）。 */
   const [uploading, setUploading] = useState<{ anchor: string; name: string; percent: number; index: number; total: number } | null>(null);
+  const [memberCard, setMemberCard] = useState<{ id: number; name: string; x: number; y: number } | null>(null);
   const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos; docTitle?: string } | null>(null);
   const linkHide = useRef<number | null>(null);
   const keepLinkCard = () => { if (linkHide.current) { window.clearTimeout(linkHide.current); linkHide.current = null; } };
-  const hideLinkCard = () => { keepLinkCard(); linkHide.current = window.setTimeout(() => setLinkCard(null), 250); };
+  const hideLinkCard = () => { keepLinkCard(); linkHide.current = window.setTimeout(() => { setLinkCard(null); setMemberCard(null); }, 250); };
   useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(t); }, [toast]);
   const [drag, setDrag] = useState<{
     b: OpId;
@@ -1461,8 +1463,19 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop} onMouseOver={(e) => {
-      const a = (e.target as HTMLElement).closest?.<HTMLAnchorElement>("a[data-link], a[data-mention]");
       const r = root.current, w = wrap.current;
+      const person = (e.target as HTMLElement).closest?.<HTMLElement>("[data-member]");
+      if (person && r && w && r.contains(person)) {
+        keepLinkCard();
+        const id = Number(person.dataset.member);
+        if (memberCard?.id === id) return;
+        const pr = person.getBoundingClientRect(), wr = w.getBoundingClientRect();
+        setLinkCard(null);
+        setMemberCard({ id, name: (person.textContent ?? "").replace(/^@/, ""), x: pr.left - wr.left, y: pr.bottom - wr.top + 6 });
+        return;
+      }
+      if (memberCard && !(e.target as HTMLElement).closest?.("[data-member-card]")) hideLinkCard();
+      const a = (e.target as HTMLElement).closest?.<HTMLAnchorElement>("a[data-link], a[data-mention]");
       if (!a || !r || !w || !r.contains(a)) { if (linkCard && !(e.target as HTMLElement).closest?.("[data-link-card]")) hideLinkCard(); return; }
       keepLinkCard();
       const href = a.getAttribute("href") ?? "";
@@ -1472,6 +1485,17 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const ar = a.getBoundingClientRect(), wr = w.getBoundingClientRect();
       setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, from, to, docTitle: a.hasAttribute("data-mention") ? (a.textContent ?? "").replace(/^@/, "") : undefined });
     }} onMouseLeave={hideLinkCard}>
+      {memberCard && <MemberCard
+        key={`${memberCard.id}@${memberCard.x},${memberCard.y}`}
+        member={people.find((m) => m.id === memberCard.id)}
+        fallbackName={memberCard.name}
+        isMe={people.find((m) => m.id === memberCard.id)?.name === me.name}
+        x={memberCard.x}
+        y={memberCard.y}
+        onEnter={keepLinkCard}
+        onLeave={hideLinkCard}
+        onCopyEmail={onCopyBlock ? undefined : (email) => { void navigator.clipboard?.writeText(email).then(() => setToast("已复制邮箱"), () => setToast(`请手动复制：${email}`)); }}
+      />}
       {linkCard && <LinkCard
         key={`${linkCard.href}@${linkCard.x},${linkCard.y}`}
         href={linkCard.href}
@@ -2242,7 +2266,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
     );
   if (marks.mention)
     return (
-      <span className="rounded bg-accent px-0.5 font-medium not-italic text-primary" title={`@成员 #${marks.mention}`}>
+      <span className="cursor-default rounded bg-accent px-0.5 font-medium not-italic text-primary" data-member={marks.mention}>
         {text}
       </span>
     );
