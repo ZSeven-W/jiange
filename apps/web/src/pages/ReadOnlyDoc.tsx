@@ -61,13 +61,13 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
   return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}><img src={src} alt={block.props.caption || block.props.name || "图片"} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={width ? { width: `${Math.min(100, width)}%` } : undefined} className="max-h-[640px] max-w-full rounded-[4px] object-contain" onError={() => setFailed(true)} />{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
-function ReadOnlyTable({ data, merges }: { data?: string; merges?: string }) {
+function ReadOnlyTable({ data, merges, header = true }: { data?: string; merges?: string; header?: boolean }) {
   const rows = parseTableData(data);
   const cover = coverMap(parseMerges(merges, rows.length, rows[0]?.length ?? 0));
   return <div className="my-2 w-fit max-w-full overflow-x-auto" data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri}>{Array.isArray(row) && row.map((cell, ci) => {
     const cov = cover.get(`${ri}:${ci}`);
     if (cov === "hidden") return null;
-    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
+    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
   })}</tr>)}</tbody></table></div>;
 }
 
@@ -121,7 +121,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-3" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
-        case "table": content = <ReadOnlyTable data={block.props.tableData} merges={block.props.tableMerges} />; break;
+        case "table": content = <ReadOnlyTable data={block.props.tableData} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-3 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
