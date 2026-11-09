@@ -182,3 +182,18 @@ describe("table block transforms", () => {
     expect(applyTableEdit([["a", "b"], ["c", "d"]], 1, 0, "X")).toEqual([["a", "b"], ["X", "d"]]);
   });
 });
+
+describe("Feishu Enter in an empty quote", () => {
+  it("leaves the quote instead of adding another quote line", () => {
+    const d = new Doc(1);
+    const tx = new Tx(d);
+    const q = tx.create("quote", null, ROOT);
+    tx.insert(q, 0, "引用");
+    const next = splitBlock(tx, { b: q, o: 2 });
+    expect(d.blockInfo(next.b).type).toBe("quote");
+    const after = splitBlock(tx, next);
+    expect(after).toEqual(next);
+    expect(d.blockInfo(next.b).type).toBe("paragraph");
+    expect(bodyBlocks(d)).toHaveLength(2);
+  });
+});
