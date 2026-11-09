@@ -1891,17 +1891,18 @@ export function readOnlyBlockAbilities(type: string, canCopy: boolean, canCommen
 
 const BLOCK_CLASS: Record<string, string> = {
   paragraph: "text-[16px] leading-[1.75] py-[3px]",
-  h1: "text-[26px] font-semibold leading-[1.4] mt-5 mb-1",
-  h2: "text-[22px] font-semibold leading-[1.4] mt-4 mb-0.5",
-  h3: "text-[20px] font-semibold leading-[1.45] mt-3.5",
-  h4: "text-[18px] font-semibold leading-[1.5] mt-3",
-  h5: "text-[16px] font-semibold leading-[1.6] mt-2.5",
-  h6: "text-[16px] font-semibold leading-[1.6] mt-2.5",
-  bullet: "text-[16px] leading-[1.75] py-[2px]",
-  ordered: "text-[16px] leading-[1.75] py-[2px]",
-  todo: "text-[16px] leading-[1.75] py-[2px]",
-  quote: "text-[16px] leading-[1.75] py-[2px] border-l-2 border-[#BBBFC4] dark:border-border pl-3 text-muted-foreground my-1",
+  h1: "text-[26px] font-medium leading-[1.4] mt-5 mb-1",
+  h2: "text-[22px] font-medium leading-[1.4] mt-4 mb-0.5",
+  h3: "text-[20px] font-medium leading-[1.45] mt-3.5",
+  h4: "text-[18px] font-medium leading-[1.5] mt-3",
+  h5: "text-[16px] font-medium leading-[1.6] mt-2.5",
+  h6: "text-[16px] font-medium leading-[1.6] mt-2.5",
+  bullet: "text-[16px] leading-[1.75] py-[3px]",
+  ordered: "text-[16px] leading-[1.75] py-[3px]",
+  todo: "text-[16px] leading-[1.75] py-[3px]",
+  quote: "text-[16px] leading-[1.75] py-[3px] border-l-2 border-[#BBBFC4] dark:border-border pl-3 text-muted-foreground my-1",
   code: "my-2",
+  callout: "text-[16px] leading-[1.75] py-[8px]",
 };
 
 interface BlockProps {
@@ -2026,7 +2027,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
+      className={cn("group relative", type === "divider" ? "py-5" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
       data-block-selected={inSelection ? "true" : undefined}
       data-comment-block={blockThreads?.length ? blockThreads.join(" ") : undefined}
       style={{ marginLeft: indent * 24, textAlign: props.align === "center" || props.align === "right" ? props.align : undefined }}
@@ -2138,7 +2139,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "file" ? (
         <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (
-        <div className="rounded-md bg-[#F5F6F7] dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
+        <div className="rounded-md border border-[#DEE0E3] bg-[#F5F6F7] dark:border-border dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
           <CodeBlockHeader
             lang={props.lang}
             wrap={props.wrap !== "false"}
@@ -2151,7 +2152,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           </div>
         </div>
       ) : type === "callout" ? (
-        <div className={cn("flex gap-2 rounded-lg border px-3.5 py-3", prefix && "flex gap-2")} style={calloutStyle(props.color)} data-callout-color={Number(props.color ?? 0)}>
+        <div className={cn("flex gap-2 rounded-lg border px-3.5 py-[15px]", prefix && "flex gap-2")} style={calloutStyle(props.color)} data-callout-color={Number(props.color ?? 0)}>
           <CalloutEmoji emoji={props.emoji} onPick={onSetProp ? (e) => onSetProp("emoji", e) : undefined} />
           <div data-text className="min-w-0 flex-1 whitespace-pre-wrap break-words">
             {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
