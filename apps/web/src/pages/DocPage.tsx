@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
+import { formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
 import { docsApi, driveApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
@@ -733,17 +734,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
               className="text-[32px] font-semibold leading-[1.3] tracking-tight [&_textarea]:font-semibold [&_textarea]:leading-[1.3]"
             /></DocumentIconEditor></div>
-            <div className="mt-4 flex items-center gap-2 text-[13px] text-subtle">
-              {meta.data && (
-                <>
-                  <Avatar name={meta.data.creatorName} color={colorFor(meta.data.creatorId - 1)} size={18} />
-                  <span>{meta.data.creatorName}</span>
-                  <span>·</span>
-                  <span>最近修改于 {formatTime(meta.data.updatedAt)}</span>
-                </>
-              )}
-            </div>
-            <div ref={body} className="mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
+            <div ref={body} className="mt-6" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
@@ -909,17 +900,6 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   );
 }
 
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const hm = d.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return d.toDateString() === now.toDateString() ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
-}
-
 const STATUS: Record<SyncStatus, { label: string; color: string }> = {
   synced: { label: "已同步", color: "#00B42A" },
   syncing: { label: "同步中…", color: "#3370FF" },
@@ -981,6 +961,17 @@ function TopBar({
   wordCount: number;
 }) {
   const s = STATUS[status];
+  const [saved, setSaved] = useState({ doc: meta?.id, seenSynced: false, saved: false });
+  const savedFlag = saved.doc === meta?.id ? saved : { doc: meta?.id, seenSynced: false, saved: false };
+  useEffect(() => {
+    setSaved((prev) => {
+      const base = prev.doc === meta?.id ? prev : { doc: meta?.id, seenSynced: false, saved: false };
+      const next = nextSavedFlag(base, status);
+      return next === prev ? prev : { ...next, doc: meta?.id };
+    });
+  }, [status, meta?.id]);
+  const metaText = headerMetaText(status, savedFlag.saved, meta?.updatedAt);
+  const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:px-5">
       <div className="min-w-0 flex-1">
@@ -1003,7 +994,7 @@ function TopBar({
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
-      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={status}><span className="size-1.5 rounded-full" style={{ background: s.color }} />{status === "synced" ? "已经保存到云端" : s.label}</span>
+      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: s.color }} />{metaText}</span>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
         {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">只读</span>}
