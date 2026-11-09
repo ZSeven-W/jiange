@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Field, FieldType } from "@/lib/api";
+import type { Cell, Field, FieldType } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,10 @@ export function FieldForm({
   const [desc, setDesc] = useState(initial?.description ?? "");
   const [formula, setFormula] = useState(initial?.formula ?? "");
   const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
+  const [dflt, setDflt] = useState<string>(() => {
+    const v = initial?.defaultValue;
+    return v === undefined || v === null ? "" : typeof v === "boolean" ? (v ? "true" : "") : String(v);
+  });
   const [typesOpen, setTypesOpen] = useState(false);
   const [typeQuery, setTypeQuery] = useState("");
   const [saving, setSaving] = useState(false);
@@ -103,7 +107,7 @@ export function FieldForm({
         if (saving || uncertain) return;
         setSaving(true); setError("");
         try {
-          await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined });
+          await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, defaultValue: defaultCell(type, dflt, names) });
           onCancel();
         } catch {
           setError("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。");
@@ -136,6 +140,21 @@ export function FieldForm({
           ))}
           <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="新增选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
         </div>
+      )}
+      {DEFAULT_KINDS[type] && (
+        <label className="block space-y-1.5" data-field-default>
+          <span className="flex items-center gap-1 text-[12px] text-muted-foreground">默认值<span title="新建记录时自动填入，之后可修改" className="text-subtle"><Info size={12} /></span></span>
+          {DEFAULT_KINDS[type] === "select" ? (
+            <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
+              <option value="">无</option>
+              {names.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          ) : DEFAULT_KINDS[type] === "checkbox" ? (
+            <span className="flex h-8 items-center gap-2"><input type="checkbox" className="accent-primary" checked={dflt === "true"} onChange={(e) => setDflt(e.target.checked ? "true" : "")} />默认勾选</span>
+          ) : (
+            <input type={DEFAULT_KINDS[type]} value={dflt} onChange={(e) => setDflt(e.target.value)} placeholder="请输入默认值" className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" />
+          )}
+        </label>
       )}
       <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">字段描述（可选）</span><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="添加字段说明" className="h-9 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" data-field-desc /></label>
       {!initial && (
@@ -179,6 +198,22 @@ export function FieldForm({
 }
 
 /** Header dropdown: edit field / delete field. */
+/** Field types that accept a 默认值, and the input used to edit it. */
+const DEFAULT_KINDS: Partial<Record<FieldType, "text" | "number" | "date" | "select" | "checkbox">> = {
+  text: "text", url: "text", phone: "text", email: "text", number: "number", rating: "number", date: "date", select: "select", checkbox: "checkbox",
+};
+
+/** Cell value for the 默认值 input; null clears the default. */
+export function defaultCell(type: FieldType, raw: string, options: string[]): Cell | null {
+  const kind = DEFAULT_KINDS[type];
+  const v = raw.trim();
+  if (!kind || !v) return null;
+  if (kind === "number") { const n = Number(v); return Number.isFinite(n) ? n : null; }
+  if (kind === "checkbox") return v === "true" ? true : null;
+  if (kind === "select") return options.includes(v) ? v : null;
+  return v;
+}
+
 export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter" | "insert-left" | "insert-right" | "freeze" | "unfreeze" | "hide";
 
 export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onAction }: { field: Field; /** this column is the last frozen one */ frozen?: boolean; onEdit: () => void; onDelete: () => void; onDuplicate?: () => void; onAction?: (action: FieldMenuAction) => void }) {
