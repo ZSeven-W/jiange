@@ -200,7 +200,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const selBlocksRef = useRef(selBlocks);
   selBlocksRef.current = selBlocks;
   const [toast, setToast] = useState("");
-  const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos } | null>(null);
+  const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos; docTitle?: string } | null>(null);
   const linkHide = useRef<number | null>(null);
   const keepLinkCard = () => { if (linkHide.current) { window.clearTimeout(linkHide.current); linkHide.current = null; } };
   const hideLinkCard = () => { keepLinkCard(); linkHide.current = window.setTimeout(() => setLinkCard(null), 250); };
@@ -1437,7 +1437,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
 
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop} onMouseOver={(e) => {
-      const a = (e.target as HTMLElement).closest?.<HTMLAnchorElement>("a[data-link]");
+      const a = (e.target as HTMLElement).closest?.<HTMLAnchorElement>("a[data-link], a[data-mention]");
       const r = root.current, w = wrap.current;
       if (!a || !r || !w || !r.contains(a)) { if (linkCard && !(e.target as HTMLElement).closest?.("[data-link-card]")) hideLinkCard(); return; }
       keepLinkCard();
@@ -1446,17 +1446,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length);
       if (!from || !to) return;
       const ar = a.getBoundingClientRect(), wr = w.getBoundingClientRect();
-      setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, from, to });
+      setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, from, to, docTitle: a.hasAttribute("data-mention") ? (a.textContent ?? "").replace(/^@/, "") : undefined });
     }} onMouseLeave={hideLinkCard}>
       {linkCard && <LinkCard
         key={`${linkCard.href}@${linkCard.x},${linkCard.y}`}
         href={linkCard.href}
+        docTitle={linkCard.docTitle}
         x={linkCard.x}
         y={linkCard.y}
         onEnter={keepLinkCard}
         onLeave={hideLinkCard}
-        onOpen={() => { window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
-        onCopy={() => { void navigator.clipboard?.writeText(linkCard.href).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
+        onOpen={() => { if (linkCard.docTitle !== undefined) { setLinkCard(null); location.hash = linkCard.href; } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
+        onCopy={() => { const url = linkCard.docTitle !== undefined ? new URL(linkCard.href, location.href).href : linkCard.href; void navigator.clipboard?.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
         onEdit={readOnly ? undefined : (url) => {
           const { from, to } = linkCard;
           setLinkCard(null);

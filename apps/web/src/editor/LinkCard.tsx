@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, ExternalLink, Globe, Pencil, Unlink } from "lucide-react";
+import { Copy, ExternalLink, FileText, Globe, Pencil, Unlink } from "lucide-react";
 
 /** 链接卡片上显示的域名与路径：去掉协议与末尾斜杠。 */
 export function linkDisplay(href: string): { host: string; rest: string } {
@@ -15,8 +15,10 @@ export function linkDisplay(href: string): { host: string; rest: string } {
 const btn = "grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground";
 
 /** 飞书风格链接悬停卡片：链接地址 + 打开 / 复制 / 编辑 / 取消链接。 */
-export function LinkCard({ href, x, y, onOpen, onCopy, onEdit, onUnlink, onEnter, onLeave, initialEditing = false }: {
+export function LinkCard({ href, docTitle, x, y, onOpen, onCopy, onEdit, onUnlink, onEnter, onLeave, initialEditing = false }: {
   href: string; x: number; y: number;
+  /** 文档提及（#/doc/ID）时的标题；显示为文档卡片而非网址。 */
+  docTitle?: string;
   onOpen: () => void; onCopy: () => void;
   onEdit?: (url: string) => void; onUnlink?: () => void;
   onEnter?: () => void; onLeave?: () => void;
@@ -31,12 +33,16 @@ export function LinkCard({ href, x, y, onOpen, onCopy, onEdit, onUnlink, onEnter
         <button className="h-7 rounded bg-primary px-2.5 text-[13px] text-white">确定</button>
       </form>
     ) : <>
-      <Globe size={14} className="shrink-0 text-subtle" />
-      <a href={href} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate text-primary hover:underline" title={href} onClick={(e) => { e.preventDefault(); onOpen(); }} data-link-card-url><span>{host}</span><span className="text-subtle">{rest}</span></a>
+      {docTitle !== undefined ? <>
+        <FileText size={15} className="shrink-0 text-primary" />
+        <a href={href} className="min-w-0 truncate font-medium text-foreground hover:text-primary" title={docTitle} onClick={(e) => { e.preventDefault(); onOpen(); }} data-link-card-doc>{docTitle || "未命名文档"}</a>
+        <span className="shrink-0 text-[12px] text-subtle">云文档</span>
+      </> : <><Globe size={14} className="shrink-0 text-subtle" />
+      <a href={href} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate text-primary hover:underline" title={href} onClick={(e) => { e.preventDefault(); onOpen(); }} data-link-card-url><span>{host}</span><span className="text-subtle">{rest}</span></a></>}
       <span className="mx-1 h-4 w-px shrink-0 bg-border" />
-      <button type="button" className={btn} title="打开链接" aria-label="打开链接" onClick={onOpen} data-link-open><ExternalLink size={14} /></button>
+      <button type="button" className={btn} title={docTitle !== undefined ? "打开文档" : "打开链接"} aria-label={docTitle !== undefined ? "打开文档" : "打开链接"} onClick={onOpen} data-link-open><ExternalLink size={14} /></button>
       <button type="button" className={btn} title="复制链接" aria-label="复制链接" onClick={onCopy} data-link-copy><Copy size={14} /></button>
-      {onEdit && <button type="button" className={btn} title="编辑链接" aria-label="编辑链接" onClick={() => setEditing(href)} data-link-edit><Pencil size={14} /></button>}
+      {onEdit && docTitle === undefined && <button type="button" className={btn} title="编辑链接" aria-label="编辑链接" onClick={() => setEditing(href)} data-link-edit><Pencil size={14} /></button>}
       {onUnlink && <button type="button" className={btn} title="取消链接" aria-label="取消链接" onClick={onUnlink} data-link-unlink><Unlink size={14} /></button>}
     </>}
   </div>;
