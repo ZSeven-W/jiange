@@ -210,6 +210,9 @@ type fieldInput struct {
 	Description  *string   `json:"description"`
 	Formula      *string   `json:"formula"`
 	Position     *float64  `json:"position"`
+	// OptionRenames maps old→new select option names so a rename keeps the
+	// records that held the old value (otherwise removed options are cleared).
+	OptionRenames map[string]string `json:"optionRenames"`
 }
 
 func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
@@ -377,7 +380,14 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, After: &f, Fields: fields, Convert: convertCell})
+	convert := convertCell
+	if len(in.OptionRenames) > 0 && old.Type == f.Type && (f.Type == "select" || f.Type == "multi_select") {
+		renames := in.OptionRenames
+		convert = func(from, to store.Field, v json.RawMessage) json.RawMessage {
+			return convertCell(from, to, renameOptionCell(v, renames))
+		}
+	}
+	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, After: &f, Fields: fields, Convert: convert})
 	if err != nil {
 		s.fieldMutationError(w, r, err)
 		return
@@ -392,6 +402,30 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 
 // convertCell rewrites a cell after its field changed type (or a select's
 // options shrank). Values that cannot be represented are cleared (nil).
+// renameOptionCell applies old→new option renames to a select or
+// multi_select cell value before the regular conversion runs.
+func renameOptionCell(v json.RawMessage, renames map[string]string) json.RawMessage {
+	var one string
+	if json.Unmarshal(v, &one) == nil {
+		if n, ok := renames[one]; ok {
+			b, _ := json.Marshal(n)
+			return b
+		}
+		return v
+	}
+	var many []string
+	if json.Unmarshal(v, &many) == nil {
+		for i, s := range many {
+			if n, ok := renames[s]; ok {
+				many[i] = n
+			}
+		}
+		b, _ := json.Marshal(many)
+		return b
+	}
+	return v
+}
+
 func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 	// A value already valid for the destination type needs no conversion.
 	// This preserves compatible values such as text→email/url/phone and
