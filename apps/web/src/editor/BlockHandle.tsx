@@ -99,7 +99,8 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
       draggable={!!onDragStart}
       onDragStart={(e) => { if (!onDragStart) return; e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; onOpenChange(false); onDragStart(); }}
       onDragEnd={onDragEnd}
-      onMouseDown={keep}
+      // preventDefault on mousedown cancels native drag start in Chromium/Firefox, so only keep focus when not draggable.
+      onMouseDown={onDragStart ? undefined : keep}
       onClick={() => onOpenChange(!open)}
       title={multi ? (onDragStart ? `已选择 ${count} 个块，点击打开菜单，拖动以整体移动` : `已选择 ${count} 个块`) : onDragStart ? "点击打开菜单，拖动以移动" : "块菜单"}
       aria-label={multi ? `${count} 个块的菜单` : "块菜单"}
