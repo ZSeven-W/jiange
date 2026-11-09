@@ -191,7 +191,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={() => setSearchOpen(true)} onCloseSearch={() => setSearchOpen(false)} />;
 
   return (
-    <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar">
+    <aside className="flex h-full w-[268px] max-w-[85vw] xl:w-[300px] shrink-0 flex-col border-r bg-sidebar">
       <div className="relative px-3 pt-4">
         <div className="flex h-8 items-center px-2"><Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">云文档</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
