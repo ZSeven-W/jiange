@@ -39,7 +39,7 @@ import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { ask, askText } from "@/components/ui/ask";
-import { Copy, MessageCircle, Play } from "lucide-react";
+import { Columns3, Copy, MessageCircle, Play, Plus, Rows3, Trash2, X } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
 import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
 import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
@@ -2059,8 +2059,15 @@ function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { da
     window.addEventListener("mouseup", up);
   };
   return (
-    <div contentEditable={false} className="group/t my-2 w-fit max-w-full select-none overflow-x-auto rounded-lg border" data-table-block>
-      <table className="border-collapse text-[13px]">
+    <div contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "pb-4 pr-4")} data-table-block>
+      {!readOnly && <span className="absolute -top-[34px] right-4 z-20 hidden items-center gap-0.5 rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] group-hover/t:flex" data-table-toolbar>
+        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onAddRow()}><Rows3 size={14} strokeWidth={1.7} />插入行</button>
+        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onAddCol()}><Columns3 size={14} strokeWidth={1.7} />插入列</button>
+        <span className="mx-0.5 h-4 w-px bg-border" />
+        <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
+      </span>}
+      <div className="max-w-full overflow-x-auto">
+      <table className="border-collapse text-[14px] leading-[1.6]">
         <colgroup>
           {rows[0].map((_, ci) => (
             <col key={ci} style={{ width: widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9)) }} />
@@ -2068,16 +2075,16 @@ function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { da
         </colgroup>
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri} className={ri > 0 && ri % 2 === 0 ? "bg-sidebar/40" : ""}>
+            <tr key={ri} className="group/row">
               {row.map((cell, ci) => (
-                <td key={ci} className={cn("relative min-w-[90px] border p-0 align-top", ri === 0 && "bg-sidebar/70 font-medium")}>
+                <td key={ci} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>
                   {readOnly ? (
-                    <span className="block px-2.5 py-1.5">{cell}</span>
+                    <span className="block px-2.5 py-[7px]">{cell}</span>
                   ) : (
                     <input
                       value={cell}
                       onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
-                      className="w-full bg-transparent px-2.5 py-1.5 outline-none focus:bg-surface"
+                      className="w-full bg-transparent px-2.5 py-[7px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
                       data-table-cell={`${ri}:${ci}`}
                     />
                   )}
@@ -2091,27 +2098,21 @@ function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { da
                 </td>
               ))}
               {!readOnly && (
-                <td className="w-6 border-l-0 p-0 align-middle">
-                  <button className="hidden px-1 text-[11px] text-subtle hover:text-destructive group-hover/t:block" title="删除此行" onClick={() => onDeleteRow(ri)}>
-                    ✕
+                <td className="w-6 border-0 p-0 align-middle">
+                  <button type="button" className="invisible grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-destructive group-hover/row:visible" title="删除此行" aria-label="删除此行" onClick={() => onDeleteRow(ri)} data-table-del-row={ri}>
+                    <X size={12} />
                   </button>
                 </td>
               )}
             </tr>
           ))}
-          {!readOnly && (
-            <tr>
-              <td colSpan={rows[0].length + 1} className="border-t-0 p-0">
-                <span className="flex gap-3 px-2 py-1 text-[12px] text-subtle">
-                  <button className="hover:text-primary" onClick={() => onAddRow()} data-table-add-row>+ 行</button>
-                  <button className="hover:text-primary" onClick={() => onAddCol()} data-table-add-col>+ 列</button>
-                  <button className="hover:text-destructive" onClick={onDelete} data-table-del>删除表格</button>
-                </span>
-              </td>
-            </tr>
-          )}
         </tbody>
       </table>
+      </div>
+      {!readOnly && <>
+        <button type="button" title="添加一行" aria-label="添加一行" className="absolute bottom-0 left-0 right-10 hidden h-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => onAddRow()} data-table-add-row><Plus size={11} strokeWidth={2.2} /></button>
+        <button type="button" title="添加一列" aria-label="添加一列" className="absolute bottom-4 right-0 top-0 hidden w-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => onAddCol()} data-table-add-col><Plus size={11} strokeWidth={2.2} /></button>
+      </>}
     </div>
   );
 
