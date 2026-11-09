@@ -40,9 +40,12 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   const skipSearchFocus = useRef(false);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "j") {
-        event.preventDefault(); setSearchOpen(true);
-      }
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      const k = event.key.toLowerCase();
+      // ⌘/Ctrl+J 与飞书云文档一致；⌘/Ctrl+K 在非输入区域也打开搜索（编辑区内留给链接等快捷键）。
+      const target = event.target as HTMLElement | null;
+      const typing = !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      if (k === "j" || (k === "k" && !typing)) { event.preventDefault(); setSearchOpen(true); }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -199,6 +202,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
           }} onClick={() => setSearchOpen(true)} onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSearchOpen(true); }
           }} placeholder="搜索标题和正文" className="w-full min-w-0 cursor-pointer bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
+          <kbd className="hidden shrink-0 font-sans text-[11px] text-[#b3b8bf] sm:inline">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</kbd>
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
