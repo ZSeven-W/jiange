@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
+import { baseApi, commentsApi, type BaseRecord, type Cell, type Comment, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
@@ -9,6 +9,7 @@ import { ask } from "@/components/ui/ask";
 import { ChevronDown, ChevronUp, MessageSquare, Plus, X } from "lucide-react";
 import { FieldForm } from "./fields";
 import { historyActorName, historyHeadline } from "./historyActor";
+import { mentionQuery, mentionsIn, splitMentions, threadComments, type Thread } from "./recordComments";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 
@@ -346,41 +347,126 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
   );
 }
 
-/** 记录评论: thread at the bottom of the detail panel. */
+/** 记录评论: threads (root + replies) with @人 and 解决/重新打开. */
 function RecordComments({ baseId, recordId }: { baseId: number; recordId: number }) {
   const q = useQuery({ queryKey: ["record-comments", baseId, recordId], queryFn: () => baseApi.recordComments(baseId, recordId) });
-  const [body, setBody] = useState("");
-  const [sending, setSending] = useState(false);
+  const membersQ = useQuery({ queryKey: ["comment-members", baseId], queryFn: () => commentsApi.members(baseId), staleTime: 60_000 });
+  const members = membersQ.data ?? [];
+  const [replyTo, setReplyTo] = useState<number | null>(null);
+  const [showResolved, setShowResolved] = useState(false);
   const [error, setError] = useState("");
+  const threads = threadComments(q.data ?? []);
+  const open = threads.filter((t) => !t.root.resolved);
+  const resolved = threads.filter((t) => t.root.resolved);
+  const post = async (body: string, parentId?: number) => {
+    setError("");
+    try { await baseApi.addRecordComment(baseId, recordId, body, { mentions: mentionsIn(body, members), parentId }); await q.refetch(); return true; }
+    catch { setError("评论未能确认发送，请刷新后核对。"); return false; }
+  };
+  const toggle = async (cid: number, value: boolean) => {
+    setError("");
+    try { await baseApi.patchRecordComment(baseId, recordId, cid, { resolved: value }); await q.refetch(); }
+    catch { setError("操作失败，请刷新后重试。"); }
+  };
+  const names = (c: Comment) => (c.mentions ?? []).map((id) => members.find((m) => m.id === id)?.name ?? "").filter(Boolean);
+  const item = (c: Comment, reply: boolean) => (
+    <div key={c.id} className={cn("flex gap-2.5 text-[13px]", reply && "mt-2.5")} data-record-comment={c.id}>
+      <Avatar name={c.userName} color={colorFor(c.userId - 1)} size={reply ? 22 : 26} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center"><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span></div>
+        <p className="mt-0.5 whitespace-pre-wrap break-words">
+          {splitMentions(c.body, names(c)).map((p, i) => p.mention ? <span key={i} className="rounded bg-accent px-0.5 font-medium text-primary" data-mention-chip>{p.text}</span> : <span key={i}>{p.text}</span>)}
+        </p>
+      </div>
+    </div>
+  );
+  const thread = (t: Thread) => (
+    <div key={t.root.id} className={cn("group rounded-lg border px-3 py-2.5", t.root.resolved && "bg-[#f8f9fa]")} data-record-thread={t.root.id} data-resolved={t.root.resolved || undefined}>
+      <div className="relative">
+        {item(t.root, false)}
+        <div className="absolute right-0 top-0 flex items-center gap-1 text-[12px]">
+          {t.root.resolved && <span className="rounded bg-[#e1eaff] px-1.5 py-px text-[11px] font-medium text-primary">已解决</span>}
+          <button type="button" className="rounded px-1.5 py-0.5 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => void toggle(t.root.id, !t.root.resolved)} data-thread-resolve>{t.root.resolved ? "重新打开" : "解决"}</button>
+        </div>
+      </div>
+      {t.replies.length > 0 && <div className="ml-9 border-l pl-3">{t.replies.map((r) => item(r, true))}</div>}
+      {!t.root.resolved && (replyTo === t.root.id
+        ? <div className="ml-9 mt-2"><CommentComposer members={members} placeholder={`回复 ${t.root.userName}`} autoFocus onSend={async (b) => { const ok = await post(b, t.root.id); if (ok) setReplyTo(null); return ok; }} onCancel={() => setReplyTo(null)} /></div>
+        : <button type="button" className="ml-9 mt-1.5 text-[12px] text-muted-foreground hover:text-primary" onClick={() => setReplyTo(t.root.id)} data-thread-reply>回复</button>)}
+    </div>
+  );
+  return (
+    <section className="border-t px-10 py-4" data-record-comments>
+      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />评论{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}
+        {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? "隐藏已解决" : `显示已解决 ${resolved.length}`}</button>}
+      </h3>
+      <div className="space-y-2.5">
+        {open.map(thread)}
+        {showResolved && resolved.map(thread)}
+        {q.isError && <p role="alert" className="text-[12px] text-destructive">无法加载评论。</p>}
+      </div>
+      <div className="mt-3"><CommentComposer members={members} placeholder="输入评论，@ 提及成员，Enter 发送" onSend={(b) => post(b)} /></div>
+      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
+    </section>
+  );
+}
+
+/** Textarea with an @ member picker; Enter sends, Shift+Enter breaks lines. */
+function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void }) {
+  const [body, setBody] = useState("");
+  const [caret, setCaret] = useState(0);
+  const [active, setActive] = useState(0);
+  const [sending, setSending] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const mq = mentionQuery(body, caret);
+  const matches = mq ? members.filter((m) => m.name.toLowerCase().includes(mq.query.toLowerCase())).slice(0, 6) : [];
+  const pick = (m: User) => {
+    if (!mq) return;
+    const next = body.slice(0, mq.start) + "@" + m.name + " " + body.slice(caret);
+    const pos = mq.start + m.name.length + 2;
+    setBody(next); setCaret(pos); setActive(0);
+    requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(pos, pos); });
+  };
   const send = async () => {
     const text = body.trim();
     if (!text || sending) return;
     setSending(true);
-    setError("");
-    try { await baseApi.addRecordComment(baseId, recordId, text); setBody(""); await q.refetch(); }
-    catch { setError("评论未能确认发送，请刷新后核对。"); }
-    finally { setSending(false); }
+    if (await onSend(text)) { setBody(""); setCaret(0); }
+    setSending(false);
   };
   return (
-    <section className="border-t px-10 py-4" data-record-comments>
-      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />评论{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}</h3>
-      <div className="space-y-3">
-        {(q.data ?? []).map((c) => (
-          <div key={c.id} className="flex gap-2.5 text-[13px]" data-record-comment={c.id}>
-            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#8d6cdf] text-[12px] text-white">{c.userName.slice(0, 1)}</span>
-            <div className="min-w-0">
-              <div><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span></div>
-              <p className="mt-0.5 whitespace-pre-wrap break-words">{c.body}</p>
-            </div>
-          </div>
-        ))}
-        {q.isError && <p role="alert" className="text-[12px] text-destructive">无法加载评论。</p>}
-      </div>
-      <div className="mt-3 flex items-end gap-2 rounded-lg border px-3 py-2 focus-within:border-primary">
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} rows={1} maxLength={2000} placeholder="输入评论，Enter 发送" className="max-h-28 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none" data-record-comment-input />
+    <div className="relative">
+      {matches.length > 0 && (
+        <div className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-lg border bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]" role="listbox" data-mention-picker>
+          {matches.map((m, i) => (
+            <button key={m.id} type="button" role="option" aria-selected={i === active} onMouseDown={(e) => { e.preventDefault(); pick(m); }} className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-hover", i === active && "bg-hover")}>
+              <Avatar name={m.name} color={colorFor(m.id - 1)} size={20} /><span className="truncate">{m.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2 rounded-lg border bg-surface px-3 py-2 focus-within:border-primary">
+        <textarea
+          ref={ref}
+          autoFocus={autoFocus}
+          value={body}
+          onChange={(e) => { setBody(e.target.value); setCaret(e.target.selectionStart); setActive(0); }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+          onKeyDown={(e) => {
+            if (matches.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); setActive((a) => (a + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length); return; }
+            if (matches.length && (e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) { e.preventDefault(); pick(matches[active] ?? matches[0]); return; }
+            if (e.key === "Escape" && onCancel) { e.preventDefault(); onCancel(); return; }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+          }}
+          rows={1}
+          maxLength={2000}
+          placeholder={placeholder}
+          className="max-h-28 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none"
+          data-record-comment-input
+        />
+        {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">取消</button>}
         <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">发送</button>
       </div>
-      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
-    </section>
+    </div>
   );
 }
