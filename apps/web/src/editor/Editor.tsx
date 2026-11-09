@@ -42,7 +42,7 @@ import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
-import type { Merge } from "./tableOps";
+import type { Merge, Widths } from "./tableOps";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
@@ -1684,11 +1684,13 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 canCopy={!onCopyBlock}
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
-                onTableChange={readOnly ? undefined : (rows, merges) => {
+                onTableChange={readOnly ? undefined : (rows, merges, widths) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
                   const tx = new Tx(doc);
                   tx.setProp(b, "tableData", JSON.stringify(rows));
                   tx.setProp(b, "tableMerges", JSON.stringify(merges));
+                  if (widths) tx.setProp(b, "tableWidths", JSON.stringify(widths));
+                  um.seal(); // 不与此前的列宽拖拽等属性修改合并为同一步撤销
                   um.record(tx, sel.current, sel.current, "prop");
                   sync.client.push(tx.ops);
                   um.seal();
@@ -1923,7 +1925,7 @@ interface BlockProps {
   canCopy?: boolean;
   canDownload?: boolean;
   onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
-  onTableChange?: (rows: string[][], merges: Merge[]) => void;
+  onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 

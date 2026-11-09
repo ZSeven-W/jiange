@@ -9,7 +9,11 @@ export type TableOp =
   | { kind: "deleteRow"; index: number }
   | { kind: "deleteCol"; index: number }
   | { kind: "clearRow"; index: number }
-  | { kind: "clearCol"; index: number };
+  | { kind: "clearCol"; index: number }
+  | { kind: "moveRow"; index: number; to: number }
+  | { kind: "moveCol"; index: number; to: number };
+/** 列宽：null 表示按内容自动。 */
+export type Widths = (number | null)[];
 export interface CellRange { r0: number; c0: number; r1: number; c1: number }
 
 export const normRange = (a: CellRange): CellRange => ({ r0: Math.min(a.r0, a.r1), c0: Math.min(a.c0, a.c1), r1: Math.max(a.r0, a.r1), c1: Math.max(a.c0, a.c1) });
@@ -112,9 +116,41 @@ export function applyTableOp(rows: string[][], merges: Merge[], op: TableOp): { 
       });
       return { rows: next, merges: m };
     }
+    case "moveRow":
+    case "moveCol": {
+      if (!canMove(rows, merges, op)) return { rows, merges };
+      const { index: a, to: b } = op;
+      const swap = (i: number) => (i === a ? b : i === b ? a : i);
+      if (op.kind === "moveRow") {
+        const next = rows.map((_, i) => rows[swap(i)]);
+        return { rows: next, merges: merges.map(([r, c, rs, cs]): Merge => [rs === 1 ? swap(r) : r, c, rs, cs]) };
+      }
+      const next = rows.map((row) => row.map((_, j) => row[swap(j)]));
+      return { rows: next, merges: merges.map(([r, c, rs, cs]): Merge => [r, cs === 1 ? swap(c) : c, rs, cs]) };
+    }
     case "clearRow":
       return { rows: rows.map((row, i) => (i === op.index ? blank(row.length) : row)), merges };
     case "clearCol":
       return { rows: rows.map((row) => row.map((cell, j) => (j === op.index ? "" : cell))), merges };
+  }
+}
+
+/** 相邻行/列交换；任一侧被跨行（跨列）合并块覆盖时不可移动。 */
+export function canMove(rows: string[][], merges: Merge[], op: { kind: "moveRow" | "moveCol"; index: number; to: number }): boolean {
+  const n = op.kind === "moveRow" ? rows.length : (rows[0]?.length ?? 0);
+  if (op.to < 0 || op.to >= n || Math.abs(op.to - op.index) !== 1) return false;
+  const lines = [op.index, op.to];
+  return !merges.some(([r, c, rs, cs]) => (op.kind === "moveRow" ? rs > 1 && lines.some((i) => i >= r && i < r + rs) : cs > 1 && lines.some((j) => j >= c && j < c + cs)));
+}
+
+/** 列宽随列插入、删除、移动同步（null 为自动宽度）；无列操作时返回 undefined。 */
+export function remapWidths(widths: Widths | undefined, op: TableOp, cols: number): Widths | undefined {
+  if (!widths?.length) return undefined;
+  const w: Widths = Array.from({ length: cols }, (_, i) => widths[i] ?? null);
+  switch (op.kind) {
+    case "insertCol": { const at = Math.max(0, Math.min(cols, op.at)); return [...w.slice(0, at), null, ...w.slice(at)]; }
+    case "deleteCol": return cols <= 1 ? undefined : w.filter((_, i) => i !== op.index);
+    case "moveCol": { const next = [...w]; [next[op.index], next[op.to]] = [next[op.to], next[op.index]]; return next; }
+    default: return undefined;
   }
 }
