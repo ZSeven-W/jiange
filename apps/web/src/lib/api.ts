@@ -134,6 +134,8 @@ export interface RecordHistoryEntry {
   op: "add" | "update";
   at?: string;
   by?: number;
+  /** Who made it; absent on events written before actors were recorded. */
+  actor?: { kind: "user" | "form"; id?: number; name?: string };
   changes: { f: number; before?: Cell; after?: Cell }[];
 }
 export interface ViewConfig {
