@@ -138,6 +138,18 @@ export function FieldForm({
         </div>
       )}
       <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">字段描述（可选）</span><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="添加字段说明" className="h-9 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" data-field-desc /></label>
+      {!initial && (
+        <div className="space-y-1.5" data-field-suggest>
+          <span className="text-[12px] text-muted-foreground">推荐</span>
+          <div className="flex flex-wrap gap-2">
+            {(["formula", "created_by", "link"] as FieldType[]).map((t) => (
+              <button key={t} type="button" onClick={() => setType(t)} className={cn("flex h-7 items-center gap-1 rounded-md bg-hover px-2 text-[12px] text-muted-foreground hover:text-foreground", t === type && "bg-accent text-primary")}>
+                <TypeGlyph t={t} size={13} /> {REGISTRY[t].label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {type === "formula" && (
         <textarea
           value={formula}
