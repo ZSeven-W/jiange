@@ -138,6 +138,11 @@ export function splitBlock(tx: Tx, pos: Pos): Pos {
   const info = doc.blockInfo(pos.b);
   if (SOURCE_BLOCK_TYPES.has(info.type)) return { b: tx.create("paragraph", pos.b, info.parent), o: 0 };
   const n = len(doc, pos.b);
+  // 飞书：空引用行回车退出引用，变为正文。
+  if (info.type === "quote" && n === 0) {
+    tx.setProp(pos.b, "type", "paragraph");
+    return pos;
+  }
   if (LIST_TYPES.has(info.type) && n === 0) {
     if ((info.props.indent ?? "0") !== "0") tx.setProp(pos.b, "indent", String(Number(info.props.indent) - 1));
     else tx.setProp(pos.b, "type", "paragraph");
