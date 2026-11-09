@@ -81,10 +81,10 @@ describe("comment navigation and column rendering", () => {
     const missing = { ...base, id: 14, endChar: "99:99" };
     const reply = { ...base, id: 15, parentId: 11 };
     const comments = [base, overlap, resolved, missing, reply];
-    expect(projectCommentAnchors(doc, first, comments)).toEqual({ flags: [null, 12, 12, null], threadIds: [11, 12] });
-    expect(projectCommentAnchors(doc, first, comments, 11)).toEqual({ flags: [null, 11, 11, null], threadIds: [11, 12] });
+    expect(projectCommentAnchors(doc, first, comments)).toEqual({ flags: [null, 12, 12, null], threadIds: [11, 12], blockThreadIds: [] });
+    expect(projectCommentAnchors(doc, first, comments, 11)).toEqual({ flags: [null, 11, 11, null], threadIds: [11, 12], blockThreadIds: [] });
     new Tx(doc).delete(first, 1, 2);
-    expect(projectCommentAnchors(doc, first, comments, 11)).toEqual({ flags: undefined, threadIds: [] });
+    expect(projectCommentAnchors(doc, first, comments, 11)).toEqual({ flags: undefined, threadIds: [], blockThreadIds: [] });
   });
 
   it("scrolls to a rendered anchor and ignores missing or invalid threads", () => {

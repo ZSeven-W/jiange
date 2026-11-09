@@ -60,7 +60,7 @@ import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSla
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
 import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
 import type { SlashInsertion, SlashQuery } from "./slashInsert";
-import { commentSelection, projectCommentAnchors } from "./commentAnchor";
+import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
 import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
@@ -486,6 +486,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           return void copyBlockLink(blockKey);
         case "comment": {
           if (!onComment) return;
+          if (COMMENTABLE_BLOCKS.has(d.blockInfo(b).type)) {
+            const blockSel = blockCommentAnchor(d, b);
+            if (!blockSel.ok) { setToast("此块暂不支持评论。"); return; }
+            onComment(blockSel.anchor);
+            return;
+          }
           const selection = commentSelection(d, whole);
           if (!selection.ok) { setToast("此块没有可评论的文字。"); return; }
           sel.current = whole;
@@ -1590,6 +1596,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
                 anchors={commentProjection.flags}
                 commentThreads={commentProjection.threadIds}
+                blockThreads={commentProjection.blockThreadIds}
+                onBlockComment={onComment ? () => blockAction(k, { kind: "comment" }) : undefined}
                 activeThread={activeThread}
                 onAnchorClick={(cid) => onActivateThread?.(cid)}
                 onSetProp={readOnly ? undefined : (key, value) => {
@@ -1814,7 +1822,7 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     copy: canCopy && (multi || textish),
     cut: canCopy && (multi || textish),
     link: true,
-    comment: canComment && textish,
+    comment: canComment && (textish || (!multi && COMMENTABLE_BLOCKS.has(type))),
     insertAfter: true,
     delete: true,
   };
@@ -1850,7 +1858,7 @@ function dragGroup(doc: Doc | null, body: OpId[], keys: string[]): OpId[] {
 /** 只读或仅评论的读者：块手柄只提供复制、复制链接和评论（受复制保护与评论权限约束）。 */
 export function readOnlyBlockAbilities(type: string, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
   const textish = COLORABLE.has(type) || type === "code";
-  return { convert: false, color: false, indent: false, copy: canCopy && textish, cut: false, link: true, comment: canComment && textish, insertAfter: false, delete: false };
+  return { convert: false, color: false, indent: false, copy: canCopy && textish, cut: false, link: true, comment: canComment && (textish || COMMENTABLE_BLOCKS.has(type)), insertAfter: false, delete: false };
 }
 
 const BLOCK_CLASS: Record<string, string> = {
@@ -1878,6 +1886,8 @@ interface BlockProps {
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   commentThreads?: number[];
+  blockThreads?: number[];
+  onBlockComment?: () => void;
   findRanges?: { start: number; end: number; active: boolean }[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
@@ -1917,7 +1927,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
@@ -1988,8 +1998,9 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]")}
+      className={cn("group relative", type === "divider" ? "py-3" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
       data-block-selected={inSelection ? "true" : undefined}
+      data-comment-block={blockThreads?.length ? blockThreads.join(" ") : undefined}
       style={{ marginLeft: indent * 24, textAlign: props.align === "center" || props.align === "right" ? props.align : undefined }}
       onDragOver={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
@@ -2089,7 +2100,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "divider" ? (
         <hr contentEditable={false} className="border-border" />
       ) : type === "image" ? (
-        <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
+        <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} onComment={onBlockComment} />
       ) : type === "video" ? (
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
