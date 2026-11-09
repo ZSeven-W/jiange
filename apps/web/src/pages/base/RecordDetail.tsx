@@ -6,6 +6,17 @@ import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
 import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
+import { X } from "lucide-react";
+
+const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+/** Feishu-style empty-value hints in the record detail. */
+function placeholderFor(type: Field["type"]): string {
+  if (type === "select" || type === "multi_select") return "请选择选项";
+  if (type === "date") return "年/月/日";
+  if (type === "person") return "请选择人员";
+  if (type === "attachment") return "上传附件";
+  return "请输入内容";
+}
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, useWriteLedger, WriteIssues, type WriteLedger } from "./writeSafety";
 
 /** Record detail drawer: every field editable in place, like Feishu's
@@ -87,31 +98,36 @@ export function RecordDetail({
   };
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[420px] flex-col border-l bg-surface shadow-xl" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
-      <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
-        <span className="truncate">
-          {recordTitle(row, fields, members) || "未命名记录"}
-        </span>
-        <span className="ml-2 text-[12px] font-normal text-subtle">#{row.id}</span>
-        <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
-          ✕
+    <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-[800px] flex-col border-l bg-surface shadow-[-6px_0_24px_rgba(31,35,41,0.08)] md:top-16" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-5 text-[13px] text-muted-foreground">
+        <span className="text-[12px] text-subtle">记录 #{row.id}</span>
+        <button className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
+          <X size={18} strokeWidth={1.7} />
         </button>
       </header>
+      <div className="shrink-0 px-10 pt-6">
+        <h2 className="truncate text-[24px] font-semibold leading-8 text-foreground" data-record-title>{recordTitle(row, fields, members) || "未命名记录"}</h2>
+        <div className="mt-4 flex h-9 items-end gap-6 border-b text-[14px]" role="tablist" aria-label="记录详情">
+          <span role="tab" aria-selected="true" className="border-b-2 border-primary pb-2 font-medium text-primary">详情</span>
+        </div>
+      </div>
       <WriteIssues ledger={ledger} issues={issues} />
-      <div className="flex-1 overflow-y-auto p-4" data-detail-fields>
+      <div className="flex-1 overflow-y-auto px-10 py-3" data-detail-fields>
         {fields.map((f) => {
           const def = REGISTRY[f.type];
           const editingThis = editing?.rid === row.id && editing.fid === f.id;
           return (
-            <div key={f.id} className="border-b py-2.5 last:border-b-0">
-              <div className="mb-1 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                <span className="text-subtle"><TypeGlyph t={f.type} /></span>
-                {f.name}
-                {def.readonly && <span className="rounded bg-hover px-1 text-[11px] text-subtle">自动</span>}
+            <div key={f.id} className="grid grid-cols-[minmax(0,200px)_minmax(0,1fr)] items-start gap-3 py-1">
+              <div className="min-w-0 pt-[9px] text-[14px] text-muted-foreground">
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0"><TypeGlyph t={f.type} size={15} /></span>
+                  <span className="truncate">{f.name}</span>
+                  {def.readonly && <span className="shrink-0 rounded bg-hover px-1 text-[11px] text-subtle">自动</span>}
+                </div>
+                {f.description && <div className="mt-0.5 text-[11px] leading-4 text-subtle">{f.description}</div>}
               </div>
-              {f.description && <div className="mb-1 text-[11px] leading-4 text-subtle">{f.description}</div>}
               <div
-                className={cn("min-h-8 rounded px-1.5 py-1 text-[14px]", !def.readonly && canEdit && "cursor-text hover:bg-hover", editingThis && "outline outline-2 -outline-offset-2 outline-primary")}
+                className={cn("flex min-h-9 items-center rounded-md px-2 py-1 text-[14px]", !def.readonly && canEdit && "cursor-text hover:bg-hover", editingThis && "outline outline-2 -outline-offset-2 outline-primary")}
                 onClick={() => !editingThis && !def.readonly && canEdit && !ledger.blocked("batch") && !ledger.blocked(`cell:${row.id}:${f.id}`) && f.type !== "checkbox" && f.type !== "link" && setEditing({ rid: row.id, fid: f.id, draft: displayValue(row, f, members) ?? null, dirty: false, authorization: ledger.capture(`cell:${row.id}:${f.id}`, isAuthoredCellType(f.type)), authored: isAuthoredCellType(f.type) })}
                 data-detail-field={f.id}
               >
@@ -128,6 +144,8 @@ export function RecordDetail({
                     onCancel={() => setEditing(null)}
                     onInvalid={(raw) => { const op = ledger.begin(`记录 #${row.id} · ${f.name}`, raw, `cell:${row.id}:${f.id}`, editingRef.current?.authorization, false, editingRef.current?.authored ?? false); if (op !== null) ledger.fail(op, "输入格式无效，未保存；请复制后修改。"); }}
                   />
+                ) : isBlank(row.cells[f.id]) && canEdit && !def.readonly && f.type !== "checkbox" ? (
+                  <span className="text-subtle" data-detail-placeholder>{placeholderFor(f.type)}</span>
                 ) : (
                   <CellView
                     field={f}
@@ -144,7 +162,7 @@ export function RecordDetail({
         })}
       </div>
       <ReverseLinks baseId={baseId} recordId={record.id} />
-      <footer className="flex items-center gap-3 border-t px-4 py-2.5 text-[12px] text-subtle">
+      <footer className="flex items-center gap-3 border-t px-10 py-2.5 text-[12px] text-subtle">
         <span>创建于 {row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
         <span>修改于 {row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
         {canEdit && (
