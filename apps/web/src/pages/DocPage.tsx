@@ -979,7 +979,7 @@ function TopBar({
 }) {
   const s = STATUS[status];
   return (
-    <header className="flex h-16 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:px-5">
+    <header className="flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:px-5">
       <div className="min-w-0 flex-1">
       <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" data-document-print-restricted={!allowDocumentPrint ? "true" : undefined} onCopy={(event) => { if (!allowContentCopy) event.preventDefault(); }} onCut={(event) => { if (!allowContentCopy) event.preventDefault(); }}>
         <a href="#/" className="hidden truncate text-muted-foreground hover:text-foreground sm:block">

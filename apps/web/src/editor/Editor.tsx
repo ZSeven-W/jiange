@@ -40,6 +40,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
 import { BlockHandle, CONVERTIBLE, TEXT_BLOCKS } from "./BlockHandle";
+import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
 import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
 import { askArea } from "@/components/ui/ask";
@@ -1542,14 +1543,14 @@ const BLOCK_CLASS: Record<string, string> = {
   paragraph: "text-[16px] leading-[1.75] py-[3px]",
   h1: "text-[26px] font-semibold leading-[1.4] mt-5 mb-1",
   h2: "text-[22px] font-semibold leading-[1.4] mt-4 mb-0.5",
-  h3: "text-[18px] font-semibold leading-[1.5] mt-3",
-  h4: "text-[16px] font-semibold leading-[1.6] mt-3",
-  h5: "text-[15px] font-semibold leading-[1.6] mt-3",
-  h6: "text-[14px] font-semibold leading-[1.6] mt-3 text-muted-foreground",
+  h3: "text-[20px] font-semibold leading-[1.45] mt-3.5",
+  h4: "text-[18px] font-semibold leading-[1.5] mt-3",
+  h5: "text-[16px] font-semibold leading-[1.6] mt-2.5",
+  h6: "text-[16px] font-semibold leading-[1.6] mt-2.5",
   bullet: "text-[16px] leading-[1.75] py-[2px]",
   ordered: "text-[16px] leading-[1.75] py-[2px]",
   todo: "text-[16px] leading-[1.75] py-[2px]",
-  quote: "text-[16px] leading-[1.75] py-[2px] border-l-[3px] border-border pl-3.5 text-muted-foreground my-1",
+  quote: "text-[16px] leading-[1.75] py-[2px] border-l-2 border-[#BBBFC4] dark:border-border pl-3 text-muted-foreground my-1",
   code: "font-mono text-[14px] leading-[1.6] bg-sidebar rounded-md px-4 py-3 my-2",
 };
 
@@ -1807,7 +1808,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           </div>
         </div>
       ) : type === "callout" ? (
-        <div className={cn("flex gap-2 rounded-lg px-3.5 py-3", prefix && "flex gap-2")} style={{ background: CALLOUT_BG[Number(props.color ?? 0)] ?? CALLOUT_BG[0] }}>
+        <div className={cn("flex gap-2 rounded-lg border px-3.5 py-3", prefix && "flex gap-2")} style={calloutStyle(props.color)} data-callout-color={Number(props.color ?? 0)}>
           <span contentEditable={false} className="select-none pt-0.5 text-[15px] leading-6">
             <button
               className="rounded px-0.5 hover:bg-black/5"
@@ -1859,7 +1860,7 @@ const CODE_LANGS: [string, string][] = [
   ["python", "Python"], ["rust", "Rust"], ["java", "Java"], ["sql", "SQL"], ["json", "JSON"],
   ["bash", "Bash"], ["css", "CSS"], ["html", "HTML"],
 ];
-const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8DEF8", "#FDEBE1"];
+const CALLOUT_BG = CALLOUT_COLORS.map(([bg]) => bg);
 const CALLOUT_EMOJI = ["💡", "📌", "⚠️", "✅", "🔥", "📝", "❓", "🎯"];
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */

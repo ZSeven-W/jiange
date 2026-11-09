@@ -1,3 +1,4 @@
+import { calloutStyle } from "@/editor/blockStyles";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { DocView } from "@/lib/api";
 import { DiagramView } from "@/editor/DiagramView";
@@ -75,7 +76,6 @@ function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: stri
   return <div className="my-2 rounded-lg border px-3.5 py-3 text-subtle">视频链接不可用</div>;
 }
 
-const CALLOUT_BG = ["#F5F6F7", "#E1EAFF", "#D9F5D6", "#FEEAD2", "#FFF4C9", "#F8DEF8", "#FDEBE1"];
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
 export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number }) {
@@ -100,14 +100,14 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
       switch (block.type) {
         case "h1": content = <h1 className="mb-1 mt-5 text-[26px] font-semibold leading-[1.4]">{rich}</h1>; break;
         case "h2": content = <h2 className="mb-0.5 mt-4 text-[22px] font-semibold leading-[1.4]">{rich}</h2>; break;
-        case "h3": content = <h3 className="mt-3 text-[18px] font-semibold leading-[1.5]">{rich}</h3>; break;
-        case "h4": content = <h4 className="mt-3 text-[16px] font-semibold leading-[1.6]">{rich}</h4>; break;
-        case "h5": content = <h5 className="mt-3 text-[15px] font-semibold leading-[1.6]">{rich}</h5>; break;
-        case "h6": content = <h6 className="mt-3 text-[14px] font-semibold leading-[1.6] text-muted-foreground">{rich}</h6>; break;
+        case "h3": content = <h3 className="mt-3.5 text-[20px] font-semibold leading-[1.45]">{rich}</h3>; break;
+        case "h4": content = <h4 className="mt-3 text-[18px] font-semibold leading-[1.5]">{rich}</h4>; break;
+        case "h5": content = <h5 className="mt-2.5 text-[16px] font-semibold leading-[1.6]">{rich}</h5>; break;
+        case "h6": content = <h6 className="mt-2.5 text-[16px] font-semibold leading-[1.6]">{rich}</h6>; break;
         case "bullet": case "ordered": case "todo": content = <div className="flex gap-2 py-[2px] text-[16px] leading-[1.75]"><span className={cn("min-w-[18px] text-center", block.type !== "todo" && "text-primary")}>{block.type === "bullet" ? ["•", "◦", "▪"][indent % 3] : block.type === "ordered" ? `${number}.` : block.props.checked === "true" ? "☑" : "☐"}</span><span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", block.type === "todo" && block.props.checked === "true" && "text-subtle line-through")}>{rich}</span></div>; break;
-        case "quote": content = <blockquote className="my-1 border-l-[3px] border-border py-[2px] pl-3.5 text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
+        case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[2px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
         case "code": content = <div className="my-2 overflow-hidden rounded-lg border border-[#e5e7eb] dark:border-[#3c4043]"><div className="border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 text-[12px] text-muted-foreground dark:border-[#3c4043] dark:bg-[#23262a]">{block.props.lang || "plain"}</div><pre className="whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">{rich}</pre></div>; break;
-        case "callout": content = <div className="my-1 flex gap-2 rounded-lg px-3.5 py-3" style={{ background: CALLOUT_BG[Number(block.props.color ?? 0)] ?? CALLOUT_BG[0] }}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
+        case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-3" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-2 text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "table": content = <ReadOnlyTable data={block.props.tableData} />; break;
