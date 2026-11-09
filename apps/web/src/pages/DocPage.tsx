@@ -693,12 +693,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto" onScroll={onBodyScroll} data-doc-scroll>
+        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", ((commentsAvailable && commentsOpen) || history) && "xl:pr-96")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
           {outlineVisible && (
             <OutlinePanel
               items={outline}
               activeId={outlineActive}
+              yieldToSidePanel={(commentsAvailable && commentsOpen) || history}
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
               onClose={() => setOutlineOpen(false)}
