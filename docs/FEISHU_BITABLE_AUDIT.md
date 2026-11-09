@@ -112,4 +112,4 @@ Jiange 有独立幻灯片（kind `slides`）。对照 `slides-side.png`：
 
 ## 验证
 
-`go test ./...`（含 Postgres）、`vitest`（654 项）、`tsc -b`、`pnpm build` 全部通过。无协同协议改动。
+`go test ./...`（含 Postgres）、`vitest`（655 项）、`tsc -b`、`pnpm build` 全部通过。无协同协议改动。
