@@ -87,7 +87,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   </div>;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
-      <header className="flex h-16 shrink-0 items-center justify-between pl-16 pr-5 md:px-7">
+      <header className="flex h-16 shrink-0 items-center justify-between pl-16 pr-5 md:px-7 xl:px-6">
         <h1 className="text-[20px] font-semibold leading-7">{pageTitle}</h1>
         {(recent || favorites) && <div ref={newMenuRef} className="relative">
           <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Plus size={15} /> 新建 <ChevronDown size={13} /></button>
@@ -95,8 +95,8 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
         </div>}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full px-5 pb-16 pt-2 sm:px-7">
-          {!recent && !favorites && <div className="grid gap-3 sm:grid-cols-3">
+        <div className="w-full px-5 pb-16 pt-2 sm:px-7 xl:px-6">
+          {!recent && !favorites && <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-[repeat(3,305px)]">
             <div ref={newMenuRef} className="relative">
               <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary">
                 <span className="grid size-8 shrink-0 place-items-center"><NewDocGlyph /></span>
@@ -112,7 +112,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">新建失败，请检查网络后重试。</p>}
           {importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}
           {createWithContent.isPending && <p role="status" className="mt-3 text-[13px] text-subtle">正在创建文档…</p>}
-          {!recent && !favorites ? <div className="mt-7 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
+          {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
             <nav aria-label="文档分类" className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
               {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}
             </nav>
