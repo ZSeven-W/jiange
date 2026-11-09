@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BlockHandle, blockLink, CONVERT_TARGETS, linkedBlock } from "./BlockHandle";
-import { blockAbilities } from "./Editor";
+import { blockAbilities, readOnlyBlockAbilities } from "./Editor";
 
 const noop = () => {};
 const all = blockAbilities("h2", false, true, true);
@@ -53,5 +53,20 @@ describe("block links", () => {
     expect(url).toBe("http://h/app#/doc/7?block=3%3A9");
     expect(linkedBlock(url.slice(url.indexOf("#")))).toBe("3:9");
     expect(linkedBlock("#/doc/7")).toBeNull();
+  });
+});
+
+describe("read-only block handle", () => {
+  it("offers only copy, copy-link and comment to readers who may comment", () => {
+    const html = renderToStaticMarkup(<BlockHandle type="paragraph" open onOpenChange={noop} can={readOnlyBlockAbilities("paragraph", true, true)} />);
+    for (const attr of ["data-block-copy", "data-block-link", "data-block-comment"]) expect(html).toContain(attr);
+    for (const attr of ["data-convert-to", "data-block-colors", "data-block-indent", "data-block-cut", "data-insert-after", "data-delete-block"]) expect(html).not.toContain(attr);
+    expect(html).toContain('draggable="false"');
+  });
+  it("keeps copy-link even when copying and commenting are off", () => {
+    const html = renderToStaticMarkup(<BlockHandle type="image" open onOpenChange={noop} can={readOnlyBlockAbilities("image", false, false)} />);
+    expect(html).toContain("data-block-link");
+    expect(html).not.toContain("data-block-copy");
+    expect(html).not.toContain("data-block-comment");
   });
 });
