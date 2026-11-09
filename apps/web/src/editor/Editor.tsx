@@ -37,6 +37,7 @@ import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
 import { applyTableEdit, parseTableData } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
+import { CodeBlockHeader } from "./CodeBlockHeader";
 import { ask, askText } from "@/components/ui/ask";
 import { Copy, MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
@@ -1759,7 +1760,7 @@ const BLOCK_CLASS: Record<string, string> = {
   ordered: "text-[16px] leading-[1.75] py-[2px]",
   todo: "text-[16px] leading-[1.75] py-[2px]",
   quote: "text-[16px] leading-[1.75] py-[2px] border-l-2 border-[#BBBFC4] dark:border-border pl-3 text-muted-foreground my-1",
-  code: "font-mono text-[14px] leading-[1.6] bg-sidebar rounded-md px-4 py-3 my-2",
+  code: "my-2",
 };
 
 interface BlockProps {
@@ -1999,32 +2000,15 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           </span>
         </div>
       ) : type === "code" ? (
-        <div className="overflow-hidden rounded-lg border border-[#e5e7eb] dark:border-[#3c4043]">
-          <div contentEditable={false} className="flex items-center gap-2 border-b border-[#e5e7eb] bg-[#f7f8fa] px-3 py-1.5 dark:border-[#3c4043] dark:bg-[#23262a]" data-code-header>
-            <select
-              value={props.lang ?? "plain"}
-              disabled={!onSetProp}
-              onChange={(e) => onSetProp?.("lang", e.target.value)}
-              className="cursor-pointer rounded bg-transparent text-[12px] text-muted-foreground outline-none"
-              title="代码语言"
-              data-code-lang
-            >
-              {CODE_LANGS.map(([v, l]) => (
-                <option key={v} value={v}>
-                  {l}
-                </option>
-              ))}
-            </select>
-            {canCopy && <button
-              className="ml-auto text-[12px] text-subtle hover:text-foreground"
-              onClick={() => navigator.clipboard?.writeText(spans.map((c) => c.ch).join(""))}
-              title="复制代码"
-              data-code-copy
-            >
-              复制
-            </button>}
-          </div>
-          <div data-text className="min-w-0 whitespace-pre-wrap break-words px-4 py-2.5 font-mono text-[13px] leading-6">
+        <div className="rounded-md bg-[#F5F6F7] dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
+          <CodeBlockHeader
+            lang={props.lang}
+            wrap={props.wrap !== "false"}
+            onLang={onSetProp ? (v) => onSetProp("lang", v) : undefined}
+            onWrap={onSetProp ? (w) => onSetProp("wrap", w ? "true" : "false") : undefined}
+            onCopy={canCopy ? () => navigator.clipboard?.writeText(spans.map((c) => c.ch).join("")) : undefined}
+          />
+          <div data-text className={cn("min-w-0 px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>
             {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
           </div>
         </div>
@@ -2056,11 +2040,6 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
   );
 }
 
-const CODE_LANGS: [string, string][] = [
-  ["plain", "纯文本"], ["typescript", "TypeScript"], ["javascript", "JavaScript"], ["go", "Go"],
-  ["python", "Python"], ["rust", "Rust"], ["java", "Java"], ["sql", "SQL"], ["json", "JSON"],
-  ["bash", "Bash"], ["css", "CSS"], ["html", "HTML"],
-];
 
 /** Simple table block: plain-text grid stored as JSON in a block prop. */
 function TableBlock({ data, widths, onWidths, onEdit, onDelete, readOnly }: { data: string; widths?: number[]; onWidths?: (w: number[]) => void; onEdit: (r: number, c: number, v: string, kind?: string) => void; onDelete: () => void; readOnly: boolean }) {
