@@ -87,7 +87,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   }, [open, onOpenChange]);
   const act = (action: BlockMenuAction) => () => { onOpenChange(false); onAction?.(action); };
   const multi = count > 1;
-  const item = "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[14px] text-foreground hover:bg-hover disabled:pointer-events-none disabled:opacity-40";
+  const item = "flex h-8 w-full items-center gap-4 rounded-md px-3 text-left text-[14px] text-foreground hover:bg-hover disabled:pointer-events-none disabled:opacity-40";
   const icon = "shrink-0 text-muted-foreground";
   const keep = (event: React.MouseEvent) => event.preventDefault();
   const groupA = can.color || can.indent;
