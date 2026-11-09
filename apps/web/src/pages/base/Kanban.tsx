@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { CellView, TAG_COLORS, Tag } from "./cells";
 import { displayValue, recordTitle, recordTitleField, REGISTRY } from "./registry";
 
+const isBlankCell = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+
 export interface KanbanColumn {
   /** option value; "" is the ungrouped bucket */
   key: string;
@@ -114,7 +116,7 @@ export function Kanban({
             void drop(col.key, over?.index ?? col.records.length, Number(e.dataTransfer.getData("text/rid")) || undefined);
           }}
         >
-          <div className="flex h-11 shrink-0 items-center gap-2 px-3 text-[13px] text-muted-foreground">
+          <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px] text-muted-foreground">
             {col.key ? <Tag colorIndex={(field.options ?? []).indexOf(col.key)} value={col.key} /> : <span className="rounded bg-[#E4E5E7] px-2 py-0.5 text-[12px] font-medium text-[#646A73]">未分类</span>}
             <span className="text-subtle">{col.records.length}</span>
             <MoreHorizontal size={16} className="ml-auto text-subtle" aria-hidden />
@@ -155,9 +157,9 @@ export function Kanban({
                   const t = recordTitle(rec, fields, members);
                   return <div className={cn("truncate leading-[22px]", t ? "font-medium" : "text-subtle")}>{t || "未命名记录"}</div>;
                 })()}
-                {extra.length > 0 && (
+                {extra.some((f) => !isBlankCell(rec.cells[f.id])) && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-muted-foreground">
-                    {extra.map((f) => (
+                    {extra.filter((f) => !isBlankCell(rec.cells[f.id])).map((f) => (
                       <span key={f.id} className="max-w-[120px] truncate">
                         <CellView field={f} record={rec} members={members} canEdit={false} />
                       </span>
@@ -170,7 +172,7 @@ export function Kanban({
           </div>
           {canEdit ? (
             <button
-              className="mx-2 my-1.5 grid h-8 shrink-0 place-items-center rounded-md text-subtle hover:bg-black/5 hover:text-foreground"
+              className="mx-2 mb-1.5 mt-1 grid h-8 shrink-0 place-items-center rounded-md text-subtle hover:bg-black/5 hover:text-foreground"
               title="添加卡片"
               aria-label="添加卡片"
               data-kanban-add={col.key}
