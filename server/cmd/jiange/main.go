@@ -116,7 +116,7 @@ func run(log *slog.Logger) error {
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies,
-			Hub: hub, BtHub: btHub, Blobs: blobs, WebUI: webui.Handler()}).Handler(),
+			Hub: hub, BtHub: btHub, Blobs: blobs, WebUI: webui.Handler(), PreviewAllow: api.PreviewAllowFromEnv(os.Getenv("JIANGE_LINK_PREVIEW_ALLOW_CIDRS"))}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	if webui.Built() {
