@@ -12,7 +12,7 @@ import (
 // commentRecipients preserves the existing notification semantics: a reply
 // notifies its parent author and mentions, while a resolve notifies the
 // original author and mentions. The actor is never notified of their action.
-func commentRecipients(c Comment, actor int64, parentAuthor int64, resolve bool) ([]int64, string) {
+func commentRecipients(ctx context.Context, c Comment, actor int64, parentAuthor int64, resolve bool) ([]int64, string) {
 	ids := make(map[int64]bool, len(c.Mentions)+1)
 	kind := "mention"
 	if resolve {
@@ -27,6 +27,9 @@ func commentRecipients(c Comment, actor int64, parentAuthor int64, resolve bool)
 	}
 	delete(ids, actor)
 	delete(ids, 0)
+	for _, id := range notifySkip(ctx) {
+		delete(ids, id)
+	}
 	recipients := make([]int64, 0, len(ids))
 	for id := range ids {
 		if id > 0 {
@@ -39,8 +42,8 @@ func commentRecipients(c Comment, actor int64, parentAuthor int64, resolve bool)
 
 // commentNotificationsLocked prepares notifications without mutating Memory.
 // Their publication and the comment mutation happen together under m.mu.
-func (m *Memory) commentNotificationsLocked(c Comment, actor int64, parentAuthor int64, resolve bool) []Notification {
-	recipients, kind := commentRecipients(c, actor, parentAuthor, resolve)
+func (m *Memory) commentNotificationsLocked(ctx context.Context, c Comment, actor int64, parentAuthor int64, resolve bool) []Notification {
+	recipients, kind := commentRecipients(ctx, c, actor, parentAuthor, resolve)
 	doc := m.doc(c.DocID)
 	if doc == nil {
 		return nil
@@ -51,9 +54,10 @@ func (m *Memory) commentNotificationsLocked(c Comment, actor int64, parentAuthor
 	}
 	items := make([]Notification, 0, len(recipients))
 	for _, uid := range recipients {
-		// Invalid IDs must not prevent a valid comment from being saved. Base
-		// notifications retain their existing non-document access semantics.
-		if m.userByID(uid) == nil || (doc.meta.Kind == "doc" && (doc.deleted || RoleRank(m.roleLocked(uid, doc)) < RoleRank(RoleView))) {
+		// Invalid IDs must not prevent a valid comment from being saved. Every
+		// node kind (doc, base, slides, file) requires current view access, so a
+		// reply or resolve never sends a preview to someone who lost access.
+		if m.userByID(uid) == nil || doc.deleted || RoleRank(m.roleLocked(uid, doc)) < RoleRank(RoleView) {
 			continue
 		}
 		id := c.ID
@@ -74,13 +78,9 @@ func (m *Memory) publishCommentNotificationsLocked(items []Notification, now tim
 // until the comment and notices commit together. Stable recipient order limits
 // lock-order inversions; database deadlocks still abort the entire transaction.
 func insertCommentNotificationsTx(ctx context.Context, tx pgx.Tx, c Comment, actor int64, parentAuthor int64, resolve bool) error {
-	recipients, kind := commentRecipients(c, actor, parentAuthor, resolve)
+	recipients, kind := commentRecipients(ctx, c, actor, parentAuthor, resolve)
 	if len(recipients) == 0 {
 		return nil
-	}
-	var nodeKind string
-	if err := tx.QueryRow(ctx, `SELECT kind FROM nodes WHERE id=$1`, c.DocID).Scan(&nodeKind); err != nil {
-		return err
 	}
 	for _, uid := range recipients {
 		var existing int64
@@ -91,21 +91,33 @@ func insertCommentNotificationsTx(ctx context.Context, tx pgx.Tx, c Comment, act
 		if err != nil {
 			return err
 		}
-		if nodeKind == "doc" {
-			role, _, _, err := lockCopySource(ctx, tx, c.DocID, uid)
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if RoleRank(role) < RoleRank(RoleView) {
-				continue
-			}
+		role, _, _, err := lockCopySource(ctx, tx, c.DocID, uid)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if RoleRank(role) < RoleRank(RoleView) {
+			continue
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO notifications (user_id,doc_id,actor_id,comment_id,kind,preview) VALUES ($1,$2,$3,$4,$5,$6)`, uid, c.DocID, actor, c.ID, kind, notificationPreview(c.Body)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type notifySkipKey struct{}
+
+// WithNotifySkip excludes users from comment notifications written under ctx.
+// The API uses it for record comments: base access is not enough, the
+// recipient must also see the record under the base's locked-view policy.
+func WithNotifySkip(ctx context.Context, ids []int64) context.Context {
+	return context.WithValue(ctx, notifySkipKey{}, append([]int64(nil), ids...))
+}
+
+func notifySkip(ctx context.Context) []int64 {
+	ids, _ := ctx.Value(notifySkipKey{}).([]int64)
+	return ids
 }

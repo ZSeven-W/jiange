@@ -157,7 +157,7 @@ func (m *Memory) AddCommentGuarded(ctx context.Context, guard RestoreGuard, c Co
 	now := time.Now()
 	c.CreatedAt, c.UpdatedAt = now, now
 	c.Mentions = append([]int64(nil), c.Mentions...)
-	items := m.commentNotificationsLocked(c, guard.UserID, parentAuthor, false)
+	items := m.commentNotificationsLocked(ctx, c, guard.UserID, parentAuthor, false)
 	if err = ctx.Err(); err != nil {
 		return Comment{}, err
 	}
@@ -192,7 +192,7 @@ func (m *Memory) PatchCommentGuarded(ctx context.Context, guard RestoreGuard, do
 		}
 		var items []Notification
 		if changed {
-			items = m.commentNotificationsLocked(c, guard.UserID, 0, true)
+			items = m.commentNotificationsLocked(ctx, c, guard.UserID, 0, true)
 		}
 		if err = ctx.Err(); err != nil {
 			return Comment{}, false, err

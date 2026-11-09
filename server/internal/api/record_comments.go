@@ -87,6 +87,7 @@ func (s *Server) addRecordComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	anchor := recordAnchor(rid)
+	var parentAuthor int64
 	if in.ParentID != nil {
 		// Replies hang under a root comment of the same record (one level, as in Feishu).
 		parent, found, err := s.recordComment(r.Context(), b.ID, *in.ParentID)
@@ -98,6 +99,7 @@ func (s *Server) addRecordComment(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "not_found", "comment not found")
 			return
 		}
+		parentAuthor = parent.UserID
 	}
 	ci := commentInput{Body: in.Body, Mentions: in.Mentions, Block: anchor, ParentID: in.ParentID}
 	c, ok := ci.clean(w)
@@ -112,6 +114,13 @@ func (s *Server) addRecordComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.Mentions = mentions
+	// The reply notice to the root author follows the same rule.
+	ctx, err := s.skipNonReaders(r.Context(), b.ID, rid, []int64{parentAuthor})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	r = r.WithContext(ctx)
 	u, _ := UserFrom(r.Context())
 	c.DocID, c.UserID = b.ID, u.ID
 	guard, ok := s.viewGuard(w, r)
@@ -143,6 +152,20 @@ func (s *Server) patchRecordComment(w http.ResponseWriter, r *http.Request) {
 	cid := pathID(r, "cid")
 	if !s.ownRecordComment(w, r, b.ID, rid, cid) {
 		return
+	}
+	if in.Resolved != nil && *in.Resolved {
+		// Resolve notices go to the author and mentions: only current readers.
+		c, _, err := s.recordComment(r.Context(), b.ID, cid)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		ctx, err := s.skipNonReaders(r.Context(), b.ID, rid, append([]int64{c.UserID}, c.Mentions...))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	guard, ok := s.viewGuard(w, r)
 	if !ok {
@@ -227,4 +250,27 @@ func (s *Server) recordReaders(ctx context.Context, baseID, rid int64, ids []int
 		}
 	}
 	return out, nil
+}
+
+// skipNonReaders marks candidates who cannot read record rid so the store
+// leaves them out of comment notifications.
+func (s *Server) skipNonReaders(ctx context.Context, baseID, rid int64, candidates []int64) (context.Context, error) {
+	readers, err := s.recordReaders(ctx, baseID, rid, candidates)
+	if err != nil {
+		return ctx, err
+	}
+	ok := map[int64]bool{}
+	for _, id := range readers {
+		ok[id] = true
+	}
+	var skip []int64
+	for _, id := range candidates {
+		if id > 0 && !ok[id] {
+			skip = append(skip, id)
+		}
+	}
+	if len(skip) == 0 {
+		return ctx, nil
+	}
+	return store.WithNotifySkip(ctx, skip), nil
 }
