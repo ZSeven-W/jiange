@@ -21,12 +21,14 @@ describe("empty document insertion affordance", () => {
     expect(html).toMatch(/<span class="[^"]*top-\[2px\][^"]*\bflex\b(?![^\"]*\bhidden\b)[^"]*"[^>]*><button[^>]*data-insert-after/);
   });
 
-  it("uses the normal hover affordance for nonempty or multiple paragraphs and hides it in read-only mode", () => {
+  it("uses the normal hover affordance for nonempty or multiple paragraphs and keeps only a non-draggable handle in read-only mode", () => {
     // 非空块悬停显示飞书式块手柄（类型图标 + 拖拽点），“在下方添加”收进块菜单。
     expect(render("内容")).toMatch(/<span class="[^"]*\bhidden\b[^"]*group-hover:flex[^"]*"[^>]*><span[^>]*><button[^>]*data-block-handle/);
     expect(render("内容")).not.toContain("data-insert-after");
     expect(render("", false, true)).toMatch(/<span class="[^"]*\bhidden\b[^"]*group-hover:flex[^"]*"[^>]*><button[^>]*data-insert-after/);
     expect(render("", true)).not.toContain("data-insert-after");
-    expect(render("内容", true)).not.toContain("data-block-handle");
+    // 只读读者仍有块手柄（复制链接/评论），但不可拖拽、没有插入入口。
+    expect(render("内容", true)).toMatch(/<button[^>]*draggable="false"[^>]*data-block-handle/);
+    expect(render("内容", true)).not.toContain("data-insert-after");
   });
 });

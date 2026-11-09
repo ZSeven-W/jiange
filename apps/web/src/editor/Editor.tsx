@@ -380,7 +380,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (!d || !el) return;
       const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
       if (!d.hasBlock(b)) return;
-      const cur = sel.current;
+      // 只读/仅评论：只允许不改正文的操作（复制、复制链接、评论）。
+      if (readOnlyRef.current && action.kind !== "copy" && action.kind !== "link" && action.kind !== "comment") return;
+      const cur = readOnlyRef.current ? null : sel.current;
       const span = selBlocksRef.current;
       const multi = !!cur && !eqId(cur.a.b, cur.f.b) && span.length > 1 && span.includes(blockKey);
       const whole: Sel = { a: { b, o: 0 }, f: { b, o: len(d, b) } };
@@ -1506,10 +1508,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onMathSource={readOnly ? undefined : editMathSource}
                 onDiagramSource={readOnly ? undefined : editDiagramSource}
                 onDeleteBlock={readOnly ? undefined : deleteBlockByKey}
-                onBlockAction={readOnly ? undefined : blockAction}
-                selectionCount={selBlocks.length > 1 && selBlocks[0] === k ? selBlocks.length : undefined}
-                inSelection={selBlocks.length > 1 && selBlocks.includes(k)}
-                blockAbilities={readOnly ? undefined : blockAbilities(info.type, selBlocks.length > 1 && selBlocks[0] === k, !onCopyBlock, !!onComment)}
+                onBlockAction={blockAction}
+                selectionCount={!readOnly && selBlocks.length > 1 && selBlocks[0] === k ? selBlocks.length : undefined}
+                inSelection={!readOnly && selBlocks.length > 1 && selBlocks.includes(k)}
+                blockAbilities={readOnly ? readOnlyBlockAbilities(info.type, !onCopyBlock, !!onComment) : blockAbilities(info.type, selBlocks.length > 1 && selBlocks[0] === k, !onCopyBlock, !!onComment)}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   const key = idKey(ch);
@@ -1699,6 +1701,12 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     insertAfter: true,
     delete: true,
   };
+}
+
+/** 只读或仅评论的读者：块手柄只提供复制、复制链接和评论（受复制保护与评论权限约束）。 */
+export function readOnlyBlockAbilities(type: string, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
+  const textish = COLORABLE.has(type) || type === "code";
+  return { convert: false, color: false, indent: false, copy: canCopy && textish, cut: false, link: true, comment: canComment && textish, insertAfter: false, delete: false };
 }
 
 const BLOCK_CLASS: Record<string, string> = {
