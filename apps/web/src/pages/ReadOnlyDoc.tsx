@@ -123,7 +123,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "table": content = <ReadOnlyTable data={block.props.tableData} merges={block.props.tableMerges} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
-        case "divider": content = <hr className="my-3 border-border" />; break;
+        case "divider": content = <hr className="my-3 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);

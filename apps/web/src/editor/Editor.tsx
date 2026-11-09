@@ -571,6 +571,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const md = isColumnText(tx.doc, p.b) ? null : markdownShortcut(tx, p, [...text].pop() ?? "");
         if (md) {
           um.seal();
+          // 飞书：**粗体**、`代码` 等行内 Markdown 转换后，继续输入不再沿用该格式。
+          if (eqId(md.b, p.b) && md.o > 0 && md.o < p.o) {
+            const at = activeMarksAt(tx.doc, md);
+            const off = Object.fromEntries(["bold", "italic", "strike", "code"].filter((k) => at[k] !== undefined && !marks?.[k]).map((k) => [k, null]));
+            if (Object.keys(off).length) stored.current = { ...(stored.current ?? {}), ...off };
+          }
           return md;
         }
         return p;
@@ -2100,7 +2106,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           readOnly={!onTableEdit}
         />
       ) : type === "divider" ? (
-        <hr contentEditable={false} className="border-border" />
+        <hr contentEditable={false} className="h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />
       ) : type === "image" ? (
         <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} onComment={onBlockComment} />
       ) : type === "video" ? (
