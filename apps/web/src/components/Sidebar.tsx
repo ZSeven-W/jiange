@@ -202,8 +202,8 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
-        <NavItem icon={<FolderIcon />} label="云盘" active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
+        <NavItem icon={<FolderIcon size={16} strokeWidth={1.7} />} label="云盘" active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
