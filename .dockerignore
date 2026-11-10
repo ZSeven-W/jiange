@@ -1,0 +1,4 @@
+*
+!bin/
+!bin/jiange
+!docker-entrypoint.sh
