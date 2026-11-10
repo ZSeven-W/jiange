@@ -795,19 +795,35 @@ func (s *Server) validPersonDefault(w http.ResponseWriter, r *http.Request, b st
 	if len(in.DefaultValue) == 0 || f.Type != "person" || f.DefaultValue == nil {
 		return true
 	}
-	var id int64
-	if json.Unmarshal(f.DefaultValue, &id) != nil || id <= 0 {
-		httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
-		return false
+	// 允许多选的默认值是 id 数组；单选仍是单个 id。
+	var ids []int64
+	if f.Multiple {
+		if json.Unmarshal(f.DefaultValue, &ids) != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
+			return false
+		}
+	} else {
+		var id int64
+		if json.Unmarshal(f.DefaultValue, &id) != nil || id <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
+			return false
+		}
+		ids = []int64{id}
 	}
 	names, err := s.collaboratorNames(r.Context(), b)
 	if err != nil {
 		s.fail(w, r, err)
 		return false
 	}
-	if _, ok := names[id]; !ok {
-		httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认人员必须是此表格的协作者")
-		return false
+	for _, id := range ids {
+		if id <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认值与字段类型不匹配")
+			return false
+		}
+		if _, ok := names[id]; !ok {
+			httpx.Error(w, http.StatusBadRequest, "invalid_default", "默认人员必须是此表格的协作者")
+			return false
+		}
 	}
 	return true
 }
