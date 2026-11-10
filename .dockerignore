@@ -1,4 +1,17 @@
+# The multi-stage Dockerfile needs the workspace sources only; everything
+# else stays out of the build context.
 *
-!bin/
-!bin/jiange
+!package.json
+!pnpm-workspace.yaml
+!pnpm-lock.yaml
 !docker-entrypoint.sh
+!apps
+!packages
+!server
+# junk inside the kept trees
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+server/bin

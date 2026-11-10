@@ -9,8 +9,7 @@ output
 docs
 
 # Embedded UI on the Uppcoder deploy branch: a plain `go build` needs these files.
-!server/webui/dist/
-!server/webui/dist/**
+!server/webui/dist/.gitkeep
 
 # Built on the stack at start; attachments written at runtime.
 /jiange
