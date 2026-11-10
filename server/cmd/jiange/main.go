@@ -105,7 +105,15 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	var blobs blob.Store
-	if cfg.S3Endpoint != "" {
+	switch {
+	case cfg.BlobDir != "":
+		dir, err := blob.NewDir(cfg.BlobDir)
+		if err != nil {
+			return err
+		}
+		blobs = dir
+		log.Info("attachments on disk", "dir", dir.Root)
+	case cfg.S3Endpoint != "":
 		s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}
 		if err := s3.EnsureBucket(ctx); err != nil {
 			log.Warn("attachments disabled", "err", err)

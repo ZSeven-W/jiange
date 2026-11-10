@@ -14,8 +14,10 @@ type Config struct {
 	SecureCookies bool
 	// AllowedOrigins are extra browser origins (host[:port]) allowed to open sync sockets.
 	AllowedOrigins []string
-	// S3/MinIO attachment storage; empty endpoint disables uploads.
+	// S3/MinIO attachment storage; empty endpoint disables uploads unless BlobDir is set.
 	S3Endpoint, S3Bucket, S3AccessKey, S3SecretKey string
+	// BlobDir, if set, stores attachments on the local filesystem (takes precedence over S3).
+	BlobDir string
 	// AutoVersionEvery: docs edited within this window get an automatic
 	// version snapshot each sweep; 0 disables.
 	AutoVersionEvery time.Duration
@@ -46,6 +48,7 @@ func Load() Config {
 		S3Bucket:      getenv("JIANGE_S3_BUCKET", "jiange"),
 		S3AccessKey:   os.Getenv("JIANGE_S3_ACCESS_KEY"),
 		S3SecretKey:   os.Getenv("JIANGE_S3_SECRET_KEY"),
+		BlobDir:       os.Getenv("JIANGE_BLOB_DIR"),
 		AllowedOrigins: strings.FieldsFunc(getenv("JIANGE_ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173"),
 			func(r rune) bool { return r == ',' || r == ' ' }),
 		AutoVersionEvery: auto,
