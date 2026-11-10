@@ -1,4 +1,5 @@
 import type { FilterRule, User } from "@/lib/api";
+import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { personRuleIDs } from "./registry";
 import { Check } from "lucide-react";
@@ -17,7 +18,7 @@ export function MemberRuleValue({ rule, members, onChange }: { rule: FilterRule;
         value={current || ""}
         onChange={(e) => onChange(e.target.value ? Number(e.target.value) : 0)}
         data-person-filter
-        aria-label="选择成员"
+        aria-label={t("选择成员")}
       >
         <option value="">—</option>
         {members.map((m) => (
@@ -49,7 +50,7 @@ export function MemberRuleValue({ rule, members, onChange }: { rule: FilterRule;
           </button>
         );
       })}
-      {members.length === 0 && <span className="px-1 text-[12px] text-subtle">没有可选成员</span>}
+      {members.length === 0 && <span className="px-1 text-[12px] text-subtle">{t("没有可选成员")}</span>}
     </div>
   );
 }

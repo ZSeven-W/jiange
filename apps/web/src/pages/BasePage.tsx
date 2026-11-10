@@ -15,6 +15,7 @@ import { AutomationsPanel } from "./base/Automations";
 import { MemberRuleValue, personRuleValue } from "./base/MemberRuleValue";
 import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
+import { t, useI18n } from "@/lib/i18n";
 import { view } from "./base/view";
 import { popupPosition } from "./base/popupPosition";
 import { baseLoadError } from "./base/loadError";
@@ -55,6 +56,7 @@ const EMPTY_CONFIG: ViewConfig = {};
 
 /** Bitable page: views, filters/sorts (temporary until saved), grid. */
 export function BasePage({ id }: { id: number }) {
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
   const key = ["base", id];
   // A fresh object is required on each successful access check. The filtered
@@ -89,7 +91,7 @@ export function BasePage({ id }: { id: number }) {
     if (q.isError || (q.isSuccess && !q.data.records.some((record) => record.id === detailRecord))) setDetailRecord(null);
   }, [detailRecord, q.isFetchedAfterMount, q.isFetching, q.isError, q.isSuccess, q.data]);
 
-  useEffect(() => { document.title = `${q.data?.base.title || "未命名多维表格"} - Jiange`; }, [q.data?.base.title]);
+  useEffect(() => { document.title = `${q.data?.base.title || t("未命名多维表格")} - Jiange`; }, [q.data?.base.title, locale]);
   const views = q.data?.views ?? [];
   const current = views.find((v) => v.id === viewId) ?? views[0];
   const setCfg = (next: ViewConfig) => {
@@ -135,10 +137,10 @@ export function BasePage({ id }: { id: number }) {
   } : null);
 
   if (q.isError) {
-    return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">{baseLoadError(q.error)}</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">重试</button></div></div>;
+    return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">{baseLoadError(q.error)}</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">{t("重试")}</button></div></div>;
   }
-  if (queryAccessBlocked) return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">无法确认多维表格访问权限，已隐藏数据。</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">重新验证</button></div></div>;
-  if (!accessReady || !q.data) return <div className="grid flex-1 place-items-center text-[13px] text-subtle" role="status">正在确认多维表格访问权限…</div>;
+  if (queryAccessBlocked) return <div className="grid flex-1 place-items-center text-muted-foreground"><div className="space-y-3 text-center"><p role="alert">{t("无法确认多维表格访问权限，已隐藏数据。")}</p><button type="button" onClick={() => void q.refetch()} className="rounded-md border px-3 py-1.5 text-[13px] hover:bg-hover">{t("重新验证")}</button></div></div>;
+  if (!accessReady || !q.data) return <div className="grid flex-1 place-items-center text-[13px] text-subtle" role="status">{t("正在确认多维表格访问权限…")}</div>;
   const { base, fields, members } = q.data;
   // The previous policy is not authorization evidence while it is refreshed.
   const preventCopy = blocksBaseCopy(base, q.isFetching);
@@ -172,10 +174,10 @@ export function BasePage({ id }: { id: number }) {
     }
     catch (error) {
       if (current.type === "form") {
-        const message = error instanceof ApiError && error.status === 409 ? "表单或字段已变化，未保存。请检查当前配置后重试。"
-          : error instanceof ApiError && [401, 403, 404].includes(error.status) ? "权限已变化或表单不存在，未保存配置。"
-          : error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) ? `未保存：${error.message || "配置无效。"}`
-          : "无法确认配置是否保存，请检查当前配置后重试。";
+        const message = error instanceof ApiError && error.status === 409 ? t("表单或字段已变化，未保存。请检查当前配置后重试。")
+          : error instanceof ApiError && [401, 403, 404].includes(error.status) ? t("权限已变化或表单不存在，未保存配置。")
+          : error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) ? t("未保存：{msg}", { msg: error.message || t("配置无效。") })
+          : t("无法确认配置是否保存，请检查当前配置后重试。");
         setFormSaveError({ viewId: current.id, message });
         void refresh();
       } else setSaveError(true);
@@ -185,7 +187,7 @@ export function BasePage({ id }: { id: number }) {
   const newView = async (type: import("@/lib/api").View["type"], name: string) => {
     setViewMenuOpen(false);
     setViewError(null);
-    const op = ledger.begin("新建视图", name, "view:write");
+    const op = ledger.begin(t("新建视图"), name, "view:write");
     if (op === null) return;
     let v: import("@/lib/api").View;
     try {
@@ -193,52 +195,52 @@ export function BasePage({ id }: { id: number }) {
     } catch (error) {
       if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
         ledger.complete(op);
-        setViewError("无法新建视图，请检查权限或视图配置。");
+        setViewError(t("无法新建视图，请检查权限或视图配置。"));
       } else {
-        ledger.fail(op, "无法确认视图是否创建，请刷新并核对后再操作。");
-        setViewError("无法确认视图是否创建，请核对列表。");
+        ledger.fail(op, t("无法确认视图是否创建，请刷新并核对后再操作。"));
+        setViewError(t("无法确认视图是否创建，请核对列表。"));
       }
       refreshWrites(refresh);
       return;
     }
     ledger.complete(op);
     try { await refresh(); setViewId(v.id); setCfgState(v.config ?? EMPTY_CONFIG); }
-    catch { setViewError("视图已创建，但列表刷新失败，请重新加载。"); }
+    catch { setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
   };
   const addRecord = async () => {
     if (ledger.blocked("batch")) return;
-    const op = ledger.begin("新增记录", "", "record:create");
+    const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
     try { await baseApi.addRecord(id); ledger.complete(op); }
-    catch { ledger.fail(op, "无法确认是否创建，请刷新并核对记录，勿直接重复新增。"); }
+    catch { ledger.fail(op, t("无法确认是否创建，请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(refresh); }
   };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-surface" onCopyCapture={(event) => guardBaseClipboard(event, preventCopy)} onCutCapture={(event) => guardBaseClipboard(event, preventCopy)}>
       <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-surface pl-14 pr-3 md:px-4" data-base-header>
-        <button onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover md:grid" title="返回云文档" aria-label="返回云文档"><Home size={17} strokeWidth={1.6} /></button>
+        <button onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover md:grid" title={t("返回云文档")} aria-label={t("返回云文档")}><Home size={17} strokeWidth={1.6} /></button>
         <span className="hidden h-8 w-px bg-border md:block" />
         <div className="min-w-0 flex-1 px-1">
           <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
             {base.workspaceName && <><span className="hidden max-w-28 truncate text-muted-foreground sm:inline">{base.workspaceName}</span><ChevronRight size={13} className="hidden shrink-0 text-subtle sm:block" /></>}
             <span className="grid size-4 shrink-0 place-items-center rounded-[4px] bg-[#8d6cdf] text-white"><Table2 size={11} strokeWidth={2} /></span>
-            <BaseTitle id={id} title={base.title || "未命名多维表格"} canEdit={canEdit} onRenamed={refresh} />
+            <BaseTitle id={id} title={base.title || t("未命名多维表格")} canEdit={canEdit} onRenamed={refresh} />
           </div>
-          <p className="pt-0.5 text-[11px] text-subtle">最近修改：{formatBaseChange(lastBaseChange(base.updatedAt, q.data.records))}{!canEdit && " · 只读"}</p>
+          <p className="pt-0.5 text-[11px] text-subtle">{t("最近修改：{time}", { time: formatBaseChange(lastBaseChange(base.updatedAt, q.data.records)) })}{!canEdit && t(" · 只读")}</p>
         </div>
-        <button ref={shareAnchor} onClick={() => setSharing(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Share2 size={14} />分享</button>
-        {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="hidden h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover sm:flex"><Zap size={15} />自动化</button>}
+        <button ref={shareAnchor} onClick={() => setSharing(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Share2 size={14} />{t("分享")}</button>
+        {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="hidden h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover sm:flex"><Zap size={15} />{t("自动化")}</button>}
       </header>
       {!directDetailOpen && !gridDetailOpen && <WriteIssues ledger={ledger} issues={issues} />}
-      {q.data.writeRestricted && <div role="status" className="border-b bg-[#fff8e8] px-4 py-2 text-[12px] text-[#8f6200]">此表启用了权限视图，当前暂不支持在受限权限下编辑。你可以查看允许访问的数据。</div>}
+      {q.data.writeRestricted && <div role="status" className="border-b bg-[#fff8e8] px-4 py-2 text-[12px] text-[#8f6200]">{t("此表启用了权限视图，当前暂不支持在受限权限下编辑。你可以查看允许访问的数据。")}</div>}
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
-          <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
-          <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />数据表</button>
-          <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />仪表盘</button>
-          {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />工作流</button>}
-          {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>新建视图</button>}
+          <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
+          <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
+          <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+          {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />{t("工作流")}</button>}
+          {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
         </aside>
         {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
         <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", pane === "dashboard" && "hidden")}>
@@ -248,38 +250,38 @@ export function BasePage({ id }: { id: number }) {
         <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewIcon type={type} />} onSelect={setViewId} onRefresh={refresh} />
         {canEdit && (
           <div className="relative shrink-0">
-            <button disabled={ledger.blocked("view:write")} className="flex h-8 items-center gap-1 rounded px-2 text-subtle hover:bg-hover hover:text-foreground disabled:opacity-50" title="新建视图" aria-label="新建视图" aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((v) => !v)}><Plus size={15} /><span className="hidden sm:inline">新建视图</span></button>
+            <button disabled={ledger.blocked("view:write")} className="flex h-8 items-center gap-1 rounded px-2 text-subtle hover:bg-hover hover:text-foreground disabled:opacity-50" title={t("新建视图")} aria-label={t("新建视图")} aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((v) => !v)}><Plus size={15} /><span className="hidden sm:inline">{t("新建视图")}</span></button>
             {viewMenuOpen && <div className="absolute left-0 top-8 z-30 w-44 rounded-lg border bg-surface p-1.5 shadow-lg max-sm:fixed max-sm:left-4 max-sm:top-24">
-              <div className="px-2.5 pb-1 pt-1 text-[12px] text-subtle">基础视图</div>
-              {([ ["grid", "表格视图", Table2, "text-[#3370ff]"], ["kanban", "看板视图", KanbanSquare, "text-[#19a55b]"], ["calendar", "日历视图", Calendar, "text-[#0ea5a4]"], ["gantt", "甘特视图", BarChart3, "text-[#df4f9a]"], ["gallery", "画册视图", Images, "text-[#8758d8]"], ["form", "表单视图", ClipboardList, "text-[#ed823d]"] ] as const).map(([type, name, Icon, color]) => <button key={type} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-hover" onClick={() => void newView(type, name)}><Icon size={16} className={color} />{name}</button>)}
+              <div className="px-2.5 pb-1 pt-1 text-[12px] text-subtle">{t("基础视图")}</div>
+              {([ ["grid", "表格视图", Table2, "text-[#3370ff]"], ["kanban", "看板视图", KanbanSquare, "text-[#19a55b]"], ["calendar", "日历视图", Calendar, "text-[#0ea5a4]"], ["gantt", "甘特视图", BarChart3, "text-[#df4f9a]"], ["gallery", "画册视图", Images, "text-[#8758d8]"], ["form", "表单视图", ClipboardList, "text-[#ed823d]"] ] as const).map(([type, name, Icon, color]) => <button key={type} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-hover" onClick={() => void newView(type, t(name))}><Icon size={16} className={color} />{t(name)}</button>)}
             </div>}
           </div>
         )}
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
-        {saveError && <span role="alert" title="无法确认视图是否已保存，请检查后重试" className="min-w-0 max-w-28 truncate text-xs text-destructive">无法确认视图是否已保存，请检查后重试</span>}
+        {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
         {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
-        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />添加记录<ChevronDown size={13} className="opacity-70" aria-hidden /></button>}
-        {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">筛选结果不可用，请重试</span>}
-        {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">正在加载筛选结果…</span>}
-        {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">筛选仅覆盖当前加载的记录，更多记录可能未显示。</span>}
+        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />{t("添加记录")}<ChevronDown size={13} className="opacity-70" aria-hidden /></button>}
+        {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
+        {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
+        {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">{t("筛选仅覆盖当前加载的记录，更多记录可能未显示。")}</span>}
         {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <ViewSettingsBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "kanban" && (
           <label className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-hover">
             <CircleChevronDown size={15} strokeWidth={1.7} aria-hidden />
-            <span>分组依据</span>
+            <span>{t("分组依据")}</span>
             <select
               className="cursor-pointer bg-transparent text-foreground outline-none"
               value={cfg.group ?? ""}
               onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              aria-label="分组依据"
+              aria-label={t("分组依据")}
               data-group-field
             >
-              <option value="">选择字段</option>
+              <option value="">{t("选择字段")}</option>
               {fields.filter((f) => f.type === "select").map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
@@ -306,28 +308,28 @@ export function BasePage({ id }: { id: number }) {
             onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
             data-calendar-field
           >
-            <option value="">选择日期字段</option>
+            <option value="">{t("选择日期字段")}</option>
             {fields.filter((f) => f.type === "date").map((f) => (
               <option key={f.id} value={f.id}>
-                按「{f.name}」排布
+                {t("按「{name}」排布", { name: f.name })}
               </option>
             ))}
           </select>
         )}
         {base.role === "manage" && (
           <button className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground sm:hidden" onClick={() => setAutoOpen(true)} data-open-automations>
-            自动化
+            {t("自动化")}
           </button>
         )}
         {canEdit && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
         {!canExportBase(base, q.data.writeRestricted) ? (
-          <span className="rounded-md px-2 py-1 text-subtle" title="当前权限不支持导出" data-export-csv>导出 CSV（不可用）</span>
+          <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
         ) : (
-          <a href={`/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>导出 CSV</a>
+          <a href={`/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
         )}
-        <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">搜索记录</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索记录" className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
+        <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索记录")} className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
         {current?.type !== "grid" && <span className="px-2 text-subtle">
-          {records.length === source.length ? `${records.length} 条记录` : `${records.length} / ${source.length} 条记录`}
+          {records.length === source.length ? t("{n} 条记录", { n: records.length }) : t("{n} / {total} 条记录", { n: records.length, total: source.length })}
         </span>}
       </div>
       {current?.type === "gallery" && (
@@ -449,7 +451,7 @@ function Popover({ label, active, width = 320, icon, children }: { label: string
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {icon ?? (label.startsWith("筛选") ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith("排序") ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith("分组") ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />)} {label}
+        {icon ?? (label.startsWith(t("筛选")) ? <Filter size={15} strokeWidth={1.7} /> : label.startsWith(t("排序")) ? <ArrowDownUp size={15} strokeWidth={1.7} /> : label.startsWith(t("分组")) ? <LayoutPanelTop size={15} strokeWidth={1.7} /> : <Settings2 size={15} strokeWidth={1.7} />)} {label}
       </button>
       {open && position && createPortal(
         <div ref={body} style={{ ...position, width }} className="fixed z-[100] max-h-[calc(100vh-32px)] overflow-y-auto rounded-lg border bg-surface p-3 text-[13px] text-foreground shadow-lg" data-popover-body={label}>
@@ -461,10 +463,11 @@ function Popover({ label, active, width = 320, icon, children }: { label: string
 }
 
 function GroupBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (value: ViewConfig) => void }) {
-  return <Popover label="分组" active={!!cfg.group}>
-    {(close) => <div data-grid-group role="group" aria-label="分组字段" className="space-y-1">
-      <div className="px-2 pb-1 text-[12px] text-subtle">选择分组字段</div>
-      <button type="button" onClick={() => { onChange({ ...cfg, group: undefined }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover">不分组{!cfg.group && <Check size={15} className="text-primary" />}</button>
+  const { t } = useI18n();
+  return <Popover label={t("分组")} active={!!cfg.group}>
+    {(close) => <div data-grid-group role="group" aria-label={t("分组字段")} className="space-y-1">
+      <div className="px-2 pb-1 text-[12px] text-subtle">{t("选择分组字段")}</div>
+      <button type="button" onClick={() => { onChange({ ...cfg, group: undefined }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover">{t("不分组")}{!cfg.group && <Check size={15} className="text-primary" />}</button>
       {fields.map((field) => <button key={field.id} type="button" onClick={() => { onChange({ ...cfg, group: field.id }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover"><span className="truncate">{field.name}</span>{cfg.group === field.id && <Check size={15} className="shrink-0 text-primary" />}</button>)}
     </div>}
   </Popover>;
@@ -484,6 +487,7 @@ function opsFor(type: string): string[] {
 }
 
 function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/api").Field[]; members: import("@/lib/api").User[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const filters = cfg.filters ?? { conj: "and" as const, rules: [] };
   const setRules = (rules: FilterRule[], conj: "and" | "or" = filters.conj) =>
     onChange({ ...cfg, filters: rules.length ? { conj, rules } : undefined });
@@ -492,22 +496,22 @@ function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/a
   const normalized = (f: import("@/lib/api").Field | undefined, rule: FilterRule): FilterRule =>
     f?.type === "person" ? { ...rule, v: personRuleValue(rule.op, rule.v) } : rule;
   return (
-    <Popover label={`筛选${filters.rules.length ? ` · ${filters.rules.length}` : ""}`} active={!!filters.rules.length} width={516}>
+    <Popover label={t("筛选{count}", { count: filters.rules.length ? ` · ${filters.rules.length}` : "" })} active={!!filters.rules.length} width={516}>
       <div className="space-y-2 p-1">
         <div className="flex items-center gap-1 pb-1 text-[14px] text-foreground" data-filter-title>
-          设置筛选条件
-          <span title="只显示满足条件的记录；条件对所有协作者生效" className="text-subtle"><Info size={14} strokeWidth={1.7} /></span>
+          {t("设置筛选条件")}
+          <span title={t("只显示满足条件的记录；条件对所有协作者生效")} className="text-subtle"><Info size={14} strokeWidth={1.7} /></span>
         </div>
         {filters.rules.length > 1 && (
           <div className="flex items-center gap-2">
-            满足
+            {t("满足")}
             <select
               className="h-7 rounded border bg-surface px-1"
               value={filters.conj}
               onChange={(e) => setRules(filters.rules, e.target.value as "and" | "or")}
             >
-              <option value="and">全部条件（且）</option>
-              <option value="or">任一条件（或）</option>
+              <option value="and">{t("全部条件（且）")}</option>
+              <option value="or">{t("任一条件（或）")}</option>
             </select>
           </div>
         )}
@@ -542,7 +546,7 @@ function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/a
               >
                 {opsFor(f?.type ?? "text").map((op) => (
                   <option key={op} value={op}>
-                    {OP_LABEL[op]}
+                    {t(OP_LABEL[op])}
                   </option>
                 ))}
               </select>
@@ -569,11 +573,11 @@ function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/a
         })}
         <div className={cn("flex items-center justify-between", filters.rules.length > 0 && "border-t pt-2")}>
           <button className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => { const nf = fields[0]; setRules([...filters.rules, nf?.type === "person" ? { f: nf.id, op: "contains", v: [] } : { f: nf?.id ?? 0, op: opsFor(nf?.type ?? "text")[0], v: "" }]); }}>
-            <Plus size={16} strokeWidth={1.7} /> 添加条件
+            <Plus size={16} strokeWidth={1.7} /> {t("添加条件")}
           </button>
           {filters.rules.length > 0 && (
             <button className="text-subtle hover:text-foreground" onClick={() => setRules([])}>
-              清空
+              {t("清空")}
             </button>
           )}
         </div>
@@ -583,14 +587,15 @@ function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/a
 }
 
 function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const sorts = cfg.sorts ?? [];
   const setSorts = (s: typeof sorts) => onChange({ ...cfg, sorts: s.length ? s : undefined });
   return (
-    <Popover label={`排序${sorts.length ? ` · ${sorts.length}` : ""}`} active={!!sorts.length}>
+    <Popover label={t("排序{count}", { count: sorts.length ? ` · ${sorts.length}` : "" })} active={!!sorts.length}>
       <div className="space-y-2">
         {sorts.map((s, i) => (
           <div key={i} className="flex items-center gap-1">
-            {i > 0 && <span className="text-subtle">然后</span>}
+            {i > 0 && <span className="text-subtle">{t("然后")}</span>}
             <select
               className="h-7 flex-1 rounded border bg-surface px-1"
               value={s.f}
@@ -614,7 +619,7 @@ function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
                 setSorts(next);
               }}
             >
-              {s.asc ? "↑ 升序" : "↓ 降序"}
+              {s.asc ? t("↑ 升序") : t("↓ 降序")}
             </button>
             <button className="px-1 text-subtle hover:text-destructive" onClick={() => setSorts(sorts.filter((_, j) => j !== i))}>
               ✕
@@ -622,7 +627,7 @@ function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
           </div>
         ))}
         <button className="text-primary hover:underline" onClick={() => setSorts([...sorts, { f: fields[0]?.id ?? 0, asc: true }])}>
-          + 添加排序
+          {t("+ 添加排序")}
         </button>
       </div>
     </Popover>
@@ -630,9 +635,10 @@ function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
 }
 
 function HiddenBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const hidden = new Set(cfg.hidden ?? []);
   return (
-    <Popover label="字段配置" active={hidden.size > 0}>
+    <Popover label={t("字段配置")} active={hidden.size > 0}>
       <div className="max-h-64 space-y-1 overflow-auto">
         {fields.map((f) => (
           <label key={f.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-hover">
@@ -641,7 +647,7 @@ function HiddenBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
               className="accent-primary"
               checked={!hidden.has(f.id)}
               disabled={!!f.isPrimary && !hidden.has(f.id)}
-              title={f.isPrimary ? "主字段不能隐藏" : undefined}
+              title={f.isPrimary ? t("主字段不能隐藏") : undefined}
               onChange={(e) => {
                 const next = new Set(hidden);
                 if (e.target.checked) next.delete(f.id);
@@ -658,27 +664,28 @@ function HiddenBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
 }
 
 function ViewSettingsBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const frozen = Math.min(cfg.frozen ?? 1, fields.length);
   return (
-    <Popover label="视图配置" icon={<PanelsTopLeft size={15} strokeWidth={1.7} />} width={280}>
+    <Popover label={t("视图配置")} icon={<PanelsTopLeft size={15} strokeWidth={1.7} />} width={280}>
       <div className="space-y-3 p-1" data-view-settings>
-        <div className="text-[14px] text-foreground">视图配置</div>
+        <div className="text-[14px] text-foreground">{t("视图配置")}</div>
         <label className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">冻结列</span>
+          <span className="text-muted-foreground">{t("冻结列")}</span>
           <select className="h-8 w-36 rounded-md border bg-surface px-2" value={frozen} onChange={(e) => onChange({ ...cfg, frozen: Number(e.target.value) === 1 ? undefined : Number(e.target.value) })} data-frozen-select>
-            <option value={0}>不冻结</option>
-            {fields.slice(0, 6).map((f, i) => <option key={f.id} value={i + 1}>冻结至「{f.name}」</option>)}
+            <option value={0}>{t("不冻结")}</option>
+            {fields.slice(0, 6).map((f, i) => <option key={f.id} value={i + 1}>{t("冻结至「{name}」", { name: f.name })}</option>)}
           </select>
         </label>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">行高</span>
+          <span className="text-muted-foreground">{t("行高")}</span>
           <div className="flex rounded-md border p-0.5">
-            {(Object.keys(ROW_HEIGHT_LABEL) as RowHeight[]).map((h) => <button key={h} type="button" onClick={() => onChange({ ...cfg, rowHeight: h === "low" ? undefined : h })} className={cn("h-7 rounded px-2 text-[12px]", (cfg.rowHeight ?? "low") === h ? "bg-accent text-primary" : "text-muted-foreground hover:bg-hover")}>{ROW_HEIGHT_LABEL[h]}</button>)}
+            {(Object.keys(ROW_HEIGHT_LABEL) as RowHeight[]).map((h) => <button key={h} type="button" onClick={() => onChange({ ...cfg, rowHeight: h === "low" ? undefined : h })} className={cn("h-7 rounded px-2 text-[12px]", (cfg.rowHeight ?? "low") === h ? "bg-accent text-primary" : "text-muted-foreground hover:bg-hover")}>{t(ROW_HEIGHT_LABEL[h])}</button>)}
           </div>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">填色规则</span>
-          <span className="text-subtle">{cfg.fills?.length ? `${cfg.fills.length} 条` : "无"}</span>
+          <span className="text-muted-foreground">{t("填色规则")}</span>
+          <span className="text-subtle">{cfg.fills?.length ? t("{n} 条", { n: cfg.fills.length }) : t("无")}</span>
         </div>
       </div>
     </Popover>
@@ -686,13 +693,14 @@ function ViewSettingsBar({ fields, cfg, onChange }: { fields: import("@/lib/api"
 }
 
 function RowHeightBar({ cfg, onChange }: { cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const current = cfg.rowHeight ?? "low";
   return (
-    <Popover label="行高" icon={<Rows3 size={15} strokeWidth={1.7} />} active={current !== "low"} width={160}>
-      {(close) => <div role="menu" aria-label="行高" className="space-y-0.5" data-row-height-menu>
+    <Popover label={t("行高")} icon={<Rows3 size={15} strokeWidth={1.7} />} active={current !== "low"} width={160}>
+      {(close) => <div role="menu" aria-label={t("行高")} className="space-y-0.5" data-row-height-menu>
         {(Object.keys(ROW_HEIGHT_LABEL) as RowHeight[]).map((h) => (
           <button key={h} type="button" role="menuitemradio" aria-checked={current === h} onClick={() => { onChange({ ...cfg, rowHeight: h === "low" ? undefined : h }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover" data-row-height={h}>
-            {ROW_HEIGHT_LABEL[h]}{current === h && <Check size={15} className="text-primary" />}
+            {t(ROW_HEIGHT_LABEL[h])}{current === h && <Check size={15} className="text-primary" />}
           </button>
         ))}
       </div>}
@@ -701,44 +709,45 @@ function RowHeightBar({ cfg, onChange }: { cfg: ViewConfig; onChange: (c: ViewCo
 }
 
 function FillBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const rules = cfg.fills ?? [];
   const set = (next: FillRule[]) => onChange({ ...cfg, fills: next.length ? next : undefined });
   const noValue = (op: string) => op === "empty" || op === "not_empty" || op === "checked" || op === "unchecked";
   return (
-    <Popover label={`填色${rules.length ? ` · ${rules.length}` : ""}`} icon={<PaintBucket size={15} strokeWidth={1.7} />} active={rules.length > 0} width={560}>
+    <Popover label={t("填色{count}", { count: rules.length ? ` · ${rules.length}` : "" })} icon={<PaintBucket size={15} strokeWidth={1.7} />} active={rules.length > 0} width={560}>
       <div className="space-y-2 p-1" data-fill-panel>
-        <div className="text-[14px] text-foreground">设置填色条件 <span className="text-[12px] text-subtle">满足条件的记录整行填充颜色，按顺序取第一条</span></div>
+        <div className="text-[14px] text-foreground">{t("设置填色条件")} <span className="text-[12px] text-subtle">{t("满足条件的记录整行填充颜色，按顺序取第一条")}</span></div>
         {rules.map((rule, i) => {
           const f = fields.find((x) => x.id === rule.f) ?? fields[0];
           const patch = (p: Partial<FillRule>) => set(rules.map((r, j) => (j === i ? { ...r, ...p } : r)));
           return (
             <div key={i} className="flex items-center gap-1.5" data-fill-rule={i}>
               <div className="flex shrink-0 gap-0.5">
-                {PALETTE.slice(0, 6).map(([bg, fg], c) => <button key={c} type="button" title="填充颜色" aria-label={`颜色 ${c + 1}`} onClick={() => patch({ color: c })} className={cn("size-5 rounded border", rule.color === c ? "ring-2 ring-primary ring-offset-1" : "border-transparent")} style={{ background: bg, borderColor: fg + "33" }} />)}
+                {PALETTE.slice(0, 6).map(([bg, fg], c) => <button key={c} type="button" title={t("填充颜色")} aria-label={t("颜色 {n}", { n: c + 1 })} onClick={() => patch({ color: c })} className={cn("size-5 rounded border", rule.color === c ? "ring-2 ring-primary ring-offset-1" : "border-transparent")} style={{ background: bg, borderColor: fg + "33" }} />)}
               </div>
               <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.f} onChange={(e) => { const nf = fields.find((x) => x.id === Number(e.target.value))!; patch({ f: nf.id, op: opsFor(nf.type)[0], v: "" }); }}>
                 {fields.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
               <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.op} onChange={(e) => patch({ op: e.target.value })}>
-                {opsFor(f?.type ?? "text").map((op) => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
+                {opsFor(f?.type ?? "text").map((op) => <option key={op} value={op}>{t(OP_LABEL[op])}</option>)}
               </select>
               {!noValue(rule.op) && (f?.type === "select" ? (
                 <select className="h-7 min-w-0 flex-1 rounded border bg-surface px-1" value={String(rule.v ?? "")} onChange={(e) => patch({ v: e.target.value })}>
-                  <option value="">选择选项</option>
+                  <option value="">{t("选择选项")}</option>
                   {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
-                <input className="h-7 min-w-0 flex-1 rounded border px-2 outline-none focus:border-primary" type={f?.type === "number" ? "number" : f?.type === "date" ? "date" : "text"} value={String(rule.v ?? "")} placeholder="请输入" onChange={(e) => patch({ v: f?.type === "number" ? Number(e.target.value) : e.target.value })} />
+                <input className="h-7 min-w-0 flex-1 rounded border px-2 outline-none focus:border-primary" type={f?.type === "number" ? "number" : f?.type === "date" ? "date" : "text"} value={String(rule.v ?? "")} placeholder={t("请输入")} onChange={(e) => patch({ v: f?.type === "number" ? Number(e.target.value) : e.target.value })} />
               ))}
-              <button type="button" className="px-1 text-subtle hover:text-destructive" aria-label="删除填色条件" onClick={() => set(rules.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="px-1 text-subtle hover:text-destructive" aria-label={t("删除填色条件")} onClick={() => set(rules.filter((_, j) => j !== i))}>✕</button>
             </div>
           );
         })}
         <div className={cn("flex items-center justify-between", rules.length > 0 && "border-t pt-2")}>
           <button type="button" className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => fields[0] && set([...rules, { f: fields[0].id, op: opsFor(fields[0].type)[0], v: "", color: rules.length % 6 }])} data-fill-add>
-            <Plus size={16} strokeWidth={1.7} /> 添加条件
+            <Plus size={16} strokeWidth={1.7} /> {t("添加条件")}
           </button>
-          {rules.length > 0 && <button type="button" className="text-subtle hover:text-foreground" onClick={() => set([])}>清空</button>}
+          {rules.length > 0 && <button type="button" className="text-subtle hover:text-foreground" onClick={() => set([])}>{t("清空")}</button>}
         </div>
       </div>
     </Popover>
@@ -746,6 +755,7 @@ function FillBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
 }
 
 function CardConfigBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+  const { t } = useI18n();
   const primary = fields.find((f) => f.isPrimary);
   const group = cfg.group ?? fields.find((f) => f.type === "select")?.id;
   const candidates = fields.filter((f) => f.id !== primary?.id && f.id !== group);
@@ -753,18 +763,18 @@ function CardConfigBar({ fields, cfg, onChange }: { fields: import("@/lib/api").
   const attachments = fields.filter((f) => f.type === "attachment");
   const setCard = (card: NonNullable<ViewConfig["card"]>) => onChange({ ...cfg, card });
   return (
-    <Popover label="卡片配置" icon={<Settings2 size={15} strokeWidth={1.7} />} active={!!cfg.card} width={300}>
+    <Popover label={t("卡片配置")} icon={<Settings2 size={15} strokeWidth={1.7} />} active={!!cfg.card} width={300}>
       <div className="space-y-3 p-1" data-card-config>
-        <div className="text-[14px] text-foreground">卡片配置</div>
+        <div className="text-[14px] text-foreground">{t("卡片配置")}</div>
         <label className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">封面</span>
+          <span className="text-muted-foreground">{t("封面")}</span>
           <select className="h-8 w-40 rounded-md border bg-surface px-2" value={cfg.card?.cover ?? ""} onChange={(e) => setCard({ fields: cfg.card?.fields, cover: Number(e.target.value) || null })} data-card-cover-select>
-            <option value="">无封面</option>
+            <option value="">{t("无封面")}</option>
             {attachments.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </label>
         <div>
-          <div className="mb-1 flex items-center justify-between text-muted-foreground"><span>卡片显示字段</span><span className="text-[12px] text-subtle">标题始终显示「{primary?.name ?? "主字段"}」</span></div>
+          <div className="mb-1 flex items-center justify-between text-muted-foreground"><span>{t("卡片显示字段")}</span><span className="text-[12px] text-subtle">{t("标题始终显示「{name}」", { name: primary?.name ?? t("主字段") })}</span></div>
           <div className="max-h-56 space-y-0.5 overflow-y-auto">
             {candidates.map((f) => (
               <label key={f.id} className="flex h-8 cursor-pointer items-center gap-2 rounded px-1.5 hover:bg-hover">
@@ -772,7 +782,7 @@ function CardConfigBar({ fields, cfg, onChange }: { fields: import("@/lib/api").
                 <span className="text-muted-foreground"><TypeGlyph t={f.type} size={14} /></span>{f.name}
               </label>
             ))}
-            {candidates.length === 0 && <p className="px-1.5 text-[12px] text-subtle">没有其它字段</p>}
+            {candidates.length === 0 && <p className="px-1.5 text-[12px] text-subtle">{t("没有其它字段")}</p>}
           </div>
         </div>
       </div>
@@ -784,17 +794,18 @@ function ToolbarSearch({ value, onChange }: { value: string; onChange: (v: strin
   const [open, setOpen] = useState(!!value);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
-  if (!open) return <button type="button" className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover" title="搜索" aria-label="搜索表格" onClick={() => setOpen(true)} data-toolbar-search><Search size={16} strokeWidth={1.7} /></button>;
+  if (!open) return <button type="button" className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover" title={t("搜索")} aria-label={t("搜索表格")} onClick={() => setOpen(true)} data-toolbar-search><Search size={16} strokeWidth={1.7} /></button>;
   return (
     <label className="flex h-8 w-56 shrink-0 items-center gap-1.5 rounded-md border px-2 text-subtle focus-within:border-primary">
       <Search size={14} />
-      <input ref={input} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { onChange(""); setOpen(false); } }} placeholder="搜索表格内容" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" data-toolbar-search-input />
-      <button type="button" aria-label="关闭搜索" onClick={() => { onChange(""); setOpen(false); }} className="text-subtle hover:text-foreground">✕</button>
+      <input ref={input} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { onChange(""); setOpen(false); } }} placeholder={t("搜索表格内容")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" data-toolbar-search-input />
+      <button type="button" aria-label={t("关闭搜索")} onClick={() => { onChange(""); setOpen(false); }} className="text-subtle hover:text-foreground">✕</button>
     </label>
   );
 }
 
 function BaseTitle({ id, title, canEdit, onRenamed }: { id: number; title: string; canEdit: boolean; onRenamed: () => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(title);
@@ -837,7 +848,7 @@ function BaseTitle({ id, title, canEdit, onRenamed }: { id: number; title: strin
       />
     );
   return (
-    <span className="min-w-0 truncate"><span className={cn("-mx-1 rounded px-1", canEdit && !saving && "cursor-text hover:bg-hover")} title={canEdit && !saving ? "点击重命名" : title} onClick={() => { if (canEdit && !saving) { cancelled.current = false; setV(error ? failedName : title); setEditing(true); } }} data-base-title>{title}</span>{saving && <span className="ml-1 text-xs text-subtle">保存中…</span>}{error && <span role="alert" className="ml-1 text-xs text-destructive">无法确认名称是否已保存，点击可查看输入</span>}</span>
+    <span className="min-w-0 truncate"><span className={cn("-mx-1 rounded px-1", canEdit && !saving && "cursor-text hover:bg-hover")} title={canEdit && !saving ? t("点击重命名") : title} onClick={() => { if (canEdit && !saving) { cancelled.current = false; setV(error ? failedName : title); setEditing(true); } }} data-base-title>{title}</span>{saving && <span className="ml-1 text-xs text-subtle">{t("保存中…")}</span>}{error && <span role="alert" className="ml-1 text-xs text-destructive">{t("无法确认名称是否已保存，点击可查看输入")}</span>}</span>
   );
 }
 

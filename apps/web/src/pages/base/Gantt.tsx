@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { t, useI18n } from "@/lib/i18n";
 import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { calendarDate, calendarKey } from "./CalendarView";
@@ -99,12 +100,12 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     for (const rec of records) {
       const range = ganttRange(rec.cells[startField.id], rec.cells[endField.id], startField.id === endField.id);
       if (!range || range.end < first || range.start >= first + days) continue;
-      out.push({ rec, range, visibleStart: Math.max(range.start, first), visibleEnd: Math.min(range.end, first + days - 1), label: recordTitle(rec, fields, members) || "未命名" });
+      out.push({ rec, range, visibleStart: Math.max(range.start, first), visibleEnd: Math.min(range.end, first + days - 1), label: recordTitle(rec, fields, members) || t("未命名") });
     }
     return out;
   }, [records, startField, endField, first, days, fields, members]);
 
-  if (!startField || !endField || first === null) return <div className="grid flex-1 place-items-center px-4 text-center text-[14px] text-muted-foreground"><p>甘特需要日期字段，请先添加日期字段作为开始时间。</p></div>;
+  if (!startField || !endField || first === null) return <div className="grid flex-1 place-items-center px-4 text-center text-[14px] text-muted-foreground"><p>{t("甘特需要日期字段，请先添加日期字段作为开始时间。")}</p></div>;
 
   const shiftMonth = (amount: number) => setMonth((current) => {
     const index = current.year * 12 + current.month - 1 + amount;
@@ -119,10 +120,10 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     const record = recordsRef.current.find((r) => r.id === drag.id);
     // Catch changes already received before sending the server-side CAS.
     if (!record || record.cells[startField.id] !== drag.startValue || record.cells[endField.id] !== drag.endValue) {
-      setError("记录日期已变化，请检查后重新拖动。"); return;
+      setError(t("记录日期已变化，请检查后重新拖动。")); return;
     }
     const target = rescheduleGantt(drag.range, dropDay, drag.grabbedOffset);
-    if (!target) { setError("目标日期超出支持范围，记录未修改。"); return; }
+    if (!target) { setError(t("目标日期超出支持范围，记录未修改。")); return; }
     const { expected, cells } = ganttMoveCells(startField.id, endField.id, drag.startValue, drag.endValue, target);
     if (record.cells[startField.id] === target.start && (target.end === null || record.cells[endField.id] === target.end)) return;
     const requestedBase = baseId, requestedGeneration = scope.current.generation;
@@ -130,7 +131,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     busyRef.current = true; setBusy(true); setError(null);
     try { await baseApi.compareCells(requestedBase, drag.id, expected, cells); }
     catch (reason) {
-      if (stillCurrent()) setError(reason instanceof ApiError && reason.status === 409 ? "记录日期已变化，请检查后重新拖动。" : "无法确认日期是否更新，请检查记录后重试。");
+      if (stillCurrent()) setError(reason instanceof ApiError && reason.status === 409 ? t("记录日期已变化，请检查后重新拖动。") : t("无法确认日期是否更新，请检查记录后重试。"));
     }
     finally {
       if (stillCurrent()) { busyRef.current = false; setBusy(false); onMutate(); }
@@ -139,23 +140,23 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
 
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-gantt>
     <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-[14px] font-medium">
-      <button type="button" aria-label="上个月" className="grid size-8 place-items-center rounded hover:bg-hover" onClick={() => shiftMonth(-1)}>‹</button>
-      <button type="button" aria-label="下个月" className="grid size-8 place-items-center rounded hover:bg-hover" onClick={() => shiftMonth(1)}>›</button>
-      <button type="button" className="h-8 rounded-md border px-3 text-[13px] font-normal hover:bg-hover" onClick={() => { const now = new Date(); setMonth({ year: now.getFullYear(), month: now.getMonth() + 1 }); }}>今天</button>
-      <span aria-live="polite">{month.year} 年 {month.month} 月</span>
-      <span className="hidden text-[12px] font-normal text-subtle sm:inline">开始「{startField.name}」– 结束「{endField.name}」</span>
+      <button type="button" aria-label={t("上个月")} className="grid size-8 place-items-center rounded hover:bg-hover" onClick={() => shiftMonth(-1)}>‹</button>
+      <button type="button" aria-label={t("下个月")} className="grid size-8 place-items-center rounded hover:bg-hover" onClick={() => shiftMonth(1)}>›</button>
+      <button type="button" className="h-8 rounded-md border px-3 text-[13px] font-normal hover:bg-hover" onClick={() => { const now = new Date(); setMonth({ year: now.getFullYear(), month: now.getMonth() + 1 }); }}>{t("今天")}</button>
+      <span aria-live="polite">{t("{year} 年 {month} 月", { year: month.year, month: month.month })}</span>
+      <span className="hidden text-[12px] font-normal text-subtle sm:inline">{t("开始「{start}」– 结束「{end}」", { start: startField.name, end: endField.name })}</span>
     </div>
     {error && <div role="alert" className="border-b px-4 py-2 text-[12px] text-destructive">{error}</div>}
     <div className="min-h-0 flex-1 overflow-auto">
       <div style={{ minWidth: 192 + days * DAY_WIDTH }}>
         <div className="flex border-b bg-sidebar/60 text-center text-[11px] text-muted-foreground">
-          <div className="w-48 shrink-0 py-1 pl-3 text-left">记录</div>
+          <div className="w-48 shrink-0 py-1 pl-3 text-left">{t("记录")}</div>
           {Array.from({ length: days }, (_, i) => {
             const day = new Date((first + i) * DAY + DAY / 2).getUTCDay();
             return <div key={i} className={cn("min-w-[30px] flex-1 py-1", (day === 0 || day === 6) && "text-subtle")}>{i + 1}</div>;
           })}
         </div>
-        {bars.length === 0 && <p className="py-12 text-center text-[13px] text-subtle">本月没有排期的记录</p>}
+        {bars.length === 0 && <p className="py-12 text-center text-[13px] text-subtle">{t("本月没有排期的记录")}</p>}
         {bars.map((bar) => {
           const offset = bar.visibleStart - first, length = bar.visibleEnd - bar.visibleStart + 1;
           return <div key={bar.rec.id} className="flex items-stretch border-b" data-gantt-row={bar.rec.id}>

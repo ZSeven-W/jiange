@@ -1,5 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { t, useI18n } from "@/lib/i18n";
 
 /**
  * 飞书风格的全局确认/输入对话框（替代原生 confirm/prompt）。
@@ -72,6 +73,7 @@ export function subscribeAskHost(onChange: () => void, renderedVersion: number):
 }
 
 export function AskHost() {
+  const { t } = useI18n();
   const [, bump] = useState(0);
   const renderedVersion = version;
   useLayoutEffect(() => {
@@ -109,14 +111,14 @@ export function AskHost() {
             {c.description && <p className="mt-2 text-[13px] leading-5 text-muted-foreground">{c.description}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={() => closeConfirm(false)}>
-                取消
+                {t("取消")}
               </button>
               <button
                 className={cn("h-8 rounded-md px-3 text-[13px] font-medium text-white hover:opacity-90", c.danger ? "bg-destructive" : "bg-primary")}
                 onClick={() => closeConfirm(true)}
                 data-ask-ok
               >
-                确定
+                {t("确定")}
               </button>
             </div>
           </>
@@ -147,14 +149,14 @@ function PromptBody({ req, onDone }: { req: PromptReq; onDone: (v: string | null
       />
       <div className="mt-5 flex justify-end gap-2">
         <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={() => onDone(null)}>
-          取消
+          {t("取消")}
         </button>
         <button
           className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
           disabled={!v.trim()}
           onClick={() => v.trim() && onDone(v.trim())}
         >
-          确定
+          {t("确定")}
         </button>
       </div>
     </>
@@ -184,7 +186,7 @@ function AreaBody({ req, onDone }: { req: AreaReq; onDone: (v: string | null) =>
       />
       <div className="mt-3 flex justify-end gap-2">
         <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={() => onDone(null)}>
-          取消
+          {t("取消")}
         </button>
         <button
           className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
@@ -192,7 +194,7 @@ function AreaBody({ req, onDone }: { req: AreaReq; onDone: (v: string | null) =>
           onClick={() => onDone(v)}
           data-ask-area-ok
         >
-          确定
+          {t("确定")}
         </button>
       </div>
     </>

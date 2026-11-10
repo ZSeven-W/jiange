@@ -9,6 +9,7 @@ import { ask } from "@/components/ui/ask";
 import { ChevronDown, ChevronUp, MessageSquare, Plus, X } from "lucide-react";
 import { FieldForm } from "./fields";
 import { historyActorName, historyHeadline } from "./historyActor";
+import { t, useI18n } from "@/lib/i18n";
 import { mentionQuery, mentionsIn, splitMentions, threadComments, type Thread } from "./recordComments";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
@@ -16,11 +17,11 @@ import { colorFor } from "@/lib/presence";
 const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Feishu-style empty-value hints in the record detail. */
 function placeholderFor(type: Field["type"]): string {
-  if (type === "select" || type === "multi_select") return "请选择选项";
-  if (type === "date") return "年/月/日";
-  if (type === "person") return "请选择人员";
-  if (type === "attachment") return "上传附件";
-  return "请输入内容";
+  if (type === "select" || type === "multi_select") return t("请选择选项");
+  if (type === "date") return t("年/月/日");
+  if (type === "person") return t("请选择人员");
+  if (type === "attachment") return t("上传附件");
+  return t("请输入内容");
 }
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, useWriteLedger, WriteIssues, type WriteLedger } from "./writeSafety";
 
@@ -73,8 +74,8 @@ export function RecordDetail({
   useEffect(() => () => {
     const draft = editingRef.current;
     if (!draft?.dirty) return;
-    const op = ledger.begin(`记录 #${draft.rid} · 字段 #${draft.fid}`, cellDraft(draft.draft), `cell:${draft.rid}:${draft.fid}`, draft.authorization, false, draft.authored);
-    if (op !== null) ledger.fail(op, "关闭记录时输入尚未提交，请复制后核对。");
+    const op = ledger.begin(t("记录 #{rid} · 字段 #{fid}", { rid: draft.rid, fid: draft.fid }), cellDraft(draft.draft), `cell:${draft.rid}:${draft.fid}`, draft.authorization, false, draft.authored);
+    if (op !== null) ledger.fail(op, t("关闭记录时输入尚未提交，请复制后核对。"));
     editingRef.current = null;
   }, [ledger]);
   useEffect(() => {
@@ -82,8 +83,8 @@ export function RecordDetail({
     if (!active) return;
     if (canEdit && active.rid === record.id && fields.some((field) => field.id === active.fid)) return;
     if (active.dirty) {
-      const op = ledger.begin(`记录 #${active.rid} · 字段 #${active.fid}`, cellDraft(active.draft), `cell:${active.rid}:${active.fid}`, active.authorization, false, active.authored);
-      if (op !== null) ledger.fail(op, "记录、字段或编辑权限已变化；输入未提交，请复制后核对。");
+      const op = ledger.begin(t("记录 #{rid} · 字段 #{fid}", { rid: active.rid, fid: active.fid }), cellDraft(active.draft), `cell:${active.rid}:${active.fid}`, active.authorization, false, active.authored);
+      if (op !== null) ledger.fail(op, t("记录、字段或编辑权限已变化；输入未提交，请复制后核对。"));
     }
     setEditing(null);
   }, [canEdit, record.id, fields, editing, ledger]);
@@ -95,37 +96,37 @@ export function RecordDetail({
     const authored = existing?.rid === row.id && existing.fid === f.id ? existing.authored : raw !== undefined && isAuthoredCellType(f.type);
     setEditing(null);
     if (!target.current.mounted || target.current.baseId !== baseId || target.current.recordId !== row.id || !target.current.canEdit) {
-      const held = ledger.begin(`记录 #${row.id} · ${f.name}`, raw ?? cellDraft(v), `cell:${row.id}:${f.id}`, authorization, false, authored);
-      if (held !== null) ledger.fail(held, "编辑权限或记录已变化；输入未提交，请复制后核对。");
+      const held = ledger.begin(t("记录 #{rid} · {field}", { rid: row.id, field: f.name }), raw ?? cellDraft(v), `cell:${row.id}:${f.id}`, authorization, false, authored);
+      if (held !== null) ledger.fail(held, t("编辑权限或记录已变化；输入未提交，请复制后核对。"));
       return;
     }
     const cur = row.cells[f.id];
     if (cur === v || (cur === undefined && (v === null || v === ""))) return;
     const recordId = row.id;
     const draft = raw ?? cellDraft(v);
-    const op = ledger.blocked("batch") ? null : ledger.begin(`记录 #${recordId} · ${f.name}`, draft, `cell:${recordId}:${f.id}`, authorization, false, authored);
-    if (op === null) { const held = ledger.begin(`记录 #${recordId} · ${f.name}`, draft, `cell:${recordId}:${f.id}`, authorization, true, authored); if (held !== null) ledger.fail(held, "尚有未确认的修改，请先核对；本次输入未提交。"); return; }
+    const op = ledger.blocked("batch") ? null : ledger.begin(t("记录 #{rid} · {field}", { rid: recordId, field: f.name }), draft, `cell:${recordId}:${f.id}`, authorization, false, authored);
+    if (op === null) { const held = ledger.begin(`记录 #${recordId} · ${f.name}`, draft, `cell:${recordId}:${f.id}`, authorization, true, authored); if (held !== null) ledger.fail(held, t("尚有未确认的修改，请先核对；本次输入未提交。")); return; }
     try {
       await baseApi.setCells(baseId, recordId, { [f.id]: v === "" ? null : v });
       ledger.complete(op);
-    } catch { ledger.fail(op, CELL_UNKNOWN); }
+    } catch { ledger.fail(op, t(CELL_UNKNOWN)); }
     finally { refreshWrites(onMutate); }
   };
 
   return (
     <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-[800px] flex-col border-l bg-surface shadow-[-6px_0_24px_rgba(31,35,41,0.08)] md:top-16" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
       <header className="flex h-14 shrink-0 items-center gap-1 border-b px-5 text-[13px] text-muted-foreground">
-        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onPrev} disabled={!onPrev} aria-label="上一条记录" title="上一条记录" data-record-prev><ChevronUp size={18} strokeWidth={1.7} /></button>
-        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onNext} disabled={!onNext} aria-label="下一条记录" title="下一条记录" data-record-next><ChevronDown size={18} strokeWidth={1.7} /></button>
-        <span className="ml-1 text-[12px] text-subtle">{position ? `${position.index} / ${position.total}` : null}<span className="ml-2">记录 #{row.id}</span></span>
-        <button className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
+        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onPrev} disabled={!onPrev} aria-label={t("上一条记录")} title={t("上一条记录")} data-record-prev><ChevronUp size={18} strokeWidth={1.7} /></button>
+        <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onNext} disabled={!onNext} aria-label={t("下一条记录")} title={t("下一条记录")} data-record-next><ChevronDown size={18} strokeWidth={1.7} /></button>
+        <span className="ml-1 text-[12px] text-subtle">{position ? `${position.index} / ${position.total}` : null}<span className="ml-2">{t("记录 #{id}", { id: row.id })}</span></span>
+        <button className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label={t("关闭")}>
           <X size={18} strokeWidth={1.7} />
         </button>
       </header>
       <div className="shrink-0 px-10 pt-6">
-        <h2 className="truncate text-[24px] font-semibold leading-8 text-foreground" data-record-title>{recordTitle(row, fields, members) || "未命名记录"}</h2>
-        <div className="mt-4 flex h-9 items-end gap-6 border-b text-[14px]" role="tablist" aria-label="记录详情">
-          {(["detail", "history"] as const).map((t) => <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={cn("-mb-px border-b-2 pb-2", tab === t ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground")} data-record-tab={t}>{t === "detail" ? "详情" : "历史"}</button>)}
+        <h2 className="truncate text-[24px] font-semibold leading-8 text-foreground" data-record-title>{recordTitle(row, fields, members) || t("未命名记录")}</h2>
+        <div className="mt-4 flex h-9 items-end gap-6 border-b text-[14px]" role="tablist" aria-label={t("记录详情")}>
+          {(["detail", "history"] as const).map((tKey) => <button key={tKey} type="button" role="tab" aria-selected={tab === tKey} onClick={() => setTab(tKey)} className={cn("-mb-px border-b-2 pb-2", tab === tKey ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground")} data-record-tab={tKey}>{tKey === "detail" ? t("详情") : t("历史")}</button>)}
         </div>
       </div>
       <WriteIssues ledger={ledger} issues={issues} />
@@ -140,7 +141,7 @@ export function RecordDetail({
                 <div className="flex items-center gap-1.5">
                   <span className="shrink-0"><TypeGlyph t={f.type} size={15} /></span>
                   <span className="truncate">{f.name}</span>
-                  {def.readonly && <span className="shrink-0 rounded bg-hover px-1 text-[11px] text-subtle">自动</span>}
+                  {def.readonly && <span className="shrink-0 rounded bg-hover px-1 text-[11px] text-subtle">{t("自动")}</span>}
                 </div>
                 {f.description && <div className="mt-0.5 text-[11px] leading-4 text-subtle">{f.description}</div>}
               </div>
@@ -160,7 +161,7 @@ export function RecordDetail({
                     onDraft={(draft) => { const previous = editingRef.current; if (previous?.rid === row.id && previous.fid === f.id) editingRef.current = { ...previous, draft, dirty: true }; }}
                     onCommit={(v, _dir, raw) => void setCell(f, v, raw)}
                     onCancel={() => setEditing(null)}
-                    onInvalid={(raw) => { const op = ledger.begin(`记录 #${row.id} · ${f.name}`, raw, `cell:${row.id}:${f.id}`, editingRef.current?.authorization, false, editingRef.current?.authored ?? false); if (op !== null) ledger.fail(op, "输入格式无效，未保存；请复制后修改。"); }}
+                    onInvalid={(raw) => { const op = ledger.begin(`记录 #${row.id} · ${f.name}`, raw, `cell:${row.id}:${f.id}`, editingRef.current?.authorization, false, editingRef.current?.authored ?? false); if (op !== null) ledger.fail(op, t("输入格式无效，未保存；请复制后修改。")); }}
                   />
                 ) : isBlank(row.cells[f.id]) && canEdit && !def.readonly && f.type !== "checkbox" ? (
                   <span className="text-subtle" data-detail-placeholder>{placeholderFor(f.type)}</span>
@@ -180,12 +181,12 @@ export function RecordDetail({
         })}
         {canEdit && (
           <div className="relative py-1">
-            <button type="button" className="flex h-9 items-center gap-1.5 rounded-md px-1 text-[14px] text-muted-foreground hover:text-foreground" onClick={() => setAddingField((v) => !v)} disabled={ledger.blocked("field:create")} data-detail-add-field><Plus size={16} strokeWidth={1.7} />新增字段</button>
+            <button type="button" className="flex h-9 items-center gap-1.5 rounded-md px-1 text-[14px] text-muted-foreground hover:text-foreground" onClick={() => setAddingField((v) => !v)} disabled={ledger.blocked("field:create")} data-detail-add-field><Plus size={16} strokeWidth={1.7} />{t("新增字段")}</button>
             {addingField && <FieldForm members={members} onCancel={() => setAddingField(false)} onAcknowledge={() => ledger.discardKey("field:create")} onSubmit={async (patch) => {
-              const op = ledger.begin("新增字段", cellDraft(patch), "field:create");
+              const op = ledger.begin(t("新增字段"), cellDraft(patch), "field:create");
               if (op === null) throw new Error("previous result unresolved");
               try { await baseApi.addField(baseId, patch); ledger.complete(op); setAddingField(false); }
-              catch (error) { ledger.fail(op, "无法确认字段是否创建。请刷新并核对字段列表。"); throw error; }
+              catch (error) { ledger.fail(op, t("无法确认字段是否创建。请刷新并核对字段列表。")); throw error; }
               finally { refreshWrites(onMutate); }
             }} />}
           </div>
@@ -195,26 +196,26 @@ export function RecordDetail({
       <RecordComments baseId={baseId} recordId={record.id} />
       </div>}
       <footer className="flex items-center gap-3 border-t px-10 py-2.5 text-[12px] text-subtle">
-        <span>创建于 {row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
-        <span>修改于 {row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
+        <span>{t("创建于 {time}", { time: row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—" })}</span>
+        <span>{t("修改于 {time}", { time: row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—" })}</span>
         {canEdit && (
           <button
             className="ml-auto text-destructive hover:underline"
             onClick={async () => {
-              if (await ask("删除这条记录？")) {
+              if (await ask(t("删除这条记录？"))) {
                 if (!target.current.mounted || target.current.baseId !== baseId || target.current.recordId !== row.id) return;
-                const op = ledger.begin(`删除记录 #${row.id}`, "", `record:delete:${row.id}`);
+                const op = ledger.begin(t("删除记录 #{id}", { id: row.id }), "", `record:delete:${row.id}`);
                 if (op === null) return;
                 try {
                   await baseApi.deleteRecord(baseId, row.id);
                   ledger.complete(op);
                   if (target.current.mounted && target.current.baseId === baseId && target.current.recordId === row.id) onClose();
-                } catch { ledger.fail(op, "无法确认是否删除。请刷新并核对记录。"); }
+                } catch { ledger.fail(op, t("无法确认是否删除。请刷新并核对记录。")); }
                 finally { refreshWrites(onMutate); }
               }
             }}
           >
-            删除记录
+            {t("删除记录")}
           </button>
         )}
       </footer>
@@ -249,13 +250,13 @@ function LinkEditor({
   const targetData = targetReady ? target.data : undefined;
   const toggle = async (id: number) => {
     const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    const op = ledger.blocked("batch") ? null : ledger.begin(`记录 #${record.id} · ${field.name}`, cellDraft(next), `cell:${record.id}:${field.id}`);
+    const op = ledger.blocked("batch") ? null : ledger.begin(t("记录 #{rid} · {field}", { rid: record.id, field: field.name }), cellDraft(next), `cell:${record.id}:${field.id}`);
     if (op === null) return;
     try { await baseApi.setCells(baseId, record.id, { [String(field.id)]: next }); ledger.complete(op); }
-    catch { ledger.fail(op, CELL_UNKNOWN); }
+    catch { ledger.fail(op, t(CELL_UNKNOWN)); }
     finally { refreshWrites(onMutate); }
   };
-  if (!targetBase) return <span className="text-[12px] text-subtle">未配置目标表</span>;
+  if (!targetBase) return <span className="text-[12px] text-subtle">{t("未配置目标表")}</span>;
   return (
     <div className="max-h-40 space-y-0.5 overflow-y-auto" data-link-editor>
       {(targetData?.records ?? []).map((r) => (
@@ -270,7 +271,7 @@ function LinkEditor({
           {(targetData && recordTitle(r, targetData.fields, targetData.members ?? [])) || `#${r.id}`}
         </label>
       ))}
-      {target.isError ? <span role="alert" className="text-[12px] text-destructive">无法加载目标表，请重试。</span> : !targetReady ? <span role="status" className="text-[12px] text-subtle">正在确认目标表访问权限…</span> : (targetData?.records ?? []).length === 0 && <span className="text-[12px] text-subtle">目标表暂无记录</span>}
+      {target.isError ? <span role="alert" className="text-[12px] text-destructive">{t("无法加载目标表，请重试。")}</span> : !targetReady ? <span role="status" className="text-[12px] text-subtle">{t("正在确认目标表访问权限…")}</span> : (targetData?.records ?? []).length === 0 && <span className="text-[12px] text-subtle">{t("目标表暂无记录")}</span>}
     </div>
   );
 }
@@ -289,7 +290,7 @@ function ReverseLinks({ baseId, recordId }: { baseId: number; recordId: number }
   if (rows.length === 0) return null;
   return (
     <div className="border-t px-4 py-3" data-reverse-links>
-      <div className="mb-1.5 text-[12px] text-muted-foreground">被以下记录关联</div>
+      <div className="mb-1.5 text-[12px] text-muted-foreground">{t("被以下记录关联")}</div>
       {rows.map((r) => (
         <div key={r.sourceBase} className="mb-1.5 flex flex-wrap gap-1">
           {r.refs.map((rid) => (
@@ -306,23 +307,24 @@ function ReverseLinks({ baseId, recordId }: { baseId: number; recordId: number }
 
 /** 记录历史 tab: field-level changes from the server's event log. */
 function RecordHistory({ baseId, record, fields, members }: { baseId: number; record: BaseRecord; fields: Field[]; members: User[] }) {
+  const { t } = useI18n();
   const q = useQuery({ queryKey: ["record-history", baseId, record.id, record.updatedAt], queryFn: () => baseApi.recordHistory(baseId, record.id) });
   const show = (f: Field, v: Cell | undefined) => {
-    if (v === undefined || v === null) return "空";
+    if (v === undefined || v === null) return t("空");
     // 人员/创建人历史值显示成员姓名，而不是裸用户 id。
     const text = REGISTRY[f.type].format(displayValue({ ...record, cells: { [f.id]: v } }, f, members), f, members);
-    return text || "空";
+    return text || t("空");
   };
   return (
     <div className="flex-1 overflow-y-auto px-10 py-4" data-record-history>
-      {q.isPending ? <p className="text-[13px] text-subtle">加载中…</p> : q.isError ? <p role="alert" className="text-[13px] text-destructive">无法加载历史记录。</p> : q.data.length === 0 ? <p className="text-[13px] text-subtle">暂无历史记录</p> : (
+      {q.isPending ? <p className="text-[13px] text-subtle">{t("加载中…")}</p> : q.isError ? <p role="alert" className="text-[13px] text-destructive">{t("无法加载历史记录。")}</p> : q.data.length === 0 ? <p className="text-[13px] text-subtle">{t("暂无历史记录")}</p> : (
         <ol className="relative space-y-5 border-l border-[#dee0e3] pl-5">
           {q.data.map((e) => (
             <li key={e.seq} className="relative" data-history-entry={e.seq}>
               <span className="absolute -left-[25px] top-1.5 size-2 rounded-full bg-primary/70" />
               <div className="text-[13px]">
                 {historyActorName(e, members) && (e.actor?.kind === "form"
-                  ? <span className="mr-1.5 inline-grid size-5 place-items-center rounded-full bg-[#ffe4ba] align-middle text-[11px] text-[#d25f00]" data-history-avatar>表</span>
+                  ? <span className="mr-1.5 inline-grid size-5 place-items-center rounded-full bg-[#ffe4ba] align-middle text-[11px] text-[#d25f00]" data-history-avatar>{t("表")}</span>
                   : <span className="mr-1.5 inline-block align-middle" data-history-avatar><Avatar name={historyActorName(e, members)} color={colorFor((e.actor?.id ?? e.by ?? 1) - 1)} size={20} /></span>)}
                 <span className="font-medium" data-history-headline>{historyHeadline(e, members)}</span>
                 {e.at && <span className="ml-2 text-[12px] text-subtle">{new Date(e.at).toLocaleString("zh-CN", { hour12: false })}</span>}
@@ -350,6 +352,7 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
 
 /** 记录评论: threads (root + replies) with @人 and 解决/重新打开. */
 function RecordComments({ baseId, recordId }: { baseId: number; recordId: number }) {
+  const { t } = useI18n();
   const q = useQuery({ queryKey: ["record-comments", baseId, recordId], queryFn: () => baseApi.recordComments(baseId, recordId) });
   const membersQ = useQuery({ queryKey: ["comment-members", baseId], queryFn: () => commentsApi.members(baseId), staleTime: 60_000 });
   const members = membersQ.data ?? [];
@@ -362,12 +365,12 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   const post = async (body: string, parentId?: number) => {
     setError("");
     try { await baseApi.addRecordComment(baseId, recordId, body, { mentions: mentionsIn(body, members), parentId }); await q.refetch(); return true; }
-    catch { setError("评论未能确认发送，请刷新后核对。"); return false; }
+    catch { setError(t("评论未能确认发送，请刷新后核对。")); return false; }
   };
   const toggle = async (cid: number, value: boolean) => {
     setError("");
     try { await baseApi.patchRecordComment(baseId, recordId, cid, { resolved: value }); await q.refetch(); }
-    catch { setError("操作失败，请刷新后重试。"); }
+    catch { setError(t("操作失败，请刷新后重试。")); }
   };
   const names = (c: Comment) => (c.mentions ?? []).map((id) => members.find((m) => m.id === id)?.name ?? "").filter(Boolean);
   const item = (c: Comment, reply: boolean) => (
@@ -381,32 +384,32 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
       </div>
     </div>
   );
-  const thread = (t: Thread) => (
-    <div key={t.root.id} className={cn("group rounded-lg border px-3 py-2.5", t.root.resolved && "bg-[#f8f9fa]")} data-record-thread={t.root.id} data-resolved={t.root.resolved || undefined}>
+  const thread = (th: Thread) => (
+    <div key={th.root.id} className={cn("group rounded-lg border px-3 py-2.5", th.root.resolved && "bg-[#f8f9fa]")} data-record-thread={th.root.id} data-resolved={th.root.resolved || undefined}>
       <div className="relative">
-        {item(t.root, false)}
+        {item(th.root, false)}
         <div className="absolute right-0 top-0 flex items-center gap-1 text-[12px]">
-          {t.root.resolved && <span className="rounded bg-[#e1eaff] px-1.5 py-px text-[11px] font-medium text-primary">已解决</span>}
-          <button type="button" className="rounded px-1.5 py-0.5 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => void toggle(t.root.id, !t.root.resolved)} data-thread-resolve>{t.root.resolved ? "重新打开" : "解决"}</button>
+          {th.root.resolved && <span className="rounded bg-[#e1eaff] px-1.5 py-px text-[11px] font-medium text-primary">{t("已解决")}</span>}
+          <button type="button" className="rounded px-1.5 py-0.5 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => void toggle(th.root.id, !th.root.resolved)} data-thread-resolve>{th.root.resolved ? t("重新打开") : t("解决")}</button>
         </div>
       </div>
-      {t.replies.length > 0 && <div className="ml-9 border-l pl-3">{t.replies.map((r) => item(r, true))}</div>}
-      {!t.root.resolved && (replyTo === t.root.id
-        ? <div className="ml-9 mt-2"><CommentComposer members={members} placeholder={`回复 ${t.root.userName}`} autoFocus onSend={async (b) => { const ok = await post(b, t.root.id); if (ok) setReplyTo(null); return ok; }} onCancel={() => setReplyTo(null)} /></div>
-        : <button type="button" className="ml-9 mt-1.5 text-[12px] text-muted-foreground hover:text-primary" onClick={() => setReplyTo(t.root.id)} data-thread-reply>回复</button>)}
+      {th.replies.length > 0 && <div className="ml-9 border-l pl-3">{th.replies.map((r) => item(r, true))}</div>}
+      {!th.root.resolved && (replyTo === th.root.id
+        ? <div className="ml-9 mt-2"><CommentComposer members={members} placeholder={t("回复 {name}", { name: th.root.userName })} autoFocus onSend={async (b) => { const ok = await post(b, th.root.id); if (ok) setReplyTo(null); return ok; }} onCancel={() => setReplyTo(null)} /></div>
+        : <button type="button" className="ml-9 mt-1.5 text-[12px] text-muted-foreground hover:text-primary" onClick={() => setReplyTo(th.root.id)} data-thread-reply>{t("回复")}</button>)}
     </div>
   );
   return (
     <section className="border-t px-10 py-4" data-record-comments>
-      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />评论{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}
-        {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? "隐藏已解决" : `显示已解决 ${resolved.length}`}</button>}
+      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />{t("评论")}{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}
+        {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? t("隐藏已解决") : t("显示已解决 {n}", { n: resolved.length })}</button>}
       </h3>
       <div className="space-y-2.5">
         {open.map(thread)}
         {showResolved && resolved.map(thread)}
-        {q.isError && <p role="alert" className="text-[12px] text-destructive">无法加载评论。</p>}
+        {q.isError && <p role="alert" className="text-[12px] text-destructive">{t("无法加载评论。")}</p>}
       </div>
-      <div className="mt-3"><CommentComposer members={members} placeholder="输入评论，@ 提及成员，Enter 发送" onSend={(b) => post(b)} /></div>
+      <div className="mt-3"><CommentComposer members={members} placeholder={t("输入评论，@ 提及成员，Enter 发送")} onSend={(b) => post(b)} /></div>
       {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
     </section>
   );
@@ -465,8 +468,8 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel }: 
           className="max-h-28 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none"
           data-record-comment-input
         />
-        {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">取消</button>}
-        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">发送</button>
+        {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">{t("取消")}</button>}
+        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{t("发送")}</button>
       </div>
     </div>
   );

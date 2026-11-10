@@ -10,20 +10,23 @@ import { colorFor } from "@/lib/presence";
 import { DocColorIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
+import { LocaleToggle } from "./LocaleToggle";
+import { t, useI18n } from "@/lib/i18n";
 
 export const hrefOf = nodeHref;
-export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || "未命名文档";
+export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || t("未命名文档");
 
 export function renameErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return "无法重命名：文档不存在或当前没有编辑权限。";
-  if (error instanceof ApiError && error.status === 400) return "名称无效，请检查名称长度后重试。";
-  if (error instanceof ApiError && error.code === "upgrade_required") return "当前版本无法安全重命名，请刷新页面后重试。";
-  if (error instanceof ApiError && error.status === 409) return "文档已发生变化，请刷新后重新命名。";
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return t("无法重命名：文档不存在或当前没有编辑权限。");
+  if (error instanceof ApiError && error.status === 400) return t("名称无效，请检查名称长度后重试。");
+  if (error instanceof ApiError && error.code === "upgrade_required") return t("当前版本无法安全重命名，请刷新页面后重试。");
+  if (error instanceof ApiError && error.status === 409) return t("文档已发生变化，请刷新后重新命名。");
   // A disconnected client cannot know whether the server committed the write.
-  return "无法确认重命名是否完成，请刷新后查看。";
+  return t("无法确认重命名是否完成，请刷新后查看。");
 }
 
 export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const docs = useQuery({
     queryKey: ["docs"],
@@ -151,7 +154,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             onAdd={() => {
               if (d.kind === "folder") {
                 // folder 子节点必须走 guarded 创建（fence 会拒旧式插入）
-                driveApi.createNode("doc", "未命名文档", d.id).then((e) => {
+                driveApi.createNode("doc", t("未命名文档"), d.id).then((e) => {
                   qc.invalidateQueries({ queryKey: ["docs"] });
                   qc.invalidateQueries({ queryKey: ["drive"] });
                   setOpen((o) => ({ ...o, [d.id]: true }));
@@ -170,15 +173,16 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
             }}
             onRename={rename.isPending ? undefined : async () => {
               rename.reset();
-              const t = await askText("重命名", "文档名称", docTitle(d));
-              if (t && t.trim()) rename.mutate({ id: d.id, title: t.trim() });
+              const title = await askText(t("重命名"), t("文档名称"), docTitle(d));
+              if (title && title.trim()) rename.mutate({ id: d.id, title: title.trim() });
+              
             }}
             onCopyLink={() => {
               navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hrefOf(d)}`).catch(() => {});
             }}
             onDelete={async () => {
               // 走版本化云盘删除：folder 子树会被 fence 拒绝旧式语句
-              if (await ask(`删除「${docTitle(d)}」？`, "可在回收站还原。"))
+              if (await ask(t("删除「{title}」？", { title: docTitle(d) }), t("可在回收站还原。")))
                 driveApi.trash(d.id, d.driveRevision ?? 0).then(() => {
                   qc.invalidateQueries({ queryKey: ["docs"] });
                   qc.invalidateQueries({ queryKey: ["drive"] });
@@ -199,57 +203,57 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   return (
     <aside className="flex h-full w-[268px] max-w-[85vw] xl:w-[300px] shrink-0 flex-col border-r bg-sidebar">
       <div className="relative px-3 pt-4">
-        <div className="flex h-8 items-center px-2"><Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">云文档</span></div>
+        <div className="flex h-8 items-center px-2"><Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">{t("云文档")}</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
           <SearchIcon />
-          <input ref={searchTrigger} type="search" readOnly aria-label="搜索标题和正文" onFocus={() => {
+          <input ref={searchTrigger} type="search" readOnly aria-label={t("搜索标题和正文")} onFocus={() => {
             if (skipSearchFocus.current) { skipSearchFocus.current = false; return; }
             setSearchOpen(true);
           }} onClick={() => setSearchOpen(true)} onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSearchOpen(true); }
-          }} placeholder="搜索标题和正文" className="w-full min-w-0 cursor-pointer bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
+          }} placeholder={t("搜索标题和正文")} className="w-full min-w-0 cursor-pointer bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
           <kbd className="hidden shrink-0 font-sans text-[11px] text-[#b3b8bf] sm:inline">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</kbd>
         </label>
       </div>
       <nav className="mt-4 space-y-1 px-3">
-        <NavItem icon={<HomeIcon />} label="主页" active={route.page === "home"} onClick={() => go("#/")} />
-        <NavItem icon={<FolderIcon size={16} strokeWidth={1.7} />} label="云盘" active={false} onClick={() => go("#/drive/mine")} />
-        <NavItem icon={<ClockIcon />} label="最近访问" active={route.page === "recent"} onClick={() => go("#/recent")} />
-        <NavItem icon={<StarIcon />} label="收藏" active={route.page === "favorites"} onClick={() => go("#/favorites")} />
-        <NavItem icon={<TrashIcon />} label="回收站" active={route.page === "trash"} onClick={() => go("#/trash")} />
+        <NavItem icon={<HomeIcon />} label={t("主页")} active={route.page === "home"} onClick={() => go("#/")} />
+        <NavItem icon={<FolderIcon size={16} strokeWidth={1.7} />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
+        <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
+        <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
+        <NavItem icon={<TrashIcon />} label={t("回收站")} active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-6 px-3">
-        <div className="px-2 pb-1 text-xs font-medium text-subtle">置顶文档</div>
+        <div className="px-2 pb-1 text-xs font-medium text-subtle">{t("置顶文档")}</div>
         <div data-pinned-docs>
           {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
         </div>
-        {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">在文档的「⋯」菜单中选择置顶</p>}
+        {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
       </div>
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
-        <span>我的文档库</span>
+        <span>{t("我的文档库")}</span>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
-          <button aria-label="新建多维表格" title="新建多维表格" onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
+          <button aria-label={t("新建多维表格")} title={t("新建多维表格")} onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
             <Table2 size={14} strokeWidth={1.7} />
           </button>
-          <button aria-label="新建文档" title="新建文档" onClick={() => create.mutate(null)} disabled={create.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-doc>
+          <button aria-label={t("新建文档")} title={t("新建文档")} onClick={() => create.mutate(null)} disabled={create.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-doc>
             <FilePlus size={14} strokeWidth={1.7} />
           </button>
         </span>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
-        {(create.isError || createBase.isError) && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">新建失败，请稍后重试</p>}
+        {(create.isError || createBase.isError) && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">{t("新建失败，请稍后重试")}</p>}
         {rename.isError && <div role="alert" className="px-2 py-1.5 text-xs text-destructive">
           <p>{renameErrorMessage(rename.error)}</p>
-          {rename.error instanceof ApiError && rename.error.status === 409 && rename.variables && <label className="mt-2 block text-muted-foreground">你输入的名称（可复制）
+          {rename.error instanceof ApiError && rename.error.status === 409 && rename.variables && <label className="mt-2 block text-muted-foreground">{t("你输入的名称（可复制）")}
             <input readOnly value={rename.variables.title} className="mt-1 block h-8 w-full rounded border bg-surface px-2 text-foreground" />
           </label>}
         </div>}
         {renderTree(null, 0)}
-        {docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">文档加载失败，请稍后重试</p>}
-        {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">还没有文档</p>}
+        {docs.isError && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">{t("文档加载失败，请稍后重试")}</p>}
+        {docs.data && shown.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("还没有文档")}</p>}
         {(shared.data?.length ?? 0) > 0 && (
           <>
-            <div className="px-2 pb-1 pt-4 text-xs text-subtle">与我共享</div>
+            <div className="px-2 pb-1 pt-4 text-xs text-subtle">{t("与我共享")}</div>
             {shared.data!.map((d) => (
               <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
@@ -260,16 +264,17 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
           {me.workspaces.map((w) => <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">{w.name} <span>✓</span></div>)}
-          <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>退出登录</button>
+          <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>{t("退出登录")}</button>
         </div>}
         <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
-          <button onClick={() => setMenu((v) => !v)} aria-label="账号与空间" aria-expanded={menu} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <button onClick={() => setMenu((v) => !v)} aria-label={t("账号与空间")} aria-expanded={menu} className="flex min-w-0 flex-1 items-center gap-2 text-left">
             <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
-            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium">{me.user.name}</span><span className="block truncate text-[11px] text-subtle">{ws?.name ?? "我的空间"}</span></span>
+            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium">{me.user.name}</span><span className="block truncate text-[11px] text-subtle">{ws?.name ?? t("我的空间")}</span></span>
             <Chevron className="text-subtle" />
           </button>
           <DarkToggle />
-          <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title="退出登录" onClick={onLogout} data-logout>
+          <LocaleToggle />
+          <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title={t("退出登录")} onClick={onLogout} data-logout>
             <LogOut size={14} strokeWidth={1.7} />
           </button>
         </div>
@@ -280,20 +285,21 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
 }
 
 function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { route: Extract<Route, { page: "drive" }>; userId: number; searchOpen: boolean; onSearch: () => void; onCloseSearch: () => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState({ personal: true, shared: true });
   const [error, setError] = useState("");
   const mine = useQuery({ queryKey: ["drive-nav", "personal", userId], queryFn: () => driveApi.children(null, true), refetchInterval: 15000, refetchIntervalInBackground: false });
   const shared = useQuery({ queryKey: ["drive-nav", "shared", userId], queryFn: () => driveApi.children(null, false), refetchInterval: 15000, refetchIntervalInBackground: false });
   const addFolder = async (personal: boolean) => {
-    const title = await askText("新建文件夹", "文件夹名称");
-    if (!title?.trim()) return;
+    const folderName = await askText(t("新建文件夹"), t("文件夹名称"));
+    if (!folderName?.trim()) return;
     setError("");
     try {
-      const folder = await driveApi.create(title.trim(), null, personal);
+      const folder = await driveApi.create(folderName.trim(), null, personal);
       await Promise.all([qc.invalidateQueries({ queryKey: ["drive-nav"] }), qc.invalidateQueries({ queryKey: ["drive"] })]);
       go(`#/drive/${folder.id}`);
-    } catch { setError("新建结果未能确认，请刷新后检查。"); }
+    } catch { setError(t("新建结果未能确认，请刷新后检查。")); }
   };
   const group = (personal: boolean) => {
     const query = personal ? mine : shared;
@@ -301,19 +307,19 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
     const rootActive = route.folderId === null && route.personal === personal;
     return <div className="mb-3" key={key}>
       <div className={cn("flex h-9 items-center rounded-md px-1 text-[13px]", rootActive ? "bg-[#dce6ff] text-[#1456f0]" : "text-[#4e5969] hover:bg-[#e9eaec]")}>
-        <button type="button" aria-label={`${expanded[key] ? "收起" : "展开"}${personal ? "我的文件夹" : "共享文件夹"}`} onClick={() => setExpanded((value) => ({ ...value, [key]: !value[key] }))} className="grid size-6 place-items-center">{expanded[key] ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</button>
-        {personal ? <FolderIcon size={15}/> : <Users size={15}/>}<button type="button" onClick={() => go(personal ? "#/drive/mine" : "#/drive")} className="min-w-0 flex-1 truncate px-2 text-left">{personal ? "我的文件夹" : "共享文件夹"}</button>
+        <button type="button" aria-label={t("{op}{folder}", { op: expanded[key] ? t("收起") : t("展开"), folder: personal ? t("我的文件夹") : t("共享文件夹") })} onClick={() => setExpanded((value) => ({ ...value, [key]: !value[key] }))} className="grid size-6 place-items-center">{expanded[key] ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</button>
+        {personal ? <FolderIcon size={15}/> : <Users size={15}/>}<button type="button" onClick={() => go(personal ? "#/drive/mine" : "#/drive")} className="min-w-0 flex-1 truncate px-2 text-left">{personal ? t("我的文件夹") : t("共享文件夹")}</button>
       </div>
       {expanded[key] && <div className="space-y-0.5 pl-6">
-        {!query.isError && (query.data ?? []).filter((item) => item.kind === "folder").map((folder) => <button key={folder.id} type="button" onClick={() => go(`#/drive/${folder.id}`)} className={cn("flex h-8 w-full items-center gap-2 truncate rounded-md px-2 text-left text-[13px]", route.folderId === folder.id ? "bg-[#dce6ff] text-[#1456f0]" : "text-[#4e5969] hover:bg-[#e9eaec]")}><FolderIcon size={14}/><span className="truncate">{folder.title || "未命名文件夹"}</span></button>)}
-        <button type="button" onClick={() => void addFolder(personal)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#8f959e] hover:bg-[#e9eaec] hover:text-[#4e5969]"><Plus size={14}/>新建文件夹</button>
+        {!query.isError && (query.data ?? []).filter((item) => item.kind === "folder").map((folder) => <button key={folder.id} type="button" onClick={() => go(`#/drive/${folder.id}`)} className={cn("flex h-8 w-full items-center gap-2 truncate rounded-md px-2 text-left text-[13px]", route.folderId === folder.id ? "bg-[#dce6ff] text-[#1456f0]" : "text-[#4e5969] hover:bg-[#e9eaec]")}><FolderIcon size={14}/><span className="truncate">{folder.title || t("未命名文件夹")}</span></button>)}
+        <button type="button" onClick={() => void addFolder(personal)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#8f959e] hover:bg-[#e9eaec] hover:text-[#4e5969]"><Plus size={14}/>{t("新建文件夹")}</button>
       </div>}
     </div>;
   };
   return <aside className="flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r border-[#dee0e3] bg-[#f5f6f7] xl:w-[300px]">
-    <div className="flex h-14 items-center px-5"><Logo appearance="light" className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]"/><span className="ml-1.5 text-[14px] font-semibold">云文档</span></div>
-    <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label="返回主页" onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">云盘</span></div>
-    <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>搜索<span className="ml-auto text-[11px] text-[#b3b8bf]">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</span></button>
+    <div className="flex h-14 items-center px-5"><Logo appearance="light" className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]"/><span className="ml-1.5 text-[14px] font-semibold">{t("云文档")}</span></div>
+    <div className="flex h-14 items-center gap-2 px-4"><button type="button" aria-label={t("返回主页")} onClick={() => go("#/")} className="grid size-7 place-items-center rounded-md text-[#646a73] hover:bg-[#e9eaec]"><ArrowLeft size={16}/></button><span className="grid size-8 place-items-center rounded-md bg-white text-[#3370ff] shadow-sm"><FolderIcon size={18}/></span><span className="text-[14px] font-semibold">{t("云盘")}</span></div>
+    <button type="button" onClick={onSearch} data-search className="mx-3 mb-3 flex h-9 items-center gap-2 rounded-md bg-white/80 px-3 text-left text-[13px] text-[#8f959e]"><SearchIcon/>{t("搜索")}<span className="ml-auto text-[11px] text-[#b3b8bf]">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</span></button>
     <nav className="min-h-0 flex-1 overflow-y-auto px-2">{group(true)}{group(false)}{error && <p role="alert" className="px-2 text-xs text-destructive">{error}</p>}</nav>
     {searchOpen && <GlobalSearch userId={userId} onClose={onCloseSearch}/>}
   </aside>;
@@ -382,7 +388,7 @@ function TreeRow({
         <button
           onClick={onToggle}
           className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 dark:hover:bg-white/10"
-          aria-label={`${open ? "收起" : "展开"} ${label}`}
+          aria-label={t("{op} {label}", { op: open ? t("收起") : t("展开"), label })}
           aria-expanded={open}
         >
           <ChevronRight size={12} strokeWidth={1.7} className={cn("transition-transform", open && "rotate-90")} />
@@ -399,8 +405,8 @@ function TreeRow({
       </button>
       <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">
         <button
-          aria-label="新建子文档"
-          title="新建子文档"
+          aria-label={t("新建子文档")}
+          title={t("新建子文档")}
           onClick={(e) => {
             e.stopPropagation();
             onAdd();
@@ -411,8 +417,8 @@ function TreeRow({
         </button>
         {onStar && (
           <button
-            aria-label={starred ? "取消收藏" : "收藏"}
-            title={starred ? "取消收藏" : "收藏"}
+            aria-label={starred ? t("取消收藏") : t("收藏")}
+            title={starred ? t("取消收藏") : t("收藏")}
             onClick={(e) => {
               e.stopPropagation();
               onStar();
@@ -487,9 +493,9 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete, pinned, onPin }: { onA
   return (
     <span ref={ref} className="relative">
       <button
-        aria-label="更多操作"
+        aria-label={t("更多操作")}
         aria-expanded={open}
-        title="更多"
+        title={t("更多")}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
@@ -501,11 +507,11 @@ function RowMenu({ onAdd, onRename, onCopyLink, onDelete, pinned, onPin }: { onA
       </button>
       {open && (
         <div className="absolute right-0 top-6 z-30 w-32 rounded-lg border bg-surface py-1 text-[13px] shadow-lg" data-row-menu-pop>
-          {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>新建子文档</button>}
-          {onPin && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" data-row-pin onClick={(e) => { e.stopPropagation(); setOpen(false); onPin(); }}>{pinned ? "取消置顶" : "置顶"}</button>}
-          {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>重命名</button>}
-          {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>复制链接</button>}
-          {onDelete && <button className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}>删除</button>}
+          {onAdd && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onAdd(); }}>{t("新建子文档")}</button>}
+          {onPin && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" data-row-pin onClick={(e) => { e.stopPropagation(); setOpen(false); onPin(); }}>{pinned ? t("取消置顶") : t("置顶")}</button>}
+          {onRename && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onRename(); }}>{t("重命名")}</button>}
+          {onCopyLink && <button className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onCopyLink(); }}>{t("复制链接")}</button>}
+          {onDelete && <button className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-hover" onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}>{t("删除")}</button>}
         </div>
       )}
     </span>
@@ -522,8 +528,8 @@ export function DarkToggle() {
   return (
     <button
       className="grid size-5 place-items-center rounded text-subtle hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
-      title={dark ? "切换到浅色" : "切换到深色"}
-      aria-label={dark ? "切换到浅色" : "切换到深色"}
+      title={dark ? t("切换到浅色") : t("切换到深色")}
+      aria-label={dark ? t("切换到浅色") : t("切换到深色")}
       onClick={() => setDark((v) => !v)}
       data-dark-toggle
     >

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t, useI18n } from "@/lib/i18n";
 import { createPortal } from "react-dom";
 import { ApiError, type Field, type ViewConfig } from "@/lib/api";
 import { closeForm, formLink, publishForm, readFormPublication } from "./publicFormApi";
@@ -46,8 +47,8 @@ export function FormPublication({ baseId, viewId, canManage, canPublish, config,
     } catch (error) {
       if (!alive.current || generation.current !== current || (abort.signal.aborted && !timedOut)) return;
       setState("error");
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setNotice("无法查看发布状态，请重新验证权限。"); accessChanged.current(); }
-      else setNotice("无法获取发布状态，请稍后重试。");
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setNotice(t("无法查看发布状态，请重新验证权限。")); accessChanged.current(); }
+      else setNotice(t("无法获取发布状态，请稍后重试。"));
     } finally { window.clearTimeout(timeout); }
   }, [baseId, viewId]);
   useEffect(() => {
@@ -66,7 +67,7 @@ export function FormPublication({ baseId, viewId, canManage, canPublish, config,
   useEffect(() => {
     if (!open) return;
     const root = dialog.current;
-    root?.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')?.focus();
+    root?.querySelector<HTMLButtonElement>(`button[aria-label="${t("关闭")}"]`)?.focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !pending.current) { event.preventDefault(); setOpen(false); return; }
       if (event.key !== "Tab" || !root) return;
@@ -83,7 +84,7 @@ export function FormPublication({ baseId, viewId, canManage, canPublish, config,
     if (pending.current || revision === null || !canManage || (kind === "publish" && (!canPublish || !acknowledged))) return;
     const current = ++generation.current;
     controller.current?.abort();
-    if (!markOperation(baseId, viewId, true)) { setState("error"); setNotice("浏览器无法保存操作状态，请检查存储设置后重试。"); return; }
+    if (!markOperation(baseId, viewId, true)) { setState("error"); setNotice(t("浏览器无法保存操作状态，请检查存储设置后重试。")); return; }
     pending.current = true; setBusy(true); setToken(null); setConfirm(null); setNotice("");
     const request = new AbortController();
     const timeout = window.setTimeout(() => request.abort(), 15_000);
@@ -95,16 +96,16 @@ export function FormPublication({ baseId, viewId, canManage, canPublish, config,
       setRevision(result.revision);
       const newToken = "token" in result ? result.token : null;
       setToken(newToken); setState(newToken ? "published" : "closed");
-      setNotice(newToken ? "链接仅在本次发布后显示，请及时复制。" : "收集表已关闭，旧链接不可再提交。");
+      setNotice(newToken ? t("链接仅在本次发布后显示，请及时复制。") : t("收集表已关闭，旧链接不可再提交。"));
     } catch (error) {
       const knownFailure = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
       if (knownFailure && !unresolved) markOperation(baseId, viewId, false);
       if (!alive.current || generation.current !== current) return;
       setState("error");
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setNotice("权限已变化，请重新验证。"); accessChanged.current(); }
-      else if (error instanceof ApiError && error.status === 409) setNotice("发布状态已发生变化，请检查最新状态后再操作。");
-      else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) setNotice(error.message || "操作失败，请检查后重试。");
-      else { setUnresolved(true); setNotice("无法确认操作是否完成，请先检查最新状态，再由你决定是否重新发布或关闭。"); }
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setNotice(t("权限已变化，请重新验证。")); accessChanged.current(); }
+      else if (error instanceof ApiError && error.status === 409) setNotice(t("发布状态已发生变化，请检查最新状态后再操作。"));
+      else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) setNotice(error.message || t("操作失败，请检查后重试。"));
+      else { setUnresolved(true); setNotice(t("无法确认操作是否完成，请先检查最新状态，再由你决定是否重新发布或关闭。")); }
     } finally {
       window.clearTimeout(timeout);
       pending.current = false;
@@ -114,25 +115,25 @@ export function FormPublication({ baseId, viewId, canManage, canPublish, config,
   if (!canManage) return null;
   const link = token && typeof location !== "undefined" ? formLink(token, location.origin, location.pathname) : null;
   return <>
-    <button ref={trigger} type="button" disabled={busy} onClick={() => setOpen(true)} className="rounded-md border px-2.5 py-1 text-primary hover:bg-hover disabled:opacity-50">发布收集表</button>
+    <button ref={trigger} type="button" disabled={busy} onClick={() => setOpen(true)} className="rounded-md border px-2.5 py-1 text-primary hover:bg-hover disabled:opacity-50">{t("发布收集表")}</button>
     {open && typeof document !== "undefined" && createPortal(<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" onClick={() => { if (!busy) setOpen(false); }}>
       <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="form-publication-title" className="w-full max-w-md rounded-xl border bg-surface p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-center justify-between"><h2 id="form-publication-title" className="text-[16px] font-semibold">分享收集表</h2><button type="button" aria-label="关闭" disabled={busy} onClick={() => setOpen(false)} className="rounded px-2 py-1 hover:bg-hover">×</button></div>
-        <p className="mt-3 text-[13px] text-muted-foreground">发布后，获得链接的人可提交表单。请仅分享给可信任的填写者。</p>
+        <div className="flex items-center justify-between"><h2 id="form-publication-title" className="text-[16px] font-semibold">{t("分享收集表")}</h2><button type="button" aria-label={t("关闭")} disabled={busy} onClick={() => setOpen(false)} className="rounded px-2 py-1 hover:bg-hover">×</button></div>
+        <p className="mt-3 text-[13px] text-muted-foreground">{t("发布后，获得链接的人可提交表单。请仅分享给可信任的填写者。")}</p>
         <div className="mt-4 rounded-md border p-3 text-[13px]">
-          <p className="font-medium">将公开的字段</p>
-          {canPublish ? <><div className="mt-2 max-h-44 space-y-2 overflow-y-auto text-muted-foreground"><div><span className="font-medium text-foreground">标题：</span>{config.title || "表单"}</div>{config.desc && <div><span className="font-medium text-foreground">说明：</span>{config.desc}</div>}<ul className="list-disc space-y-1 pl-5">{(Array.isArray(config.fields) ? config.fields : []).map((id) => { const field = fields.find((item) => item.id === id); return <li key={id}><span>{field?.name ?? "已删除字段"}{Array.isArray(config.required) && config.required.includes(id) ? "（必填）" : ""}</span>{field?.description && <p className="break-words text-[12px]">说明：{field.description}</p>}{field?.options?.length ? <p className="break-words text-[12px]">选项：{field.options.join("、")}</p> : null}</li>; })}</ul></div><label className="mt-3 flex items-start gap-2 text-[12px] text-muted-foreground"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledgedSignature(event.currentTarget.checked ? previewSignature : null)} />我已确认以上内容可供获得链接的人查看和填写</label></> : <p className="mt-2 text-[12px] text-destructive">请先选择并保存可公开填写的字段，再发布；仍可关闭已有收集。</p>}
+          <p className="font-medium">{t("将公开的字段")}</p>
+          {canPublish ? <><div className="mt-2 max-h-44 space-y-2 overflow-y-auto text-muted-foreground"><div><span className="font-medium text-foreground">{t("标题：")}</span>{config.title || t("表单")}</div>{config.desc && <div><span className="font-medium text-foreground">{t("说明：")}</span>{config.desc}</div>}<ul className="list-disc space-y-1 pl-5">{(Array.isArray(config.fields) ? config.fields : []).map((id) => { const field = fields.find((item) => item.id === id); return <li key={id}><span>{field?.name ?? t("已删除字段")}{Array.isArray(config.required) && config.required.includes(id) ? t("（必填）") : ""}</span>{field?.description && <p className="break-words text-[12px]">{t("说明：")}{field.description}</p>}{field?.options?.length ? <p className="break-words text-[12px]">{t("选项：")}{field.options.join(t("、"))}</p> : null}</li>; })}</ul></div><label className="mt-3 flex items-start gap-2 text-[12px] text-muted-foreground"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledgedSignature(event.currentTarget.checked ? previewSignature : null)} />{t("我已确认以上内容可供获得链接的人查看和填写")}</label></> : <p className="mt-2 text-[12px] text-destructive">{t("请先选择并保存可公开填写的字段，再发布；仍可关闭已有收集。")}</p>}
         </div>
-        <p className="mt-4 text-[13px]">状态：{state === "loading" ? "正在检查…" : state === "published" ? "已发布" : state === "closed" ? "未发布" : "未确认"}</p>
-        {state === "published" && !link && <p className="mt-2 text-[12px] text-subtle">出于安全考虑，旧链接不会再次显示；重新发布会使旧链接失效。</p>}
-        {link && <div className="mt-3 flex gap-2"><label className="min-w-0 flex-1"><span className="sr-only">收集表链接</span><input readOnly value={link} className="h-9 w-full rounded-md border bg-surface px-2 text-[12px]" onFocus={(e) => e.currentTarget.select()} /></label><button type="button" className="shrink-0 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={() => { if (!navigator.clipboard) { setNotice("请手动选择并复制链接。"); return; } void navigator.clipboard.writeText(link).then(() => setNotice("链接已复制。")).catch(() => setNotice("复制失败，请手动选择并复制链接。")); }}>复制</button></div>}
+        <p className="mt-4 text-[13px]">{t("状态：")}{state === "loading" ? t("正在检查…") : state === "published" ? t("已发布") : state === "closed" ? t("未发布") : t("未确认")}</p>
+        {state === "published" && !link && <p className="mt-2 text-[12px] text-subtle">{t("出于安全考虑，旧链接不会再次显示；重新发布会使旧链接失效。")}</p>}
+        {link && <div className="mt-3 flex gap-2"><label className="min-w-0 flex-1"><span className="sr-only">{t("收集表链接")}</span><input readOnly value={link} className="h-9 w-full rounded-md border bg-surface px-2 text-[12px]" onFocus={(e) => e.currentTarget.select()} /></label><button type="button" className="shrink-0 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={() => { if (!navigator.clipboard) { setNotice(t("请手动选择并复制链接。")); return; } void navigator.clipboard.writeText(link).then(() => setNotice(t("链接已复制。"))).catch(() => setNotice(t("复制失败，请手动选择并复制链接。"))); }}>{t("复制")}</button></div>}
         {notice && <p role="status" className="mt-3 text-[12px] text-muted-foreground">{notice}</p>}
-        {unresolved && <p role="alert" className="mt-3 text-[12px] text-destructive">上次操作结果尚未确认，旧请求仍可能完成。请先检查状态，再明确选择关闭或重新发布；若状态同时变化，请重新检查。</p>}
-        {confirm && <div className="mt-4 rounded-md bg-[#fff8e8] p-3 text-[13px] text-[#8f6200]">{confirm === "rotate" ? "重新发布后，所有旧链接会立即失效。" : "关闭后，现有链接将不能再提交。"}<div className="mt-2 flex gap-2"><button type="button" disabled={busy || (confirm === "rotate" && (!canPublish || !acknowledged))} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50" onClick={() => void action(confirm === "rotate" ? "publish" : "close")}>确认{confirm === "rotate" ? "重新发布" : "关闭"}</button><button type="button" onClick={() => setConfirm(null)} className="rounded border px-3 py-1">取消</button></div></div>}
+        {unresolved && <p role="alert" className="mt-3 text-[12px] text-destructive">{t("上次操作结果尚未确认，旧请求仍可能完成。请先检查状态，再明确选择关闭或重新发布；若状态同时变化，请重新检查。")}</p>}
+        {confirm && <div className="mt-4 rounded-md bg-[#fff8e8] p-3 text-[13px] text-[#8f6200]">{confirm === "rotate" ? t("重新发布后，所有旧链接会立即失效。") : t("关闭后，现有链接将不能再提交。")}<div className="mt-2 flex gap-2"><button type="button" disabled={busy || (confirm === "rotate" && (!canPublish || !acknowledged))} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50" onClick={() => void action(confirm === "rotate" ? "publish" : "close")}>{t("确认{action}", { action: confirm === "rotate" ? t("重新发布") : t("关闭") })}</button><button type="button" onClick={() => setConfirm(null)} className="rounded border px-3 py-1">{t("取消")}</button></div></div>}
         <div className="mt-5 flex flex-wrap gap-2">
-          {state === "error" && <button type="button" disabled={busy} onClick={() => void refresh()} className="rounded-md border px-3 py-1.5 text-[13px]">检查状态</button>}
-          {state === "closed" && !unresolved && <button type="button" disabled={busy || !canPublish || !acknowledged} onClick={() => void action("publish")} className="rounded-md bg-primary px-3 py-1.5 text-[13px] text-white disabled:opacity-50">发布并生成链接</button>}
-          {(state === "published" || (state === "closed" && unresolved)) && <><button type="button" disabled={busy || !canPublish} onClick={() => setConfirm("rotate")} className="rounded-md border px-3 py-1.5 text-[13px] disabled:opacity-50">重新发布</button><button type="button" disabled={busy} onClick={() => setConfirm("close")} className="rounded-md border px-3 py-1.5 text-[13px] disabled:opacity-50">关闭收集</button></>}
+          {state === "error" && <button type="button" disabled={busy} onClick={() => void refresh()} className="rounded-md border px-3 py-1.5 text-[13px]">{t("检查状态")}</button>}
+          {state === "closed" && !unresolved && <button type="button" disabled={busy || !canPublish || !acknowledged} onClick={() => void action("publish")} className="rounded-md bg-primary px-3 py-1.5 text-[13px] text-white disabled:opacity-50">{t("发布并生成链接")}</button>}
+          {(state === "published" || (state === "closed" && unresolved)) && <><button type="button" disabled={busy || !canPublish} onClick={() => setConfirm("rotate")} className="rounded-md border px-3 py-1.5 text-[13px] disabled:opacity-50">{t("重新发布")}</button><button type="button" disabled={busy} onClick={() => setConfirm("close")} className="rounded-md border px-3 py-1.5 text-[13px] disabled:opacity-50">{t("关闭收集")}</button></>}
         </div>
       </section>
     </div>, document.body)}

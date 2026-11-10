@@ -4,6 +4,7 @@ import { baseApi, type Automation, type Field, type FilterRule, type User } from
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
 import { MemberRuleValue, personRuleValue } from "./MemberRuleValue";
+import { t, useI18n } from "@/lib/i18n";
 
 const OP_LABEL: Record<string, string> = {
   contains: "包含", not_contains: "不包含", is: "等于", is_not: "不等于",
@@ -44,6 +45,7 @@ export function AutomationsPanel({
   members: User[];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const key = ["automations", baseId];
   const list = useQuery({ queryKey: key, queryFn: () => baseApi.automations(baseId) });
@@ -55,8 +57,8 @@ export function AutomationsPanel({
   return (
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl" data-automations-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
-        自动化
-        <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
+        {t("自动化")}
+        <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label={t("关闭")}>
           ✕
         </button>
       </header>
@@ -72,37 +74,37 @@ export function AutomationsPanel({
               onClick={() => setCreating(true)}
               data-create-automation
             >
-              + 新建自动化
+              {t("+ 新建自动化")}
             </button>
-            {automations.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">还没有自动化流程</p>}
+            {automations.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{t("还没有自动化流程")}</p>}
             {automations.map((a) => (
               <div key={a.id} className="mb-2 rounded-lg border p-3 text-[13px]" data-automation={a.id}>
                 <div className="flex items-center gap-2 font-medium">
                   <span className="truncate">{a.name}</span>
                   <span className={cn("ml-auto rounded px-1.5 py-0.5 text-[11px]", a.enabled ? "bg-[#D9F5D6] text-[#237B19] dark:bg-[#1d3a24] dark:text-[#7bd88f]" : "bg-hover text-subtle")}>
-                    {a.enabled ? "已启用" : "已停用"}
+                    {a.enabled ? t("已启用") : t("已停用")}
                   </span>
                 </div>
                 <div className="mt-1 text-[12px] text-muted-foreground">
                   {a.triggerKind === "form_submit"
-                    ? "表单提交时"
+                    ? t("表单提交时")
                     : a.triggerKind === "schedule"
-                      ? `定时（每${(a.config as { schedule?: { every?: string } })?.schedule?.every === "1h" ? "小时" : (a.config as { schedule?: { every?: string } })?.schedule?.every === "1w" ? "周" : "天"}）`
-                      : "记录满足条件时"}
+                      ? t("定时（每{unit}）", { unit: (a.config as { schedule?: { every?: string } })?.schedule?.every === "1h" ? t("小时") : (a.config as { schedule?: { every?: string } })?.schedule?.every === "1w" ? t("周") : t("天") })
+                      : t("记录满足条件时")}
                 </div>
                 <div className="mt-2 flex gap-2">
-                  <button className="rounded border px-2 py-0.5 text-[12px] hover:bg-hover" onClick={() => setEditing(a)}>编辑</button>
+                  <button className="rounded border px-2 py-0.5 text-[12px] hover:bg-hover" onClick={() => setEditing(a)}>{t("编辑")}</button>
                   <button
                     className="rounded border px-2 py-0.5 text-[12px] hover:bg-hover"
                     onClick={() => baseApi.updateAutomation(baseId, a.id, { enabled: !a.enabled }).then(invalidate)}
                   >
-                    {a.enabled ? "停用" : "启用"}
+                    {a.enabled ? t("停用") : t("启用")}
                   </button>
                   <button
                     className="ml-auto text-[12px] text-destructive hover:underline"
-                    onClick={() => void ask("删除该自动化？").then((ok: boolean) => { if (ok) void baseApi.deleteAutomation(baseId, a.id).then(invalidate); })}
+                    onClick={() => void ask(t("删除该自动化？")).then((ok: boolean) => { if (ok) void baseApi.deleteAutomation(baseId, a.id).then(invalidate); })}
                   >
-                    删除
+                    {t("删除")}
                   </button>
                 </div>
               </div>
@@ -129,6 +131,7 @@ function AutomationForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState(initial?.name ?? "");
   const [trigger, setTrigger] = useState(initial?.triggerKind ?? "record_matches");
   const [cfg, setCfg] = useState<AutomationConfig>(() => {
@@ -170,7 +173,7 @@ function AutomationForm({
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="流程名称"
+        placeholder={t("流程名称")}
         className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary"
         data-auto-name
       />
@@ -180,9 +183,9 @@ function AutomationForm({
         onChange={(e) => setTrigger(e.target.value as Automation["triggerKind"])}
         data-auto-trigger
       >
-        <option value="record_matches">当记录满足条件时</option>
-        <option value="form_submit">当表单被提交时</option>
-        <option value="schedule">定时触发</option>
+        <option value="record_matches">{t("当记录满足条件时")}</option>
+        <option value="form_submit">{t("当表单被提交时")}</option>
+        <option value="schedule">{t("定时触发")}</option>
       </select>
       {trigger === "schedule" && (
         <select
@@ -191,14 +194,14 @@ function AutomationForm({
           onChange={(e) => setCfg({ ...cfg, schedule: { every: e.target.value } })}
           data-auto-every
         >
-          <option value="1h">每小时</option>
-          <option value="1d">每天</option>
-          <option value="1w">每周</option>
+          <option value="1h">{t("每小时")}</option>
+          <option value="1d">{t("每天")}</option>
+          <option value="1w">{t("每周")}</option>
         </select>
       )}
       {trigger === "record_matches" && (
         <div className="space-y-1.5 rounded-md border p-2" data-auto-rules>
-          <p className="text-[12px] text-subtle">触发条件</p>
+          <p className="text-[12px] text-subtle">{t("触发条件")}</p>
           {rules.map((rule, i) => {
             const f = fields.find((x) => x.id === rule.f) ?? fields[0];
             const noValue = rule.op === "empty" || rule.op === "not_empty" || rule.op === "checked" || rule.op === "unchecked";
@@ -228,7 +231,7 @@ function AutomationForm({
                   }}
                 >
                   {opsFor(f?.type ?? "text").map((op) => (
-                    <option key={op} value={op}>{OP_LABEL[op]}</option>
+                    <option key={op} value={op}>{t(OP_LABEL[op])}</option>
                   ))}
                 </select>
                 {!noValue && (f?.type === "person" ? (
@@ -252,12 +255,12 @@ function AutomationForm({
             className="text-[12px] text-primary hover:underline"
             onClick={() => { const nf = fields[0]; setCfg({ ...cfg, rules: [...rules, nf?.type === "person" ? { f: nf.id, op: "contains", v: [] } : { f: nf?.id ?? 0, op: opsFor(nf?.type ?? "text")[0], v: "" }] }); }}
           >
-            + 添加条件
+            {t("+ 添加条件")}
           </button>
         </div>
       )}
       <div className="rounded-md border p-2" data-auto-action>
-        <p className="mb-1.5 text-[12px] text-subtle">通知这些成员</p>
+        <p className="mb-1.5 text-[12px] text-subtle">{t("通知这些成员")}</p>
         <div className="max-h-28 space-y-0.5 overflow-y-auto">
           {members.map((m) => (
             <label key={m.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-hover">
@@ -279,22 +282,22 @@ function AutomationForm({
         <input
           value={cfg.message ?? ""}
           onChange={(e) => setCfg({ ...cfg, message: e.target.value })}
-          placeholder="通知消息，可用 {{字段名}} 插值"
+          placeholder={t("通知消息，可用 {{字段名}} 插值")}
           className="mt-1.5 h-8 w-full rounded border px-2 outline-none focus:border-primary"
           data-auto-message
         />
-        <p className="mb-1.5 mt-2 text-[12px] text-subtle">推送到 IM 群机器人（企微/钉钉/飞书/自建，可选）</p>
+        <p className="mb-1.5 mt-2 text-[12px] text-subtle">{t("推送到 IM 群机器人（企微/钉钉/飞书/自建，可选）")}</p>
         <select
           className="h-8 w-full rounded border bg-surface px-2 outline-none focus:border-primary"
           value={cfg.webhook?.kind ?? ""}
           onChange={(e) => setCfg({ ...cfg, webhook: { ...cfg.webhook, kind: e.target.value } })}
           data-auto-hook-kind
         >
-          <option value="">不推送</option>
-          <option value="wecom">企业微信</option>
-          <option value="dingtalk">钉钉</option>
-          <option value="feishu">飞书</option>
-          <option value="generic">自建（通用 JSON）</option>
+          <option value="">{t("不推送")}</option>
+          <option value="wecom">{t("企业微信")}</option>
+          <option value="dingtalk">{t("钉钉")}</option>
+          <option value="feishu">{t("飞书")}</option>
+          <option value="generic">{t("自建（通用 JSON）")}</option>
         </select>
         {cfg.webhook?.kind && (
           <>
@@ -308,16 +311,16 @@ function AutomationForm({
             <input
               value={cfg.webhook.message ?? ""}
               onChange={(e) => setCfg({ ...cfg, webhook: { ...cfg.webhook, message: e.target.value } })}
-              placeholder="推送消息，可用 {{字段名}}"
+              placeholder={t("推送消息，可用 {{字段名}}")}
               className="mt-1.5 h-8 w-full rounded border px-2 outline-none focus:border-primary"
             />
           </>
         )}
       </div>
       <div className="flex justify-end gap-2">
-        <button className="h-8 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={onCancel}>取消</button>
+        <button className="h-8 rounded-md border px-3 text-[13px] hover:bg-hover" onClick={onCancel}>{t("取消")}</button>
         <button className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={busy || !name.trim()} onClick={() => void save()} data-auto-save>
-          {initial ? "保存" : "创建"}
+          {initial ? t("保存") : t("创建")}
         </button>
       </div>
     </div>
