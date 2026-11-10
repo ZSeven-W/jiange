@@ -7,3 +7,11 @@ coverage
 *.tsbuildinfo
 output
 docs
+
+# Embedded UI on the Uppcoder deploy branch: a plain `go build` needs these files.
+!server/webui/dist/
+!server/webui/dist/**
+
+# Built on the stack at start; attachments written at runtime.
+/jiange
+/data
