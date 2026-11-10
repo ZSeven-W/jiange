@@ -68,6 +68,9 @@ func fieldChangesCells(before, after Field) bool {
 	if before.Type != after.Type {
 		return true
 	}
+	if after.Type == "person" && before.Multiple != after.Multiple {
+		return true
+	}
 	return (after.Type == "select" || after.Type == "multi_select") && !slices.Equal(before.Options, after.Options)
 }
 
@@ -479,7 +482,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 		switch {
 		case change.Before == nil:
 			f := *change.After
-			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1 ELSE $8 END,$9,$10) RETURNING `+fieldCols, change.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, len(fields) == 0, defaultJSON(f)))
+			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1 ELSE $8 END,$9,$10,$11) RETURNING `+fieldCols, change.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, len(fields) == 0, defaultJSON(f), multipleFlag(f)))
 			if err != nil {
 				return err
 			}
@@ -521,7 +524,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 			result.Field = *change.Before
 		default:
 			f := *change.After
-			if _, err = tx.Exec(ctx, `UPDATE base_fields SET name=$3,type=$4,options=$5,option_colors=$6,description=$7,formula=$8,position=$9,default_value=$10 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f)); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE base_fields SET name=$3,type=$4,options=$5,option_colors=$6,description=$7,formula=$8,position=$9,default_value=$10,multiple=$11 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)); err != nil {
 				return err
 			}
 			if fieldChangesCells(*change.Before, f) {

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/btformula"
+	"github.com/ZSeven-W/jiange/server/internal/btquery"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -152,9 +153,10 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		for _, f := range read.fields {
 			for _, rec := range read.records {
 				if f.Type == "person" {
-					var id int64
-					if json.Unmarshal(rec.Cells[strconv.FormatInt(f.ID, 10)], &id) == nil && id > 0 {
-						used[id] = true
+					for _, id := range btquery.PersonCellIDs(rec.Cells[strconv.FormatInt(f.ID, 10)]) {
+						if id > 0 {
+							used[id] = true
+						}
 					}
 				}
 				if f.Type == "created_by" && rec.CreatorID != nil {
@@ -227,6 +229,8 @@ type fieldInput struct {
 	OptionRenames map[string]string `json:"optionRenames"`
 	// DefaultValue sets (or with null clears) the field's 默认值.
 	DefaultValue json.RawMessage `json:"defaultValue"` // absent = keep; null = clear
+	// Multiple turns a person field into a member array (允许多选).
+	Multiple *bool `json:"multiple"`
 }
 
 // defaultableTypes may carry a 默认值; derived, link and attachment fields cannot.
@@ -272,6 +276,16 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	}
 	if in.Position != nil {
 		f.Position = *in.Position
+	}
+	// 允许多选 is a person-only attribute; every other type stays single.
+	if in.Multiple != nil {
+		if f.Type != "person" && *in.Multiple {
+			httpx.Error(w, http.StatusBadRequest, "invalid_multiple", "只有人员字段允许多选")
+			return false
+		}
+		f.Multiple = f.Type == "person" && *in.Multiple
+	} else if f.Type != "person" {
+		f.Multiple = false
 	}
 	if len(in.DefaultValue) > 0 {
 		v := in.DefaultValue
@@ -424,6 +438,14 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 			return convertCell(from, to, renameOptionCell(v, renames))
 		}
 	}
+	// 允许多选 flip: single number → [n] when turning on, [a, b…] → a (first
+	// member) when turning off; anything unrepresentable is cleared.
+	if old.Type == f.Type && f.Type == "person" && old.Multiple != f.Multiple {
+		toMultiple := f.Multiple
+		convert = func(from, to store.Field, v json.RawMessage) json.RawMessage {
+			return convertCell(from, to, convertPersonMultiple(toMultiple, v))
+		}
+	}
 	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, After: &f, Fields: fields, Convert: convert})
 	if err != nil {
 		s.fieldMutationError(w, r, err)
@@ -441,6 +463,42 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 // options shrank). Values that cannot be represented are cleared (nil).
 // renameOptionCell applies old→new option renames to a select or
 // multi_select cell value before the regular conversion runs.
+// convertPersonMultiple rewrites a person cell between the single-number and
+// array shapes (允许多选 flip); values that cannot be represented are cleared.
+func convertPersonMultiple(toMultiple bool, v json.RawMessage) json.RawMessage {
+	var one int64
+	if json.Unmarshal(v, &one) == nil {
+		if one <= 0 {
+			return nil
+		}
+		if !toMultiple {
+			return v
+		}
+		b, _ := json.Marshal([]int64{one})
+		return b
+	}
+	var many []int64
+	if json.Unmarshal(v, &many) != nil {
+		return v
+	}
+	kept := make([]int64, 0, len(many))
+	for _, id := range many {
+		if id > 0 {
+			kept = append(kept, id)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	if !toMultiple {
+		// Single mode stores a bare number, not a one-element array.
+		b, _ := json.Marshal(kept[0])
+		return b
+	}
+	b, _ := json.Marshal(kept)
+	return b
+}
+
 func renameOptionCell(v json.RawMessage, renames map[string]string) json.RawMessage {
 	var one string
 	if json.Unmarshal(v, &one) == nil {
@@ -674,6 +732,18 @@ func validCell(f store.Field, v json.RawMessage) bool {
 		}
 		return true
 	case "person":
+		if f.Multiple {
+			var ids []int64
+			if json.Unmarshal(v, &ids) != nil {
+				return false
+			}
+			for _, id := range ids {
+				if id <= 0 {
+					return false
+				}
+			}
+			return true
+		}
 		var id int64
 		return json.Unmarshal(v, &id) == nil
 	case "attachment":

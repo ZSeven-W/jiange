@@ -309,7 +309,8 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
   const q = useQuery({ queryKey: ["record-history", baseId, record.id, record.updatedAt], queryFn: () => baseApi.recordHistory(baseId, record.id) });
   const show = (f: Field, v: Cell | undefined) => {
     if (v === undefined || v === null) return "空";
-    const text = REGISTRY[f.type].format(displayValue({ ...record, cells: { [f.id]: v } }, f, members), f);
+    // 人员/创建人历史值显示成员姓名，而不是裸用户 id。
+    const text = REGISTRY[f.type].format(displayValue({ ...record, cells: { [f.id]: v } }, f, members), f, members);
     return text || "空";
   };
   return (

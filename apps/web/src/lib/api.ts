@@ -105,6 +105,8 @@ export interface Field {
   /** expression for type=formula (see base/formula.ts) */
   formula?: string;
   position: number;
+  /** 允许多选: person fields store an array of member ids when true. */
+  multiple?: boolean;
   /** 默认值: applied by the server to omitted cells of new records; null clears. */
   defaultValue?: Cell | null;
 }
@@ -114,7 +116,7 @@ export interface AttachmentRef {
   mime: string;
   size: number;
 }
-export type Cell = string | number | boolean | string[] | AttachmentRef[];
+export type Cell = string | number | boolean | string[] | number[] | AttachmentRef[];
 export interface BaseRecord {
   id: number;
   baseId: number;
@@ -127,7 +129,8 @@ export interface BaseRecord {
 export interface FilterRule {
   f: number;
   op: string;
-  v?: string | number | boolean;
+  /** person contains/not_contains carry an array of member ids */
+  v?: string | number | boolean | number[];
 }
 export interface RecordHistoryEntry {
   seq: number;

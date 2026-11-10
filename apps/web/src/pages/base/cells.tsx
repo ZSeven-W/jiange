@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, REGISTRY } from "./registry";
+import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, personIDs, REGISTRY } from "./registry";
 import { Paperclip } from "lucide-react";
 
 export const TAG_COLORS = [
@@ -83,8 +83,23 @@ export function CellView({
             : null}
         </span>
       );
-    case "person":
-      return typeof v === "number" && v !== 0 ? <span className="inline-flex items-center gap-1.5 truncate"><Avatar name={memberName(v, members)} />{memberName(v, members)}</span> : null;
+    case "person": {
+      // 允许多选: the cell may hold an array of member ids (single stays scalar).
+      const ids = personIDs(v);
+      if (!ids.length) return null;
+      const labels = ids.map((id) => memberName(id, members) || `成员 #${id}`);
+      if (compact && ids.length > 1) {
+        return <CompactValues labels={labels} first={<span className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap"><Avatar name={labels[0]} />{labels[0]}</span>} />;
+      }
+      if (ids.length === 1) return <span className="inline-flex items-center gap-1.5 truncate"><Avatar name={labels[0]} />{labels[0]}</span>;
+      return (
+        <span className="flex min-w-0 flex-wrap gap-1 overflow-hidden">
+          {ids.map((id, i) => (
+            <span key={id} className="inline-flex max-w-full items-center gap-1.5 rounded bg-accent px-1.5 py-0.5 text-[12px]"><Avatar name={labels[i]} /><span className="truncate">{labels[i]}</span></span>
+          ))}
+        </span>
+      );
+    }
     case "created_by":
       return typeof v === "number" && v !== 0 ? <span className="inline-flex items-center gap-1.5 truncate"><Avatar name={memberName(v, members)} />{memberName(v, members)}</span> : null;
     case "created_at":
@@ -200,6 +215,7 @@ export function CellEditor({
       </select>
     );
   if (field.type === "multi_select") return <MultiSelectEditor field={field} value={isStringArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} onDraft={onDraft} />;
+  if (field.type === "person" && field.multiple) return <PersonMultiEditor members={members} value={personIDs(value)} onCommit={onCommit} onCancel={onCancel} onDraft={onDraft} />;
   if (field.type === "person" || field.type === "created_by")
     return (
       <select
@@ -284,6 +300,50 @@ function MultiSelectEditor({ field, value, onCommit, onCancel, onDraft }: { fiel
             }}
           />
           {o}
+        </label>
+      ))}
+      <div className="mt-1 flex justify-end gap-2 border-t pt-1.5">
+        <button className="h-6 rounded border px-2 text-[12px]" onClick={onCancel}>
+          取消
+        </button>
+        <button
+          className="h-6 rounded bg-primary px-2 text-[12px] text-white"
+          onClick={() => onCommit(sel.length ? sel : null)}
+        >
+          确定
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 允许多选人员字段编辑器：与 MultiSelectEditor 相同的弹层交互，成员可多选。 */
+function PersonMultiEditor({ members, value, onCommit, onCancel, onDraft }: { members: User[]; value: number[]; onCommit: (v: Cell | null) => void; onCancel: () => void; onDraft?: (value: Cell | null) => void }) {
+  const [sel, setSel] = useState<number[]>(value);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onCancel();
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [onCancel]);
+  return (
+    <div ref={ref} className="absolute left-0 top-8 z-30 w-48 rounded-lg border bg-surface p-2 shadow-lg" data-person-editor>
+      {members.map((m) => (
+        <label key={m.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[13px] hover:bg-hover">
+          <input
+            type="checkbox"
+            className="accent-primary"
+            checked={sel.includes(m.id)}
+            onChange={(e) => {
+              const next = e.target.checked ? [...sel, m.id] : sel.filter((x) => x !== m.id);
+              setSel(next);
+              onDraft?.(next.length ? next : null);
+            }}
+          />
+          <Avatar name={m.name} />
+          <span className="truncate">{m.name}</span>
         </label>
       ))}
       <div className="mt-1 flex justify-end gap-2 border-t pt-1.5">

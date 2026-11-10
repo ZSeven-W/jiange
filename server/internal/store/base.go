@@ -27,6 +27,9 @@ type Field struct {
 	IsPrimary bool `json:"isPrimary"`
 	// DefaultValue (Feishu 默认值) fills this field when a new record omits it.
 	DefaultValue json.RawMessage `json:"defaultValue,omitempty"`
+	// Multiple allows a person field to store an array of member ids. Only
+	// meaningful for type=person; created_by is always single-valued.
+	Multiple bool `json:"multiple,omitempty"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.

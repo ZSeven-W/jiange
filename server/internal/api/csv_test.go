@@ -132,7 +132,7 @@ func TestCSVProductionReportsBadRowsAndRejectsAmbiguousColumns(t *testing.T) {
 
 func TestCSVImportPreservesTextWhitespace(t *testing.T) {
 	fields := []store.Field{{ID: 7, Name: "文本", Type: "text"}, {ID: 8, Name: "数值", Type: "number"}}
-	plan, errs, err := csvImportPlan([][]string{{"文本", "数值"}, {"  项目  ", " 12 "}, {" ", ""}}, true, nil, fields)
+	plan, errs, err := csvImportPlan([][]string{{"文本", "数值"}, {"  项目  ", " 12 "}, {" ", ""}}, true, nil, fields, nil)
 	if err != nil || len(errs) != 0 || len(plan.Rows) != 2 {
 		t.Fatalf("plan=%+v errs=%+v err=%v", plan, errs, err)
 	}
@@ -150,14 +150,14 @@ func TestCSVImportPreservesNumericTextAndEmptyRows(t *testing.T) {
 	if got := inferType([]string{"123", "3.5"}); got != "number" {
 		t.Fatalf("canonical numbers inferred as %q", got)
 	}
-	plan, errs, err := csvImportPlan([][]string{{"编号", "内容"}, {"00123", ""}, {"", ""}, {"", "末行"}}, true, nil, nil)
+	plan, errs, err := csvImportPlan([][]string{{"编号", "内容"}, {"00123", ""}, {"", ""}, {"", "末行"}}, true, nil, nil, nil)
 	if err != nil || len(errs) != 0 || len(plan.Rows) != 3 || plan.Columns[0].New.Type != "text" {
 		t.Fatalf("plan=%+v errs=%+v err=%v", plan, errs, err)
 	}
 	if string(plan.Rows[0][0]) != `"00123"` || len(plan.Rows[1]) != 0 {
 		t.Fatalf("rows changed: %+v", plan.Rows)
 	}
-	spacePlan, _, err := csvImportPlan([][]string{{"编码"}, {" 123 "}}, true, nil, nil)
+	spacePlan, _, err := csvImportPlan([][]string{{"编码"}, {" 123 "}}, true, nil, nil, nil)
 	if err != nil || spacePlan.Columns[0].New.Type != "text" || string(spacePlan.Rows[0][0]) != `" 123 "` {
 		t.Fatalf("spaced text changed: %+v err=%v", spacePlan, err)
 	}

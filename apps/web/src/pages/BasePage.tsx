@@ -12,6 +12,7 @@ import { Gallery } from "./base/Gallery";
 import { CalendarView } from "./base/CalendarView";
 import { Gantt } from "./base/Gantt";
 import { AutomationsPanel } from "./base/Automations";
+import { MemberRuleValue, personRuleValue } from "./base/MemberRuleValue";
 import { RecordDetail } from "./base/RecordDetail";
 import { useBaseSync } from "./base/sync";
 import { view } from "./base/view";
@@ -288,7 +289,7 @@ export function BasePage({ id }: { id: number }) {
           </label>
         )}
         {current?.type === "kanban" && <CardConfigBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
-        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar fields={fields} cfg={cfg} onChange={setCfg} />}
+        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {(current?.type === "grid" || current?.type === "kanban") && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
@@ -482,11 +483,14 @@ function opsFor(type: string): string[] {
   }
 }
 
-function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/api").Field[]; members: import("@/lib/api").User[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
   const filters = cfg.filters ?? { conj: "and" as const, rules: [] };
   const setRules = (rules: FilterRule[], conj: "and" | "or" = filters.conj) =>
     onChange({ ...cfg, filters: rules.length ? { conj, rules } : undefined });
   const noValue = (op: string) => op === "empty" || op === "not_empty" || op === "checked" || op === "unchecked";
+  // 人员字段：切换字段/运算符时把值规范化为成员 id（数组或单个），避免无效配置。
+  const normalized = (f: import("@/lib/api").Field | undefined, rule: FilterRule): FilterRule =>
+    f?.type === "person" ? { ...rule, v: personRuleValue(rule.op, rule.v) } : rule;
   return (
     <Popover label={`筛选${filters.rules.length ? ` · ${filters.rules.length}` : ""}`} active={!!filters.rules.length} width={516}>
       <div className="space-y-2 p-1">
@@ -517,7 +521,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
                 onChange={(e) => {
                   const nf = fields.find((x) => x.id === Number(e.target.value))!;
                   const rules = [...filters.rules];
-                  rules[i] = { f: nf.id, op: opsFor(nf.type)[0] };
+                  rules[i] = normalized(nf, { ...rule, f: nf.id, op: opsFor(nf.type)[0] });
                   setRules(rules);
                 }}
               >
@@ -532,7 +536,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
                 value={rule.op}
                 onChange={(e) => {
                   const rules = [...filters.rules];
-                  rules[i] = { ...rule, op: e.target.value };
+                  rules[i] = normalized(f, { ...rule, op: e.target.value });
                   setRules(rules);
                 }}
               >
@@ -543,7 +547,9 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
                 ))}
               </select>
               {!noValue(rule.op) &&
-                (f?.type === "checkbox" ? null : (
+                (f?.type === "person" ? (
+                  <MemberRuleValue rule={rule} members={members} onChange={(v) => { const rules = [...filters.rules]; rules[i] = { ...rule, v }; setRules(rules); }} />
+                ) : f?.type === "checkbox" ? null : (
                   <input
                     className="h-7 flex-1 rounded border px-2 outline-none focus:border-primary"
                     type={f?.type === "number" ? "number" : "text"}
@@ -562,7 +568,7 @@ function FilterBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Fiel
           );
         })}
         <div className={cn("flex items-center justify-between", filters.rules.length > 0 && "border-t pt-2")}>
-          <button className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => setRules([...filters.rules, { f: fields[0]?.id ?? 0, op: opsFor(fields[0]?.type ?? "text")[0], v: "" }])}>
+          <button className="-ml-1 flex h-8 items-center gap-1 rounded-md px-1 text-[14px] text-foreground hover:bg-hover" onClick={() => { const nf = fields[0]; setRules([...filters.rules, nf?.type === "person" ? { f: nf.id, op: "contains", v: [] } : { f: nf?.id ?? 0, op: opsFor(nf?.type ?? "text")[0], v: "" }]); }}>
             <Plus size={16} strokeWidth={1.7} /> 添加条件
           </button>
           {filters.rules.length > 0 && (

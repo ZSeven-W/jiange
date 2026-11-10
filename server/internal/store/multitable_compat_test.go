@@ -97,7 +97,7 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 		ALTER TABLE bt_events RENAME TO bt_events_all;
 		ALTER TABLE bt_automations RENAME TO bt_automations_all;
 		ALTER TABLE bt_public_form_links RENAME TO bt_public_form_links_all;
-		CREATE VIEW base_fields WITH (security_barrier=true) AS SELECT id,base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value FROM base_fields_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW base_fields WITH (security_barrier=true) AS SELECT id,base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple FROM base_fields_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW base_records WITH (security_barrier=true) AS SELECT id,base_id,cells,position,creator_id,created_at,updated_at FROM base_records_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_views WITH (security_barrier=true) AS SELECT id,base_id,type,name,config,pos FROM bt_views_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_links WITH (security_barrier=true) AS SELECT id,base_id,field_id,from_record,to_record FROM bt_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;

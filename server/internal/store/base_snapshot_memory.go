@@ -500,8 +500,7 @@ func (m *Memory) cloneBaseSnapshotLocked(ctx context.Context, uid, baseID int64)
 		}
 		workspaceID := m.doc(record.BaseID).meta.WorkspaceID
 		for _, fieldID := range personFields[record.BaseID] {
-			var personID int64
-			if json.Unmarshal(record.Cells[strconv.FormatInt(fieldID, 10)], &personID) == nil {
+			for _, personID := range btquery.PersonCellIDs(record.Cells[strconv.FormatInt(fieldID, 10)]) {
 				if err := addReferencedMember(personID, workspaceID); err != nil {
 					return nil, nil, err
 				}

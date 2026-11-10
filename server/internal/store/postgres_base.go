@@ -92,7 +92,7 @@ func notFound(err error) error {
 func scanField(r pgx.Row) (f Field, err error) {
 	var opts, colors []byte
 	var def []byte
-	err = r.Scan(&f.ID, &f.BaseID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Formula, &f.Position, &f.IsPrimary, &def)
+	err = r.Scan(&f.ID, &f.BaseID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Formula, &f.Position, &f.IsPrimary, &def, &f.Multiple)
 	if len(def) > 0 && string(def) != "null" {
 		f.DefaultValue = def
 	}
@@ -105,7 +105,7 @@ func scanField(r pgx.Row) (f Field, err error) {
 	return f, notFound(err)
 }
 
-const fieldCols = `id, base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value`
+const fieldCols = `id, base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple`
 const recordCols = `id, base_id, cells, position, creator_id, created_at, updated_at`
 
 func (p *Postgres) Fields(ctx context.Context, base int64) ([]Field, error) {
@@ -132,6 +132,10 @@ func defaultJSON(f Field) any {
 	return string(f.DefaultValue)
 }
 
+// multipleFlag is the boolean parameter for base_fields.multiple; it only
+// applies to person fields, every other type stores false.
+func multipleFlag(f Field) bool { return f.Type == "person" && f.Multiple }
+
 func colors(f Field) []byte {
 	if f.OptionColors == nil {
 		f.OptionColors = []int{}
@@ -156,23 +160,23 @@ func (p *Postgres) AddField(ctx context.Context, f Field) (out Field, err error)
 				return ErrPrimaryField
 			}
 		}
-		out, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value)
+		out, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple)
 			VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1), 0) + 1 ELSE $8 END,
-			NOT EXISTS (SELECT 1 FROM base_fields WHERE base_id=$1), $9)
-			RETURNING `+fieldCols, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f)))
+			NOT EXISTS (SELECT 1 FROM base_fields WHERE base_id=$1), $9, $10)
+			RETURNING `+fieldCols, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)))
 		return err
 	})
 	return out, err
 }
 
 func (p *Postgres) UpdateField(ctx context.Context, f Field) (Field, error) {
-	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields AS field SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, formula=$8, position=$9, default_value=$10 WHERE field.id=$1 AND field.base_id=$2
+	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields AS field SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, formula=$8, position=$9, default_value=$10, multiple=$11 WHERE field.id=$1 AND field.base_id=$2
 		AND (NOT field.is_primary OR field.position=$9)
 		AND (field.is_primary OR field.position=$9 OR NOT EXISTS (
 			SELECT 1 FROM base_fields AS primary_field WHERE primary_field.base_id=$2 AND primary_field.is_primary
 			AND ((field.position,field.id) < (primary_field.position,primary_field.id)) <>
 			    (($9::float8,field.id) < (primary_field.position,primary_field.id)))) RETURNING `+fieldCols,
-		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f)))
+		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)))
 }
 
 func (p *Postgres) DeleteField(ctx context.Context, base, id int64) error {
