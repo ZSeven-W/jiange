@@ -1,4 +1,5 @@
 import type { BaseRecord, Field, User } from "@/lib/api";
+import { t, useI18n } from "@/lib/i18n";
 import { displayValue, memberName, optionColor, personIDs } from "./registry";
 import { TypeGlyph } from "./cells";
 
@@ -23,7 +24,7 @@ export function dashboardStats(records: BaseRecord[], fields: Field[], members: 
       const v = displayValue(r, field, members);
       // 人员字段（含允许多选）按成员逐个计数，与多选的聚合方式一致。
       const keys = field.type === "person"
-        ? personIDs(v).map((id) => memberName(id, members) || `成员 #${id}`)
+        ? personIDs(v).map((id) => memberName(id, members) || t("成员 #{id}", { id }))
         : Array.isArray(v)
           ? v.map(String)
           : typeof v === "string" && v
@@ -48,21 +49,21 @@ export function Dashboard({ records, fields, members }: { records: BaseRecord[];
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f6f7] p-5" data-dashboard>
       <div className="mb-4 flex items-center gap-2">
-        <h2 className="text-[16px] font-medium">仪表盘</h2>
-        <span className="text-[12px] text-subtle">根据当前可见数据实时统计</span>
+        <h2 className="text-[16px] font-medium">{t("仪表盘")}</h2>
+        <span className="text-[12px] text-subtle">{t("根据当前可见数据实时统计")}</span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-        <Card title="记录总数" glyph={null}><Big>{fmt(s.total)}</Big><Sub>条记录</Sub></Card>
+        <Card title={t("记录总数")} glyph={null}><Big>{fmt(s.total)}</Big><Sub>{t("条记录")}</Sub></Card>
         {s.numbers.map(({ field, sum, avg, filled }) => (
-          <Card key={field.id} title={`${field.name} · 求和`} glyph={field}>
+          <Card key={field.id} title={t("{name} · 求和", { name: field.name })} glyph={field}>
             <Big>{fmt(sum)}</Big>
-            <Sub>平均 {avg === null ? "—" : fmt(avg)} · 已填 {filled} 条</Sub>
+            <Sub>{t("平均 {avg} · 已填 {n} 条", { avg: avg === null ? "—" : fmt(avg), n: filled })}</Sub>
           </Card>
         ))}
         {s.checkboxes.map(({ field, checked }) => (
-          <Card key={field.id} title={`${field.name} · 已勾选`} glyph={field}>
+          <Card key={field.id} title={t("{name} · 已勾选", { name: field.name })} glyph={field}>
             <Big>{fmt(checked)}</Big>
-            <Sub>占比 {s.total ? Math.round((checked / s.total) * 100) : 0}%</Sub>
+            <Sub>{t("占比 {p}%", { p: s.total ? Math.round((checked / s.total) * 100) : 0 })}</Sub>
           </Card>
         ))}
       </div>
@@ -71,13 +72,13 @@ export function Dashboard({ records, fields, members }: { records: BaseRecord[];
           {s.selects.map(({ field, buckets }) => {
             const max = Math.max(1, ...buckets.map((b) => b.count));
             return (
-              <Card key={field.id} title={`按「${field.name}」统计`} glyph={field}>
+              <Card key={field.id} title={t("按「{name}」统计", { name: field.name })} glyph={field}>
                 <div className="mt-2 space-y-2" data-dashboard-chart={field.id}>
                   {buckets.map((b) => {
                     const [bg, fg] = b.key ? optionColor(field, b.key) : ["#F2F3F5", "#646A73"];
                     return (
                       <div key={b.key || "__none"} className="flex items-center gap-2 text-[12px]">
-                        <span className="w-20 shrink-0 truncate text-muted-foreground">{b.key || "未填写"}</span>
+                        <span className="w-20 shrink-0 truncate text-muted-foreground">{b.key || t("未填写")}</span>
                         <div className="h-5 min-w-0 flex-1 rounded bg-[#f2f3f5]">
                           <div className="h-5 rounded" style={{ width: `${(b.count / max) * 100}%`, background: fg, opacity: b.count ? 0.85 : 0 }} title={`${b.count}`} />
                         </div>

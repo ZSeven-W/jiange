@@ -1,4 +1,5 @@
 import { baseApi, type BaseRecord, type Field, type User } from "@/lib/api";
+import { t, useI18n } from "@/lib/i18n";
 import { CellView } from "./cells";
 import { displayValue, isAttachmentArray, recordTitle, recordTitleField, REGISTRY } from "./registry";
 import { Image as ImageIcon } from "lucide-react";
@@ -38,14 +39,14 @@ export function Gallery({
       <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
         {records.map((r) => {
           const cover = coverOf(r);
-          const t = recordTitle(r, fields, members) || "未命名";
+          const title = recordTitle(r, fields, members) || t("未命名");
           return (
             <div key={r.id} className="group cursor-pointer overflow-hidden rounded-lg border bg-surface transition-shadow hover:shadow-md" onClick={() => onOpen(r)} data-card={r.id}>
               <div className="grid h-32 place-items-center bg-sidebar text-[26px] font-semibold text-subtle" style={cover ? { padding: 0 } : undefined}>
                 {cover ? <img src={cover.url} alt={cover.name} className="size-full object-cover" /> : <ImageIcon size={24} strokeWidth={1.3} className="text-subtle/60" />}
               </div>
               <div className="space-y-1 p-2.5 text-[13px]">
-                <div className="truncate font-medium">{t}</div>
+                <div className="truncate font-medium">{title}</div>
                 {extra.map((f) => (
                   <div key={f.id} className="truncate text-[12px] text-muted-foreground">
                     <CellView field={f} record={r} members={members} canEdit={false} />
@@ -60,13 +61,13 @@ export function Gallery({
                     baseApi.deleteRecord(baseId, r.id).then(onMutate);
                   }}
                 >
-                  删除
+                  {t("删除")}
                 </button>
               )}
             </div>
           );
         })}
-        {records.length === 0 && <p className="col-span-full py-12 text-center text-[13px] text-subtle">暂无记录</p>}
+        {records.length === 0 && <p className="col-span-full py-12 text-center text-[13px] text-subtle">{t("暂无记录")}</p>}
       </div>
     </div>
   );

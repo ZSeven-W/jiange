@@ -1,19 +1,20 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 import { ApiError, baseApi } from "@/lib/api";
 import { refreshWrites, useWriteLedger, type WriteLedger } from "./writeSafety";
 
 export function importFailureMessage(error: unknown): string {
   if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
-    if (error.status === 409) return "表格或权限已变化，未导入数据，请检查后重新选择文件。";
-    if (error.status === 401 || error.status === 403 || error.status === 404) return "当前无权导入或登录已失效，未导入数据。";
-    return `未导入数据：${error.message || "文件内容无效"}`;
+    if (error.status === 409) return t("表格或权限已变化，未导入数据，请检查后重新选择文件。");
+    if (error.status === 401 || error.status === 403 || error.status === 404) return t("当前无权导入或登录已失效，未导入数据。");
+    return t("未导入数据：{msg}", { msg: error.message || t("文件内容无效") });
   }
-  return "无法确认导入是否完成，请先检查记录，避免重复导入。";
+  return t("无法确认导入是否完成，请先检查记录，避免重复导入。");
 }
 
 export function importResultMessage(result: { imported: number; errors: { row: number; err: string }[] }): string {
-  if (!result.errors.length) return `已导入 ${result.imported} 条记录。`;
-  return `已导入 ${result.imported} 条记录，跳过 ${result.errors.length} 行：${result.errors.slice(0, 5).map((item) => `第 ${item.row} 行 ${item.err}`).join("；")}${result.errors.length > 5 ? "等" : ""}`;
+  if (!result.errors.length) return t("已导入 {n} 条记录。", { n: result.imported });
+  return t("已导入 {n} 条记录，跳过 {m} 行：{errors}{more}", { n: result.imported, m: result.errors.length, errors: result.errors.slice(0, 5).map((item) => t("第 {row} 行 {msg}", { row: item.row, msg: item.err })).join(t("；")), more: result.errors.length > 5 ? t("等") : "" });
 }
 
 /** Keep the session ledger accurate even if the chooser's component unmounts. */
@@ -26,8 +27,8 @@ export async function executeCsvImport({ file, ledger, valid, send, onRefresh, o
   onMessage: (message: string) => void;
 }): Promise<void> {
   if (ledger.hasCellWrites() || ledger.blocked("record:create")) return;
-  if (file.size > (1 << 20)) { if (valid()) onMessage("CSV 文件超过 1 MiB，请拆分后再导入。"); return; }
-  const op = ledger.begin("导入 CSV", file.name, "batch");
+  if (file.size > (1 << 20)) { if (valid()) onMessage(t("CSV 文件超过 1 MiB，请拆分后再导入。")); return; }
+  const op = ledger.begin(t("导入 CSV"), file.name, "batch");
   if (op === null) return;
   let requestStarted = false;
   try {
@@ -40,8 +41,8 @@ export async function executeCsvImport({ file, ledger, valid, send, onRefresh, o
     if (valid()) onMessage(importResultMessage(result));
   } catch (error) {
     if (!requestStarted || (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429)) ledger.complete(op);
-    else ledger.fail(op, "无法确认导入是否完成，请先核对记录，勿直接重复导入。");
-    if (valid()) onMessage(requestStarted ? importFailureMessage(error) : "无法读取文件，请选择 UTF-8 编码的 CSV 文件。");
+    else ledger.fail(op, t("无法确认导入是否完成，请先核对记录，勿直接重复导入。"));
+    if (valid()) onMessage(requestStarted ? importFailureMessage(error) : t("无法读取文件，请选择 UTF-8 编码的 CSV 文件。"));
   } finally {
     if (requestStarted) refreshWrites(onRefresh);
   }
@@ -75,7 +76,7 @@ export function CsvImport({ baseId, onRefresh }: { baseId: number; onRefresh: ()
   const disabled = busy || ledger.blocked("batch") || ledger.blocked("record:create") || ledger.hasCellWrites();
   return <>
     <label className={`rounded-md px-2 py-1 ${disabled ? "cursor-not-allowed text-subtle" : "cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground"}`} data-import-csv>
-      {busy ? "正在导入…" : "导入 CSV"}
+      {busy ? t("正在导入…") : t("导入 CSV")}
       <input type="file" accept=".csv,text/csv" disabled={disabled} className="sr-only" onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         event.currentTarget.value = "";

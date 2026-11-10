@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /** 飞书风格确认对话框（替代原生 confirm）。 */
 export function ConfirmDialog({
   open,
   title,
   description,
-  confirmText = "确定",
+  confirmText,
   danger,
   onConfirm,
   onCancel,
@@ -39,14 +40,14 @@ export function ConfirmDialog({
         {description && <p className="mt-2 text-[13px] leading-5 text-muted-foreground">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={onCancel}>
-            取消
+            {t("取消")}
           </button>
           <button
             className={cn("h-8 rounded-md px-3 text-[13px] font-medium text-white", danger ? "bg-destructive hover:opacity-90" : "bg-primary hover:opacity-90")}
             onClick={onConfirm}
             data-confirm-ok
           >
-            {confirmText}
+            {confirmText ?? t("确定")}
           </button>
         </div>
       </div>
@@ -60,7 +61,7 @@ export function PromptDialog({
   title,
   placeholder,
   initial = "",
-  confirmText = "确定",
+  confirmText,
   onConfirm,
   onCancel,
 }: {
@@ -99,14 +100,14 @@ export function PromptDialog({
         />
         <div className="mt-5 flex justify-end gap-2">
           <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={onCancel}>
-            取消
+            {t("取消")}
           </button>
           <button
             className="h-8 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
             disabled={!v.trim()}
             onClick={() => v.trim() && onConfirm(v.trim())}
           >
-            {confirmText}
+            {confirmText ?? t("确定")}
           </button>
         </div>
       </div>

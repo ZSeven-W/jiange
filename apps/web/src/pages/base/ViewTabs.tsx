@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { t, useI18n } from "@/lib/i18n";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
 import { ApiError, baseApi, type View } from "@/lib/api";
@@ -18,8 +19,8 @@ export function moveViewIds(ids: readonly number[], moving: number, destination:
 
 /** A rejected rename is known not to have committed; retain its text without locking all view operations. */
 export function retainRejectedViewRename(ledger: WriteLedger, draft: string, viewId: number) {
-  const held = ledger.begin("重命名视图（未保存）", draft, undefined, undefined, false, true, { kind: "view", viewId });
-  if (held !== null) ledger.fail(held, "名称未保存，权限或视图可能已变化。请复制输入并核对后重新命名。");
+  const held = ledger.begin(t("重命名视图（未保存）"), draft, undefined, undefined, false, true, { kind: "view", viewId });
+  if (held !== null) ledger.fail(held, t("名称未保存，权限或视图可能已变化。请复制输入并核对后重新命名。"));
 }
 
 export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSelect, onRefresh }: {
@@ -77,13 +78,13 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
       const rejected = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
       if (preserveRejectedViewId !== undefined && rejected) retainRejectedViewRename(ledger, draft, preserveRejectedViewId);
       if (rejected) ledger.complete(operation);
-      else ledger.fail(operation, "无法确认视图操作是否完成，请检查视图列表后再操作。");
-      if (valid(originalBase)) setMessage(error instanceof ApiError && error.status === 409 ? "视图已发生变化，请检查后重试。" : "无法确认视图操作是否完成，请刷新后检查。 ");
+      else ledger.fail(operation, t("无法确认视图操作是否完成，请检查视图列表后再操作。"));
+      if (valid(originalBase)) setMessage(error instanceof ApiError && error.status === 409 ? t("视图已发生变化，请检查后重试。") : t("无法确认视图操作是否完成，请刷新后检查。 "));
     } finally {
       // An interrupted write may have committed, so always fetch the server state.
       if (identity.current.alive && identity.current.baseId === originalBase) {
         try { await onRefresh(); }
-        catch { if (valid(originalBase)) setMessage("无法刷新视图，请稍后重试。"); }
+        catch { if (valid(originalBase)) setMessage(t("无法刷新视图，请稍后重试。")); }
         finally {
           if (pending.current === token) {
             pending.current = null;
@@ -97,34 +98,34 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
   const rename = async (view: View) => {
     const originalBase = baseId;
     setMenu(null);
-    const name = await askText("重命名视图", "视图名称", view.name);
+    const name = await askText(t("重命名视图"), t("视图名称"), view.name);
     if (name === null || !valid(originalBase)) return;
     const trimmed = name.trim();
-    if (!trimmed || [...trimmed].length > 100) { setMessage("视图名称需为 1–100 个字符。"); return; }
+    if (!trimmed || [...trimmed].length > 100) { setMessage(t("视图名称需为 1–100 个字符。")); return; }
     if (trimmed === view.name) return;
-    void run("重命名视图", trimmed, async () => { await baseApi.renameView(originalBase, view.id, view.name, trimmed); }, view.id);
+    void run(t("重命名视图"), trimmed, async () => { await baseApi.renameView(originalBase, view.id, view.name, trimmed); }, view.id);
   };
   const duplicate = async (view: View) => {
     const originalBase = baseId;
     setMenu(null);
-    if (dirty && view.id === activeId && !await ask("复制已保存的视图？", "当前临时配置尚未保存，副本将使用已保存的配置。", false)) return;
+    if (dirty && view.id === activeId && !await ask(t("复制已保存的视图？"), t("当前临时配置尚未保存，副本将使用已保存的配置。"), false)) return;
     if (!valid(originalBase)) return;
-    void run("复制视图", view.name, async () => (await baseApi.duplicateView(originalBase, view.id)).id);
+    void run(t("复制视图"), view.name, async () => (await baseApi.duplicateView(originalBase, view.id)).id);
   };
   const remove = async (view: View) => {
     const originalBase = baseId;
     setMenu(null);
-    if (!await ask(`删除视图「${view.name}」？`, "删除后不可恢复。") || !valid(originalBase)) return;
-    void run("删除视图", view.name, async () => { await baseApi.deleteView(originalBase, view.id); });
+    if (!await ask(t("删除视图「{name}」？", { name: view.name }), t("删除后不可恢复。")) || !valid(originalBase)) return;
+    void run(t("删除视图"), view.name, async () => { await baseApi.deleteView(originalBase, view.id); });
   };
   const reorder = (view: View, destination: View, expected = views.map((item) => item.id)) => {
     const order = moveViewIds(expected, view.id, destination.id);
-    if (order) void run("调整视图顺序", "", async () => { await baseApi.reorderViews(baseId, expected, order); });
+    if (order) void run(t("调整视图顺序"), "", async () => { await baseApi.reorderViews(baseId, expected, order); });
   };
   const selected = views.find((view) => view.id === menu);
   const selectedIndex = selected ? views.findIndex((view) => view.id === selected.id) : -1;
   return <>
-    <div className="flex min-w-0 shrink items-center overflow-x-auto" role="tablist" aria-label="视图">
+    <div className="flex min-w-0 shrink items-center overflow-x-auto" role="tablist" aria-label={t("视图")}>
       {views.map((view) => <div key={view.id} className={`group/view flex h-10 shrink-0 items-center rounded-t-md ${view.id === activeId ? "bg-surface font-medium text-foreground shadow-[0_-1px_4px_rgba(31,35,41,0.05)]" : "text-muted-foreground hover:bg-hover hover:text-foreground"}`}
         draggable={canEdit && !busy && !ledger.blocked("view:write")}
         onDragStart={(event) => { dragging.current = { baseId, source: view.id, order: views.map((item) => item.id) }; event.dataTransfer.setData("application/x-jiange-view", String(view.id)); event.dataTransfer.effectAllowed = "move"; }}
@@ -132,15 +133,15 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
         onDragOver={(event) => { if (canEdit && event.dataTransfer.types.includes("application/x-jiange-view")) event.preventDefault(); }}
         onDrop={(event) => { event.preventDefault(); const drag = dragging.current; dragging.current = null; const source = views.find((item) => item.id === drag?.source); if (drag && drag.baseId === baseId && source && canEdit) reorder(source, view, drag.order); }}>
         <button type="button" role="tab" aria-selected={view.id === activeId} data-view-tab={view.type} className="flex h-full items-center gap-1.5 pl-3 pr-1" onClick={() => onSelect(view.id)}>{icon(view.type)}<span>{view.name}</span></button>
-        {canEdit && <button type="button" ref={(el) => { if (el) anchors.current.set(view.id, el); else anchors.current.delete(view.id); }} aria-label={`${view.name}视图菜单`} aria-expanded={menu === view.id} disabled={busy || ledger.blocked("view:write")} onClick={() => setMenu(menu === view.id ? null : view.id)} className={`mr-1 grid size-6 place-items-center rounded hover:bg-hover disabled:opacity-50 ${view.id === activeId ? "text-muted-foreground" : "text-subtle sm:opacity-0 sm:group-hover/view:opacity-100"}`}><MoreVertical size={16} /></button>}
+        {canEdit && <button type="button" ref={(el) => { if (el) anchors.current.set(view.id, el); else anchors.current.delete(view.id); }} aria-label={t("{name}视图菜单", { name: view.name })} aria-expanded={menu === view.id} disabled={busy || ledger.blocked("view:write")} onClick={() => setMenu(menu === view.id ? null : view.id)} className={`mr-1 grid size-6 place-items-center rounded hover:bg-hover disabled:opacity-50 ${view.id === activeId ? "text-muted-foreground" : "text-subtle sm:opacity-0 sm:group-hover/view:opacity-100"}`}><MoreVertical size={16} /></button>}
       </div>)}
     </div>
     {selected && position && createPortal(<div ref={menuRef} style={position} role="menu" className="fixed z-[100] rounded-lg border bg-surface p-1 text-[13px] shadow-lg">
-      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void rename(selected)}>重命名</button>
-      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void duplicate(selected)}>复制视图</button>
-      {selectedIndex > 0 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex - 1])}>向左移动</button>}
-      {selectedIndex >= 0 && selectedIndex < views.length - 1 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex + 1])}>向右移动</button>}
-      <button type="button" role="menuitem" disabled={views.length <= 1} className="block w-full rounded px-3 py-2 text-left text-destructive hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void remove(selected)}>删除视图</button>
+      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void rename(selected)}>{t("重命名")}</button>
+      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void duplicate(selected)}>{t("复制视图")}</button>
+      {selectedIndex > 0 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex - 1])}>{t("向左移动")}</button>}
+      {selectedIndex >= 0 && selectedIndex < views.length - 1 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex + 1])}>{t("向右移动")}</button>}
+      <button type="button" role="menuitem" disabled={views.length <= 1} className="block w-full rounded px-3 py-2 text-left text-destructive hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void remove(selected)}>{t("删除视图")}</button>
     </div>, document.body)}
     {message && <span role="alert" title={message} className="max-w-28 shrink truncate text-xs text-destructive">{message}</span>}
   </>;

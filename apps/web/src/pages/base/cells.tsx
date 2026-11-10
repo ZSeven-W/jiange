@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { t } from "@/lib/i18n";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, personIDs, REGISTRY } from "./registry";
@@ -25,7 +26,7 @@ export function Tag({ colorIndex, bg, fg, value }: { colorIndex: number; bg?: st
 function CompactValues({ labels, first, action }: { labels: string[]; first?: ReactNode; action?: ReactNode }) {
   return <span className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden whitespace-nowrap" title={labels.join("、")}>
     {first && <span className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap">{first}</span>}
-    {labels.length > 1 && <span className="shrink-0 rounded bg-sidebar px-1 text-[12px] text-subtle" aria-label={`还有 ${labels.length - 1} 项`}>+{labels.length - 1}</span>}
+    {labels.length > 1 && <span className="shrink-0 rounded bg-sidebar px-1 text-[12px] text-subtle" aria-label={t("还有 {n} 项", { n: labels.length - 1 })}>+{labels.length - 1}</span>}
     {action}
   </span>;
 }
@@ -87,7 +88,7 @@ export function CellView({
       // 允许多选: the cell may hold an array of member ids (single stays scalar).
       const ids = personIDs(v);
       if (!ids.length) return null;
-      const labels = ids.map((id) => memberName(id, members) || `成员 #${id}`);
+      const labels = ids.map((id) => memberName(id, members) || t("成员 #{id}", { id }));
       if (compact && ids.length > 1) {
         return <CompactValues labels={labels} first={<span className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap"><Avatar name={labels[0]} />{labels[0]}</span>} />;
       }
@@ -126,7 +127,7 @@ export function CellView({
       return null;
     }
     case "attachment":
-      if (compact && isAttachmentArray(v) && v.length) return <CompactValues labels={v.map((a) => a.name)} first={<a href={`/api/files/${v[0].id}`} target="_blank" rel="noreferrer" className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-primary hover:underline"><Paperclip size={11} strokeWidth={1.7} className="inline align-[-1px]" /> {v[0].name}</a>} action={canEdit && onEdit ? <button className="shrink-0 rounded px-1 text-[12px] text-subtle hover:bg-hover hover:text-foreground" onClick={(e) => { e.stopPropagation(); onEdit(); }}>+ 上传</button> : undefined} />;
+      if (compact && isAttachmentArray(v) && v.length) return <CompactValues labels={v.map((a) => a.name)} first={<a href={`/api/files/${v[0].id}`} target="_blank" rel="noreferrer" className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-primary hover:underline"><Paperclip size={11} strokeWidth={1.7} className="inline align-[-1px]" /> {v[0].name}</a>} action={canEdit && onEdit ? <button className="shrink-0 rounded px-1 text-[12px] text-subtle hover:bg-hover hover:text-foreground" onClick={(e) => { e.stopPropagation(); onEdit(); }}>{t("+ 上传")}</button> : undefined} />;
       return (
         <span className="flex flex-wrap gap-1 overflow-hidden">
           {isAttachmentArray(v)
@@ -138,7 +139,7 @@ export function CellView({
             : null}
           {canEdit && onEdit && (
             <button className="rounded px-1 text-[12px] text-subtle hover:bg-hover hover:text-foreground" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
-              + 上传
+              {t("+ 上传")}
             </button>
           )}
         </span>
@@ -304,13 +305,13 @@ function MultiSelectEditor({ field, value, onCommit, onCancel, onDraft }: { fiel
       ))}
       <div className="mt-1 flex justify-end gap-2 border-t pt-1.5">
         <button className="h-6 rounded border px-2 text-[12px]" onClick={onCancel}>
-          取消
+          {t("取消")}
         </button>
         <button
           className="h-6 rounded bg-primary px-2 text-[12px] text-white"
           onClick={() => onCommit(sel.length ? sel : null)}
         >
-          确定
+          {t("确定")}
         </button>
       </div>
     </div>
@@ -348,13 +349,13 @@ function PersonMultiEditor({ members, value, onCommit, onCancel, onDraft }: { me
       ))}
       <div className="mt-1 flex justify-end gap-2 border-t pt-1.5">
         <button className="h-6 rounded border px-2 text-[12px]" onClick={onCancel}>
-          取消
+          {t("取消")}
         </button>
         <button
           className="h-6 rounded bg-primary px-2 text-[12px] text-white"
           onClick={() => onCommit(sel.length ? sel : null)}
         >
-          确定
+          {t("确定")}
         </button>
       </div>
     </div>
@@ -406,12 +407,12 @@ function AttachmentEditor({
         onClick={() => inputRef.current?.click()}
         data-attach-upload
       >
-        {busy ? "上传中…" : `上传（已 ${value.length} 个）`}
+        {busy ? t("上传中…") : t("上传（已 {n} 个）", { n: value.length })}
       </button>
       <button className="h-6 rounded border px-2 text-[12px]" disabled={busy} onClick={onCancel}>
-        取消
+        {t("取消")}
       </button>
-      {error && <span role="alert" className="text-[12px] text-destructive">上传失败，请重试。</span>}
+      {error && <span role="alert" className="text-[12px] text-destructive">{t("上传失败，请重试。")}</span>}
     </div>
   );
 }

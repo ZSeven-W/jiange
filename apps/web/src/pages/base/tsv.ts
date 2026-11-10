@@ -1,5 +1,6 @@
 import type { BaseRecord, Cell, Field } from "@/lib/api";
 import { displayValue, REGISTRY } from "./registry";
+import { t as translate } from "@/lib/i18n";
 import type { User } from "@/lib/api";
 
 /** Parse Excel-style TSV: \t between cells, \n between rows; a leading `"`
@@ -118,9 +119,9 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
   return plan;
 }
 
-export function skippedPasteMessage(skipped: PastePlan["skipped"]): string {
-  const positions = skipped.slice(0, 5).map(({ row, column }) => `第 ${row} 行第 ${column} 列`).join("、");
-  return `有 ${skipped.length} 个单元格因格式不支持或超出字段范围未写入（${positions}${skipped.length > 5 ? "等" : ""}）。`;
+export function skippedPasteMessage(skipped: PastePlan["skipped"], tr: (key: string, vars?: Record<string, string | number>) => string = translate): string {
+  const positions = skipped.slice(0, 5).map(({ row, column }) => tr("第 {row} 行第 {column} 列", { row, column })).join(tr("、"));
+  return tr("有 {n} 个单元格因格式不支持或超出字段范围未写入（{positions}{more}）。", { n: skipped.length, positions, more: skipped.length > 5 ? tr("等") : "" });
 }
 
 /** TSV for a cell rectangle (indices into the visible grid). */

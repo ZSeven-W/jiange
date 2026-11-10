@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { t } from "@/lib/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import type { BaseRecord, DocMeta, Field, FieldType, View } from "@/lib/api";
 
@@ -138,6 +139,7 @@ export function useWriteLedger(baseId: number) {
 }
 
 export const CELL_UNKNOWN = "无法确认是否保存。请刷新并核对当前值，再决定是否重新输入；不会自动重试。";
+// 展示时经 t() 翻译。
 /** A batch operation stopped before issuing its next network request. */
 export class WriteNotAttempted extends Error {}
 /** Stops on the first uncertain write; later non-idempotent creates never run. */
@@ -161,16 +163,16 @@ export function cellDraft(value: unknown): string {
 
 export function WriteIssues({ ledger, issues }: { ledger: WriteLedger; issues: WriteIssue[] }) {
   if (!issues.length) return null;
-  return <div className="space-y-2 border-b bg-[#fff8e8] px-3 py-2 text-[12px] text-[#815b00]" aria-label="未确认的表格修改">
+  return <div className="space-y-2 border-b bg-[#fff8e8] px-3 py-2 text-[12px] text-[#815b00]" aria-label={t("未确认的表格修改")}>
     {issues.map((issue) => <div key={issue.id} role={issue.status === "failed" ? "alert" : "status"}>
       {ledger.mayShow(issue) ? <>
-      <p>{issue.label}：{issue.status === "pending" ? "正在保存…" : issue.message}</p>
+      <p>{t(issue.label)}：{issue.status === "pending" ? t("正在保存…") : issue.message}</p>
       {issue.status === "failed" && <>
         <label className="mt-1 block">原始输入（可复制）<textarea readOnly value={issue.draft} rows={Math.min(4, Math.max(1, issue.draft.split("\n").length))} className="mt-1 block w-full rounded border bg-surface px-2 py-1 text-foreground" /></label>
-        <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">已核对，关闭提示</button>
+        <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">{t("已核对，关闭提示")}</button>
       </>}
-      </> : <><p>{issue.publicMessage ? `${issue.publicMessage} ` : ""}未确认的修改已保留；当前权限或数据范围发生变化，原内容暂时隐藏。</p>{issue.status === "failed" && <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">删除这条未确认草稿</button>}</>}
+      </> : <><p>{issue.publicMessage ? `${issue.publicMessage} ` : ""}{t("未确认的修改已保留；当前权限或数据范围发生变化，原内容暂时隐藏。")}</p>{issue.status === "failed" && <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">{t("删除这条未确认草稿")}</button>}</>}
     </div>)}
-    <p className="text-subtle">提示仅保存在当前登录会话内，刷新或退出后不会保留。</p>
+    <p className="text-subtle">{t("提示仅保存在当前登录会话内，刷新或退出后不会保留。")}</p>
   </div>;
 }

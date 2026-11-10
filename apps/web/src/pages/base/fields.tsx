@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { Cell, Field, FieldType, User } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
+import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
 import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Snowflake, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
@@ -24,6 +25,7 @@ export function FieldForm({
   onCancel: () => void;
   onAcknowledge?: () => void;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
   const [multi, setMulti] = useState(initial?.multiple ?? false);
@@ -101,7 +103,7 @@ export function FieldForm({
   return <><span ref={anchor} />{position && createPortal(<form
       ref={form}
       role="dialog"
-      aria-label={initial ? "编辑字段" : "添加字段"}
+      aria-label={initial ? t("编辑字段") : t("添加字段")}
       style={position}
       className="fixed z-[100] max-h-[calc(100vh-32px)] space-y-4 overflow-y-auto rounded-lg border bg-surface p-3 text-left text-[13px] font-normal text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.16)]"
       data-field-form
@@ -112,21 +114,21 @@ export function FieldForm({
         if (saving || uncertain) return;
         setSaving(true); setError("");
         try {
-          await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, multiple: type === "person" ? multi : false, defaultValue: defaultCell(type, dflt, names, members) });
+          await onSubmit({ name: name.trim() || initial?.name || t("新字段"), type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, multiple: type === "person" ? multi : false, defaultValue: defaultCell(type, dflt, names, members) });
           onCancel();
         } catch {
-          setError("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。");
+          setError(t("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。"));
           setUncertain(true);
         } finally { setSaving(false); }
       }}
     >
-      <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">标题</span><input autoFocus={!initial} value={name} onChange={(e) => setName(e.target.value)} placeholder="请输入字段标题" className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" /></label>
-      <div className="space-y-1.5"><span className="text-[12px] text-muted-foreground">字段类型</span><button ref={typeButton} type="button" aria-haspopup="listbox" aria-expanded={typesOpen} onClick={() => setTypesOpen((open) => !open)} className="flex h-9 w-full items-center gap-2 rounded-md border px-2.5 text-left hover:bg-hover" data-field-type><TypeGlyph t={type} size={15} /><span className="flex-1">{REGISTRY[type].label}</span><ChevronRight size={15} className="text-subtle" /></button></div>
+      <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">{t("标题")}</span><input autoFocus={!initial} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("请输入字段标题")} className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" /></label>
+      <div className="space-y-1.5"><span className="text-[12px] text-muted-foreground">{t("字段类型")}</span><button ref={typeButton} type="button" aria-haspopup="listbox" aria-expanded={typesOpen} onClick={() => setTypesOpen((open) => !open)} className="flex h-9 w-full items-center gap-2 rounded-md border px-2.5 text-left hover:bg-hover" data-field-type><TypeGlyph t={type} size={15} /><span className="flex-1">{t(REGISTRY[type].label)}</span><ChevronRight size={15} className="text-subtle" /></button></div>
       {type === "person" && (
         <label className="flex items-center gap-2 text-[13px]" data-field-multiple>
           <input type="checkbox" className="accent-primary" checked={multi} onChange={(e) => setMulti(e.target.checked)} />
-          允许多选
-          <span title="开启后每个单元格可包含多个成员；关闭时多出的成员只保留第一个" className="text-subtle"><Info size={12} /></span>
+          {t("允许多选")}
+          <span title={t("开启后每个单元格可包含多个成员；关闭时多出的成员只保留第一个")} className="text-subtle"><Info size={12} /></span>
         </label>
       )}
       {def.hasOptions && (
@@ -141,7 +143,7 @@ export function FieldForm({
                   <button
                     key={ci}
                     type="button"
-                    title={`颜色 ${ci + 1}`}
+                    title={t("颜色 {n}", { n: ci + 1 })}
                     className={cn("h-4 w-4 rounded-full border", (colors[i] ?? -1) === ci ? "ring-1 ring-primary ring-offset-1" : "")}
                     style={{ background: bg }}
                     onClick={() => setColor(i, (colors[i] ?? -1) === ci ? -1 : ci)}
@@ -150,15 +152,15 @@ export function FieldForm({
               </div>
             </div>
           ))}
-          <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder="新增选项，用逗号分隔" className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
+          <input value={opts} onChange={(e) => setOpts(e.target.value)} placeholder={t("新增选项，用逗号分隔")} className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary" />
         </div>
       )}
       {DEFAULT_KINDS[type] && (
-        <div role="group" aria-label="默认值" className="block space-y-1.5" data-field-default>
-          <span className="flex items-center gap-1 text-[12px] text-muted-foreground">默认值<span title="新建记录时自动填入，之后可修改" className="text-subtle"><Info size={12} /></span></span>
+        <div role="group" aria-label={t("默认值")} className="block space-y-1.5" data-field-default>
+          <span className="flex items-center gap-1 text-[12px] text-muted-foreground">{t("默认值")}<span title={t("新建记录时自动填入，之后可修改")} className="text-subtle"><Info size={12} /></span></span>
           {DEFAULT_KINDS[type] === "multi" ? (
             <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-multi>
-              {names.length === 0 && <span className="text-[12px] text-subtle">先添加选项</span>}
+              {names.length === 0 && <span className="text-[12px] text-subtle">{t("先添加选项")}</span>}
               {names.map((n, i) => {
                 const picked = parseMulti(dflt).includes(n);
                 const [bg, fg] = PALETTE[(colors[i] ?? -1) >= 0 ? colors[i] : i % PALETTE.length] ?? PALETTE[0];
@@ -173,7 +175,7 @@ export function FieldForm({
           ) : DEFAULT_KINDS[type] === "person" ? (
             type === "person" && multi ? (
               <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person-multi>
-                {members.length === 0 && <span className="text-[12px] text-subtle">没有可选成员</span>}
+                {members.length === 0 && <span className="text-[12px] text-subtle">{t("没有可选成员")}</span>}
                 {members.map((m) => {
                   const picked = parseMultiIDs(dflt).includes(m.id);
                   return (
@@ -185,8 +187,8 @@ export function FieldForm({
                 })}
               </div>
             ) : (
-              <div role="radiogroup" aria-label="默认人员" className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person>
-                {[{ id: 0, name: "无" }, ...members, ...(dflt && !dflt.startsWith("[") && !members.some((m) => String(m.id) === dflt) ? [{ id: Number(dflt), name: `成员 #${dflt}` }] : [])].map((m) => {
+              <div role="radiogroup" aria-label={t("默认人员")} className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person>
+                {[{ id: 0, name: t("无") }, ...members, ...(dflt && !dflt.startsWith("[") && !members.some((m) => String(m.id) === dflt) ? [{ id: Number(dflt), name: t("成员 #{id}", { id: dflt }) }] : [])].map((m) => {
                   const picked = m.id === 0 ? !dflt : String(m.id) === dflt;
                   return (
                     <button key={m.id} type="button" role="radio" aria-checked={picked} onClick={() => setDflt(m.id === 0 ? "" : String(m.id))}
@@ -199,24 +201,24 @@ export function FieldForm({
             )
           ) : DEFAULT_KINDS[type] === "select" ? (
             <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
-              <option value="">无</option>
+              <option value="">{t("无")}</option>
               {names.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           ) : DEFAULT_KINDS[type] === "checkbox" ? (
-            <span className="flex h-8 items-center gap-2"><input type="checkbox" className="accent-primary" checked={dflt === "true"} onChange={(e) => setDflt(e.target.checked ? "true" : "")} />默认勾选</span>
+            <span className="flex h-8 items-center gap-2"><input type="checkbox" className="accent-primary" checked={dflt === "true"} onChange={(e) => setDflt(e.target.checked ? "true" : "")} />{t("默认勾选")}</span>
           ) : (
-            <input type={DEFAULT_KINDS[type]} value={dflt} onChange={(e) => setDflt(e.target.value)} placeholder="请输入默认值" className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" />
+            <input type={DEFAULT_KINDS[type]} value={dflt} onChange={(e) => setDflt(e.target.value)} placeholder={t("请输入默认值")} className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" />
           )}
         </div>
       )}
-      <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">字段描述（可选）</span><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="添加字段说明" className="h-9 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" data-field-desc /></label>
+      <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">{t("字段描述（可选）")}</span><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("添加字段说明")} className="h-9 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" data-field-desc /></label>
       {!initial && (
         <div className="space-y-1.5" data-field-suggest>
-          <span className="text-[12px] text-muted-foreground">推荐</span>
+          <span className="text-[12px] text-muted-foreground">{t("推荐")}</span>
           <div className="flex flex-wrap gap-2">
-            {(["formula", "created_by", "link"] as FieldType[]).map((t) => (
-              <button key={t} type="button" onClick={() => setType(t)} className={cn("flex h-7 items-center gap-1 rounded-md bg-hover px-2 text-[12px] text-muted-foreground hover:text-foreground", t === type && "bg-accent text-primary")}>
-                <TypeGlyph t={t} size={13} /> {REGISTRY[t].label}
+            {(["formula", "created_by", "link"] as FieldType[]).map((typeKey) => (
+              <button key={typeKey} type="button" onClick={() => setType(typeKey)} className={cn("flex h-7 items-center gap-1 rounded-md bg-hover px-2 text-[12px] text-muted-foreground hover:text-foreground", typeKey === type && "bg-accent text-primary")}>
+                <TypeGlyph t={typeKey} size={13} /> {t(REGISTRY[typeKey].label)}
               </button>
             ))}
           </div>
@@ -226,27 +228,27 @@ export function FieldForm({
         <textarea
           value={formula}
           onChange={(e) => setFormula(e.target.value)}
-          placeholder='公式，如 [数量] * [单价]。引用字段用 [字段名]'
+          placeholder={t('公式，如 [数量] * [单价]。引用字段用 [字段名]')}
           rows={3}
           className="w-full rounded-md border px-2 py-1 font-mono text-[12px] outline-none focus:border-primary"
           data-field-formula
         />
       )}
-      {typeChanged && <p className="text-[12px] leading-4 text-amber-600">切换类型会自动转换兼容的值，不兼容的值将被清空。</p>}
+      {typeChanged && <p className="text-[12px] leading-4 text-amber-600">{t("切换类型会自动转换兼容的值，不兼容的值将被清空。")}</p>}
       {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
-      {uncertain && <button type="button" className="text-[12px] text-primary underline" onClick={() => { onAcknowledge?.(); setUncertain(false); setError(""); }}>已核对，允许再次提交</button>}
+      {uncertain && <button type="button" className="text-[12px] text-primary underline" onClick={() => { onAcknowledge?.(); setUncertain(false); setError(""); }}>{t("已核对，允许再次提交")}</button>}
       <div className="flex justify-end gap-2">
         <button type="button" disabled={saving} onClick={onCancel} className="h-8 rounded-md border px-4 hover:bg-hover disabled:opacity-50">
-          取消
+          {t("取消")}
         </button>
         <button type="submit" disabled={saving || uncertain} className="h-8 rounded-md bg-primary px-4 text-white hover:bg-primary-hover disabled:opacity-50">
-          {saving ? "保存中…" : "确定"}
+          {saving ? t("保存中…") : t("确定")}
         </button>
       </div>
-    </form>, document.body)}{typesOpen && typePosition && createPortal(<div ref={typeMenu} role="listbox" aria-label="字段类型" style={typePosition} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); setTypesOpen(false); typeButton.current?.focus(); } }} onPaste={(event) => event.stopPropagation()} className="fixed z-[101] max-h-[min(590px,calc(100vh-32px))] overflow-y-auto rounded-lg border bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
-      <label className="mx-2 flex h-9 items-center gap-2 border-b px-1 text-subtle"><Search size={15}/><input autoFocus value={typeQuery} onChange={(e) => setTypeQuery(e.target.value)} placeholder="搜索" className="w-full bg-transparent text-foreground outline-none" /></label>
-      <div className="px-4 pb-1 pt-3 text-[12px] text-subtle">字段类型</div>
-      {FIELD_TYPES.filter((t) => REGISTRY[t].label.includes(typeQuery.trim())).map((t) => <button key={t} type="button" role="option" aria-selected={t === type} onClick={() => { setType(t); setTypesOpen(false); setTypeQuery(""); }} className="flex h-9 w-full items-center gap-2 px-4 text-left hover:bg-hover"><TypeGlyph t={t} size={15}/><span className="flex-1">{REGISTRY[t].label}</span>{t === type && <Check size={14} className="text-primary"/>}</button>)}
+    </form>, document.body)}{typesOpen && typePosition && createPortal(<div ref={typeMenu} role="listbox" aria-label={t("字段类型")} style={typePosition} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); setTypesOpen(false); typeButton.current?.focus(); } }} onPaste={(event) => event.stopPropagation()} className="fixed z-[101] max-h-[min(590px,calc(100vh-32px))] overflow-y-auto rounded-lg border bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
+      <label className="mx-2 flex h-9 items-center gap-2 border-b px-1 text-subtle"><Search size={15}/><input autoFocus value={typeQuery} onChange={(e) => setTypeQuery(e.target.value)} placeholder={t("搜索")} className="w-full bg-transparent text-foreground outline-none" /></label>
+      <div className="px-4 pb-1 pt-3 text-[12px] text-subtle">{t("字段类型")}</div>
+      {FIELD_TYPES.filter((typeKey) => t(REGISTRY[typeKey].label).includes(typeQuery.trim())).map((typeKey) => <button key={typeKey} type="button" role="option" aria-selected={typeKey === type} onClick={() => { setType(typeKey); setTypesOpen(false); setTypeQuery(""); }} className="flex h-9 w-full items-center gap-2 px-4 text-left hover:bg-hover"><TypeGlyph t={typeKey} size={15}/><span className="flex-1">{t(REGISTRY[typeKey].label)}</span>{typeKey === type && <Check size={14} className="text-primary"/>}</button>)}
     </div>, document.body)}</>;
 }
 
@@ -299,6 +301,7 @@ function parseMultiIDs(raw: string): number[] {
 export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter" | "insert-left" | "insert-right" | "freeze" | "unfreeze" | "hide";
 
 export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onAction }: { field: Field; /** this column is the last frozen one */ frozen?: boolean; onEdit: () => void; onDelete: () => void; onDuplicate?: () => void; onAction?: (action: FieldMenuAction) => void }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -340,7 +343,7 @@ export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onActi
         type="button"
         className="inline-flex size-8 touch-manipulation items-center justify-center rounded text-subtle opacity-0 hover:bg-hover hover:text-foreground group-hover/th:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        aria-label={`字段菜单 ${field.name}`}
+        aria-label={t("字段菜单 {name}", { name: field.name })}
         aria-haspopup="menu"
         aria-expanded={open}
         data-field-menu
@@ -350,23 +353,23 @@ export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onActi
       {open && position && createPortal(
         <div ref={menu} role="menu" style={position} className="fixed z-[101] w-56 overflow-y-auto rounded-lg border bg-surface p-1 text-[13px] font-normal text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-field-menu-pop onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); setOpen(false); trigger.current?.focus(); } }} onPaste={(e) => e.stopPropagation()}>
           {([
-            ["edit", "修改字段/列", Pencil],
-            ["describe", "编辑字段/列描述", Info],
-            ...(onDuplicate ? [["duplicate", "复制字段/列", Copy]] : []),
+            ["edit", t("修改字段/列"), Pencil],
+            ["describe", t("编辑字段/列描述"), Info],
+            ...(onDuplicate ? [["duplicate", t("复制字段/列"), Copy]] : []),
             ...(onAction ? [
               ["sep0"],
-              ...(!field.isPrimary ? [["insert-left", "向左插入字段/列", ArrowLeftToLine]] : []),
-              ["insert-right", "向右插入字段/列", ArrowRightToLine],
-              frozen ? ["unfreeze", "取消冻结", Snowflake] : ["freeze", "冻结至此列", Snowflake],
-              ...(!field.isPrimary ? [["hide", "隐藏字段/列", EyeOff]] : []),
+              ...(!field.isPrimary ? [["insert-left", t("向左插入字段/列"), ArrowLeftToLine]] : []),
+              ["insert-right", t("向右插入字段/列"), ArrowRightToLine],
+              frozen ? ["unfreeze", t("取消冻结"), Snowflake] : ["freeze", t("冻结至此列"), Snowflake],
+              ...(!field.isPrimary ? [["hide", t("隐藏字段/列"), EyeOff]] : []),
               ["sep1"],
-              ["sort-asc", field.type === "number" ? "按 1 → 9 排序" : "按 A 到 Z 排序", ArrowDownAZ],
-              ["sort-desc", field.type === "number" ? "按 9 → 1 排序" : "按 Z 到 A 排序", ArrowDownZA],
+              ["sort-asc", field.type === "number" ? t("按 1 → 9 排序") : t("按 A 到 Z 排序"), ArrowDownAZ],
+              ["sort-desc", field.type === "number" ? t("按 9 → 1 排序") : t("按 Z 到 A 排序"), ArrowDownZA],
               ["sep2"],
-              ["group", `按 ${field.name} 分组`, LayoutPanelTop],
-              ["filter", `按 ${field.name} 筛选`, Filter],
+              ["group", t("按 {name} 分组", { name: field.name }), LayoutPanelTop],
+              ["filter", t("按 {name} 筛选", { name: field.name }), Filter],
             ] : []),
-            ...(!field.isPrimary ? [["sep3"], ["delete", "删除字段/列", Trash2]] : []),
+            ...(!field.isPrimary ? [["sep3"], ["delete", t("删除字段/列"), Trash2]] : []),
           ] as [string, string?, React.ComponentType<{ size?: number; strokeWidth?: number }>?][]).map(([key, label, Icon]) => !label || !Icon ? <div key={key} className="mx-1 my-1 h-px bg-border" role="separator" /> : (
             <button
               key={key}
@@ -378,7 +381,7 @@ export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onActi
                 setOpen(false);
                 if (key === "edit" || key === "describe") onEdit();
                 else if (key === "duplicate") onDuplicate?.();
-                else if (key === "delete") { if (await ask(`删除字段「${field.name}」？`, "字段及其所有值将被删除。")) onDelete(); }
+                else if (key === "delete") { if (await ask(t("删除字段「{name}」？", { name: field.name }), t("字段及其所有值将被删除。"))) onDelete(); }
                 else onAction?.(key as FieldMenuAction);
               }}
             >

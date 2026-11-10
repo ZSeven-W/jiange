@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { t, useI18n } from "@/lib/i18n";
 import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { ask, askText } from "@/components/ui/ask";
 import { deleteOption, moveOption, recolorOption, renameOption, type OptionPatch } from "./optionOps";
@@ -67,8 +68,8 @@ export function Kanban({
     return (
       <div className="grid flex-1 place-items-center text-[14px] text-muted-foreground">
         <div className="space-y-2 text-center">
-          <p>看板需要一个单选字段来分列</p>
-          {canEdit && <p className="text-[13px] text-subtle">请先在表格视图中添加一个单选字段</p>}
+          <p>{t("看板需要一个单选字段来分列")}</p>
+          {canEdit && <p className="text-[13px] text-subtle">{t("请先在表格视图中添加一个单选字段")}</p>}
         </div>
       </div>
     );
@@ -89,7 +90,7 @@ export function Kanban({
     if (!patch || !canEdit) return;
     setError("");
     try { await baseApi.patchField(baseId, field.id, patch as Partial<Field>); }
-    catch { setError("分组修改未能确认，请刷新后核对。"); }
+    catch { setError(t("分组修改未能确认，请刷新后核对。")); }
     onMutate();
   };
   const dropColumn = (to: number) => {
@@ -119,7 +120,7 @@ export function Kanban({
   };
 
   const addGroup = async () => {
-    const name = (await askText("新建分组", "分组名称"))?.trim();
+    const name = (await askText(t("新建分组"), t("分组名称")))?.trim();
     if (!name || (field.options ?? []).includes(name)) return;
     await baseApi.patchField(baseId, field.id, { options: [...(field.options ?? []), name] }).catch(() => {});
     onMutate();
@@ -166,10 +167,10 @@ export function Kanban({
             onDragEnd={() => { setColDrag(null); setColOver(null); }}
             data-kanban-col-head={col.key}
           >
-            {col.key ? <Tag colorIndex={optionIndex} bg={tagBg} fg={tagFg} value={col.key} /> : <span className="rounded bg-[#E4E5E7] px-2 py-0.5 text-[12px] font-medium text-[#646A73]">未分类</span>}
+            {col.key ? <Tag colorIndex={optionIndex} bg={tagBg} fg={tagFg} value={col.key} /> : <span className="rounded bg-[#E4E5E7] px-2 py-0.5 text-[12px] font-medium text-[#646A73]">{t("未分类")}</span>}
             <span className="text-subtle">{col.records.length}</span>
             {canEdit && col.key ? (
-              <button type="button" className="ml-auto grid size-6 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground" aria-label={`分组菜单 ${col.key}`} aria-expanded={menuFor === col.key} onClick={() => setMenuFor((v) => (v === col.key ? null : col.key))} data-kanban-col-menu={col.key}>
+              <button type="button" className="ml-auto grid size-6 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground" aria-label={t("分组菜单 {name}", { name: col.key })} aria-expanded={menuFor === col.key} onClick={() => setMenuFor((v) => (v === col.key ? null : col.key))} data-kanban-col-menu={col.key}>
                 <MoreHorizontal size={16} />
               </button>
             ) : <MoreHorizontal size={16} className="ml-auto text-subtle opacity-40" aria-hidden />}
@@ -179,9 +180,9 @@ export function Kanban({
                 option={col.key}
                 count={col.records.length}
                 onClose={() => setMenuFor(null)}
-                onRename={async () => { setMenuFor(null); const name = await askText("重命名分组", "分组名称", col.key); if (name !== null) await patchOptions(renameOption(field, col.key, name)); }}
+                onRename={async () => { setMenuFor(null); const name = await askText(t("重命名分组"), t("分组名称"), col.key); if (name !== null) await patchOptions(renameOption(field, col.key, name)); }}
                 onColor={(c) => { setMenuFor(null); void patchOptions(recolorOption(field, col.key, c)); }}
-                onDelete={async () => { setMenuFor(null); if (await ask(`删除分组「${col.key}」？`, col.records.length ? `该分组的 ${col.records.length} 张卡片将移到「未分类」。` : undefined)) await patchOptions(deleteOption(field, col.key)); }}
+                onDelete={async () => { setMenuFor(null); if (await ask(t("删除分组「{name}」？", { name: col.key }), col.records.length ? t("该分组的 {n} 张卡片将移到「{group}」。", { n: col.records.length, group: t("未分类") }) : undefined)) await patchOptions(deleteOption(field, col.key)); }}
               />
             )}
           </div>
@@ -224,8 +225,8 @@ export function Kanban({
                   return c ? <img src={c.url} alt={c.name} className="-mx-3 -mt-[11px] mb-2 block h-28 w-[calc(100%+24px)] max-w-none rounded-t-md object-cover" data-card-cover /> : null;
                 })()}
                 {(() => {
-                  const t = recordTitle(rec, fields, members);
-                  return <div className={cn("truncate leading-[22px]", t ? "font-medium" : "text-subtle")}>{t || "未命名记录"}</div>;
+                  const title = recordTitle(rec, fields, members);
+                  return <div className={cn("truncate leading-[22px]", title ? "font-medium" : "text-subtle")}>{title || t("未命名记录")}</div>;
                 })()}
                 {extra.some((f) => !isBlankCell(rec.cells[f.id])) && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-muted-foreground">
@@ -243,8 +244,8 @@ export function Kanban({
           {canEdit ? (
             <button
               className="mx-2 mb-1.5 mt-1 grid h-8 shrink-0 place-items-center rounded-md text-subtle hover:bg-black/5 hover:text-foreground"
-              title="添加卡片"
-              aria-label="添加卡片"
+              title={t("添加卡片")}
+              aria-label={t("添加卡片")}
               data-kanban-add={col.key}
               onClick={() => baseApi.addRecord(baseId, col.key ? { [field.id]: col.key } : {}).then(onMutate)}
             >
@@ -264,7 +265,7 @@ export function Kanban({
           onDrop={(e) => { if (colDrag) { e.preventDefault(); dropColumn((field.options ?? []).length); } }}
           data-kanban-add-group
         >
-          <Plus size={16} /> 新建分组
+          <Plus size={16} /> {t("新建分组")}
         </button>
       )}
     </div>
@@ -283,14 +284,14 @@ function ColumnMenu({ field, option, count, onClose, onRename, onColor, onDelete
   }, [onClose]);
   const current = optionColor(field, option)[0];
   return (
-    <div ref={ref} role="menu" aria-label={`分组 ${option}`} className="absolute right-1 top-9 z-30 w-52 rounded-lg border bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-kanban-col-pop>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover" onClick={onRename} data-col-action="rename"><Pencil size={15} strokeWidth={1.6} className="text-muted-foreground" />重命名</button>
-      <div className="px-2 pb-1 pt-1.5 text-[12px] text-subtle">分组颜色</div>
+    <div ref={ref} role="menu" aria-label={t("分组 {name}", { name: option })} className="absolute right-1 top-9 z-30 w-52 rounded-lg border bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-kanban-col-pop>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover" onClick={onRename} data-col-action="rename"><Pencil size={15} strokeWidth={1.6} className="text-muted-foreground" />{t("重命名")}</button>
+      <div className="px-2 pb-1 pt-1.5 text-[12px] text-subtle">{t("分组颜色")}</div>
       <div className="grid grid-cols-5 gap-1.5 px-2 pb-2">
-        {PALETTE.map(([bg, fg], i) => <button key={i} type="button" aria-label={`颜色 ${i + 1}`} onClick={() => onColor(i)} className={cn("h-6 rounded border", current === bg && "ring-2 ring-primary ring-offset-1")} style={{ background: bg, borderColor: fg + "33" }} data-col-color={i} />)}
+        {PALETTE.map(([bg, fg], i) => <button key={i} type="button" aria-label={t("颜色 {n}", { n: i + 1 })} onClick={() => onColor(i)} className={cn("h-6 rounded border", current === bg && "ring-2 ring-primary ring-offset-1")} style={{ background: bg, borderColor: fg + "33" }} data-col-color={i} />)}
       </div>
       <div className="mx-1 my-1 h-px bg-border" role="separator" />
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-destructive hover:bg-hover" onClick={onDelete} data-col-action="delete"><Trash2 size={15} strokeWidth={1.6} />删除分组{count ? <span className="ml-auto text-[12px] text-subtle">{count} 张卡片</span> : null}</button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-destructive hover:bg-hover" onClick={onDelete} data-col-action="delete"><Trash2 size={15} strokeWidth={1.6} />{t("删除分组")}{count ? <span className="ml-auto text-[12px] text-subtle">{t("{n} 张卡片", { n: count })}</span> : null}</button>
     </div>
   );
 }
