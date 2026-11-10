@@ -47,21 +47,40 @@ func visibleTitleField(fields, allFields []store.Field) *store.Field {
 	return nil
 }
 
-func visibleTitleMemberID(record store.Record, field *store.Field) (int64, bool) {
+// visibleTitleMemberIDs lists the member ids a person/created_by title field
+// references; a multi-person cell contributes every id in stored order.
+func visibleTitleMemberIDs(record store.Record, field *store.Field) []int64 {
 	if field == nil {
-		return 0, false
+		return nil
 	}
-	if field.Type == "created_by" && record.CreatorID != nil && *record.CreatorID > 0 {
-		return *record.CreatorID, true
+	if field.Type == "created_by" {
+		if record.CreatorID != nil && *record.CreatorID > 0 {
+			return []int64{*record.CreatorID}
+		}
+		return nil
 	}
 	if field.Type != "person" {
-		return 0, false
+		return nil
 	}
-	var id int64
-	if json.Unmarshal(record.Cells[strconv.FormatInt(field.ID, 10)], &id) != nil || id <= 0 {
-		return 0, false
+	var v any
+	if json.Unmarshal(record.Cells[strconv.FormatInt(field.ID, 10)], &v) != nil {
+		return nil
 	}
-	return id, true
+	switch x := v.(type) {
+	case float64:
+		if x > 0 {
+			return []int64{int64(x)}
+		}
+	case []any:
+		ids := make([]int64, 0, len(x))
+		for _, item := range x {
+			if n, ok := item.(float64); ok && n > 0 {
+				ids = append(ids, int64(n))
+			}
+		}
+		return ids
+	}
+	return nil
 }
 
 func visibleRecordTitle(record store.Record, field *store.Field, names map[int64]string) string {
@@ -73,10 +92,13 @@ func visibleRecordTitle(record store.Record, field *store.Field, names map[int64
 	// internal identifier or claim a derived value is a record title.
 	switch field.Type {
 	case "person", "created_by":
-		if id, ok := visibleTitleMemberID(record, field); ok {
-			return names[id]
+		parts := make([]string, 0, 2)
+		for _, id := range visibleTitleMemberIDs(record, field) {
+			if name := names[id]; name != "" {
+				parts = append(parts, name)
+			}
 		}
-		return ""
+		return strings.Join(parts, "、")
 	case "formula", "lookup", "link":
 		return ""
 	case "created_at":
@@ -126,9 +148,11 @@ func titleMemberNames(ctx context.Context, reader store.BaseSnapshotReader, tabl
 		if !used[record.ID] {
 			continue
 		}
-		if id, ok := visibleTitleMemberID(record, field); ok && !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
+		for _, id := range visibleTitleMemberIDs(record, field) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
 		}
 	}
 	if len(ids) == 0 {

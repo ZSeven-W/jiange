@@ -505,6 +505,21 @@ func renderTemplate(tmpl string, fields []store.Field, rec store.Record) string 
 						return strconv.FormatFloat(x, 'f', -1, 64)
 					case bool:
 						return strconv.FormatBool(x)
+					case []any:
+						// Person/link style arrays render as a comma-joined id
+						// list (notifications carry ids; names resolve client-side).
+						parts := make([]string, 0, len(x))
+						for _, item := range x {
+							switch n := item.(type) {
+							case float64:
+								parts = append(parts, strconv.FormatFloat(n, 'f', -1, 64))
+							case string:
+								parts = append(parts, n)
+							}
+						}
+						if len(parts) > 0 {
+							return strings.Join(parts, ",")
+						}
 					}
 				}
 			}

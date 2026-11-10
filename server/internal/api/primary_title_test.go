@@ -26,8 +26,8 @@ func TestVisibleRecordTitleUsesPrimaryProjection(t *testing.T) {
 	}
 	person := store.Field{ID: 5, Type: "person", IsPrimary: true}
 	row.Cells["5"] = json.RawMessage(`7`)
-	if id, ok := visibleTitleMemberID(row, &person); !ok || id != 7 {
-		t.Fatalf("person id=%d ok=%v", id, ok)
+	if ids := visibleTitleMemberIDs(row, &person); len(ids) != 1 || ids[0] != 7 {
+		t.Fatalf("person ids=%v", ids)
 	}
 	if got := visibleRecordTitle(row, &person, map[int64]string{7: "小简"}); got != "小简" {
 		t.Fatalf("person title=%q", got)

@@ -18,5 +18,10 @@ describe("field 默认值 input", () => {
     expect(defaultCell("person", "7", [])).toBe(7);
     expect(defaultCell("person", "", [])).toBeNull();
     expect(defaultCell("person", "-1", [])).toBeNull();
+    // 允许多选: the default is a JSON array of member ids in member order.
+    expect(defaultCell("person", "[9,7]", [], [{ id: 7, name: "张三", email: "", createdAt: "" }, { id: 9, name: "李四", email: "", createdAt: "" }])).toEqual([7, 9]);
+    expect(defaultCell("person", "[9,404]", [], [{ id: 9, name: "李四", email: "", createdAt: "" }])).toEqual([9]);
+    expect(defaultCell("person", "[]", [])).toBeNull();
+    expect(defaultCell("person", "not json", [])).toBeNull();
   });
 });

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu, type FieldMenuAction } from "./fields";
 import { RecordDetail } from "./RecordDetail";
-import { displayValue, evalFormulas, PALETTE, REGISTRY, setFormulaCache, optionColor } from "./registry";
+import { displayValue, evalFormulas, memberName, PALETTE, personIDs, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
 import { ChevronRight, Expand, Lock, Pencil, Trash2, X } from "lucide-react";
@@ -304,7 +304,7 @@ export function Grid({
     if (!canEdit) return;
     const active = readSelection();
     if (!active) { const held = ledger.begin("粘贴", text); if (held !== null) ledger.fail(held, "选区已变化或尚未选择，本次粘贴未提交；请重新选择单元格。"); return; }
-    const plan = planPaste(records, fields, Math.min(active.ar, active.rr), Math.min(active.af, active.rf), text);
+    const plan = planPaste(records, fields, Math.min(active.ar, active.rr), Math.min(active.af, active.rf), text, members);
     const scope = { kind: "paste" as const, ...plan.scope };
     const total = plan.patches.length + plan.addRows.length;
     if (!total) { const held = ledger.begin("粘贴", text, undefined, undefined, false, true, scope); if (held !== null) ledger.fail(held, `${plan.skipped.length ? skippedPasteMessage(plan.skipped) : "没有可粘贴的内容。"}本次粘贴未提交。`, plan.skipped.length ? skippedPasteMessage(plan.skipped) : undefined); return; }
@@ -536,9 +536,7 @@ export function Grid({
   const groups: { key: string; rows: BaseRecord[] }[] = [];
   if (groupField) {
     const index = new Map<string, { key: string; rows: BaseRecord[] }>();
-    for (const r of records) {
-      const raw = displayValue(r, groupField, members);
-      const key = raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0) ? "" : String(raw);
+    const push = (key: string, r: BaseRecord) => {
       let g = index.get(key);
       if (!g) {
         g = { key, rows: [] };
@@ -546,9 +544,23 @@ export function Grid({
         groups.push(g);
       }
       g.rows.push(r);
+    };
+    for (const r of records) {
+      const raw = displayValue(r, groupField, members);
+      if (groupField.type === "person") {
+        // 飞书式：一条记录出现在它每个成员的分组里，空值进未分组。
+        const ids = personIDs(raw);
+        if (!ids.length) push("", r);
+        else ids.forEach((id) => push(String(id), r));
+        continue;
+      }
+      const key = raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0) ? "" : String(raw);
+      push(key, r);
     }
   }
   const groupColor = (key: string) => (groupField && groupField.type === "select" && key ? optionColor(groupField, key) : null);
+  // 人员分组头显示成员名（key 是成员 id 字符串）。
+  const groupLabel = (key: string) => (groupField?.type === "person" && key ? memberName(Number(key), members) || `成员 #${key}` : key);
   const idxOf = new Map(records.map((r, i) => [r.id, i]));
 
   // --- virtualization: render only the visible window (plus overscan) ---
@@ -830,7 +842,7 @@ export function Grid({
                         <ChevronRight size={12} strokeWidth={1.7} className={cn("text-subtle transition-transform", open && "rotate-90")} />
                         {g.key ? (
                           <span className="rounded px-1.5 py-0.5 text-[12px]" style={{ background: bg, color: fg }}>
-                            {g.key}
+                            {groupLabel(g.key)}
                           </span>
                         ) : (
                           <span className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-subtle">未分组</span>

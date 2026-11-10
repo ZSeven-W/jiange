@@ -52,13 +52,13 @@ export function formatTSV(rows: string[][]): string {
 }
 
 /** Cell value → plain text (for copy), through the type registry. */
-export function toText(field: Field, v: Cell | undefined): string {
-  return REGISTRY[field.type].format(v, field);
+export function toText(field: Field, v: Cell | undefined, members?: User[]): string {
+  return REGISTRY[field.type].format(v, field, members);
 }
 
 /** Plain text → cell value; undefined means "cannot paste into this field" (skip). */
-export function fromText(field: Field, text: string): Cell | null | undefined {
-  const value = REGISTRY[field.type].parse(text, field);
+export function fromText(field: Field, text: string, members?: User[]): Cell | null | undefined {
+  const value = REGISTRY[field.type].parse(text, field, members);
   if (field.type !== "date" || value === null || value === undefined) return value;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const [year, month, day] = value.split("-").map(Number);
@@ -87,7 +87,7 @@ export interface PastePlan {
 
 /** Compute the mutations for pasting TSV at selection anchor (ri, fi).
  * Cells that cannot be represented in their field are skipped. */
-export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi: number, text: string): PastePlan {
+export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi: number, text: string, members?: User[]): PastePlan {
   const grid = parseTSV(text);
   const width = grid.reduce((maximum, row) => Math.max(maximum, row.length), 0);
   const plan: PastePlan = {
@@ -102,7 +102,7 @@ export function planPaste(records: BaseRecord[], fields: Field[], ri: number, fi
     for (let dc = 0; dc < row.length; dc++) {
       const f = fields[fi + dc];
       if (!f) { plan.skipped.push({ row: dr + 1, column: dc + 1, reason: "outside_fields" }); continue; }
-      const v = fromText(f, row[dc]);
+      const v = fromText(f, row[dc], members);
       if (v === undefined) { plan.skipped.push({ row: dr + 1, column: dc + 1, reason: "invalid" }); continue; }
       cells[f.id] = v;
     }
@@ -128,7 +128,7 @@ export function rangeText(records: BaseRecord[], fields: Field[], members: User[
   const rows: string[][] = [];
   for (let r = Math.min(r0, r1); r <= Math.max(r0, r1); r++) {
     const out: string[] = [];
-    for (let f = Math.min(f0, f1); f <= Math.max(f0, f1); f++) out.push(toText(fields[f], displayValue(records[r], fields[f], members)));
+    for (let f = Math.min(f0, f1); f <= Math.max(f0, f1); f++) out.push(toText(fields[f], displayValue(records[r], fields[f], members), members));
     rows.push(out);
   }
   return formatTSV(rows);

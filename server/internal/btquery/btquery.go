@@ -83,6 +83,11 @@ func Validate(fields []FieldSpec, cfg Config) error {
 					}
 				}
 			}
+			if f.Type == "person" && (r.Op == "contains" || r.Op == "not_contains") {
+				if _, ok := personIDs(r.V); !ok {
+					return fmt.Errorf("field %d requires member id(s)", r.F)
+				}
+			}
 		}
 	}
 	for _, s := range cfg.Sorts {
@@ -216,6 +221,14 @@ func ruleSQL(f FieldSpec, r Rule, next func(any) string) string {
 	exists := "(cells ? '" + key(f) + "')"
 	validString := "jsonb_typeof(cells -> '" + key(f) + "') = 'string'"
 	validBool := "jsonb_typeof(cells -> '" + key(f) + "') = 'boolean'"
+	// Person filters match member ids inside scalar or array cells; the
+	// generic substring path below would falsely match "1" inside "[11, 2]".
+	if f.Type == "person" {
+		switch r.Op {
+		case "contains", "not_contains", "is", "is_not":
+			return personRuleSQL(f, r, next)
+		}
+	}
 	switch r.Op {
 	case "contains":
 		// strpos treats percent, underscore and backslash literally, matching
@@ -307,6 +320,11 @@ func sortSQL(f FieldSpec, asc bool) string {
 			cases = append(cases, fmt.Sprintf("WHEN %s = '%s' THEN %d", cell, optEscape(o), i))
 		}
 		return fmt.Sprintf("CASE %s ELSE %d END %s NULLS LAST", strings.Join(cases, " "), len(f.Options), dir)
+	case "person", "created_by":
+		// numeric order on the member id; arrays sort by their first member
+		// (matching the in-memory twin, which previously diverged here)
+		k := key(f)
+		return fmt.Sprintf("COALESCE(CASE WHEN jsonb_typeof(cells -> '%s') = 'number' THEN (cells ->> '%s')::float8 END, CASE WHEN jsonb_typeof(cells -> '%s') = 'array' THEN (cells -> '%s' ->> 0)::float8 END) %s NULLS LAST", k, k, k, k, dir)
 	default:
 		return fmt.Sprintf("%s %s NULLS LAST", cell, dir)
 	}
@@ -315,6 +333,94 @@ func sortSQL(f FieldSpec, asc bool) string {
 // optEscape guards select options embedded in CASE branches: they come from
 // the field's own options list, quotes are doubled to stay inside the literal.
 func optEscape(o string) string { return strings.ReplaceAll(o, "'", "''") }
+
+// personRuleSQL compiles person filters as membership of member ids in a
+// scalar or array cell. The EXISTS form normalizes a scalar cell (and a
+// missing/null one) into elements so both shapes share one predicate,
+// mirroring matchRule bit for bit.
+func personRuleSQL(f FieldSpec, r Rule, next func(any) string) string {
+	k := key(f)
+	elements := fmt.Sprintf(
+		`jsonb_array_elements_text(CASE WHEN jsonb_typeof(cells -> '%s') = 'array' THEN cells -> '%s' ELSE jsonb_build_array(cells -> '%s') END)`,
+		k, k, k)
+	matches := func(ids []int64) string {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s e WHERE e::bigint = ANY(%s))", elements, next(ids))
+	}
+	ids, _ := personIDs(r.V)
+	switch r.Op {
+	case "contains", "is":
+		return matches(ids)
+	default: // not_contains, is_not: empty and null cells match, as in matchRule
+		return "NOT " + matches(ids)
+	}
+}
+
+// personIDs normalizes a person filter value — a member id (number or numeric
+// text, the legacy saved form) or an array of them — into ids.
+func personIDs(v any) ([]int64, bool) {
+	one := func(x any) (int64, bool) {
+		f, ok := toFloat(x)
+		if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return int64(f), true
+	}
+	switch x := v.(type) {
+	case float64, string, int, int64:
+		id, ok := one(x)
+		return []int64{id}, ok
+	case []any:
+		ids := make([]int64, 0, len(x))
+		for _, item := range x {
+			id, ok := one(item)
+			if !ok {
+				return nil, false
+			}
+			ids = append(ids, id)
+		}
+		return ids, true
+	}
+	return nil, false
+}
+
+// personCellIDs extracts member ids from a person cell (scalar or array);
+// malformed or non-numeric content counts as no members.
+func personCellIDs(raw json.RawMessage) []int64 {
+	var v any
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return nil
+	}
+	switch x := v.(type) {
+	case float64:
+		return []int64{int64(x)}
+	case []any:
+		ids := make([]int64, 0, len(x))
+		for _, item := range x {
+			if n, ok := item.(float64); ok {
+				ids = append(ids, int64(n))
+			}
+		}
+		return ids
+	}
+	return nil
+}
+
+// cellContains reports whether any member id of the cell is in ids.
+func cellContains(cell, ids []int64) bool {
+	for _, c := range cell {
+		for _, id := range ids {
+			if c == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// PersonCellIDs extracts member ids from a person cell value (scalar or
+// array); malformed or non-numeric content counts as no members. Exported for
+// the member-visibility and history paths outside this package.
+func PersonCellIDs(raw json.RawMessage) []int64 { return personCellIDs(raw) }
 
 // OpsValid reports whether an operator name exists.
 func OpsValid(op string) bool { return ops[op] }
@@ -369,6 +475,17 @@ func matchRule(field FieldSpec, r Rule, raw json.RawMessage) bool {
 	if ok && field.Type == "checkbox" {
 		if _, valid := v.(bool); !valid && r.Op != "empty" && r.Op != "not_empty" {
 			return false
+		}
+	}
+	// Person filters match member ids inside scalar or array cells; comparing
+	// the string form of an array would falsely match "1" inside "[11, 2]".
+	if field.Type == "person" && (r.Op == "contains" || r.Op == "not_contains" || r.Op == "is" || r.Op == "is_not") {
+		if ids, ok := personIDs(r.V); ok {
+			member := cellContains(personCellIDs(raw), ids)
+			if r.Op == "contains" || r.Op == "is" {
+				return member
+			}
+			return !member
 		}
 	}
 	switch r.Op {
@@ -511,9 +628,13 @@ func SortIndexes(fields []FieldSpec, cfg Config, n int, cellsOf func(i int) map[
 			sj, _ := cellText(cj, s.F)
 			var c int
 			switch f.Type {
-			case "number", "person", "created_by":
+			case "number":
 				x, _ := toFloat(rawToAny(ci[key(f)]))
 				y, _ := toFloat(rawToAny(cj[key(f)]))
+				c = int(x - y)
+			case "person", "created_by":
+				x, _ := toFloat(personFirstID(ci[key(f)]))
+				y, _ := toFloat(personFirstID(cj[key(f)]))
 				c = int(x - y)
 			case "checkbox":
 				c = int(btoi(si == "true") - btoi(sj == "true"))
@@ -554,6 +675,26 @@ func rawToAny(raw json.RawMessage) any {
 	var v any
 	if json.Unmarshal(raw, &v) == nil {
 		return v
+	}
+	return nil
+}
+
+// personFirstID is a person cell's sort key: the scalar id or the first array
+// member; missing/unusable values sort as empty via the caller's checks.
+func personFirstID(raw json.RawMessage) any {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return nil
+	}
+	switch x := v.(type) {
+	case float64:
+		return x
+	case []any:
+		if len(x) > 0 {
+			if n, ok := x[0].(float64); ok {
+				return n
+			}
+		}
 	}
 	return nil
 }

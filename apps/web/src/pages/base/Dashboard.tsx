@@ -1,5 +1,5 @@
 import type { BaseRecord, Field, User } from "@/lib/api";
-import { displayValue, optionColor } from "./registry";
+import { displayValue, memberName, optionColor, personIDs } from "./registry";
 import { TypeGlyph } from "./cells";
 
 export interface DashboardStats {
@@ -16,12 +16,19 @@ export function dashboardStats(records: BaseRecord[], fields: Field[], members: 
     const sum = vals.reduce((a, b) => a + b, 0);
     return { field, sum, avg: vals.length ? sum / vals.length : null, filled: vals.length };
   });
-  const selects = fields.filter((f) => f.type === "select" || f.type === "multi_select").map((field) => {
+  const selects = fields.filter((f) => f.type === "select" || f.type === "multi_select" || f.type === "person").map((field) => {
     const counts = new Map<string, number>((field.options ?? []).map((o) => [o, 0]));
     let none = 0;
     for (const r of records) {
       const v = displayValue(r, field, members);
-      const keys = Array.isArray(v) ? v.map(String) : typeof v === "string" && v ? [v] : [];
+      // 人员字段（含允许多选）按成员逐个计数，与多选的聚合方式一致。
+      const keys = field.type === "person"
+        ? personIDs(v).map((id) => memberName(id, members) || `成员 #${id}`)
+        : Array.isArray(v)
+          ? v.map(String)
+          : typeof v === "string" && v
+            ? [v]
+            : [];
       if (!keys.length) none++;
       for (const k of keys) counts.set(k, (counts.get(k) ?? 0) + 1);
     }

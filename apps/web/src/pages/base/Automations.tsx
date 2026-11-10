@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, type Automation, type Field, type FilterRule, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
+import { MemberRuleValue, personRuleValue } from "./MemberRuleValue";
 
 const OP_LABEL: Record<string, string> = {
   contains: "包含", not_contains: "不包含", is: "等于", is_not: "不等于",
@@ -26,6 +27,10 @@ function opsFor(type: string): string[] {
     default: return ["contains", "not_contains", "is", "is_not", "empty", "not_empty"];
   }
 }
+
+/** 人员字段：切换字段/运算符时把值规范化为成员 id（数组或单个）。 */
+const normalized = (f: Field | undefined, rule: FilterRule): FilterRule =>
+  f?.type === "person" ? { ...rule, v: personRuleValue(rule.op, rule.v) } : rule;
 
 /** 自动化面板：触发器（表单提交/记录满足条件）→ 通知成员 + IM webhook。 */
 export function AutomationsPanel({
@@ -203,8 +208,9 @@ function AutomationForm({
                   className="h-7 w-20 rounded border bg-surface px-1"
                   value={rule.f}
                   onChange={(e) => {
+                    const nf = fields.find((x) => x.id === Number(e.target.value));
                     const rules2 = [...rules];
-                    rules2[i] = { ...rule, f: Number(e.target.value) };
+                    rules2[i] = normalized(nf, { ...rule, f: Number(e.target.value) });
                     setCfg({ ...cfg, rules: rules2 });
                   }}
                 >
@@ -217,7 +223,7 @@ function AutomationForm({
                   value={rule.op}
                   onChange={(e) => {
                     const rules2 = [...rules];
-                    rules2[i] = { ...rule, op: e.target.value };
+                    rules2[i] = normalized(f, { ...rule, op: e.target.value });
                     setCfg({ ...cfg, rules: rules2 });
                   }}
                 >
@@ -225,7 +231,9 @@ function AutomationForm({
                     <option key={op} value={op}>{OP_LABEL[op]}</option>
                   ))}
                 </select>
-                {!noValue && (
+                {!noValue && (f?.type === "person" ? (
+                  <MemberRuleValue rule={rule} members={members} onChange={(v) => { const rules2 = [...rules]; rules2[i] = { ...rule, v }; setCfg({ ...cfg, rules: rules2 }); }} />
+                ) : (
                   <input
                     className="h-7 min-w-0 flex-1 rounded border px-1.5 outline-none focus:border-primary"
                     value={String(rule.v ?? "")}
@@ -235,14 +243,14 @@ function AutomationForm({
                       setCfg({ ...cfg, rules: rules2 });
                     }}
                   />
-                )}
+                ))}
                 <button className="px-1 text-subtle hover:text-destructive" onClick={() => setCfg({ ...cfg, rules: rules.filter((_, j) => j !== i) })}>✕</button>
               </div>
             );
           })}
           <button
             className="text-[12px] text-primary hover:underline"
-            onClick={() => setCfg({ ...cfg, rules: [...rules, { f: fields[0]?.id ?? 0, op: opsFor(fields[0]?.type ?? "text")[0], v: "" }] })}
+            onClick={() => { const nf = fields[0]; setCfg({ ...cfg, rules: [...rules, nf?.type === "person" ? { f: nf.id, op: "contains", v: [] } : { f: nf?.id ?? 0, op: opsFor(nf?.type ?? "text")[0], v: "" }] }); }}
           >
             + 添加条件
           </button>

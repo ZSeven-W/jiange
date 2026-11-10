@@ -26,6 +26,7 @@ export function FieldForm({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
+  const [multi, setMulti] = useState(initial?.multiple ?? false);
   const [opts, setOpts] = useState((initial?.options ?? []).join(", "));
   const [desc, setDesc] = useState(initial?.description ?? "");
   const [formula, setFormula] = useState(initial?.formula ?? "");
@@ -111,7 +112,7 @@ export function FieldForm({
         if (saving || uncertain) return;
         setSaving(true); setError("");
         try {
-          await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, defaultValue: defaultCell(type, dflt, names) });
+          await onSubmit({ name: name.trim() || initial?.name || "新字段", type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, multiple: type === "person" ? multi : false, defaultValue: defaultCell(type, dflt, names, members) });
           onCancel();
         } catch {
           setError("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。");
@@ -121,6 +122,13 @@ export function FieldForm({
     >
       <label className="block space-y-1.5"><span className="text-[12px] text-muted-foreground">标题</span><input autoFocus={!initial} value={name} onChange={(e) => setName(e.target.value)} placeholder="请输入字段标题" className="h-8 w-full rounded-md border bg-surface px-2.5 outline-none focus:border-primary" /></label>
       <div className="space-y-1.5"><span className="text-[12px] text-muted-foreground">字段类型</span><button ref={typeButton} type="button" aria-haspopup="listbox" aria-expanded={typesOpen} onClick={() => setTypesOpen((open) => !open)} className="flex h-9 w-full items-center gap-2 rounded-md border px-2.5 text-left hover:bg-hover" data-field-type><TypeGlyph t={type} size={15} /><span className="flex-1">{REGISTRY[type].label}</span><ChevronRight size={15} className="text-subtle" /></button></div>
+      {type === "person" && (
+        <label className="flex items-center gap-2 text-[13px]" data-field-multiple>
+          <input type="checkbox" className="accent-primary" checked={multi} onChange={(e) => setMulti(e.target.checked)} />
+          允许多选
+          <span title="开启后每个单元格可包含多个成员；关闭时多出的成员只保留第一个" className="text-subtle"><Info size={12} /></span>
+        </label>
+      )}
       {def.hasOptions && (
         <div className="space-y-1.5" data-option-editor>
           {names.map((n, i) => (
@@ -163,17 +171,32 @@ export function FieldForm({
               })}
             </div>
           ) : DEFAULT_KINDS[type] === "person" ? (
-            <div role="radiogroup" aria-label="默认人员" className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person>
-              {[{ id: 0, name: "无" }, ...members, ...(dflt && !members.some((m) => String(m.id) === dflt) ? [{ id: Number(dflt), name: `成员 #${dflt}` }] : [])].map((m) => {
-                const picked = m.id === 0 ? !dflt : String(m.id) === dflt;
-                return (
-                  <button key={m.id} type="button" role="radio" aria-checked={picked} onClick={() => setDflt(m.id === 0 ? "" : String(m.id))}
-                    className={cn("flex h-6 items-center gap-1 rounded-full pl-0.5 pr-2 text-[12px]", m.id === 0 && "pl-2", picked ? "bg-accent text-primary ring-1 ring-primary" : "bg-hover text-muted-foreground hover:text-foreground")} data-person-option={m.id}>
-                    {m.id !== 0 && <Avatar name={m.name} color={colorFor(m.id - 1)} size={20} />}{m.name}
-                  </button>
-                );
-              })}
-            </div>
+            type === "person" && multi ? (
+              <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person-multi>
+                {members.length === 0 && <span className="text-[12px] text-subtle">没有可选成员</span>}
+                {members.map((m) => {
+                  const picked = parseMultiIDs(dflt).includes(m.id);
+                  return (
+                    <button key={m.id} type="button" aria-pressed={picked} onClick={() => { const cur = parseMultiIDs(dflt); const next = picked ? cur.filter((x) => x !== m.id) : members.map((x) => x.id).filter((id) => id === m.id || cur.includes(id)); setDflt(next.length ? JSON.stringify(next) : ""); }}
+                      className={cn("flex h-6 items-center gap-1 rounded px-1.5 text-[12px] font-medium", picked ? "bg-accent ring-1 ring-primary" : "bg-hover opacity-60 hover:opacity-100")}>
+                      {picked && <Check size={11} />}{m.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div role="radiogroup" aria-label="默认人员" className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5" data-default-person>
+                {[{ id: 0, name: "无" }, ...members, ...(dflt && !dflt.startsWith("[") && !members.some((m) => String(m.id) === dflt) ? [{ id: Number(dflt), name: `成员 #${dflt}` }] : [])].map((m) => {
+                  const picked = m.id === 0 ? !dflt : String(m.id) === dflt;
+                  return (
+                    <button key={m.id} type="button" role="radio" aria-checked={picked} onClick={() => setDflt(m.id === 0 ? "" : String(m.id))}
+                      className={cn("flex h-6 items-center gap-1 rounded-full pl-0.5 pr-2 text-[12px]", m.id === 0 && "pl-2", picked ? "bg-accent text-primary ring-1 ring-primary" : "bg-hover text-muted-foreground hover:text-foreground")} data-person-option={m.id}>
+                      {m.id !== 0 && <Avatar name={m.name} color={colorFor(m.id - 1)} size={20} />}{m.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )
           ) : DEFAULT_KINDS[type] === "select" ? (
             <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
               <option value="">无</option>
@@ -235,7 +258,7 @@ const DEFAULT_KINDS: Partial<Record<FieldType, "text" | "number" | "date" | "sel
 };
 
 /** Cell value for the 默认值 input; null clears the default. */
-export function defaultCell(type: FieldType, raw: string, options: string[]): Cell | null {
+export function defaultCell(type: FieldType, raw: string, options: string[], members: User[] = []): Cell | null {
   const kind = DEFAULT_KINDS[type];
   const v = raw.trim();
   if (!kind || !v) return null;
@@ -243,12 +266,34 @@ export function defaultCell(type: FieldType, raw: string, options: string[]): Ce
   if (kind === "checkbox") return v === "true" ? true : null;
   if (kind === "select") return options.includes(v) ? v : null;
   if (kind === "multi") { const picked = options.filter((o) => parseMulti(v).includes(o)); return picked.length ? picked : null; }
-  if (kind === "person") { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; }
+  if (kind === "person") {
+    if (v.startsWith("[")) {
+      // 允许多选: the default is a JSON array of member ids, filtered to the
+      // workspace directory (when one is given) and ordered by it.
+      let ids = parseMultiIDs(v);
+      if (members.length) {
+        const known = new Set(members.map((m) => m.id));
+        const order = new Map(members.map((m, i) => [m.id, i] as const));
+        ids = ids.filter((id) => known.has(id));
+        ids.sort((a, b) => (order.get(a) ?? members.length) - (order.get(b) ?? members.length));
+      }
+      return ids.length ? ids : null;
+    }
+    const n = Number(v);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
   return v;
 }
 
 function parseMulti(raw: string): string[] {
   try { const v = JSON.parse(raw); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []; } catch { return []; }
+}
+
+function parseMultiIDs(raw: string): number[] {
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x > 0) : [];
+  } catch { return []; }
 }
 
 export type FieldMenuAction = "sort-asc" | "sort-desc" | "group" | "filter" | "insert-left" | "insert-right" | "freeze" | "unfreeze" | "hide";

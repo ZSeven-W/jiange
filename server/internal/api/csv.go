@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
+	"github.com/ZSeven-W/jiange/server/internal/btquery"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
@@ -77,8 +79,9 @@ func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
 	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
 	var rowErrors []csvRowError
 	var fieldCount int
+	memberIDs := s.csvMemberIDs(r.Context(), u.ID, b.WorkspaceID)
 	count, err := s.Store.ImportBaseCSV(r.Context(), guard, b.ID, func(fields []store.Field) (store.BaseImportPlan, error) {
-		plan, errs, e := csvImportPlan(rows, in.Header, in.Types, fields)
+		plan, errs, e := csvImportPlan(rows, in.Header, in.Types, fields, memberIDs)
 		rowErrors, fieldCount = errs, len(plan.Columns)
 		return plan, e
 	})
@@ -156,7 +159,36 @@ func preserveCSVBlankLines(input string) string {
 	return out.String()
 }
 
-func csvImportPlan(rows [][]string, header bool, types []string, fields []store.Field) (store.BaseImportPlan, []csvRowError, error) {
+// csvMemberIDs maps member names to ids for person-column imports, but only
+// for workspace members: an external collaborator never gains a way to probe
+// the directory through import errors.
+func (s *Server) csvMemberIDs(ctx context.Context, userID, workspaceID int64) map[string]int64 {
+	workspaces, err := s.Store.Workspaces(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	member := false
+	for _, ws := range workspaces {
+		if ws.ID == workspaceID {
+			member = true
+			break
+		}
+	}
+	if !member {
+		return nil
+	}
+	members, err := s.Store.WorkspaceMembers(ctx, workspaceID)
+	if err != nil {
+		return nil
+	}
+	ids := make(map[string]int64, len(members))
+	for _, m := range members {
+		ids[m.Name] = m.ID
+	}
+	return ids
+}
+
+func csvImportPlan(rows [][]string, header bool, types []string, fields []store.Field, memberIDs map[string]int64) (store.BaseImportPlan, []csvRowError, error) {
 	var plan store.BaseImportPlan
 	headers, data := rows[0], rows[1:]
 	if !header {
@@ -215,6 +247,10 @@ func csvImportPlan(rows [][]string, header bool, types []string, fields []store.
 		}
 		switch f.Type {
 		case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating":
+		case "person":
+			if memberIDs == nil {
+				return plan, nil, &csvPlanError{fmt.Sprintf("字段「%s」的类型暂不支持 CSV 导入", name)}
+			}
 		default:
 			return plan, nil, &csvPlanError{fmt.Sprintf("字段「%s」的类型暂不支持 CSV 导入", name)}
 		}
@@ -250,7 +286,7 @@ func csvImportPlan(rows [][]string, header bool, types []string, fields []store.
 			if value == "" {
 				continue
 			}
-			cell, err := csvValue(f, value)
+			cell, err := csvValue(f, value, memberIDs)
 			if err != nil || !validCell(f, cell) {
 				bad = fmt.Sprintf("第 %d 列「%s」的值无效", ci+1, f.Name)
 				break
@@ -366,7 +402,7 @@ func (s *Server) importCSVLegacy(w http.ResponseWriter, r *http.Request) {
 			if v == "" {
 				continue
 			}
-			cell, err := csvValue(colFields[ci], v)
+			cell, err := csvValue(colFields[ci], v, nil)
 			if err != nil {
 				bad = fmt.Sprintf("第 %d 列「%s」：%v", ci+1, colFields[ci].Name, err)
 				break
@@ -394,9 +430,36 @@ func (s *Server) importCSVLegacy(w http.ResponseWriter, r *http.Request) {
 }
 
 // csvValue coerces one CSV cell into the field's JSON representation.
-func csvValue(f store.Field, v string) (json.RawMessage, error) {
+// memberIDs maps member names to ids for person columns (nil = unsupported).
+func csvValue(f store.Field, v string, memberIDs map[string]int64) (json.RawMessage, error) {
 	mustJSON := func(a any) (json.RawMessage, error) { b, err := json.Marshal(a); return b, err }
 	switch f.Type {
+	case "person":
+		if memberIDs == nil {
+			return nil, fmt.Errorf("不支持人员导入")
+		}
+		var ids []int64
+		for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ';' || r == '，' || r == ',' || r == '、' }) {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, ok := memberIDs[part]
+			if !ok {
+				return nil, fmt.Errorf("不是工作空间成员")
+			}
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			return nil, fmt.Errorf("缺少成员")
+		}
+		if !f.Multiple {
+			if len(ids) > 1 {
+				return nil, fmt.Errorf("单选人员字段只能填一个成员")
+			}
+			return mustJSON(ids[0]) // single mode stores a bare member id
+		}
+		return mustJSON(ids)
 	case "number":
 		n, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -521,6 +584,7 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导出")
 		return
 	}
+	u, _ := UserFrom(r.Context())
 	fields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -531,6 +595,7 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	memberNames := s.csvMemberNames(r.Context(), u.ID, b.WorkspaceID)
 	var buf bytes.Buffer
 	wr := csv.NewWriter(&buf)
 	header := make([]string, len(fields))
@@ -541,7 +606,7 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	for _, rec := range recs {
 		row := make([]string, len(fields))
 		for i := range fields {
-			row[i] = cellCSV(fields[i], rec)
+			row[i] = cellCSV(fields[i], rec, memberNames)
 		}
 		_ = wr.Write(row)
 	}
@@ -557,10 +622,44 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
-func cellCSV(f store.Field, rec store.Record) string {
+// csvMemberNames resolves member ids to names for CSV export, but only for
+// workspace members: external collaborators keep the legacy id exports and
+// never receive the directory through a CSV download.
+func (s *Server) csvMemberNames(ctx context.Context, userID, workspaceID int64) map[int64]string {
+	names := map[int64]string{}
+	workspaces, err := s.Store.Workspaces(ctx, userID)
+	if err != nil {
+		return names
+	}
+	member := false
+	for _, ws := range workspaces {
+		if ws.ID == workspaceID {
+			member = true
+			break
+		}
+	}
+	if !member {
+		return names
+	}
+	members, err := s.Store.WorkspaceMembers(ctx, workspaceID)
+	if err != nil {
+		return names
+	}
+	for _, m := range members {
+		names[m.ID] = m.Name
+	}
+	return names
+}
+
+// cellCSV renders one record cell as CSV text; memberNames (empty for external
+// collaborators) resolves person/creator ids to readable names.
+func cellCSV(f store.Field, rec store.Record, memberNames map[int64]string) string {
 	switch f.Type {
 	case "created_by":
 		if rec.CreatorID != nil {
+			if name, ok := memberNames[*rec.CreatorID]; ok && name != "" {
+				return name
+			}
 			return strconv.FormatInt(*rec.CreatorID, 10)
 		}
 		return ""
@@ -578,6 +677,17 @@ func cellCSV(f store.Field, rec store.Record) string {
 	raw, ok := rec.Cells[strconv.FormatInt(f.ID, 10)]
 	if !ok {
 		return ""
+	}
+	if f.Type == "person" {
+		parts := make([]string, 0, 2)
+		for _, id := range btquery.PersonCellIDs(raw) {
+			if name, ok := memberNames[id]; ok && name != "" {
+				parts = append(parts, name)
+			} else {
+				parts = append(parts, strconv.FormatInt(id, 10))
+			}
+		}
+		return strings.Join(parts, "; ")
 	}
 	var v any
 	if json.Unmarshal(raw, &v) != nil {

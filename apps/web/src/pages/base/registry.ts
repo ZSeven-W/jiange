@@ -16,9 +16,9 @@ export interface FieldTypeDef {
   /** the options list configures this type */
   hasOptions?: boolean;
   /** plain text → cell value (undefined = cannot paste, null = clear) */
-  parse(text: string, f: Field): Cell | null | undefined;
+  parse(text: string, f: Field, members?: User[]): Cell | null | undefined;
   /** cell value → plain text (copy, filter) */
-  format(v: CellValue, f: Field): string;
+  format(v: CellValue, f: Field, members?: User[]): string;
   /** order two non-empty values (empty cells sort last in view()) */
   compare(a: Cell, b: Cell, f: Field): number;
 }
@@ -28,6 +28,21 @@ const zh = "zh-CN";
 function optIndex(options: string[], v: unknown): number {
   const i = options.indexOf(String(v));
   return i === -1 ? options.length : i;
+}
+
+/** A person cell's member ids, whether the stored shape is scalar or array. */
+export function personIDs(v: CellValue | Cell | undefined | null): number[] {
+  if (typeof v === "number") return v > 0 ? [v] : [];
+  if (Array.isArray(v)) return v.filter((x): x is number => typeof x === "number" && x > 0);
+  return [];
+}
+
+/** A saved person filter value (number, legacy numeric text, or number[]) as ids. */
+export function personRuleIDs(v: unknown): number[] {
+  if (typeof v === "number") return v > 0 ? [v] : [];
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) return [Number(v.trim())];
+  if (Array.isArray(v)) return v.filter((x): x is number => typeof x === "number" && x > 0);
+  return [];
 }
 
 export const REGISTRY: Record<FieldType, FieldTypeDef> = {
@@ -102,9 +117,26 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     icon: UserIcon,
     label: "人员",
     width: 140,
-    parse: () => undefined, // no textual round-trip for member ids
-    format: (v) => String(v ?? ""),
-    compare: (a, b) => Number(a) - Number(b),
+    parse: (t, f, members = []) => {
+      const parts = t.split(/[,，、;；]/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      const ids: number[] = [];
+      for (const part of parts) {
+        const byName = members.find((m) => m.name === part);
+        const raw = /^\d+$/.test(part) ? Number(part) : byName?.id;
+        if (raw === undefined || raw <= 0) return undefined; // unknown member → skip the cell
+        if (!ids.includes(raw)) ids.push(raw);
+      }
+      if (f.multiple) return ids;
+      return ids.length === 1 ? ids[0] : undefined; // single mode: exactly one member
+    },
+    format: (v, _f, members) => {
+      const ids = personIDs(v);
+      if (!ids.length) return "";
+      if (!members) return ids.join(",");
+      return ids.map((id) => memberName(id, members) || `成员 #${id}`).join("、");
+    },
+    compare: (a, b) => (personIDs(a)[0] ?? 0) - (personIDs(b)[0] ?? 0),
   },
   attachment: {
     icon: Paperclip,
@@ -121,7 +153,7 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     width: 140,
     readonly: true,
     parse: () => undefined,
-    format: (v) => String(v ?? ""),
+    format: (v, _f, members) => (members && typeof v === "number" && v > 0 ? memberName(v, members) || String(v) : String(v ?? "")),
     compare: (a, b) => Number(a) - Number(b),
   },
   created_at: {
@@ -300,7 +332,13 @@ export function recordTitle(record: BaseRecord | undefined, fields: Field[], mem
   }
   catch { return "#错误"; }
   if (value === null || value === undefined || value === "") return "";
-  if (field.type === "person" || field.type === "created_by") return memberName(typeof value === "number" ? value : undefined, members);
+  if (field.type === "person") {
+    const ids = personIDs(value);
+    // Unknown ids (external collaborator with a trimmed member list) must not
+    // leak raw ids into the title; they are simply omitted.
+    return ids.map((id) => memberName(id, members)).filter(Boolean).join("、");
+  }
+  if (field.type === "created_by") return memberName(typeof value === "number" ? value : undefined, members);
   if (field.type === "created_at" || field.type === "modified_at") return formatTime(typeof value === "string" ? value : undefined);
   if (Array.isArray(value)) return value.map((item) => typeof item === "string" ? item : typeof item === "object" && item && "name" in item ? String(item.name) : "").filter(Boolean).join(", ");
   return String(value);
@@ -372,7 +410,7 @@ export function evalFormulas(fields: Field[], rec: BaseRecord, members: User[]):
   return out;
 }
 
-/** 原始单元格值（computed 类型照旧读 record 元数据）。 */
+/** 原始单元格值（computed 类型照旧读 record 元数据；人员字段给成员姓名）。 */
 function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
   switch (f.type) {
     case "created_by":
@@ -381,6 +419,12 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
       return rec.createdAt ?? null;
     case "modified_at":
       return rec.updatedAt ?? null;
+    case "person": {
+      // 公式里引用人员字段得到成员姓名（多人用「、」连接），而不是裸 id 数字。
+      const ids = personIDs(rec.cells[f.id]);
+      if (!ids.length) return null;
+      return ids.map((id) => memberName(id, members) || `成员 #${id}`).join("、");
+    }
     default: {
       const v = rec.cells[f.id];
       if (v === undefined) return null;
