@@ -684,6 +684,7 @@ export const en: Record<string, string> = {
   "高": "Tall",
   "高级搜索": "Advanced search",
   "默认值": "Default value",
+  "默认人员": "Default person",
   "默认勾选": "Checked by default",
   "（必填）": "(required)",
   "；": "; ",
