@@ -34,7 +34,9 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Table2, Undo2, Workflow, Zap } from "lucide-react";
+import { aiFilterPrompt, parseAiFilter } from "./base/aiFilter";
+import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Undo2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -313,7 +315,7 @@ export function BasePage({ id }: { id: number }) {
           </label>
         )}
         {current?.type === "kanban" && <CardConfigBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
-        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
+        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar baseId={id} aiAllowed={!preventCopy} fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {(current?.type === "grid" || current?.type === "kanban") && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
@@ -508,8 +510,24 @@ function opsFor(type: string): string[] {
   }
 }
 
-function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/api").Field[]; members: import("@/lib/api").User[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
+function FilterBar({ baseId, aiAllowed, fields, members, cfg, onChange }: { baseId: number; aiAllowed: boolean; fields: import("@/lib/api").Field[]; members: import("@/lib/api").User[]; cfg: ViewConfig; onChange: (c: ViewConfig) => void }) {
   const { t } = useI18n();
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const runAiFilter = async () => {
+    if (!aiText.trim() || aiBusy) return;
+    setAiBusy(true); setAiNote(null);
+    try {
+      const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+      const answer = await aiApi.complete(baseId, aiFilterPrompt(aiText, fields, members, today));
+      const parsed = parseAiFilter(answer, fields);
+      if (!parsed || !parsed.rules.length) { setAiNote({ ok: false, text: t("AI 未能生成可用的筛选条件，请换种说法或手动添加。") }); return; }
+      onChange({ ...cfg, filters: { conj: parsed.conj, rules: parsed.rules } });
+      setAiNote({ ok: true, text: parsed.dropped ? t("已生成 {n} 个条件，{d} 个无效条件已忽略，请核对。", { n: parsed.rules.length, d: parsed.dropped }) : t("已生成 {n} 个条件，请核对。", { n: parsed.rules.length }) });
+    } catch (err) { setAiNote({ ok: false, text: aiErrorText(err) }); }
+    finally { setAiBusy(false); }
+  };
   const filters = cfg.filters ?? { conj: "and" as const, rules: [] };
   const setRules = (rules: FilterRule[], conj: "and" | "or" = filters.conj) =>
     onChange({ ...cfg, filters: rules.length ? { conj, rules } : undefined });
@@ -524,6 +542,13 @@ function FilterBar({ fields, members, cfg, onChange }: { fields: import("@/lib/a
           {t("设置筛选条件")}
           <span title={t("只显示满足条件的记录；条件对所有协作者生效")} className="text-subtle"><Info size={14} strokeWidth={1.7} /></span>
         </div>
+        {aiAllowed && <form className="flex items-center gap-1.5 rounded-md border px-2 focus-within:border-primary" onSubmit={(e) => { e.preventDefault(); void runAiFilter(); }} data-ai-filter>
+          <Sparkles size={14} className="shrink-0 text-primary" />
+          <input value={aiText} onChange={(e) => setAiText(e.target.value)} maxLength={500} placeholder={t("用一句话描述筛选条件，例如：金额大于 100 且状态为进行中")} className="h-8 min-w-0 flex-1 bg-transparent text-[13px] outline-none" />
+          <button type="submit" disabled={aiBusy || !aiText.trim()} className="h-6 shrink-0 rounded px-2 text-[12px] text-primary hover:bg-hover disabled:opacity-40">{aiBusy ? t("生成中…") : t("AI 生成")}</button>
+          <button type="button" title={t("AI 设置")} aria-label={t("AI 设置")} onClick={() => openAISettings()} className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-hover"><Settings2 size={13} /></button>
+        </form>}
+        {aiNote && <p role={aiNote.ok ? "status" : "alert"} className={aiNote.ok ? "text-[12px] text-subtle" : "text-[12px] text-destructive"}>{aiNote.text}</p>}
         {filters.rules.length > 1 && (
           <div className="flex items-center gap-2">
             {t("满足")}
