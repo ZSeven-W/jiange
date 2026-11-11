@@ -65,6 +65,12 @@ type CommentStore interface {
 	CommentAttemptCapabilityGuarded(ctx context.Context, guard RestoreGuard, expectedUserID, docID int64) (bool, error)
 	PatchCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64, body *string, resolved *bool) (Comment, bool, error)
 	DeleteCommentGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64) error
+	// SetCommentReactionGuarded adds (on) or removes one emoji reaction by the
+	// guarded user, with the same session and comment-permission checks as
+	// posting a comment. Only ReactionEmojis are accepted.
+	SetCommentReactionGuarded(ctx context.Context, guard RestoreGuard, docID, commentID int64, emoji string, on bool) error
+	// CommentReactions returns reactions on the node's comments, keyed by comment.
+	CommentReactions(ctx context.Context, docID int64) (map[int64][]CommentReaction, error)
 	AddComment(ctx context.Context, c Comment) (Comment, error)
 	Comments(ctx context.Context, docID int64) ([]Comment, error)
 	UpdateComment(ctx context.Context, c Comment) (Comment, error)

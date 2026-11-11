@@ -189,7 +189,9 @@ export const baseApi = {
     request<{ expansions?: { reverse?: { sourceBase: number; fieldId: number; from: Record<string, number[]>; titles: Record<string, string> }[] } }>("GET", `/api/bases/${id}`).then((r) => r.expansions?.reverse ?? []),
   /** 记录历史：字段级变更（新→旧），按当前读者的权限视图过滤 */
   recordHistory: (id: number, rid: number) => request<{ entries: RecordHistoryEntry[] }>("GET", `/api/bases/${id}/records/${rid}/history`).then((r) => r.entries),
-  recordComments: (id: number, rid: number) => request<{ comments: Comment[] }>("GET", `/api/bases/${id}/records/${rid}/comments`).then((r) => r.comments),
+  recordComments: (id: number, rid: number) => request<{ comments: Comment[]; reactions?: Record<string, CommentReaction[]> }>("GET", `/api/bases/${id}/records/${rid}/comments`).then((r) => ({ comments: r.comments, reactions: r.reactions ?? {} })),
+  /** 评论表情回应：on=true 添加、false 取消（固定表情集合）。 */
+  setRecordCommentReaction: (id: number, rid: number, cid: number, emoji: string, on: boolean) => request<void>("POST", `/api/bases/${id}/records/${rid}/comments/${cid}/reactions`, { emoji, on }),
   addRecordComment: (id: number, rid: number, body: string, opts: { mentions?: number[]; parentId?: number } = {}) => request<Comment>("POST", `/api/bases/${id}/records/${rid}/comments`, { body, ...opts }),
   patchRecordComment: (id: number, rid: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment | undefined>("PATCH", `/api/bases/${id}/records/${rid}/comments/${cid}`, p),
   deleteRecordComment: (id: number, rid: number, cid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}/comments/${cid}`),
@@ -223,6 +225,9 @@ export const baseApi = {
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
 };
+export interface CommentReaction { emoji: string; userIds: number[] }
+/** 与服务端 store.ReactionEmojis 一致的固定表情集合。 */
+export const REACTION_EMOJIS = ["👍", "✅", "😄", "❤️", "🎉", "👀", "🙏", "💪"] as const;
 export interface Comment {
   id: number;
   docId: number;
