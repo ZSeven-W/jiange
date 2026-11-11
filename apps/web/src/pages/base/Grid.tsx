@@ -15,6 +15,7 @@ import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBat
 import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
+import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -52,6 +53,7 @@ export function Grid({
   rowHeight,
   fills,
   frozen,
+  undo,
 }: {
   baseId: number;
   canEdit: boolean;
@@ -73,6 +75,8 @@ export function Grid({
   onDetailVisibilityChange?: (visible: boolean) => void;
   /** Field header menu shortcuts that change the view config (sort/group/filter). */
   onFieldAction?: (action: FieldMenuAction, field: Field) => void;
+  /** 撤销/重做栈与执行入口（BasePage 持有）。 */
+  undo?: { stack: BaseUndoStack; run: (redo: boolean) => void };
   /** Feishu 行高 preset from the view config. */
   rowHeight?: RowHeight;
   /** Feishu 填色 rules from the view config. */
@@ -238,6 +242,7 @@ export function Grid({
     try {
       await baseApi.setCells(baseId, rec.id, { [f.id]: v === "" ? null : v });
       ledger.complete(op);
+      if (UNDOABLE_TYPES.has(f.type)) undo?.stack.record({ label: t("编辑「{field}」", { field: f.name }), cells: [{ rid: rec.id, fid: f.id, before: cur ?? null, after: v === "" ? null : v }], created: [] });
     } catch {
       ledger.fail(op, t(CELL_UNKNOWN));
     } finally { refreshWrites(onMutate); }
@@ -281,8 +286,11 @@ export function Grid({
         for (let f = f0; f <= f1; f++) cells[fields[f].id] = null;
         return baseApi.setCells(baseId, rec.id, cells);
       }));
-      if (result.complete) ledger.complete(op);
-      else ledger.fail(op, result.attempted === result.confirmed
+      if (result.complete) {
+        ledger.complete(op);
+        const cleared = fields.slice(f0, f1 + 1).filter((field) => UNDOABLE_TYPES.has(field.type));
+        undo?.stack.record({ label: t("清空单元格"), cells: selected.flatMap((rec) => cleared.map((field) => ({ rid: rec.id, fid: field.id, before: rec.cells[field.id] ?? null, after: null }))), created: [] });
+      } else ledger.fail(op, result.attempted === result.confirmed
         ? t("已确认清空 {n} 行；数据或权限已变化，后续 {rest} 行未尝试。请核对后再操作。", { n: result.confirmed, rest: result.total - result.attempted })
         : t("已确认清空 {n} 行；当前行结果未知，后续 {rest} 行未尝试。请核对后再操作。", { n: result.confirmed, rest: result.total - result.attempted }));
     } catch {
@@ -314,13 +322,23 @@ export function Grid({
     try {
       const ensureCurrent = () => awaitBatchAuthorization(plan.scope.recordIds, plan.scope.fieldIds);
       const existing = plan.patches.map((patch) => async () => { await ensureCurrent(); return baseApi.setCells(baseId, patch.rid, patch.cells); });
+      const createdRows: BaseRecord[] = [];
       const additions = plan.addRows.map((row) => async () => {
         await ensureCurrent();
         const cells: Record<string, Cell> = {};
         for (const [k, v] of Object.entries(row.cells)) if (v !== null) cells[k] = v;
-        return baseApi.addRecord(baseId, cells);
+        const added = await baseApi.addRecord(baseId, cells);
+        createdRows.push(added);
+        return added;
       });
       const result = await runWriteBatch([...existing, ...additions]);
+      if (result.complete) {
+        const byId = new Map(records.map((rec) => [rec.id, rec]));
+        const typeOf = new Map((allFields ?? fields).map((field) => [String(field.id), field.type]));
+        const pasted = plan.patches.flatMap((patch) => Object.entries(patch.cells).filter(([fid]) => UNDOABLE_TYPES.has(typeOf.get(fid) ?? "")).map(([fid, after]) => ({ rid: patch.rid, fid: Number(fid), before: byId.get(patch.rid)?.cells[Number(fid)] ?? null, after: after as UndoCellValue })));
+        // Only fully undoable pastes are recorded; others stay manual to avoid a partial undo.
+        if (pasted.length === plan.patches.reduce((n, patch) => n + Object.keys(patch.cells).length, 0)) undo?.stack.record({ label: t("粘贴"), cells: pasted, created: createdRows.map((rec) => ({ rid: rec.id, cells: definedCells(rec.cells) })) });
+      }
       if (result.complete && !plan.skipped.length) ledger.complete(op);
       else if (result.complete) ledger.fail(op, `${t("已确认处理 {n} 行。", { n: result.confirmed })}${skippedPasteMessage(plan.skipped, t)}${t("原始内容已保留，请核对后再操作，勿直接重复粘贴。")}`, skippedPasteMessage(plan.skipped, t));
       else ledger.fail(op, `${result.attempted === result.confirmed ? t("已确认处理 {n} 行；数据或权限已变化，后续 {rest} 行未尝试。", { n: result.confirmed, rest: result.total - result.attempted }) : t("已确认处理 {n} 行；当前行结果未知，后续 {rest} 行未尝试。", { n: result.confirmed, rest: result.total - result.attempted })}${plan.skipped.length ? skippedPasteMessage(plan.skipped, t) : ""}${t("新增行可能已创建，请核对后再操作，勿直接重复粘贴。")}`, plan.skipped.length ? skippedPasteMessage(plan.skipped, t) : t("粘贴结果未全部确认，请先核对。"));
@@ -332,7 +350,7 @@ export function Grid({
   const addRecord = async () => {
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
-    try { await baseApi.addRecord(baseId); ledger.complete(op); }
+    try { const rec = await baseApi.addRecord(baseId); ledger.complete(op); undo?.stack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
     catch { ledger.fail(op, t("无法确认是否创建。请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(onMutate); }
   };
@@ -389,6 +407,11 @@ export function Grid({
     if (edit) return; // the cell editor handles its own keys
     const mod = e.metaKey || e.ctrlKey;
     const selection = readSelection();
+    if (mod && !e.altKey && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y") && undo && canEdit) {
+      e.preventDefault();
+      undo.run(e.key.toLowerCase() === "y" || e.shiftKey);
+      return;
+    }
     if (mod && e.key.toLowerCase() === "c") {
       if (preventCopy || sel) e.preventDefault();
       if (!preventCopy && selection) void copy();

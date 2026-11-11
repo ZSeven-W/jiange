@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, type FillRule, type FilterRule, type RowHeight, type ViewConfig } from "@/lib/api";
@@ -33,7 +33,8 @@ import { refreshWrites, useWriteLedger, WriteIssues } from "./base/writeSafety";
 import { ShareDialog } from "@/components/ShareDialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Rows3, Search, Settings2, Share2, Table2, Workflow, Zap } from "lucide-react";
+import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
+import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Table2, Undo2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -68,6 +69,10 @@ export function BasePage({ id }: { id: number }) {
   const accessReady = q.isFetchedAfterMount && q.isSuccess;
   useBaseSync(id, { ready: accessReady, restricted: !!q.data?.writeRestricted });
   const [viewId, setViewId] = useState<number | null>(null);
+  // 撤销/重做：本人在本页的单元格编辑与新增记录（条件写入，不覆盖他人更新）。
+  const [undoStack] = useState(() => new BaseUndoStack());
+  useSyncExternalStore(undoStack.subscribe, undoStack.snapshot, undoStack.snapshot);
+  const [undoNotice, setUndoNotice] = useState<string | null>(null);
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
   const [gridDetailOpen, setGridDetailOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
@@ -207,11 +212,23 @@ export function BasePage({ id }: { id: number }) {
     try { await refresh(); setViewId(v.id); setCfgState(v.config ?? EMPTY_CONFIG); }
     catch { setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
   };
+  const undoApi: UndoApi = {
+    setCellsIf: (rid, expected, cells) => baseApi.setCellsIf(id, rid, expected, cells),
+    deleteRecordIf: (rid, expected) => baseApi.deleteRecordIf(id, rid, expected),
+    addRecord: (cells) => baseApi.addRecord(id, cells as Record<string, import("@/lib/api").Cell>),
+  };
+  const runUndo = async (redo: boolean) => {
+    if (!canEdit || ledger.blocked("batch") || ledger.hasCellWrites()) return;
+    const outcome = await (redo ? undoStack.redo(undoApi) : undoStack.undo(undoApi));
+    refreshWrites(refresh);
+    if (!outcome) return;
+    setUndoNotice(outcome.ok ? t(redo ? "已重做：{label}" : "已撤销：{label}", { label: outcome.label }) : outcome.conflict ? t("内容已被他人修改，无法{action}「{label}」。", { action: t(redo ? "重做" : "撤销"), label: outcome.label }) : t("{action}未完成，请刷新后核对。", { action: t(redo ? "重做" : "撤销") }));
+  };
   const addRecord = async () => {
     if (ledger.blocked("batch")) return;
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
-    try { await baseApi.addRecord(id); ledger.complete(op); }
+    try { const rec = await baseApi.addRecord(id); ledger.complete(op); undoStack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
     catch { ledger.fail(op, t("无法确认是否创建，请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(refresh); }
   };
@@ -264,7 +281,12 @@ export function BasePage({ id }: { id: number }) {
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
+        {canEdit && current?.type !== "form" && <span className="mr-1 flex shrink-0 items-center gap-0.5 border-r pr-1.5">
+          <button type="button" disabled={!undoStack.canUndo} onClick={() => void runUndo(false)} aria-label={t("撤销")} title={undoStack.undoLabel ? `${t("撤销")}：${undoStack.undoLabel} (⌘/Ctrl+Z)` : t("撤销")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-undo><Undo2 size={16} /></button>
+          <button type="button" disabled={!undoStack.canRedo} onClick={() => void runUndo(true)} aria-label={t("重做")} title={undoStack.redoLabel ? `${t("重做")}：${undoStack.redoLabel} (⌘/Ctrl+Shift+Z)` : t("重做")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-redo><Redo2 size={16} /></button>
+        </span>}
         {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />{t("添加记录")}<ChevronDown size={13} className="opacity-70" aria-hidden /></button>}
+        {undoNotice && <span role="status" className="mx-1 max-w-72 truncate text-xs text-subtle" title={undoNotice}>{undoNotice}</span>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
         {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">{t("筛选仅覆盖当前加载的记录，更多记录可能未显示。")}</span>}
@@ -394,7 +416,7 @@ export function BasePage({ id }: { id: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });

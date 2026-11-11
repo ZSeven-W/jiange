@@ -26,8 +26,15 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		Cells    map[string]json.RawMessage `json:"cells"`
 		Position float64                    `json:"position"`
 		Move     bool                       `json:"move"`
+		// Undo/redo: apply only if these cells still hold the given values.
+		Expected map[string]json.RawMessage `json:"expected"`
+		Exact    bool                       `json:"exact"`
 	}
-	if operation != "delete" && r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
+	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
+		return
+	}
+	if operation == "delete" && len(in.Cells) != 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "删除记录不能携带单元格")
 		return
 	}
 	if operation == "update" && in.Move {
@@ -43,7 +50,11 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 	if operation == "add" && in.Cells == nil {
 		in.Cells = map[string]json.RawMessage{}
 	}
-	mutation := store.BaseRecordMutation{Operation: operation, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position}
+	if (in.Expected != nil || in.Exact) && operation != "update" && operation != "delete" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "仅修改或删除记录时可指定预期值")
+		return
+	}
+	mutation := store.BaseRecordMutation{Operation: operation, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position, Expected: in.Expected, ExpectExact: in.Exact}
 	record, affected, err := s.Store.MutateRecordGuarded(r.Context(), guard, b.ID, mutation, func(fields []store.Field) error {
 		if msg := checkCells(fields, in.Cells); msg != "" {
 			return invalidRecordCells{msg}
@@ -69,6 +80,9 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		return
 	case errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not_found", "记录不存在")
+		return
+	case errors.Is(err, store.ErrExpectedCells):
+		httpx.Error(w, http.StatusConflict, "cells_changed", "单元格已被修改，未执行")
 		return
 	case errors.Is(err, store.ErrConflict):
 		httpx.Error(w, http.StatusConflict, "conflict", "记录或表结构已变化，请重试")

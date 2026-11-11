@@ -22,6 +22,66 @@ type BaseRecordMutation struct {
 	RecordID  int64
 	Cells     map[string]json.RawMessage
 	Position  float64
+	// Expected makes an update or delete conditional (used by undo/redo): every
+	// listed cell must still hold this value under the write lock. For update,
+	// keys must be a subset of Cells. ExpectExact (delete only) additionally
+	// requires the record to have no other non-empty cells.
+	Expected    map[string]json.RawMessage
+	ExpectExact bool
+}
+
+// ErrExpectedCells reports that a conditional record write found other values.
+var ErrExpectedCells = errors.New("store: record cells changed")
+
+func cellJSONEqual(a, b json.RawMessage) bool {
+	if nullCell(a) || nullCell(b) {
+		return nullCell(a) && nullCell(b)
+	}
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+func validExpectation(m BaseRecordMutation) error {
+	if m.Expected == nil && !m.ExpectExact {
+		return nil
+	}
+	if m.Operation != "update" && m.Operation != "delete" || m.ExpectExact && m.Operation != "delete" {
+		return ErrInvalidBaseRecord
+	}
+	for key, value := range m.Expected {
+		id, err := strconv.ParseInt(key, 10, 64)
+		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != key || len(bytes.TrimSpace(value)) == 0 || !json.Valid(value) {
+			return ErrInvalidBaseRecord
+		}
+		if m.Operation == "update" {
+			if _, ok := m.Cells[key]; !ok {
+				return ErrInvalidBaseRecord
+			}
+		}
+	}
+	return nil
+}
+
+func checkExpectedCells(current map[string]json.RawMessage, m BaseRecordMutation) error {
+	for key, value := range m.Expected {
+		if !cellJSONEqual(current[key], value) {
+			return ErrExpectedCells
+		}
+	}
+	if m.ExpectExact {
+		for key, value := range current {
+			if nullCell(value) {
+				continue
+			}
+			if _, ok := m.Expected[key]; !ok {
+				return ErrExpectedCells
+			}
+		}
+	}
+	return nil
 }
 
 // BaseRecordValidator validates user-supplied values against the current
@@ -131,6 +191,9 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 	if validate == nil {
 		return Record{}, nil, ErrInvalidBaseRecord
 	}
+	if err := validExpectation(mutation); err != nil {
+		return Record{}, nil, err
+	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		before, err := pgRecordFields(ctx, tx, baseID)
 		if err != nil {
@@ -225,6 +288,9 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 			if err != nil {
 				return err
 			}
+			if err := checkExpectedCells(current.Cells, mutation); err != nil {
+				return err
+			}
 			cells := make(map[string]json.RawMessage, len(current.Cells)+len(mutation.Cells))
 			for k, v := range current.Cells {
 				cells[k] = slices.Clone(v)
@@ -240,6 +306,15 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 		case "move":
 			result, err = scanRecord(tx.QueryRow(ctx, `UPDATE base_records SET position=$3,updated_at=now() WHERE base_id=$1 AND id=$2 RETURNING `+recordCols, baseID, mutation.RecordID, mutation.Position))
 		case "delete":
+			if mutation.Expected != nil || mutation.ExpectExact {
+				current, err := scanRecord(tx.QueryRow(ctx, `SELECT `+recordCols+` FROM base_records WHERE base_id=$1 AND id=$2 FOR UPDATE`, baseID, mutation.RecordID))
+				if err != nil {
+					return err
+				}
+				if err := checkExpectedCells(current.Cells, mutation); err != nil {
+					return err
+				}
+			}
 			result, err = scanRecord(tx.QueryRow(ctx, `DELETE FROM base_records WHERE base_id=$1 AND id=$2 RETURNING `+recordCols, baseID, mutation.RecordID))
 		}
 		if err != nil {
@@ -356,6 +431,9 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 	if validate == nil {
 		return Record{}, nil, ErrInvalidBaseRecord
 	}
+	if err := validExpectation(mutation); err != nil {
+		return Record{}, nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -412,6 +490,9 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 			return Record{}, nil, ErrNotFound
 		}
 		result = m.b.records[recordIndex]
+		if err := checkExpectedCells(result.Cells, mutation); err != nil {
+			return Record{}, nil, err
+		}
 	}
 	now := time.Now()
 	switch mutation.Operation {
