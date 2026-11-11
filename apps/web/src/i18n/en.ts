@@ -736,7 +736,7 @@ export const en: Record<string, string> = {
   "连接成功：{text}": "Connected: {text}",
   "已清除 AI 设置": "AI settings cleared",
   "AI 设置": "AI settings",
-  "使用你自己的 OpenAI 兼容接口。API Key 加密保存在服务器，仅你本人的请求会使用；受复制保护的文档内容不会发送给 AI。": "Use your own OpenAI-compatible endpoint. The API key is stored encrypted on the server and used only for your requests; copy-protected document content is never sent to AI.",
+  "使用你自己的 OpenAI 兼容或 Anthropic 接口。API Key 加密保存在服务器，仅你本人的请求会使用；受复制保护的文档内容不会发送给 AI。": "Use your own OpenAI-compatible or Anthropic endpoint. The API key is stored encrypted on the server and used only for your requests; copy-protected document content is never sent to AI.",
   "服务器未配置 JIANGE_SECRET_KEY，暂时无法保存 API Key，请联系管理员。": "The server has no JIANGE_SECRET_KEY configured, so API keys cannot be saved. Contact your administrator.",
   "无法加载 AI 设置。": "Could not load AI settings.",
   "接口地址": "Endpoint URL",
@@ -750,4 +750,6 @@ export const en: Record<string, string> = {
   "用一句话描述筛选条件，例如：金额大于 100 且状态为进行中": "Describe the filter, e.g. amount over 100 and status in progress",
   "生成中…": "Generating…",
   "AI 生成": "Generate with AI",
+  "接口协议": "API protocol",
+  "OpenAI 兼容": "OpenAI-compatible",
 };

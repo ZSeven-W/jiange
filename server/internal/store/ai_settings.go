@@ -13,6 +13,7 @@ import (
 // encrypted by the API layer; the store never sees the plaintext key.
 type AISettings struct {
 	UserID       int64
+	Provider     string // openai | anthropic
 	BaseURL      string
 	Model        string
 	APIKeyCipher []byte
@@ -59,8 +60,8 @@ func (m *Memory) DeleteAISettings(ctx context.Context, userID int64) error {
 
 func (p *Postgres) AISettings(ctx context.Context, userID int64) (AISettings, error) {
 	s := AISettings{UserID: userID}
-	err := p.Pool.QueryRow(ctx, `SELECT base_url,model,api_key_cipher,key_hint,updated_at FROM user_ai_settings WHERE user_id=$1`, userID).
-		Scan(&s.BaseURL, &s.Model, &s.APIKeyCipher, &s.KeyHint, &s.UpdatedAt)
+	err := p.Pool.QueryRow(ctx, `SELECT provider,base_url,model,api_key_cipher,key_hint,updated_at FROM user_ai_settings WHERE user_id=$1`, userID).
+		Scan(&s.Provider, &s.BaseURL, &s.Model, &s.APIKeyCipher, &s.KeyHint, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AISettings{}, ErrNotFound
 	}
@@ -68,9 +69,13 @@ func (p *Postgres) AISettings(ctx context.Context, userID int64) (AISettings, er
 }
 
 func (p *Postgres) SetAISettings(ctx context.Context, s AISettings) error {
-	_, err := p.Pool.Exec(ctx, `INSERT INTO user_ai_settings (user_id,base_url,model,api_key_cipher,key_hint) VALUES ($1,$2,$3,$4,$5)
-		ON CONFLICT (user_id) DO UPDATE SET base_url=EXCLUDED.base_url,model=EXCLUDED.model,api_key_cipher=EXCLUDED.api_key_cipher,key_hint=EXCLUDED.key_hint,updated_at=now()`,
-		s.UserID, s.BaseURL, s.Model, s.APIKeyCipher, s.KeyHint)
+	provider := s.Provider
+	if provider == "" {
+		provider = "openai"
+	}
+	_, err := p.Pool.Exec(ctx, `INSERT INTO user_ai_settings (user_id,provider,base_url,model,api_key_cipher,key_hint) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (user_id) DO UPDATE SET provider=EXCLUDED.provider,base_url=EXCLUDED.base_url,model=EXCLUDED.model,api_key_cipher=EXCLUDED.api_key_cipher,key_hint=EXCLUDED.key_hint,updated_at=now()`,
+		s.UserID, provider, s.BaseURL, s.Model, s.APIKeyCipher, s.KeyHint)
 	return err
 }
 
