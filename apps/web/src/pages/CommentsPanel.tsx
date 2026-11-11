@@ -209,11 +209,12 @@ export function CommentsPanel({
   }, [comments]);
 
   return (
-    <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl xl:z-20 xl:shadow-none" data-comments-panel>
-      <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
-        评论
-        <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">
-          ✕
+    <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full flex-col border-l bg-surface shadow-xl sm:max-w-[296px] md:top-16 xl:z-20 xl:shadow-none" data-comments-panel>
+      {/* 飞书实测：侧栏宽 296、标题「评论（N）」14px、右侧收起按钮 */}
+      <header className="flex h-10 shrink-0 items-center px-3 text-[14px] font-medium">
+        评论{threads.length ? `（${threads.length}）` : ""}
+        <button className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭" title="收起评论">
+          <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M4 4l4 4-4 4M8.5 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       </header>
       <div ref={listRef} className="flex-1 overflow-y-auto p-3" data-comment-list>

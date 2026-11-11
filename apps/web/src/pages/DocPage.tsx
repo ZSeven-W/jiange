@@ -50,7 +50,7 @@ import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
-import { Check, Eye, MessageSquare, Sparkles, Star } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -726,7 +726,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", ((commentsAvailable && commentsOpen) || history || (aiOpen && runAI)) && "xl:pr-96")} onScroll={onBodyScroll} data-doc-scroll>
+        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px]")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
           {outlineVisible && (
             <OutlinePanel
@@ -1118,7 +1118,7 @@ function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) 
   const qc = useQueryClient();
   const favs = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites });
   const starred = favs.data?.some((d) => d.id === docId) ?? false;
-  return <button className="block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover sm:hidden" onClick={() => { (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] })); onDone(); }}>{starred ? "取消收藏" : "收藏"}</button>;
+  return <button className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover" onClick={() => { (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] })); onDone(); }}><Star size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground" />{starred ? "取消收藏" : "添加到收藏"}</button>;
 }
 
 function DocMenu({
@@ -1182,6 +1182,10 @@ function DocMenu({
     setOpen(false);
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
+  const row = "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover";
+  const icon = "shrink-0 text-[#646A73] dark:text-muted-foreground";
+  const group = "border-t border-[#DEE0E3] py-1 first:border-t-0 dark:border-border";
+  const [sub, setSub] = useState<"download" | null>(null);
   const duplicate = async () => {
     if (!canCopyDocument(meta) || copying.current) return;
     const sourceId = meta!.id;
@@ -1213,74 +1217,57 @@ function DocMenu({
       {copyNotice && <div role="status" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] shadow-lg"><span className="min-w-0 flex-1">{copyNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setCopyNotice("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {copyError && <div role="alert" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] text-destructive shadow-lg"><span className="min-w-0 flex-1">{copyError}</span><button type="button" aria-label="关闭错误提示" onClick={() => setCopyError("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
-          <div className="px-3 py-1.5 text-[12px] text-subtle" data-word-count>字数统计：{wordCount}</div>
-          <button className={item} onClick={() => { close(); onFind(); }}>查找和替换</button>
-          {onAI && <button className={cn(item, "sm:hidden")} onClick={() => { close(); onAI(); }}>AI 助手</button>}
-          {onSaveTemplate && <button className={item} onClick={() => { close(); onSaveTemplate(); }} data-save-template>保存为模板</button>}
-          <button className={item} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry>AI 设置</button>
-          {onTitleCheck && <button className={item} onClick={() => { close(); onTitleCheck(); }}>检查文档名称</button>}
-          <button className={cn(item, "sm:hidden")} onClick={() => { close(); onComments(); }}>评论</button>
-          {meta && <StarMenuItem docId={meta.id} onDone={close} />}
-          {onHistory && (
-            <button className={item} onClick={() => { close(); onHistory(); }}>
-              历史版本
-            </button>
-          )}
-          {onExport && (
-            <button className={item} onClick={() => { close(); onExport(); }}>
-              导出 Markdown
-            </button>
-          )}
-          {onPrint && (
-            <button className={item} onClick={() => { close(); onPrint(); }} data-export-pdf>
-              导出 PDF（打印）
-            </button>
-          )}
-          {canCopyDocument(meta) && (
-            <button className={cn(item, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate>
-              创建副本
-            </button>
-          )}
-          <button className={item} onClick={() => { close(); onOutline(); }} data-outline>
-            目录
-          </button>
+        <div className="absolute right-0 top-9 z-30 w-[188px] rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" onMouseLeave={() => setOpen(false)} data-doc-more-menu>
+          {/* 飞书「…」菜单分组（2026-11-11 实测）：页宽 / 查找 / 收藏与位置 / 模板、副本、下载 / 打印 / 文档信息与历史 / 删除 */}
           {onToggleWide && (
-            <div className="hidden items-center justify-between px-3 py-1.5 text-[13px] lg:flex" data-doc-width>
-              <span>页面宽度</span>
-              <span className="flex rounded-md bg-hover p-0.5 text-[12px]">
-                {([[false, "标准"], [true, "全宽"]] as const).map(([w, label]) => (
-                  <button key={label} type="button" aria-pressed={!!wide === w} onClick={() => { if (!!wide !== w) onToggleWide(); }} className={cn("rounded px-2 py-0.5", !!wide === w ? "bg-surface font-medium text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")} data-doc-width-option={w ? "wide" : "standard"}>{label}</button>
-                ))}
-              </span>
+            <div className={cn(group, "hidden lg:block")}>
+              <div className="flex h-8 items-center gap-2 px-3" data-doc-width>
+                <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页宽设置</span>
+                <span className="flex rounded-md bg-hover p-0.5 text-[12px]">
+                  {([[false, "标准"], [true, "全宽"]] as const).map(([w, label]) => (
+                    <button key={label} type="button" aria-pressed={!!wide === w} onClick={() => { if (!!wide !== w) onToggleWide(); }} className={cn("rounded px-1.5 py-0.5", !!wide === w ? "bg-surface font-medium text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")} data-doc-width-option={w ? "wide" : "standard"}>{label}</button>
+                  ))}
+                </span>
+              </div>
             </div>
           )}
-          {onImport && (
-            <label className={cn(item, "block cursor-pointer")} data-import-md>
-              导入 Markdown
-              <input
-                type="file"
-                accept=".md,.markdown,text/markdown"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onImport(f);
-                  e.target.value = "";
-                  close();
-                }}
-              />
-            </label>
-          )}
-          <div className="my-1 border-t" />
-          {meta?.role === "manage" && meta.parentId && <div className="my-1 border-t" />}
-          {meta?.role === "manage" && meta.parentId && (
-            <button className={item} onClick={toRoot}>
-              移到顶层
-            </button>
-          )}
-          {meta?.role === "manage" && <button className="block w-full rounded px-3 py-1.5 text-left text-[13px] text-destructive hover:bg-hover" onClick={trash}>
-            删除（移到回收站）
-          </button>}
+          <div className={group}>
+            <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />查找和替换</button>
+            <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>
+            {onAI && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onAI(); }}><Sparkles size={15} className={icon} />AI 助手</button>}
+            <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />评论</button>
+          </div>
+          {meta && <div className={group}>
+            {meta && <StarMenuItem docId={meta.id} onDone={close} />}
+            {meta?.role === "manage" && meta.parentId && <button className={row} onClick={toRoot}><FolderInput size={15} className={icon} />移到顶层</button>}
+          </div>}
+          <div className={group}>
+            {onSaveTemplate && <button className={row} onClick={() => { close(); onSaveTemplate(); }} data-save-template><LayoutTemplate size={15} className={icon} />保存为模板</button>}
+            {canCopyDocument(meta) && <button className={cn(row, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate><Copy size={15} className={icon} />创建副本</button>}
+            {<div className="relative" onMouseEnter={() => setSub("download")} onMouseLeave={() => setSub(null)}>
+              <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub((v) => (v === "download" ? null : "download"))} data-download-menu><Download size={15} className={icon} /><span className="flex-1">下载为</span><ChevronRight size={14} className="text-subtle" /></button>
+              <div role="menu" className={cn("absolute right-full top-0 z-40 mr-1 w-40 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", sub !== "download" && "hidden")}>
+                {onExport && <button className={row} onClick={() => { close(); onExport(); }}><FileText size={15} className={icon} />导出 Markdown</button>}
+                {<button className={row} onClick={() => { close(); onPrint(); }} data-export-pdf><FileDown size={15} className={icon} />导出 PDF（打印）</button>}
+              </div>
+            </div>}
+            {onImport && (
+              <label className={cn(row, "cursor-pointer")} data-import-md>
+                <FileUp size={15} className={icon} />导入 Markdown
+                <input type="file" accept=".md,.markdown,text/markdown" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; close(); }} />
+              </label>
+            )}
+          </div>
+          {<div className={group}><button className={row} onClick={() => { close(); onPrint(); }}><Printer size={15} className={icon} />打印</button></div>}
+          <div className={group}>
+            <div className="flex h-8 items-center gap-2 px-3 text-subtle" data-word-count><Info size={15} className={icon} />字数统计：{wordCount}</div>
+            {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}
+            {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
+            <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>
+          </div>
+          {meta?.role === "manage" && <div className={group}>
+            <button className={cn(row, "text-destructive")} onClick={trash}><Trash2 size={15} />删除（移到回收站）</button>
+          </div>}
         </div>
       )}
     </div>
