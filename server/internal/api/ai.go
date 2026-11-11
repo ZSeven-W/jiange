@@ -44,7 +44,28 @@ const (
 	aiRatePerMinute = 20
 	aiDefaultBase   = "https://api.openai.com/v1"
 	aiDefaultModel  = "gpt-4o-mini"
+	// Anthropic Messages API defaults.
+	aiAnthropicBase    = "https://api.anthropic.com/v1"
+	aiAnthropicModel   = "claude-sonnet-4-5"
+	aiAnthropicVersion = "2023-06-01"
 )
+
+func aiDefaults(provider string) (string, string) {
+	if provider == "anthropic" {
+		return aiAnthropicBase, aiAnthropicModel
+	}
+	return aiDefaultBase, aiDefaultModel
+}
+
+func normalizeProvider(p string) (string, bool) {
+	switch strings.TrimSpace(p) {
+	case "", "openai":
+		return "openai", true
+	case "anthropic":
+		return "anthropic", true
+	}
+	return "", false
+}
 
 var reAIModel = regexp.MustCompile(`^[A-Za-z0-9._:/@-]{1,100}$`)
 
@@ -91,11 +112,11 @@ func openAIKey(secret []byte, userID int64, sealed []byte) (string, error) {
 	return string(plain), err
 }
 
-// normalizeAIBase validates an OpenAI-compatible base URL (https, no credentials).
-func (s *Server) normalizeAIBase(raw string) (string, bool) {
+// normalizeAIBase validates a provider base URL (https, no credentials).
+func (s *Server) normalizeAIBase(raw, provider string) (string, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		raw = aiDefaultBase
+		raw, _ = aiDefaults(provider)
 	}
 	if len(raw) > 512 {
 		return "", false
@@ -163,6 +184,7 @@ func (l *aiLimiter) allow(userID int64, now time.Time) bool {
 
 type aiSettingsView struct {
 	Configured  bool   `json:"configured"`
+	Provider    string `json:"provider"`
 	BaseURL     string `json:"baseUrl"`
 	Model       string `json:"model"`
 	KeyHint     string `json:"keyHint,omitempty"`
@@ -171,14 +193,15 @@ type aiSettingsView struct {
 
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
-	view := aiSettingsView{BaseURL: aiDefaultBase, Model: aiDefaultModel, ServerReady: len(s.AISecret) == 32}
+	view := aiSettingsView{Provider: "openai", BaseURL: aiDefaultBase, Model: aiDefaultModel, ServerReady: len(s.AISecret) == 32}
 	cur, err := s.Store.AISettings(r.Context(), u.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, r, err)
 		return
 	}
 	if err == nil {
-		view = aiSettingsView{Configured: true, BaseURL: cur.BaseURL, Model: cur.Model, KeyHint: cur.KeyHint, ServerReady: view.ServerReady}
+		provider, _ := normalizeProvider(cur.Provider)
+		view = aiSettingsView{Configured: true, Provider: provider, BaseURL: cur.BaseURL, Model: cur.Model, KeyHint: cur.KeyHint, ServerReady: view.ServerReady}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, view)
@@ -187,9 +210,10 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	var in struct {
-		BaseURL string `json:"baseUrl"`
-		Model   string `json:"model"`
-		APIKey  string `json:"apiKey"` // empty keeps the saved key
+		Provider string `json:"provider"`
+		BaseURL  string `json:"baseUrl"`
+		Model    string `json:"model"`
+		APIKey   string `json:"apiKey"` // empty keeps the saved key
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -198,20 +222,25 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusServiceUnavailable, "ai_secret_missing", "服务器未配置 JIANGE_SECRET_KEY，暂不能保存 API Key，请联系管理员")
 		return
 	}
-	base, ok := s.normalizeAIBase(in.BaseURL)
+	provider, ok := normalizeProvider(in.Provider)
 	if !ok {
-		httpx.Error(w, http.StatusBadRequest, "invalid_base_url", "接口地址需为 https 开头的 OpenAI 兼容地址")
+		httpx.Error(w, http.StatusBadRequest, "invalid_provider", "不支持的接口协议")
+		return
+	}
+	base, ok := s.normalizeAIBase(in.BaseURL, provider)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid_base_url", "接口地址需为 https 开头的 OpenAI 兼容或 Anthropic 地址")
 		return
 	}
 	model := strings.TrimSpace(in.Model)
 	if model == "" {
-		model = aiDefaultModel
+		_, model = aiDefaults(provider)
 	}
 	if !reAIModel.MatchString(model) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_model", "模型名称无效")
 		return
 	}
-	next := store.AISettings{UserID: u.ID, BaseURL: base, Model: model}
+	next := store.AISettings{UserID: u.ID, Provider: provider, BaseURL: base, Model: model}
 	key := strings.TrimSpace(in.APIKey)
 	if key == "" {
 		cur, err := s.Store.AISettings(r.Context(), u.ID)
@@ -283,17 +312,25 @@ func (s *Server) callAI(ctx context.Context, userID int64, messages []aiMessage)
 	if err != nil {
 		return "", aiProviderError{http.StatusConflict, "ai_key_unreadable", "已保存的 API Key 无法解密（服务端密钥可能已更换），请在 AI 设置中重新填写"}
 	}
-	base, ok := s.normalizeAIBase(cur.BaseURL)
+	provider, _ := normalizeProvider(cur.Provider)
+	base, ok := s.normalizeAIBase(cur.BaseURL, provider)
 	if !ok {
 		return "", aiProviderError{http.StatusBadRequest, "invalid_base_url", "接口地址无效，请在 AI 设置中修改"}
 	}
-	body, _ := json.Marshal(map[string]any{"model": cur.Model, "messages": messages, "max_tokens": 2048, "temperature": 0.3})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
+	var req *http.Request
+	if provider == "anthropic" {
+		req, err = anthropicRequest(ctx, base, key, cur.Model, messages)
+	} else {
+		body, _ := json.Marshal(map[string]any{"model": cur.Model, "messages": messages, "max_tokens": 2048, "temperature": 0.3})
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
 	res, err := s.aiClient().Do(req)
 	if err != nil {
 		if errors.Is(err, errBlockedAddress) || strings.Contains(err.Error(), errBlockedAddress.Error()) {
@@ -313,6 +350,9 @@ func (s *Server) callAI(ctx context.Context, userID int64, messages []aiMessage)
 		return "", aiProviderError{http.StatusTooManyRequests, "ai_rate_limited", "AI 服务限流或额度不足，请稍后重试"}
 	case res.StatusCode >= 300:
 		return "", aiProviderError{http.StatusBadGateway, "ai_failed", fmt.Sprintf("AI 服务返回错误（HTTP %d）", res.StatusCode)}
+	}
+	if provider == "anthropic" {
+		return parseAnthropic(raw)
 	}
 	var out struct {
 		Choices []struct {
@@ -396,4 +436,61 @@ func (s *Server) docAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+// anthropicRequest builds a Messages API call: system prompts go to the top-level
+// "system" field, and consecutive same-role turns are merged (the API requires
+// alternating user/assistant roles starting with user).
+func anthropicRequest(ctx context.Context, base, key, model string, messages []aiMessage) (*http.Request, error) {
+	var system []string
+	turns := []aiMessage{}
+	for _, m := range messages {
+		if m.Role == "system" {
+			system = append(system, m.Content)
+			continue
+		}
+		if n := len(turns); n > 0 && turns[n-1].Role == m.Role {
+			turns[n-1].Content += "\n\n" + m.Content
+			continue
+		}
+		turns = append(turns, m)
+	}
+	if len(turns) == 0 || turns[0].Role != "user" {
+		turns = append([]aiMessage{{Role: "user", Content: "（开始）"}}, turns...)
+	}
+	payload := map[string]any{"model": model, "max_tokens": 2048, "temperature": 0.3, "messages": turns}
+	if len(system) > 0 {
+		payload["system"] = strings.Join(system, "\n\n")
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", key)
+	req.Header.Set("anthropic-version", aiAnthropicVersion)
+	return req, nil
+}
+
+func parseAnthropic(raw []byte) (string, error) {
+	var out struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return "", aiProviderError{http.StatusBadGateway, "ai_bad_response", "AI 服务返回了无法识别的结果"}
+	}
+	var parts []string
+	for _, c := range out.Content {
+		if c.Type == "text" {
+			parts = append(parts, c.Text)
+		}
+	}
+	if len(parts) == 0 {
+		return "", aiProviderError{http.StatusBadGateway, "ai_bad_response", "AI 服务返回了无法识别的结果"}
+	}
+	return strings.TrimSpace(strings.Join(parts, "")), nil
 }

@@ -125,3 +125,48 @@ func TestAIBlocksPrivateAddresses(t *testing.T) {
 		t.Fatalf("loopback provider status=%d code=%q", res.StatusCode, body.Code)
 	}
 }
+
+func TestAnthropicProvider(t *testing.T) {
+	var headers http.Header
+	var payload struct {
+		Model    string      `json:"model"`
+		System   string      `json:"system"`
+		Messages []aiMessage `json:"messages"`
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers = r.Header.Clone()
+		json.NewDecoder(r.Body).Decode(&payload)
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"world"}]}`))
+	}))
+	defer provider.Close()
+	ts, c := newAITestServer(t, store.NewMemory(), AISecretFromEnv("unit-test-secret"))
+	post(t, c, ts.URL+"/api/auth/register", map[string]string{"email": "claude@example.test", "name": "C", "password": "password123"})
+	if res := send(t, c, "PUT", ts.URL+"/api/me/ai", map[string]string{"provider": "gemini", "apiKey": "sk-ant-123456"}); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad provider status=%d", res.StatusCode)
+	}
+	res := send(t, c, "PUT", ts.URL+"/api/me/ai", map[string]string{"provider": "anthropic", "baseUrl": provider.URL + "/v1", "apiKey": "sk-ant-123456"})
+	var view aiSettingsView
+	json.NewDecoder(res.Body).Decode(&view)
+	if res.StatusCode != http.StatusOK || view.Provider != "anthropic" || view.Model != aiAnthropicModel {
+		t.Fatalf("save status=%d view=%+v", res.StatusCode, view)
+	}
+	var doc store.DocMeta
+	json.NewDecoder(post(t, c, ts.URL+"/api/docs", map[string]string{"title": "C"}).Body).Decode(&doc)
+	ask := map[string]any{"messages": []map[string]string{{"role": "system", "content": "规则"}, {"role": "user", "content": "一"}, {"role": "user", "content": "二"}}}
+	res = send(t, c, "POST", ts.URL+"/api/docs/"+strconv.FormatInt(doc.ID, 10)+"/ai", ask)
+	var out struct{ Text string }
+	json.NewDecoder(res.Body).Decode(&out)
+	if res.StatusCode != http.StatusOK || out.Text != "Hello world" {
+		t.Fatalf("status=%d text=%q", res.StatusCode, out.Text)
+	}
+	if headers.Get("x-api-key") != "sk-ant-123456" || headers.Get("anthropic-version") == "" || headers.Get("Authorization") != "" {
+		t.Fatalf("headers=%v", headers)
+	}
+	if payload.System != "规则" || len(payload.Messages) != 1 || payload.Messages[0].Content != "一\n\n二" {
+		t.Fatalf("payload=%+v", payload)
+	}
+}

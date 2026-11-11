@@ -1,7 +1,8 @@
 import { ApiError } from "./api";
 
-/** 个人 AI 设置（OpenAI 兼容接口）。API Key 只在保存时上传，服务端加密保存、只返回末 4 位。 */
-export interface AISettings { configured: boolean; baseUrl: string; model: string; keyHint?: string; serverReady: boolean }
+/** 个人 AI 设置（OpenAI 兼容接口或 Anthropic Messages API）。API Key 只在保存时上传，服务端加密保存、只返回末 4 位。 */
+export type AIProvider = "openai" | "anthropic";
+export interface AISettings { configured: boolean; provider: AIProvider; baseUrl: string; model: string; keyHint?: string; serverReady: boolean }
 export interface AIMessage { role: "system" | "user" | "assistant"; content: string }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -14,7 +15,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const aiApi = {
   settings: () => call<AISettings>("GET", "/api/me/ai"),
-  save: (s: { baseUrl: string; model: string; apiKey?: string }) => call<AISettings>("PUT", "/api/me/ai", s),
+  save: (s: { provider: AIProvider; baseUrl: string; model: string; apiKey?: string }) => call<AISettings>("PUT", "/api/me/ai", s),
   clear: () => call<void>("DELETE", "/api/me/ai"),
   test: () => call<{ text: string }>("POST", "/api/me/ai/test"),
   /** 以某篇文档的名义调用（服务端校验可查看且允许复制该文档）。 */
