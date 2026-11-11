@@ -64,7 +64,7 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
     } finally { confirming.current = false; }
   };
   return (
-    <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full max-w-96 flex-col border-l bg-surface shadow-xl xl:z-20 xl:shadow-none" data-version-panel>
+    <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full max-w-96 md:top-16 flex-col border-l bg-surface shadow-xl xl:z-20 xl:shadow-none" data-version-panel>
       <header className="flex h-[52px] shrink-0 items-center border-b px-4 text-[15px] font-semibold">
         历史版本
         <button className="ml-auto rounded p-1 text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭">

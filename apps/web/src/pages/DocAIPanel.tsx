@@ -41,7 +41,7 @@ export function DocAIPanel({ title, body, ai, canInsert, onInsert, onClose }: {
       }
     } finally { if (id === seq.current) setBusy(false); }
   };
-  return <aside className="fixed bottom-0 right-0 top-16 z-30 flex w-full flex-col border-l bg-surface shadow-xl sm:w-96 xl:shadow-none" aria-label="AI 助手" data-doc-ai-panel>
+  return <aside className="fixed bottom-0 right-0 top-14 z-30 flex w-full flex-col border-l bg-surface shadow-xl sm:w-[358px] md:top-16 xl:shadow-none" aria-label="AI 助手" data-doc-ai-panel>
     <header className="flex h-12 shrink-0 items-center gap-1.5 border-b px-4 text-[14px] font-medium">
       <Sparkles size={16} className="text-primary" />AI 助手
       <button type="button" title="清空对话" aria-label="清空对话" disabled={!history.length || busy} onClick={() => { setHistory([]); setError(null); }} className="ml-auto grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover disabled:opacity-30"><Trash2 size={14} /></button>
@@ -49,9 +49,11 @@ export function DocAIPanel({ title, body, ai, canInsert, onInsert, onClose }: {
       <button type="button" aria-label="关闭" onClick={onClose} className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover"><X size={16} /></button>
     </header>
     <div ref={list} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 text-[13px]">
-      {!history.length && <div className="space-y-2">
-        <p className="text-subtle">基于当前文档内容提问，回答由你配置的模型生成，可能不准确。</p>
-        <div className="flex flex-wrap gap-1.5">{QUICK.map((q) => <button key={q} type="button" disabled={busy} onClick={() => void send(q)} className="h-7 rounded-full border px-2.5 text-[12px] hover:border-primary hover:text-primary disabled:opacity-40" data-ai-quick>{q}</button>)}</div>
+      {!history.length && <div className="flex min-h-full flex-col items-center justify-center gap-4 pb-10 text-center">
+        <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-[#4E83FD] to-[#7B61FF] text-white"><Sparkles size={24} /></span>
+        <p className="text-[20px] font-semibold text-foreground">今天有什么工作要处理？</p>
+        <p className="text-[12px] text-subtle">基于当前文档内容回答，由你在 AI 设置中配置的模型生成，可能不准确。</p>
+        <div className="flex flex-wrap justify-center gap-1.5">{QUICK.map((q) => <button key={q} type="button" disabled={busy} onClick={() => void send(q)} className="h-7 rounded-full border px-2.5 text-[12px] hover:border-primary hover:text-primary disabled:opacity-40" data-ai-quick>{q}</button>)}</div>
       </div>}
       {history.map((m, i) => <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
         <div className={cn("max-w-[92%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 leading-6", m.role === "user" ? "bg-[#e1eaff] text-foreground" : "bg-[#F5F6F7] dark:bg-hover")} data-ai-message={m.role}>
@@ -65,8 +67,8 @@ export function DocAIPanel({ title, body, ai, canInsert, onInsert, onClose }: {
       {busy && <p role="status" className="flex items-center gap-1.5 text-subtle"><Loader2 size={14} className="animate-spin" />AI 正在思考…</p>}
       {error && <p role="alert" className="text-destructive">{error.text}{error.settings && <button type="button" onClick={() => openAISettings()} className="ml-2 text-primary underline">去设置</button>}</p>}
     </div>
-    <form className="m-3 flex items-end gap-2 rounded-lg border px-3 py-2 focus-within:border-primary" onSubmit={(e) => { e.preventDefault(); void send(input); }}>
-      <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(input); } }} rows={2} maxLength={2000} placeholder="向 AI 提问，Enter 发送" className="max-h-32 min-h-10 flex-1 resize-none bg-transparent text-[13px] outline-none" data-ai-input />
+    <form className="m-3 flex items-end gap-2 rounded-2xl border px-3 py-2.5 shadow-[0_2px_10px_rgba(31,35,41,0.06)] focus-within:border-primary" onSubmit={(e) => { e.preventDefault(); void send(input); }}>
+      <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(input); } }} rows={2} maxLength={2000} placeholder="发消息或描述任务，Enter 发送" className="max-h-32 min-h-10 flex-1 resize-none bg-transparent text-[13px] outline-none" data-ai-input />
       <button type="submit" disabled={busy || !input.trim()} aria-label="发送" className="grid size-7 place-items-center rounded-md bg-primary text-white disabled:opacity-30"><CornerDownLeft size={14} /></button>
     </form>
   </aside>;
