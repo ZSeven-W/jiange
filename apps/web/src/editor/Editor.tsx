@@ -38,6 +38,7 @@ import { applyTableEdit, CLIPPABLE_BLOCKS, EMPTY_TABLE, parseTableData, type Cli
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
+import { CodeLineNumbers } from "./CodeLineNumbers";
 import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
 import { linkApi } from "@/lib/api";
@@ -1891,9 +1892,9 @@ export function readOnlyBlockAbilities(type: string, canCopy: boolean, canCommen
 
 const BLOCK_CLASS: Record<string, string> = {
   paragraph: "text-[16px] leading-[1.75] py-[3px]",
-  h1: "text-[26px] font-medium leading-[1.4] mt-5 mb-1",
-  h2: "text-[22px] font-medium leading-[1.4] mt-4 mb-0.5",
-  h3: "text-[20px] font-medium leading-[1.45] mt-3.5",
+  h1: "text-[26px] font-medium leading-[1.4] mt-5 mb-[6px]",
+  h2: "text-[22px] font-medium leading-[1.4] mt-[17px] mb-[5px]",
+  h3: "text-[20px] font-medium leading-[1.45] mt-4",
   h4: "text-[18px] font-medium leading-[1.5] mt-3",
   h5: "text-[16px] font-medium leading-[1.6] mt-2.5",
   h6: "text-[16px] font-medium leading-[1.6] mt-2.5",
@@ -1958,6 +1959,7 @@ interface BlockProps {
 
 function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
+  const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
   const firstThread = commentThreads?.includes(activeThread ?? -1) ? activeThread : (commentThreads?.[0] ?? null);
@@ -2139,7 +2141,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       ) : type === "file" ? (
         <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (
-        <div className="rounded-md border border-[#DEE0E3] bg-[#F5F6F7] dark:border-border dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
+        <div className="rounded-md border border-[#D9DBDF] bg-[#F3F5F6] dark:border-border dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
           <CodeBlockHeader
             lang={props.lang}
             wrap={props.wrap !== "false"}
@@ -2147,8 +2149,11 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
             onWrap={onSetProp ? (w) => onSetProp("wrap", w ? "true" : "false") : undefined}
             onCopy={canCopy ? () => navigator.clipboard?.writeText(spans.map((c) => c.ch).join("")) : undefined}
           />
-          <div data-text className={cn("min-w-0 px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>
-            {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
+          <div className="flex gap-6 pl-7">
+            <CodeLineNumbers text={spans.map((c) => c.ch).join("")} textRef={codeTextRef} wrap={props.wrap !== "false"} />
+            <div ref={codeTextRef} data-text className={cn("min-w-0 flex-1 pb-[26px] pr-7 pt-0.5 font-mono text-[14px] leading-[22px]", props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>
+              {runs.length === 0 ? <br /> : runs.map(renderAnchoredRun)}
+            </div>
           </div>
         </div>
       ) : type === "callout" ? (

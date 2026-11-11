@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
+import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
 
 const now = new Date(2026, 10, 9, 16, 40);
 
@@ -10,6 +10,13 @@ describe("doc header meta (最近修改 in the top bar)", () => {
     expect(formatEditTime(new Date(2026, 9, 2, 8, 30).toISOString(), now)).toBe("10月2日 08:30");
     expect(formatEditTime(new Date(2025, 2, 2, 8, 30).toISOString(), now)).toBe("2025年3月2日 08:30");
     expect(formatEditTime("nope", now)).toBe("");
+  });
+  it("formats the author-line edit day the Feishu way", () => {
+    expect(formatEditDay(new Date(2026, 10, 9, 9, 5).toISOString(), now)).toBe("今天修改");
+    expect(formatEditDay(new Date(2026, 10, 8, 18, 0).toISOString(), now)).toBe("昨天修改");
+    expect(formatEditDay(new Date(2026, 9, 2, 8, 30).toISOString(), now)).toBe("10月2日修改");
+    expect(formatEditDay(new Date(2025, 2, 2, 8, 30).toISOString(), now)).toBe("2025年3月2日修改");
+    expect(formatEditDay("nope", now)).toBe("");
   });
   it("shows 最近修改 on open and 已经保存到云端 after a local save", () => {
     const at = new Date(2026, 10, 9, 16, 19).toISOString();

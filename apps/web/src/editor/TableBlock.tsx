@@ -59,7 +59,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
     return () => document.removeEventListener("mousedown", down);
   }, [grip, range]);
   const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
-  const colW = (ci: number) => widths?.[ci] ?? Math.max(90, Math.min(260, 18 + size(rows[0]) * 9));
+  const colW = (ci: number) => widths?.[ci] ?? Math.max(100, Math.min(260, 18 + size(rows[0]) * 9));
   const startResize = (e: React.MouseEvent, ci: number) => {
     e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, base = colW(ci);
@@ -87,7 +87,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
       </span>}
       <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")}>
-      <table className="border-collapse text-[14px] leading-[1.6]">
+      <table className="border-collapse text-[14px] leading-[22px]">
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
         <tbody>
           {rows.map((row, ri) => (
@@ -98,8 +98,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                 const span = cov?.span;
                 const sel = inRange(selected, ri, ci);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[90px] border border-[#DEE0E3] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
-                    {readOnly ? <span className="block min-h-[38px] whitespace-pre-wrap px-2.5 py-[7px]">{cell}</span> : (
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
+                    {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap px-2 py-[8.5px]">{cell}</span> : (
                       <input
                         value={cell}
                         onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
@@ -109,7 +109,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
-                        className="w-full bg-transparent px-2.5 py-[7px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
+                        className="w-full bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
                         data-table-cell={`${ri}:${ci}`}
                       />
                     )}
