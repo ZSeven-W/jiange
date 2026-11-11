@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { baseApi, commentsApi, type BaseRecord, type Cell, type Comment, type Field, type User } from "@/lib/api";
+import { api, baseApi, commentsApi, type BaseRecord, type Cell, type Comment, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
@@ -356,7 +356,10 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   const q = useQuery({ queryKey: ["record-comments", baseId, recordId], queryFn: () => baseApi.recordComments(baseId, recordId) });
   const membersQ = useQuery({ queryKey: ["comment-members", baseId], queryFn: () => commentsApi.members(baseId), staleTime: 60_000 });
   const members = membersQ.data ?? [];
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 60_000 });
+  const myId = me.data?.user.id;
   const [replyTo, setReplyTo] = useState<number | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [error, setError] = useState("");
   const threads = threadComments(q.data ?? []);
@@ -372,15 +375,33 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
     try { await baseApi.patchRecordComment(baseId, recordId, cid, { resolved: value }); await q.refetch(); }
     catch { setError(t("操作失败，请刷新后重试。")); }
   };
+  const saveEdit = async (cid: number, body: string) => {
+    setError("");
+    try { await baseApi.patchRecordComment(baseId, recordId, cid, { body }); await q.refetch(); setEditing(null); return true; }
+    catch { setError(t("评论修改未能确认，请刷新后核对。")); return false; }
+  };
+  const remove = async (c: Comment) => {
+    if (!(await ask(t("删除这条评论？"), c.parentId ? t("删除后不可恢复。") : t("回复也会一并删除，删除后不可恢复。")))) return;
+    setError("");
+    try { await baseApi.deleteRecordComment(baseId, recordId, c.id); await q.refetch(); }
+    catch { setError(t("操作失败，请刷新后重试。")); }
+  };
   const names = (c: Comment) => (c.mentions ?? []).map((id) => members.find((m) => m.id === id)?.name ?? "").filter(Boolean);
   const item = (c: Comment, reply: boolean) => (
     <div key={c.id} className={cn("flex gap-2.5 text-[13px]", reply && "mt-2.5")} data-record-comment={c.id}>
       <Avatar name={c.userName} color={colorFor(c.userId - 1)} size={reply ? 22 : 26} />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center"><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span></div>
-        <p className="mt-0.5 whitespace-pre-wrap break-words">
+        <div className="group/comment flex items-center"><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
+          {c.userId === myId && editing !== c.id && <span className={cn("ml-2 flex items-center gap-0.5 text-[12px] opacity-0 focus-within:opacity-100 group-hover/comment:opacity-100 [@media(hover:none)]:opacity-100", !reply && "mr-24")}>
+            <button type="button" className="rounded px-1 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => setEditing(c.id)} data-comment-edit>{t("编辑")}</button>
+            <button type="button" className="rounded px-1 text-muted-foreground hover:bg-hover hover:text-destructive" onClick={() => void remove(c)} data-comment-delete>{t("删除")}</button>
+          </span>}
+        </div>
+        {editing === c.id
+          ? <div className="mt-1"><CommentComposer members={members} initial={c.body} autoFocus placeholder={t("编辑评论")} submitLabel={t("保存")} onSend={(b) => b === c.body ? (setEditing(null), Promise.resolve(true)) : saveEdit(c.id, b)} onCancel={() => setEditing(null)} /></div>
+          : <p className="mt-0.5 whitespace-pre-wrap break-words">
           {splitMentions(c.body, names(c)).map((p, i) => p.mention ? <span key={i} className="rounded bg-accent px-0.5 font-medium text-primary" data-mention-chip>{p.text}</span> : <span key={i}>{p.text}</span>)}
-        </p>
+        </p>}
       </div>
     </div>
   );
@@ -416,8 +437,8 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
 }
 
 /** Textarea with an @ member picker; Enter sends, Shift+Enter breaks lines. */
-function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void }) {
-  const [body, setBody] = useState("");
+function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, initial = "", submitLabel }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void; initial?: string; submitLabel?: string }) {
+  const [body, setBody] = useState(initial);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [sending, setSending] = useState(false);
@@ -469,7 +490,7 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel }: 
           data-record-comment-input
         />
         {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">{t("取消")}</button>}
-        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{t("发送")}</button>
+        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{submitLabel ?? t("发送")}</button>
       </div>
     </div>
   );
