@@ -153,7 +153,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const readOnlyRef = useRef(!!readOnly);
-  const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction } | null>(null);
+  const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction; range?: { start: number; end: number } } | null>(null);
+  const aiRangeText = useRef("");
   const onShareBlockRef = useRef(onShareBlock);
   onShareBlockRef.current = onShareBlock;
   const onSaveTemplateRef = useRef(onSaveTemplate);
@@ -350,7 +351,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   );
 
   /** AI 结果写回：替换该块文字，或在其后插入；多段结果按 Markdown 拆成多个块。 */
-  const applyAiResult = useCallback((blockKey: string, result: string, mode: "replace" | "insert") => {
+  const applyAiResult = useCallback((blockKey: string, result: string, mode: "replace" | "insert", range?: { start: number; end: number }) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
     const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
@@ -358,6 +359,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     const TEXTUAL = new Set(["paragraph", "h1", "h2", "h3", "bullet", "ordered", "todo", "quote", "code"]);
     const parsed = parseMarkdown(result).filter((x) => TEXTUAL.has(x.type));
     const pieces: { type: string; text: string; props: Record<string, string> }[] = parsed.length ? parsed.map((x) => ({ type: x.type, text: x.text, props: (x.type === "todo" ? { checked: x.props.checked ?? "" } : x.type === "code" && x.props.lang ? { lang: x.props.lang } : {}) as Record<string, string> })) : [{ type: "paragraph", text: result.trim(), props: {} }];
+    if (range) {
+      // 选中文字：只替换该范围（文字已变化时拒绝写入）；插入则放在所在块之后。
+      const n = len(d, b);
+      if (range.end > n || [...d.text(b)].slice(range.start, range.end).join("") !== aiRangeText.current) { setToast("选中的文字已变化，未写入 AI 结果。"); return; }
+      if (mode === "replace") {
+        sel.current = { a: { b, o: range.start }, f: { b, o: range.end } };
+        const flat = result.replace(/\s*\n+\s*/g, " ").trim();
+        run((tx) => { tx.delete(b, range.start, range.end); if (flat) tx.insert(b, range.start, flat); return { b, o: range.start + [...flat].length }; });
+        um.seal();
+        return;
+      }
+    }
     sel.current = { a: { b, o: 0 }, f: { b, o: len(d, b) } };
     run((tx) => {
       const parent = tx.doc.blockInfo(b).parent;
@@ -1820,12 +1833,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           key={`${aiPanel.key}:${aiPanel.initial ?? ""}`}
           x={aiPanel.x}
           y={aiPanel.y}
-          text={sync.client.doc.text({ client: Number(aiPanel.key.split(":")[0]), clock: Number(aiPanel.key.split(":")[1]) })}
+          text={aiPanel.range ? aiRangeText.current : sync.client.doc.text({ client: Number(aiPanel.key.split(":")[0]), clock: Number(aiPanel.key.split(":")[1]) })}
           initial={aiPanel.initial}
           ai={ai}
           canEdit={!readOnly}
-          onReplace={(result) => applyAiResult(aiPanel.key, result, "replace")}
-          onInsert={(result) => applyAiResult(aiPanel.key, result, "insert")}
+          onReplace={(result) => applyAiResult(aiPanel.key, result, "replace", aiPanel.range)}
+          onInsert={(result) => applyAiResult(aiPanel.key, result, "insert", aiPanel.range)}
           onClose={() => setAiPanel(null)}
         />
       )}
@@ -1837,6 +1850,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           blockType={curType}
           align={curAlign}
           readOnly={readOnly}
+          onAI={ai && !onCopyBlock && sel.current && eqId(sel.current.a.b, sel.current.f.b) ? () => {
+            const cur = sel.current, d = sync.client.doc, w = wrap.current;
+            if (!cur || !d || !w || !eqId(cur.a.b, cur.f.b) || !d.hasBlock(cur.a.b)) return;
+            const start = Math.min(cur.a.o, cur.f.o), end = Math.max(cur.a.o, cur.f.o);
+            if (start === end) return;
+            aiRangeText.current = [...d.text(cur.a.b)].slice(start, end).join("");
+            const node = blockEl(w, cur.a.b), base = w.getBoundingClientRect(), r = node?.getBoundingClientRect();
+            setToolbar(null);
+            setAiPanel({ key: idKey(cur.a.b), x: r ? Math.max(0, Math.round(r.left - base.left)) : 0, y: r ? Math.round(r.bottom - base.top + 6) : toolbar.y + 24, range: { start, end } });
+          } : undefined}
           onAlign={(a) => run((tx, s) => {
             for (const b of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(b).type) && !isColumnText(tx.doc, b)) tx.setProp(b, "align", a);
           })}

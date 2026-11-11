@@ -1,13 +1,14 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { AlignCenter, AlignLeft, AlignRight, Baseline, Bold, ChevronDown, Code2, Eraser, Highlighter, Italic, Link, Link2, MessageSquarePlus, MoreHorizontal, Strikethrough, Underline } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Bold, ChevronDown, Code2, Eraser, Italic, LayoutGrid, Link, Link2, MessageSquarePlus, Sparkles, Strikethrough, Underline } from "lucide-react";
+import { MENU_ICONS } from "./menuIcons";
 
-const TYPES: [string, string][] = [["paragraph", "正文"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
+const TYPES: [string, string][] = [["paragraph", "文本"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["h4", "四级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS = [
   { key: "bold", label: "加粗", Icon: Bold },
+  { key: "strike", label: "删除线", Icon: Strikethrough },
   { key: "italic", label: "斜体", Icon: Italic },
   { key: "underline", label: "下划线", Icon: Underline },
-  { key: "strike", label: "删除线", Icon: Strikethrough },
   { key: "code", label: "行内代码", Icon: Code2 },
 ] as const;
 
@@ -20,10 +21,11 @@ export type Align = (typeof ALIGNS)[number]["value"];
 /** 只接受已知对齐值，其余（含缺省）按左对齐处理。 */
 export const blockAlign = (value: string | undefined): Align => (value === "center" || value === "right" ? value : "left");
 
-/** 飞书风格文本色板：文字色（上排）与背景高亮（下排同色浅版）。 */
-const PALETTE = ["#212121", "#F54A45", "#FF8800", "#FFC60A", "#00B42A", "#3370FF", "#7B61FF", "#E63995"];
+/** 飞书文本色板（2026-11-11 实测面板）：字体颜色 8 个（首个为默认），背景颜色两排 16 个（首个为无）。 */
+export const TEXT_COLORS = ["#1F2329", "#8F959E", "#D83931", "#DE7802", "#DC9B04", "#2EA121", "#245BDB", "#6425D0"];
+export const BG_COLORS = ["", "#EFF0F1", "#FBBFBC", "#FED4A4", "#FFF67A", "#B7EDB1", "#BACEFD", "#CDB2FA", "#DEE0E3", "#BBBFC4", "#F76964", "#FFA53D", "#FFE928", "#62D256", "#4E83FD", "#935AF6"];
 
-export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, onType, onAlign, onClearFormat, onCopyLink, onComment, readOnly, commentError }: {
+export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, onType, onAlign, onClearFormat, onCopyLink, onComment, onAI, readOnly, commentError }: {
   x: number; y: number; marks: Record<string, string>; blockType: string;
   align?: string;
   onAlign?: (align: Align) => void;
@@ -31,6 +33,8 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
   onCopyLink?: () => void;
   onMark: (key: string, value?: string) => void; onLink: (url: string) => void; onType: (t: string) => void;
   onComment?: () => void;
+  /** 对选中文字使用 AI（未配置页面级 AI 时不显示）。 */
+  onAI?: () => void;
   readOnly?: boolean;
   commentError?: string | null;
 }) {
@@ -38,7 +42,7 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
   const toolbarRef = useRef<HTMLDivElement>(null);
   const typeMenuRef = useRef<HTMLDivElement>(null);
   const paletteRef = useRef<HTMLDivElement>(null);
-  const [palette, setPalette] = useState<"color" | "bg" | null>(null);
+  const [palette, setPalette] = useState<"color" | null>(null);
   const [pop, setPop] = useState<"align" | "more" | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState(false);
@@ -120,103 +124,46 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
   const current = blockAlign(align);
   const AlignIcon = ALIGNS.find((a) => a.value === current)!.Icon;
   const more = !readOnly && (onClearFormat || onCopyLink);
-  const label = TYPES.find(([t]) => t === blockType)?.[1] ?? "正文";
+  const label = TYPES.find(([t]) => t === blockType)?.[1] ?? "文本";
+  const TypeIcon = MENU_ICONS[blockType] ?? MENU_ICONS.paragraph;
+  const sep = <span className="mx-1 h-5 w-px shrink-0 bg-[#DEE0E3] dark:bg-border" />;
+  const btn = "grid size-7 shrink-0 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground";
   return (
     <div
       ref={toolbarRef}
       data-format-toolbar
-      className="fixed z-30 flex min-h-10 w-max flex-wrap items-center gap-0.5 rounded-lg border bg-surface px-1.5 py-1 text-foreground shadow-[0_4px_16px_rgba(31,35,41,0.16)]"
+      className="fixed z-30 flex min-h-10 w-max flex-wrap items-center gap-0.5 rounded-lg border border-[#DEE0E3] bg-surface px-1.5 py-1 text-foreground shadow-[0_4px_16px_rgba(31,35,41,0.12)] dark:border-border"
       style={placement ? { left: placement.left, top: placement.top, maxWidth: placement.maxWidth } : { left: 0, top: 0, visibility: "hidden" }}
       onMouseDown={(e) => (e.target as HTMLElement).tagName !== "INPUT" && e.preventDefault()}
     >
-      {!readOnly && (link !== null ? (
+      {!readOnly && link !== null ? (
         <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); if (link.trim()) onLink(link.trim()); setLink(null); }}>
           <input autoFocus value={link} onChange={(e) => setLink(e.target.value)} placeholder="粘贴或输入链接" className="h-8 w-56 max-w-[calc(100vw-96px)] rounded border px-2 text-base outline-none focus:border-primary sm:h-7 sm:text-[13px]" />
           <button className="h-7 rounded bg-primary px-2.5 text-[13px] text-white">确定</button>
         </form>
-      ) : (
-        <>
+      ) : <>
+        {/* 飞书实测顺序：AI | 文本类型、对齐 | 加粗、删除线、斜体、下划线、链接、行内代码、颜色 | 更多、评论 */}
+        {onAI && <><button type="button" onClick={onAI} className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[13px] hover:bg-hover" title="AI" data-toolbar-ai><Sparkles size={15} className="text-primary" />AI</button>{sep}</>}
+        {!readOnly && <>
           <div className="relative">
-            <button className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 text-[13px] hover:bg-hover" onClick={() => { setMenu((m) => !m); setPalette(null); setPop(null); }}>
-              {label} <ChevronDown size={12} className="text-subtle" />
+            <button type="button" title={`文本类型：${label}`} aria-label={`文本类型：${label}`} aria-haspopup="menu" aria-expanded={menu} className={cn("flex h-7 shrink-0 items-center gap-0.5 rounded-md px-1 hover:bg-hover", menu && "bg-hover")} onClick={() => { setMenu((m) => !m); setPalette(null); setPop(null); }} data-type-btn>
+              <TypeIcon size={16} strokeWidth={1.7} /><ChevronDown size={12} className="text-subtle" />
             </button>
             {menu && (
-              <div ref={typeMenuRef} className="absolute left-0 top-8 z-40 w-32 rounded-lg border bg-surface p-1 shadow-lg">
-                {TYPES.map(([t, l]) => (
-                  <button key={t} className={cn("block w-full rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", t === blockType && "text-primary")} onClick={() => { onType(t); setMenu(false); }}>
-                    {l}
+              <div ref={typeMenuRef} className="absolute left-0 top-9 z-40 w-36 rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border">
+                {TYPES.map(([t, l]) => { const Icon = MENU_ICONS[t] ?? MENU_ICONS.paragraph; return (
+                  <button key={t} type="button" className={cn("flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] hover:bg-hover", t === blockType && "text-primary")} onClick={() => { onType(t); setMenu(false); }}>
+                    <Icon size={15} strokeWidth={1.7} />{l}
                   </button>
-                ))}
+                ); })}
               </div>
             )}
           </div>
-          <span className="mx-1 h-4 w-px bg-border" />
-          {MARKS.map(({ key, label: markLabel, Icon }) => (
-            <button key={key} type="button" title={markLabel} aria-label={markLabel} aria-pressed={!!marks[key]} onClick={() => onMark(key)} className={cn("grid size-7 shrink-0 place-items-center rounded hover:bg-hover", marks[key] && "bg-accent text-primary")}>
-              <Icon size={15} strokeWidth={1.8} />
-            </button>
-          ))}
-          <button title="链接" onClick={() => (marks.link ? onMark("link", marks.link) : setLink(""))} className={cn("grid h-7 min-w-7 place-items-center rounded px-1.5 text-[13px] hover:bg-hover", marks.link && "bg-accent text-primary")}>
-            <Link2 size={14} strokeWidth={1.7} />
-          </button>
-          <span className="relative flex">
-            <button
-              title="文字颜色"
-              onClick={() => { setPalette((p) => (p === "color" ? null : "color")); setMenu(false); setPop(null); }}
-              className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.color && "bg-accent")}
-              data-color-btn
-            >
-              <Baseline size={14} strokeWidth={1.7} />
-              <span className="h-[3px] w-3.5 rounded-sm" style={{ background: marks.color ?? "#3370FF" }} />
-            </button>
-            <button
-              title="背景高亮"
-              onClick={() => { setPalette((p) => (p === "bg" ? null : "bg")); setMenu(false); setPop(null); }}
-              className={cn("grid h-7 min-w-7 place-items-center rounded px-1 hover:bg-hover", marks.bg && "bg-accent")}
-              data-bg-btn
-            >
-              <Highlighter size={14} strokeWidth={1.7} />
-            </button>
-            {palette && (
-              <div ref={paletteRef} className="absolute left-0 top-9 z-40 w-[184px] rounded-lg border bg-surface p-2 shadow-lg" data-color-pop>
-                <div className="mb-1 px-1 text-[11px] text-subtle">{palette === "color" ? "文字颜色" : "背景高亮"}</div>
-                <div className="grid grid-cols-4 gap-1">
-                  {PALETTE.map((c) => (
-                    <button
-                      key={c}
-                      className={cn("grid h-7 place-items-center rounded hover:ring-1 hover:ring-primary", marks[palette] === c && "ring-2 ring-primary")}
-                      style={{ background: palette === "bg" ? `${c}33` : undefined }}
-                      onClick={() => {
-                        onMark(palette, marks[palette] === c ? undefined : c);
-                        setPalette(null);
-                      }}
-                      title={c}
-                    >
-                      <span style={{ color: c }} className="text-[13px] font-medium">
-                        A
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <button
-                  className="mt-1.5 block w-full rounded px-2 py-1 text-left text-[12px] text-muted-foreground hover:bg-hover"
-                  onClick={() => {
-                    onMark(palette, ""); // 空串 = 清除
-                    setPalette(null);
-                  }}
-                  data-clear-color
-                >
-                  清除{palette === "color" ? "文字颜色" : "背景高亮"}
-                </button>
-              </div>
-            )}
-          </span>
           {onAlign && <span className="relative flex">
-            <span className="mx-1 my-auto h-4 w-px bg-border" />
-            <button type="button" title="对齐" aria-label="对齐" aria-haspopup="menu" aria-expanded={pop === "align"} onClick={() => { setPop((p) => (p === "align" ? null : "align")); setMenu(false); setPalette(null); }} className={cn("flex h-7 items-center gap-0.5 rounded px-1 hover:bg-hover", pop === "align" && "bg-hover")} data-align-btn>
-              <AlignIcon size={15} strokeWidth={1.8} /><ChevronDown size={11} className="text-subtle" />
+            <button type="button" title="对齐" aria-label="对齐" aria-haspopup="menu" aria-expanded={pop === "align"} onClick={() => { setPop((p) => (p === "align" ? null : "align")); setMenu(false); setPalette(null); }} className={cn("flex h-7 items-center gap-0.5 rounded-md px-1 hover:bg-hover", pop === "align" && "bg-hover")} data-align-btn>
+              <AlignIcon size={15} strokeWidth={1.8} /><ChevronDown size={12} className="text-subtle" />
             </button>
-            {pop === "align" && <div ref={popRef} role="menu" className="absolute left-2 top-9 z-40 flex gap-0.5 rounded-lg border bg-surface p-1 shadow-lg" data-align-pop>
+            {pop === "align" && <div ref={popRef} role="menu" className="absolute left-0 top-9 z-40 flex gap-0.5 rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-align-pop>
               {ALIGNS.map(({ value, label: alignLabel, Icon }) => (
                 <button key={value} type="button" role="menuitemradio" aria-checked={current === value} title={alignLabel} aria-label={alignLabel} onClick={() => { onAlign(value); setPop(null); }} className={cn("grid size-7 place-items-center rounded hover:bg-hover", current === value && "bg-primary/10 text-primary")} data-align={value}>
                   <Icon size={15} strokeWidth={1.8} />
@@ -224,22 +171,60 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
               ))}
             </div>}
           </span>}
-        </>
-      ))}
-      {onComment && (
-        <button className="mx-0.5 grid h-7 w-7 place-items-center rounded hover:bg-hover" title="评论" aria-label="评论" onClick={onComment} data-comment-btn>
-          <MessageSquarePlus size={15} strokeWidth={1.7} />
-        </button>
-      )}
-      {more && <span className="relative flex">
-        <button type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded={pop === "more"} onClick={() => { setPop((p) => (p === "more" ? null : "more")); setMenu(false); setPalette(null); }} className={cn("grid size-7 place-items-center rounded hover:bg-hover", pop === "more" && "bg-hover")} data-more-btn>
-          <MoreHorizontal size={15} strokeWidth={1.8} />
-        </button>
-        {pop === "more" && <div ref={popRef} role="menu" className="absolute right-0 top-9 z-40 w-40 rounded-lg border bg-surface p-1 text-[13px] shadow-lg" data-more-pop>
-          {onClearFormat && <button type="button" role="menuitem" onClick={() => { onClearFormat(); setPop(null); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-hover" data-clear-format><Eraser size={14} strokeWidth={1.7} className="text-muted-foreground" />清除格式</button>}
-          {onCopyLink && <button type="button" role="menuitem" onClick={() => { onCopyLink(); setPop(null); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-hover" data-copy-block-link><Link size={14} strokeWidth={1.7} className="text-muted-foreground" />复制段落链接</button>}
-        </div>}
-      </span>}
+          {sep}
+          {MARKS.map(({ key, label: markLabel, Icon }) => key === "code" ? null : (
+            <button key={key} type="button" title={markLabel} aria-label={markLabel} aria-pressed={!!marks[key]} onClick={() => onMark(key)} className={cn(btn, marks[key] && "bg-[#E1EAFF] text-primary dark:bg-primary/20")}>
+              <Icon size={15} strokeWidth={1.8} />
+            </button>
+          ))}
+          <button type="button" title="链接" aria-label="链接" onClick={() => (marks.link ? onMark("link", marks.link) : setLink(""))} className={cn(btn, marks.link && "bg-[#E1EAFF] text-primary dark:bg-primary/20")}>
+            <Link2 size={15} strokeWidth={1.7} />
+          </button>
+          <button type="button" title="行内代码" aria-label="行内代码" aria-pressed={!!marks.code} onClick={() => onMark("code")} className={cn(btn, marks.code && "bg-[#E1EAFF] text-primary dark:bg-primary/20")}>
+            <Code2 size={15} strokeWidth={1.8} />
+          </button>
+          <span className="relative flex">
+            <button type="button" title="字体与背景颜色" aria-label="字体与背景颜色" aria-haspopup="dialog" aria-expanded={!!palette} onClick={() => { setPalette((p) => (p ? null : "color")); setMenu(false); setPop(null); }} className={cn("flex h-7 items-center gap-0.5 rounded-md px-1 hover:bg-hover", palette && "bg-hover")} data-color-btn>
+              <span className="grid size-[18px] place-items-center rounded-[3px] text-[13px] font-medium leading-none" style={{ color: marks.color || "#1F2329", background: marks.bg || "#FFF67A" }}>A</span>
+              <ChevronDown size={12} className={cn("text-subtle transition-transform", palette && "rotate-180")} />
+            </button>
+            {palette && (
+              <div ref={paletteRef} className="absolute left-0 top-9 z-40 w-[227px] rounded-lg border border-[#DEE0E3] bg-surface p-2.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-color-pop>
+                <div className="mb-1.5 text-[12px] text-[#646A73]">字体颜色</div>
+                <div className="grid grid-cols-8 gap-1">
+                  {TEXT_COLORS.map((c, i) => {
+                    const on = i === 0 ? !marks.color : marks.color === c;
+                    return <button key={c} type="button" title={i === 0 ? "默认字体颜色" : `字体颜色 ${c}`} aria-label={i === 0 ? "默认字体颜色" : `字体颜色 ${c}`} aria-pressed={on} onClick={() => onMark("color", i === 0 ? "" : on ? undefined : c)} className={cn("grid size-[22px] place-items-center rounded border text-[13px] font-medium", on ? "border-primary" : "border-[#DEE0E3] hover:border-[#BBBFC4]")} style={{ color: c }} data-text-color={c}>A</button>;
+                  })}
+                </div>
+                <div className="mb-1.5 mt-2.5 text-[12px] text-[#646A73]">背景颜色</div>
+                <div className="grid grid-cols-8 gap-1">
+                  {BG_COLORS.map((c, i) => {
+                    const on = i === 0 ? !marks.bg : marks.bg === c;
+                    return <button key={c || "none"} type="button" title={i === 0 ? "无背景色" : `背景颜色 ${c}`} aria-label={i === 0 ? "无背景色" : `背景颜色 ${c}`} aria-pressed={on} onClick={() => onMark("bg", i === 0 ? "" : on ? undefined : c)} className={cn("relative size-[22px] overflow-hidden rounded border", on ? "border-primary ring-1 ring-primary" : "border-transparent hover:border-[#BBBFC4]", i === 0 && "border-[#DEE0E3] bg-surface")} style={i === 0 ? undefined : { background: c }} data-bg-color={c || "none"}>{i === 0 && <span className="absolute left-1/2 top-[-3px] h-[28px] w-px rotate-45 bg-[#F54A45]" />}</button>;
+                  })}
+                </div>
+                <button type="button" className="mt-2.5 block h-7 w-full rounded-md border border-[#DEE0E3] text-[12px] text-[#1F2329] hover:bg-hover dark:border-border dark:text-foreground" onClick={() => { onMark("color", ""); onMark("bg", ""); setPalette(null); }} data-clear-color>恢复默认</button>
+              </div>
+            )}
+          </span>
+          {sep}
+        </>}
+        {more && <span className="relative flex">
+          <button type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded={pop === "more"} onClick={() => { setPop((p) => (p === "more" ? null : "more")); setMenu(false); setPalette(null); }} className={cn(btn, pop === "more" && "bg-hover")} data-more-btn>
+            <LayoutGrid size={15} strokeWidth={1.7} />
+          </button>
+          {pop === "more" && <div ref={popRef} role="menu" className="absolute right-0 top-9 z-40 w-40 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-more-pop>
+            {onClearFormat && <button type="button" role="menuitem" onClick={() => { onClearFormat(); setPop(null); }} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover" data-clear-format><Eraser size={14} strokeWidth={1.7} className="text-muted-foreground" />清除格式</button>}
+            {onCopyLink && <button type="button" role="menuitem" onClick={() => { onCopyLink(); setPop(null); }} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover" data-copy-block-link><Link size={14} strokeWidth={1.7} className="text-muted-foreground" />复制段落链接</button>}
+          </div>}
+        </span>}
+        {onComment && (
+          <button type="button" className={btn} title="评论" aria-label="评论" onClick={onComment} data-comment-btn>
+            <MessageSquarePlus size={15} strokeWidth={1.7} />
+          </button>
+        )}
+      </>}
       {commentError && <span role="alert" className="max-w-52 px-2 text-[12px] text-destructive">{commentError}</span>}
     </div>
   );
