@@ -203,6 +203,11 @@ export const baseApi = {
     request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}/compare-cells`, { expected, cells }),
   moveRecord: (id: number, rid: number, position: number) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { move: true, position }),
   deleteRecord: (id: number, rid: number) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`),
+  /** Undo/redo: write only while `expected` cells still hold these values (409 cells_changed otherwise). */
+  setCellsIf: (id: number, rid: number, expected: Record<string, Cell | number[] | null>, cells: Record<string, Cell | number[] | null>) =>
+    request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells, expected }),
+  /** Undo of a created record: delete only while it holds exactly `expected`. */
+  deleteRecordIf: (id: number, rid: number, expected: Record<string, Cell | number[] | null>) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`, { expected, exact: true }),
   automations: (id: number) => request<{ automations: Automation[] }>("GET", `/api/bases/${id}/automations`).then((r) => r.automations),
   addAutomation: (id: number, a: Partial<Automation>) => request<Automation>("POST", `/api/bases/${id}/automations`, a),
   updateAutomation: (id: number, aid: number, a: Partial<Automation>) => request<Automation>("PATCH", `/api/bases/${id}/automations/${aid}`, a),
