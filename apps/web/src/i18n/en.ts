@@ -744,4 +744,10 @@ export const en: Record<string, string> = {
   "已保存（末四位 {hint}），留空则不修改": "Saved (ends with {hint}); leave empty to keep it",
   "测试中…": "Testing…",
   "测试连接": "Test connection",
+  "AI 未能生成可用的筛选条件，请换种说法或手动添加。": "AI could not produce a usable filter. Rephrase it or add conditions manually.",
+  "已生成 {n} 个条件，{d} 个无效条件已忽略，请核对。": "Generated {n} conditions; {d} invalid ones were ignored. Please review.",
+  "已生成 {n} 个条件，请核对。": "Generated {n} conditions. Please review.",
+  "用一句话描述筛选条件，例如：金额大于 100 且状态为进行中": "Describe the filter, e.g. amount over 100 and status in progress",
+  "生成中…": "Generating…",
+  "AI 生成": "Generate with AI",
 };
