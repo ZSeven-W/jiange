@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
-import { formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
+import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
 import { docsApi, driveApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
@@ -356,7 +356,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         const el = area.querySelector<HTMLElement>(`[data-block="${it.id}"]`);
         if (el) tops[it.id] = el.getBoundingClientRect().top - base;
       }
-      setOutlineActive(activeOutlineId(outline, tops, 96));
+      setOutlineActive(activeOutlineId(outline, tops, 96, false));
     });
   }, [outline, outlineVisible]);
   useEffect(() => { onBodyScroll(); }, [onBodyScroll]);
@@ -712,6 +712,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
               onClose={() => setOutlineOpen(false)}
+              title={docTitle({ title })}
+              onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); }}
               onJump={(bid) => {
                 setOutlineActive(bid);
                 const area = scrollArea.current;
@@ -720,7 +722,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               }}
             />
           )}
-          <div className="min-w-0 flex-1">
+          <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
           <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={wide ? "true" : undefined} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(wide), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
@@ -738,8 +740,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
               className="text-[32px] font-medium leading-[1.3] tracking-tight [&_textarea]:font-medium [&_textarea]:leading-[1.3]"
-            /></DocumentIconEditor></div>
-            <div ref={body} className="mt-6" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
+            /></DocumentIconEditor>{metadataVerified && meta.data && <DocAuthorLine name={meta.data.creatorName} seed={meta.data.creatorId} updatedAt={meta.data.updatedAt} />}</div>
+            <div ref={body} className="mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
@@ -982,7 +984,7 @@ function TopBar({
   const metaText = headerMetaText(status, savedFlag.saved, meta?.updatedAt);
   const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
-    <header className="flex h-14 shrink-0 md:h-16 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:px-5">
+    <header className="flex h-14 shrink-0 md:h-16 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:pr-5">
       <div className="min-w-0 flex-1">
       <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" data-document-print-restricted={!allowDocumentPrint ? "true" : undefined} onCopy={(event) => { if (!allowContentCopy) event.preventDefault(); }} onCut={(event) => { if (!allowContentCopy) event.preventDefault(); }}>
         <a href="#/" className="hidden truncate text-muted-foreground hover:text-foreground sm:block">
@@ -1025,6 +1027,15 @@ function TopBar({
       </div>
     </header>
   );
+}
+
+/** 飞书标题下的作者行：头像 + 创建者 | 修改日期。 */
+function DocAuthorLine({ name, seed, updatedAt }: { name: string; seed: number; updatedAt?: string }) {
+  const day = updatedAt ? formatEditDay(updatedAt) : "";
+  return <div contentEditable={false} className="mt-[19px] flex h-5 select-none items-center text-[12px] leading-5 text-subtle" data-doc-author>
+    <span className="flex min-w-0 items-center gap-1"><Avatar name={name || "?"} color={colorFor(seed)} size={20} /><span className="truncate">{name}</span></span>
+    {day && <><span className="mx-3 h-3 w-px shrink-0 bg-[#DEE0E3] dark:bg-border" /><span className="shrink-0" title={updatedAt ? formatEditTime(updatedAt) : undefined}>{day}</span></>}
+  </div>;
 }
 
 function ModeMenu({ reading, onToggle }: { reading: boolean; onToggle: () => void }) {

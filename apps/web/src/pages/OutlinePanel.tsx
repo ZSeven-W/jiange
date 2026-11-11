@@ -19,7 +19,7 @@ export function outlineOf(blocks: { id: string; type: string; spans: { text: str
 }
 
 /** 当前阅读位置对应的目录项：最后一个顶部越过阅读线的标题；都未越过时取第一个。 */
-export function activeOutlineId(items: OutlineItem[], tops: Record<string, number>, readingLine: number): string | null {
+export function activeOutlineId(items: OutlineItem[], tops: Record<string, number>, readingLine: number, fallbackFirst = true): string | null {
   let active: string | null = null;
   for (const it of items) {
     const top = tops[it.id];
@@ -27,7 +27,7 @@ export function activeOutlineId(items: OutlineItem[], tops: Record<string, numbe
     if (top <= readingLine) active = it.id;
     else break;
   }
-  return active ?? items[0]?.id ?? null;
+  return active ?? (fallbackFirst ? items[0]?.id ?? null : null);
 }
 
 /** 目录中可见的项：被折叠标题的下级标题隐藏。返回 [项, 是否有下级] 列表。 */
@@ -73,6 +73,8 @@ export function OutlinePanel({
   yieldToSidePanel = false,
   pinned = true,
   onPinnedChange,
+  title,
+  onTop,
 }: {
   items: OutlineItem[];
   activeId: string | null;
@@ -85,6 +87,9 @@ export function OutlinePanel({
   /** 宽屏下是否固定展开；未固定时显示缩略横线，悬停展开。 */
   pinned?: boolean;
   onPinnedChange?: (pinned: boolean) => void;
+  /** 飞书目录首行显示文档标题，点击回到顶部。 */
+  title?: string;
+  onTop?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const minLevel = items.reduce((m, it) => Math.min(m, it.level), 6);
@@ -111,21 +116,22 @@ export function OutlinePanel({
             <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" /></svg>
           </button>
         </header>
-        <nav className="min-h-0 flex-1 overflow-y-auto py-2 pl-4 pr-3 text-[14px] xl:pr-2" data-outline-list data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
+        <nav className="min-h-0 flex-1 overflow-y-auto py-2 pl-3 pr-3 text-[14px] xl:pr-2" data-outline-list data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
+          {title !== undefined && onTop && <button type="button" className={cn("relative block w-full truncate rounded-md py-1 pl-2 pr-2 text-left leading-[22px] transition-colors hover:bg-hover", activeId === null ? "font-medium text-primary" : "text-foreground")} title={title} onClick={onTop} data-outline-title>{title}</button>}
           {items.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">在文档中使用标题即可生成目录</p>}
           {rows.map(({ item: it, hasChildren }) => {
             const active = activeId === it.id;
             const folded = collapsed.has(it.id);
-            const pad = 8 + (it.level - minLevel) * 16;
+            const pad = 8 + (it.level - minLevel) * 15;
             return (
               <div key={it.id} className="group/row relative">
-                {hasChildren && <button type="button" tabIndex={-1} aria-label={folded ? "展开" : "折叠"} aria-expanded={!folded} onClick={() => toggle(it.id)} className={cn("absolute top-[7px] z-10 grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground", folded ? "" : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100")} style={{ left: pad - 18 }} data-outline-fold={it.id}>
+                {hasChildren && <button type="button" tabIndex={-1} aria-label={folded ? "展开" : "折叠"} aria-expanded={!folded} onClick={() => toggle(it.id)} className={cn("absolute top-[5px] z-10 grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground", folded ? "" : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100")} style={{ left: pad - 18 }} data-outline-fold={it.id}>
                   <svg viewBox="0 0 16 16" className={cn("size-3 transition-transform", !folded && "rotate-90")} fill="currentColor" aria-hidden><path d="M6 4l4 4-4 4z" /></svg>
                 </button>}
                 <button
                   type="button"
                   className={cn(
-                    "relative block w-full truncate rounded-md py-[5px] pr-2 text-left leading-[22px] transition-colors hover:bg-hover",
+                    "relative block w-full truncate rounded-md py-1 pr-2 text-left leading-[22px] transition-colors hover:bg-hover",
                     active ? "font-medium text-primary" : it.level === minLevel ? "text-foreground" : "text-muted-foreground",
                   )}
                   style={{ paddingLeft: pad }}
@@ -134,7 +140,7 @@ export function OutlinePanel({
                   onClick={() => onJump(it.id)}
                   data-outline-item={it.id}
                 >
-                  {active && <span aria-hidden className="absolute inset-y-[7px] left-0 w-[2px] rounded-full bg-primary" />}
+                  {active && <span aria-hidden className="absolute inset-y-[6px] left-0 w-[2px] rounded-full bg-primary" />}
                   {it.text}
                 </button>
               </div>

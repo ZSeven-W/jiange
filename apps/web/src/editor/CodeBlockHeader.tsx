@@ -36,7 +36,7 @@ export function CodeBlockHeader({ lang, wrap, onLang, onWrap, onCopy, initialOpe
   }, [open]);
   useEffect(() => { if (!copied) return; const t = window.setTimeout(() => setCopied(false), 1500); return () => window.clearTimeout(t); }, [copied]);
   const items = filterCodeLangs(query);
-  return <div contentEditable={false} className="flex h-8 select-none items-center gap-1 px-2 pt-1 text-[12px] text-subtle" data-code-header>
+  return <div contentEditable={false} className="flex h-[38px] select-none items-center gap-1 pl-[22px] pr-2 pt-1 text-[14px] text-subtle" data-code-header>
     <div ref={ref} className="relative">
       <button type="button" disabled={!onLang} onMouseDown={keep} onClick={() => { setOpen((v) => !v); setQuery(""); }} className={cn("flex h-6 items-center gap-0.5 rounded px-1.5", onLang && "hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10")} title="代码语言" aria-haspopup="listbox" aria-expanded={open} data-code-lang={lang ?? "plain"}>
         {codeLangLabel(lang)}{onLang && <ChevronDown size={12} />}
