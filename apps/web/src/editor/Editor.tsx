@@ -1901,6 +1901,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           } : undefined}
         />
       )}
+      {/* 飞书：输入「/」后在其后显示灰色「输入关键词」占位，开始输入即消失。 */}
+      {!readOnly && slash?.kind === "/" && !slash.fromButton && slashRange && slashRange.text === "/" && base && root.current && (() => {
+        const r = caretRect(root.current, { b: slash.at.b, o: slashRange.start + 1 });
+        return r ? <span aria-hidden className="pointer-events-none absolute select-none whitespace-nowrap text-[16px] text-[#BBBFC4]" style={{ left: r.left - base.left + 2, top: r.top - base.top, lineHeight: `${r.bottom - r.top}px` }} data-slash-placeholder>输入关键词</span> : null;
+      })()}
       {!readOnly && slash && slashPos && base && (
         <SlashMenu
           x={slashPos.left - base.left}
