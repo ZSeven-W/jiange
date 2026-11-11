@@ -152,6 +152,9 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/docs/{id}/star":                             s.putFavorite,
 		"DELETE /api/docs/{id}/star":                          s.putFavorite,
 		"GET /api/docs/{id}/ancestors":                        s.getAncestors,
+
+		// 评论表情回应
+		"POST /api/bases/{id}/records/{rid}/comments/{cid}/reactions": s.setRecordCommentReaction,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

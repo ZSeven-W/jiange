@@ -26,6 +26,7 @@ type Memory struct {
 	slidesSequence   int64
 	comments         []Comment
 	commentSequence  int64
+	reactions        map[reactionKey]time.Time
 	notifications    []Notification
 	favorites        map[int64][]int64
 	pins             map[int64][]int64

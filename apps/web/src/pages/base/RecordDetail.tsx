@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, baseApi, commentsApi, type BaseRecord, type Cell, type Comment, type Field, type User } from "@/lib/api";
+import { api, baseApi, commentsApi, REACTION_EMOJIS, type BaseRecord, type Cell, type Comment, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { displayValue, evalFormulas, recordTitle, REGISTRY, setFormulaCache } from "./registry";
 import { TypeGlyph } from "./cells";
 import { ask } from "@/components/ui/ask";
-import { ChevronDown, ChevronUp, MessageSquare, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronUp, MessageSquare, Plus, SmilePlus, X } from "lucide-react";
 import { FieldForm } from "./fields";
 import { historyActorName, historyHeadline } from "./historyActor";
 import { t, useI18n } from "@/lib/i18n";
@@ -362,7 +362,14 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   const [editing, setEditing] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [error, setError] = useState("");
-  const threads = threadComments(q.data ?? []);
+  const threads = threadComments(q.data?.comments ?? []);
+  const reactionsOf = (cid: number) => q.data?.reactions[String(cid)] ?? [];
+  const [picker, setPicker] = useState<number | null>(null);
+  const react = async (cid: number, emoji: string, on: boolean) => {
+    setError(""); setPicker(null);
+    try { await baseApi.setRecordCommentReaction(baseId, recordId, cid, emoji, on); await q.refetch(); }
+    catch { setError(t("表情回应未完成，请刷新后重试。")); }
+  };
   const open = threads.filter((t) => !t.root.resolved);
   const resolved = threads.filter((t) => t.root.resolved);
   const post = async (body: string, parentId?: number) => {
@@ -390,7 +397,7 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   const item = (c: Comment, reply: boolean) => (
     <div key={c.id} className={cn("flex gap-2.5 text-[13px]", reply && "mt-2.5")} data-record-comment={c.id}>
       <Avatar name={c.userName} color={colorFor(c.userId - 1)} size={reply ? 22 : 26} />
-      <div className="min-w-0 flex-1">
+      <div className="group/comment-body min-w-0 flex-1">
         <div className="group/comment flex items-center"><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
           {c.userId === myId && editing !== c.id && <span className={cn("ml-2 flex items-center gap-0.5 text-[12px] opacity-0 focus-within:opacity-100 group-hover/comment:opacity-100 [@media(hover:none)]:opacity-100", !reply && "mr-24")}>
             <button type="button" className="rounded px-1 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => setEditing(c.id)} data-comment-edit>{t("编辑")}</button>
@@ -402,6 +409,17 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
           : <p className="mt-0.5 whitespace-pre-wrap break-words">
           {splitMentions(c.body, names(c)).map((p, i) => p.mention ? <span key={i} className="rounded bg-accent px-0.5 font-medium text-primary" data-mention-chip>{p.text}</span> : <span key={i}>{p.text}</span>)}
         </p>}
+        <div className="relative mt-1 flex flex-wrap items-center gap-1" data-comment-reactions={c.id}>
+          {reactionsOf(c.id).map((r) => {
+            const mine = myId !== undefined && r.userIds.includes(myId);
+            const who = r.userIds.map((id) => members.find((m) => m.id === id)?.name ?? (id === myId ? me.data?.user.name : "")).filter(Boolean).join("、");
+            return <button key={r.emoji} type="button" aria-pressed={mine} title={who} onClick={() => void react(c.id, r.emoji, !mine)} className={cn("flex h-6 items-center gap-1 rounded-full border px-2 text-[12px]", mine ? "border-primary/40 bg-[#e1eaff] text-primary" : "border-border bg-surface text-muted-foreground hover:bg-hover")} data-reaction={r.emoji}><span>{r.emoji}</span>{r.userIds.length}</button>;
+          })}
+          <button type="button" aria-label={t("添加表情回应")} aria-expanded={picker === c.id} onClick={() => setPicker(picker === c.id ? null : c.id)} className={cn("grid h-6 w-7 place-items-center rounded-full text-muted-foreground hover:bg-hover", picker !== c.id && !reactionsOf(c.id).length && "opacity-0 focus-visible:opacity-100 group-hover/comment-body:opacity-100 [@media(hover:none)]:opacity-100")} data-reaction-add><SmilePlus size={14} strokeWidth={1.7} /></button>
+          {picker === c.id && <div role="menu" aria-label={t("选择表情")} className="absolute left-0 top-7 z-20 flex gap-0.5 rounded-lg border bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" onKeyDown={(e) => { if (e.key === "Escape") setPicker(null); }}>
+            {REACTION_EMOJIS.map((emoji) => { const mine = myId !== undefined && !!reactionsOf(c.id).find((r) => r.emoji === emoji)?.userIds.includes(myId); return <button key={emoji} type="button" role="menuitemcheckbox" aria-checked={mine} onClick={() => void react(c.id, emoji, !mine)} className={cn("grid size-8 place-items-center rounded-md text-[16px] hover:bg-hover", mine && "bg-[#e1eaff]")}>{emoji}</button>; })}
+          </div>}
+        </div>
       </div>
     </div>
   );
@@ -422,7 +440,7 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   );
   return (
     <section className="border-t px-10 py-4" data-record-comments>
-      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />{t("评论")}{q.data?.length ? <span className="text-subtle">{q.data.length}</span> : null}
+      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />{t("评论")}{q.data?.comments.length ? <span className="text-subtle">{q.data.comments.length}</span> : null}
         {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? t("隐藏已解决") : t("显示已解决 {n}", { n: resolved.length })}</button>}
       </h3>
       <div className="space-y-2.5">

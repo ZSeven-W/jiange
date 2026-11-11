@@ -729,4 +729,7 @@ export const en: Record<string, string> = {
   "删除这条评论？": "Delete this comment?",
   "回复也会一并删除，删除后不可恢复。": "Replies will be deleted too. This cannot be undone.",
   "编辑评论": "Edit comment",
+  "表情回应未完成，请刷新后重试。": "The reaction did not complete. Refresh and retry.",
+  "添加表情回应": "Add reaction",
+  "选择表情": "Choose a reaction",
 };

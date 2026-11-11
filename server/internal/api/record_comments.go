@@ -65,12 +65,57 @@ func (s *Server) listRecordComments(w http.ResponseWriter, r *http.Request) {
 			out = append(out, c)
 		}
 	}
+	all, err := s.Store.CommentReactions(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	reactions := map[string][]store.CommentReaction{}
+	for _, c := range out {
+		if list := all[c.ID]; len(list) > 0 {
+			reactions[strconv.FormatInt(c.ID, 10)] = list
+		}
+	}
 	if err := s.checkCommentReadAccess(r.Context(), guard, b.ID); err != nil {
 		s.commentMutationError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.JSON(w, http.StatusOK, map[string]any{"comments": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{"comments": out, "reactions": reactions})
+}
+
+// setRecordCommentReaction toggles the caller's emoji on a record comment.
+// Reacting needs the same permission as commenting on the record.
+func (s *Server) setRecordCommentReaction(w http.ResponseWriter, r *http.Request) {
+	b, rid, ok := s.visibleRecord(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Emoji string `json:"emoji"`
+		On    bool   `json:"on"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	cid := pathID(r, "cid")
+	if !s.ownRecordComment(w, r, b.ID, rid, cid) {
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	err := s.Store.SetCommentReactionGuarded(r.Context(), guard, b.ID, cid, in.Emoji, in.On)
+	if errors.Is(err, store.ErrInvalidReaction) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_reaction", "不支持的表情")
+		return
+	}
+	if err != nil {
+		s.commentMutationError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) addRecordComment(w http.ResponseWriter, r *http.Request) {
