@@ -35,7 +35,7 @@ function measure(root: HTMLElement, starts: number[], lineHeight: number): numbe
       range.setStart(at.node, at.local);
       range.setEnd(at.node, Math.min(at.local + 1, at.node.data.length));
       const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
-      if (rect && (rect.height > 0 || rect.top !== 0)) { top = rect.top - base.top; any = true; }
+      if (rect && (rect.height > 0 || rect.top !== 0)) { top = rect.top - base.top - Math.max(0, (lineHeight - rect.height) / 2); any = true; }
     }
     tops.push(top ?? (tops.length ? tops[tops.length - 1] + lineHeight : 0));
   }
