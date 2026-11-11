@@ -27,6 +27,9 @@ type Memory struct {
 	comments         []Comment
 	commentSequence  int64
 	reactions        map[reactionKey]time.Time
+	aiSettings       map[int64]AISettings
+	templates        []memTemplate
+	templateSeq      int64
 	notifications    []Notification
 	favorites        map[int64][]int64
 	pins             map[int64][]int64

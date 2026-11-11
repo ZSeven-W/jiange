@@ -39,6 +39,9 @@ import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
+import { AIBlockPanel } from "./AIPanel";
+import type { AIAction, AIMessage } from "@/lib/ai";
+import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
 import { linkApi } from "@/lib/api";
@@ -124,6 +127,12 @@ interface Props {
   onMathSource?: (src: string) => Promise<string | null>;
   /** @人 提及插入（发通知用） */
   onMentionPerson?: (userId: number, name: string) => void;
+  /** 个人 AI（未提供时隐藏块菜单中的 AI / 翻译）。 */
+  ai?: (messages: AIMessage[]) => Promise<string>;
+  /** 块菜单「分享」：传入块链接，由页面打开分享面板。 */
+  onShareBlock?: (link: string) => void;
+  /** 块菜单「保存为模板」：传入所选块的 Markdown。 */
+  onSaveTemplate?: (markdown: string) => void;
 }
 
 /**
@@ -132,7 +141,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -144,6 +153,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const readOnlyRef = useRef(!!readOnly);
+  const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction } | null>(null);
+  const onShareBlockRef = useRef(onShareBlock);
+  onShareBlockRef.current = onShareBlock;
+  const onSaveTemplateRef = useRef(onSaveTemplate);
+  onSaveTemplateRef.current = onSaveTemplate;
   readOnlyRef.current = !!readOnly;
   const commentAllowedRef = useRef(!!onComment);
   commentAllowedRef.current = !!onComment;
@@ -335,6 +349,36 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     [sync.client, um, publish],
   );
 
+  /** AI 结果写回：替换该块文字，或在其后插入；多段结果按 Markdown 拆成多个块。 */
+  const applyAiResult = useCallback((blockKey: string, result: string, mode: "replace" | "insert") => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current) return;
+    const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
+    if (!d.hasBlock(b)) { setToast("原段落已被删除，未写入 AI 结果。"); return; }
+    const TEXTUAL = new Set(["paragraph", "h1", "h2", "h3", "bullet", "ordered", "todo", "quote", "code"]);
+    const parsed = parseMarkdown(result).filter((x) => TEXTUAL.has(x.type));
+    const pieces: { type: string; text: string; props: Record<string, string> }[] = parsed.length ? parsed.map((x) => ({ type: x.type, text: x.text, props: (x.type === "todo" ? { checked: x.props.checked ?? "" } : x.type === "code" && x.props.lang ? { lang: x.props.lang } : {}) as Record<string, string> })) : [{ type: "paragraph", text: result.trim(), props: {} }];
+    sel.current = { a: { b, o: 0 }, f: { b, o: len(d, b) } };
+    run((tx) => {
+      const parent = tx.doc.blockInfo(b).parent;
+      let rest = pieces;
+      let after = b;
+      if (mode === "replace") {
+        const n = len(tx.doc, b);
+        if (n) tx.delete(b, 0, n);
+        if (rest[0]?.text) tx.insert(b, 0, rest[0].text);
+        rest = rest.slice(1);
+      }
+      for (const piece of rest) {
+        const nb = tx.create(piece.type, after, parent, piece.props);
+        if (piece.text) tx.insert(nb, 0, piece.text);
+        after = nb;
+      }
+      return { b: after, o: len(tx.doc, after) };
+    });
+    um.seal();
+  }, [sync.client, run, um]);
+
   /** 公式块：弹编辑框改写源码。 */
   const editMathSource = useCallback(
     async (blockKey: string) => {
@@ -416,8 +460,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       if (!d || !el) return;
       const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
       if (!d.hasBlock(b)) return;
-      // 只读/仅评论：只允许不改正文的操作（复制、复制链接、评论）。
-      if (readOnlyRef.current && action.kind !== "copy" && action.kind !== "link" && action.kind !== "comment") return;
+      // 只读/仅评论：只允许不改正文的操作（复制、复制链接、评论、分享、AI 预览）。
+      if (readOnlyRef.current && !["copy", "link", "comment", "share", "ai", "translate", "template"].includes(action.kind)) return;
       const cur = readOnlyRef.current ? null : sel.current;
       const span = selBlocksRef.current;
       const multi = !!cur && !eqId(cur.a.b, cur.f.b) && span.length > 1 && span.includes(blockKey);
@@ -462,6 +506,23 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
               if (next !== was) tx.setProp(x, "indent", String(next));
             }
           });
+        case "ai":
+        case "translate": {
+          const w = wrap.current, node = blockEl(el, b);
+          if (!w || !node) return;
+          const base = w.getBoundingClientRect(), r = node.getBoundingClientRect();
+          setAiPanel({ key: blockKey, x: Math.max(0, Math.round(r.left - base.left)), y: Math.round(r.bottom - base.top + 6), initial: action.kind === "translate" ? action.lang : undefined });
+          return;
+        }
+        case "share":
+          onShareBlockRef.current?.(blockLink(location.href, blockKey));
+          return;
+        case "template": {
+          const keys = multi ? normalize(d, target).blocks : [b];
+          const md = toMarkdown(keys.map((x) => { const info = d.blockInfo(x); return { type: info.type, props: info.props, text: d.text(x), spans: d.richChars(x).length ? [{ text: d.text(x), marks: {} }] : [] }; }));
+          onSaveTemplateRef.current?.(md);
+          return;
+        }
         case "align":
           return editing((tx, s) => {
             for (const x of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(x).type) && !isColumnText(tx.doc, x)) tx.setProp(x, "align", action.value);
@@ -1650,7 +1711,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onBlockAction={blockAction}
                 selectionCount={!readOnly && selBlocks.length > 1 && selBlocks[0] === k ? selBlocks.length : undefined}
                 inSelection={!readOnly && selBlocks.length > 1 && selBlocks.includes(k)}
-                blockAbilities={readOnly ? readOnlyBlockAbilities(info.type, !onCopyBlock, !!onComment) : blockAbilities(info.type, selBlocks.length > 1 && selBlocks[0] === k, !onCopyBlock, !!onComment)}
+                blockAbilities={withPageAbilities(readOnly ? readOnlyBlockAbilities(info.type, !onCopyBlock, !!onComment) : blockAbilities(info.type, selBlocks.length > 1 && selBlocks[0] === k, !onCopyBlock, !!onComment), info.type, { ai: !!ai && !onCopyBlock, share: !!onShareBlock, template: !!onSaveTemplate && !onCopyBlock })}
                 childBlocks={doc.children(b).map((ch) => {
                   const ci = doc.blockInfo(ch);
                   const key = idKey(ch);
@@ -1754,6 +1815,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           </div>
         </div>
       ))}
+      {aiPanel && ai && sync.client.doc?.hasBlock({ client: Number(aiPanel.key.split(":")[0]), clock: Number(aiPanel.key.split(":")[1]) }) && (
+        <AIBlockPanel
+          key={`${aiPanel.key}:${aiPanel.initial ?? ""}`}
+          x={aiPanel.x}
+          y={aiPanel.y}
+          text={sync.client.doc.text({ client: Number(aiPanel.key.split(":")[0]), clock: Number(aiPanel.key.split(":")[1]) })}
+          initial={aiPanel.initial}
+          ai={ai}
+          canEdit={!readOnly}
+          onReplace={(result) => applyAiResult(aiPanel.key, result, "replace")}
+          onInsert={(result) => applyAiResult(aiPanel.key, result, "insert")}
+          onClose={() => setAiPanel(null)}
+        />
+      )}
       {(!readOnly || onComment) && toolbar && sel.current && (
         <FormatToolbar
           x={toolbar.x}
@@ -1860,6 +1935,12 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     insertAfter: true,
     delete: true,
   };
+}
+
+/** 页面级能力（AI、分享、保存为模板）叠加到块菜单能力上；AI 只处理文字类块。 */
+export function withPageAbilities(base: BlockMenuAbilities, type: string, page: { ai: boolean; share: boolean; template: boolean }): BlockMenuAbilities {
+  const textish = COLORABLE.has(type) || type === "code";
+  return { ...base, ai: page.ai && textish, share: page.share, template: page.template && (textish || type === "divider" || type === "table") };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BlockHandle, blockLink, CONVERT_TARGETS, linkedBlock } from "./BlockHandle";
-import { blockAbilities, dropPlan, readOnlyBlockAbilities } from "./Editor";
+import { blockAbilities, dropPlan, readOnlyBlockAbilities, withPageAbilities } from "./Editor";
 
 const noop = () => {};
 const all = blockAbilities("h2", false, true, true);
@@ -44,6 +44,19 @@ describe("Feishu-style block handle", () => {
     expect(html).not.toContain("data-block-comment");
     expect(html).not.toContain("data-insert-after");
     expect(html).toContain('draggable="true"');
+  });
+});
+
+describe("page-level block actions (AI / share / template)", () => {
+  it("adds AI, translate, share and save-as-template rows only when the page provides them", () => {
+    const can = withPageAbilities(all, "h2", { ai: true, share: true, template: true });
+    const html = renderToStaticMarkup(<BlockHandle type="h2" open onOpenChange={noop} can={can} />);
+    for (const attr of ["data-block-ai", "data-block-translate", "data-block-share", "data-block-template"]) expect(html).toContain(attr);
+    const none = renderToStaticMarkup(<BlockHandle type="h2" open onOpenChange={noop} can={withPageAbilities(all, "h2", { ai: false, share: false, template: false })} />);
+    for (const attr of ["data-block-ai", "data-block-translate", "data-block-share", "data-block-template"]) expect(none).not.toContain(attr);
+  });
+  it("offers AI only for text-like blocks", () => {
+    expect(withPageAbilities(blockAbilities("image", false, true, true), "image", { ai: true, share: true, template: true }).ai).toBe(false);
   });
 });
 

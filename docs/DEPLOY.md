@@ -32,6 +32,7 @@ pnpm --filter web dev     # :5173，/api 代理到 :8080
 | `JIANGE_SESSION_TTL` | `720h` | 会话时长 |
 | `JIANGE_SECURE_COOKIES` | `false` | HTTPS 下置 true |
 | `JIANGE_ALLOWED_ORIGINS` | `localhost:5173,…` | WebSocket 允许的来源 |
+| `JIANGE_SECRET_KEY` | 空 | 加密用户在「AI 设置」中保存的 API Key（任意长随机字符串，部署后勿更换，否则已存 Key 需用户重新填写）；为空时不能保存 API Key，AI 功能不可用 |
 | `JIANGE_S3_ENDPOINT` 等 | 空 | 不配则附件关闭 |
 | `JIANGE_AUTO_VERSION_EVERY` | `30m` | 自动历史版本间隔，0 关闭 |
 

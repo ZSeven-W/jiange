@@ -1,3 +1,4 @@
+import { openAISettings } from "@/lib/ai";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
@@ -264,6 +265,7 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
           {me.workspaces.map((w) => <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">{w.name} <span>✓</span></div>)}
+          <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAISettings(); }} data-open-ai-settings><Sparkles size={14} className="text-primary" />{t("AI 设置")}</button>
           <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>{t("退出登录")}</button>
         </div>}
         <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
@@ -538,4 +540,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
