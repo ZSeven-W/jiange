@@ -17,7 +17,7 @@ describe("Feishu-style block handle", () => {
     const html = renderToStaticMarkup(<BlockHandle type="h2" indent={0} open onOpenChange={noop} can={all} />);
     for (const t of CONVERT_TARGETS) expect(html).toContain(`data-convert-to="${t.type}"`);
     expect(html).toMatch(/class="[^"]*text-primary[^"]*"[^>]*data-convert-to="h2"/);
-    for (const attr of ["data-block-colors", "data-block-indent", "data-block-outdent", "data-block-cut", "data-block-copy", "data-block-link", "data-block-comment", "data-insert-after", "data-delete-block"]) expect(html).toContain(attr);
+    for (const attr of ["data-block-colors", "data-block-layout", "data-block-align", "data-block-indent", "data-block-outdent", "data-block-cut", "data-block-copy", "data-block-link", "data-block-comment", "data-insert-after", "data-delete-block"]) expect(html).toContain(attr);
     // 无缩进时“减少缩进”不可用
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-block-outdent/);
   });
