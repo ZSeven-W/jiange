@@ -462,6 +462,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
               if (next !== was) tx.setProp(x, "indent", String(next));
             }
           });
+        case "align":
+          return editing((tx, s) => {
+            for (const x of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(x).type) && !isColumnText(tx.doc, x)) tx.setProp(x, "align", action.value);
+          });
         case "color":
           return editing((tx, s) => {
             for (const x of normalize(tx.doc, s).blocks) {
@@ -1848,6 +1852,7 @@ export function blockAbilities(type: string, multi: boolean, canCopy: boolean, c
     convert: multi || CONVERTIBLE.has(type),
     color: multi || COLORABLE.has(type),
     indent: multi || TEXT_BLOCKS.has(type),
+    align: multi || ALIGNABLE.has(type),
     copy: canCopy && (multi || textish || CLIPPABLE_BLOCKS.has(type)),
     cut: canCopy && (multi || textish || CLIPPABLE_BLOCKS.has(type)),
     link: true,
@@ -1887,7 +1892,7 @@ function dragGroup(doc: Doc | null, body: OpId[], keys: string[]): OpId[] {
 /** 只读或仅评论的读者：块手柄只提供复制、复制链接和评论（受复制保护与评论权限约束）。 */
 export function readOnlyBlockAbilities(type: string, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
   const textish = COLORABLE.has(type) || type === "code";
-  return { convert: false, color: false, indent: false, copy: canCopy && (textish || CLIPPABLE_BLOCKS.has(type)), cut: false, link: true, comment: canComment && (textish || COMMENTABLE_BLOCKS.has(type)), insertAfter: false, delete: false };
+  return { convert: false, color: false, indent: false, align: false, copy: canCopy && (textish || CLIPPABLE_BLOCKS.has(type)), cut: false, link: true, comment: canComment && (textish || COMMENTABLE_BLOCKS.has(type)), insertAfter: false, delete: false };
 }
 
 const BLOCK_CLASS: Record<string, string> = {
@@ -2029,7 +2034,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-5" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
+      className={cn("group relative", type === "divider" ? "py-5" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", handleOpen && !inSelection && "rounded-[4px] bg-[#E6ECFD] dark:bg-primary/15", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
       data-block-selected={inSelection ? "true" : undefined}
       data-comment-block={blockThreads?.length ? blockThreads.join(" ") : undefined}
       style={{ marginLeft: indent * 24, textAlign: props.align === "center" || props.align === "right" ? props.align : undefined }}
@@ -2039,7 +2044,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-9", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
+      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-[62px]", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
         {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock && !onBlockAction)) && !((selectionCount ?? 0) > 1) ? (
           <button
             className="relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
@@ -2053,6 +2058,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           <BlockHandle
             type={type}
             indent={indent}
+            align={props.align}
             count={selectionCount ?? 1}
             open={handleOpen}
             onOpenChange={setHandleOpen}

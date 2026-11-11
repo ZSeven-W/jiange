@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { SLASH_ITEMS, type MenuItem } from "./pinyin";
+import type { MenuItem } from "./pinyin";
 import { MenuGlyph } from "./menuIcons";
 
 /**
@@ -8,18 +8,13 @@ import { MenuGlyph } from "./menuIcons";
  * hover 同步 index——不再经由 cmdk（其 value 是搜索框而非选中项，方向键
  * 高亮会失灵）。
  */
-/** 在无搜索词时以图标网格展示的分组。 */
-const GRID_GROUPS = new Set(["基础", "列表"]);
 /** 图标网格列数。 */
 export const SLASH_GRID_COLS = 5;
 
 /** 无搜索词且基础/列表块齐全时，返回网格中的项数（它们位于 items 开头）；否则为 0。 */
-export function slashGridSize(items: MenuItem[], query?: string): number {
-  if (query) return 0;
-  if (!SLASH_ITEMS.filter((it) => GRID_GROUPS.has(it.group)).every((it) => items.some((x) => x.id === it.id))) return 0;
-  let n = 0;
-  while (n < items.length && GRID_GROUPS.has(items[n].group)) n++;
-  return n;
+export function slashGridSize(_items: MenuItem[], _query?: string): number {
+  // 飞书当前版本（2026-11-11 实测）斜杠菜单为纯列表，不再平铺图标网格。
+  return 0;
 }
 
 /**
@@ -133,47 +128,17 @@ export function SlashMenu({
     if (item.top < bounds.top) list.scrollTop -= bounds.top - item.top;
     else if (item.bottom > bounds.bottom) list.scrollTop += item.bottom - bounds.bottom;
   }, [index, items]);
-  // 飞书式：无搜索词时“基础/列表”类块以图标网格平铺在顶部，其余以列表展示；搜索时全部为列表。
-  const gridItems = items.slice(0, slashGridSize(items, query));
-  const listItems = items.filter((it) => !gridItems.includes(it));
-  const groups = [...new Set(listItems.map((i) => i.group))];
-  const selectedGrid = gridItems.find((it) => items.indexOf(it) === index);
+  const groups = [...new Set(items.map((i) => i.group))];
   return (
-    <div className="absolute z-30 w-[272px] max-w-[calc(100vw-16px)]" style={{ left: x + placement.dx, top: y + placement.dy }} onMouseDown={(e) => e.preventDefault()} data-slash-menu>
-      <div ref={listRef} style={{ maxHeight: placement.maxHeight }} className="overflow-y-auto rounded-lg border bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)]">
-        {query && <div className="px-2.5 pb-1 pt-1.5 text-[12px] text-subtle">搜索：{query}</div>}
-        {items.length === 0 && <div className="px-3 py-2 text-[13px] text-subtle">没有匹配的块</div>}
-        {gridItems.length > 0 && (
-          <div className="px-1 pb-1 pt-1" data-slash-grid>
-            <div className="flex h-6 items-center px-1.5 text-[12px] text-subtle">基础{selectedGrid && <span className="ml-auto text-muted-foreground" aria-live="polite">{selectedGrid.label}</span>}</div>
-            <div className="grid gap-1 px-0.5" style={{ gridTemplateColumns: `repeat(${SLASH_GRID_COLS}, minmax(0, 1fr))` }}>
-              {gridItems.map((it) => {
-                const gi = items.indexOf(it);
-                const selected = gi === index;
-                return (
-                  <button
-                    key={it.id}
-                    type="button"
-                    data-selected={selected}
-                    data-value={it.id}
-                    title={it.label}
-                    aria-label={it.label}
-                    className={cn("grid h-9 place-items-center rounded-md text-muted-foreground transition-colors", selected ? "bg-hover text-foreground" : "hover:bg-hover hover:text-foreground")}
-                    onMouseEnter={() => onHover(gi)}
-                    onClick={() => onPick(it)}
-                  >
-                    <MenuGlyph id={it.id} fallback={it.icon} size={18} />
-                  </button>
-                );
-              })}
-            </div>
-            {listItems.length > 0 && <div className="mx-1.5 mt-1.5 h-px bg-border" />}
-          </div>
-        )}
+    <div className="absolute z-30 w-[232px] max-w-[calc(100vw-16px)]" style={{ left: x + placement.dx, top: y + placement.dy }} onMouseDown={(e) => e.preventDefault()} data-slash-menu>
+      {/* 飞书实测：宽 232、#D9DBDF 描边、内边距 8、分组标题 40 高（含上内边距）、行高 32、图标 20 距行左 8、文字距图标 16、选中 #EDEDEE。 */}
+      <div ref={listRef} style={{ maxHeight: placement.maxHeight }} className="overflow-y-auto rounded-lg border border-[#D9DBDF] bg-surface px-2 pb-2 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border">
+        {query && <div className="flex h-8 items-end px-1 pb-1 text-[12px] text-subtle">搜索：{query}</div>}
+        {items.length === 0 && <div className="px-2 py-3 text-[13px] text-subtle">没有匹配的块</div>}
         {groups.map((g) => (
           <div key={g}>
-            <div className="flex h-7 items-end px-2.5 pb-1 text-[12px] text-subtle">{g}</div>
-            {listItems
+            <div className="flex h-10 items-center px-1 pt-1 text-[12px] text-subtle">{g}</div>
+            {items
               .filter((i) => i.group === g)
               .map((it) => {
                 const gi = items.indexOf(it);
@@ -184,14 +149,11 @@ export function SlashMenu({
                     type="button"
                     data-selected={selected}
                     data-value={it.id}
-                    className={cn(
-                      "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[14px]",
-                      selected ? "bg-hover text-foreground" : "text-foreground hover:bg-hover",
-                    )}
+                    className={cn("flex h-8 w-full items-center gap-4 rounded-md px-2 text-left text-[14px] text-foreground", selected ? "bg-[#EDEDEE] dark:bg-hover" : "hover:bg-[#EDEDEE] dark:hover:bg-hover")}
                     onMouseEnter={() => onHover(gi)}
                     onClick={() => onPick(it)}
                   >
-                    <span className="grid size-5 shrink-0 place-items-center text-muted-foreground">
+                    <span className={cn("grid size-5 shrink-0 place-items-center", it.id === "code" ? "text-[#2EA121]" : "text-primary")}>
                       <MenuGlyph id={it.id} fallback={it.icon} size={18} />
                     </span>
                     <span className="flex-1 truncate">{it.label}</span>
