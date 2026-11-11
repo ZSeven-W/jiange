@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { templatesApi } from "@/lib/api";
 import { SearchIcon } from "@/components/FeishuIcons";
 import { parseMarkdown } from "@/lib/markdown";
 
@@ -38,7 +40,10 @@ function MoreTemplatesIcon() {
 export function StarterTemplates({ onChoose, onHide, compact = false, disabled = false }: { onChoose: (template: StarterTemplate) => void; onHide: () => void; compact?: boolean; disabled?: boolean }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const items = STARTER_TEMPLATES.filter((t) => t.name.includes(query.trim()));
+  const qc = useQueryClient();
+  const mine = useQuery({ queryKey: ["my-templates"], queryFn: templatesApi.list, staleTime: 30_000 });
+  const own: (StarterTemplate & { userTemplateId: number })[] = (mine.data ?? []).map((t) => ({ id: `u:${t.id}`, name: t.name, body: t.body, color: "#eef3ff", userTemplateId: t.id }));
+  const items = [...own, ...STARTER_TEMPLATES].filter((t) => t.name.includes(query.trim()));
   const visible = expanded || query.trim() ? items : items.slice(0, 4);
   return <section className={compact ? "w-full" : "mt-auto w-full pt-20"} aria-label="文档模板" data-starter-templates>
     <div className="mb-4 flex items-center justify-between gap-4">
@@ -46,10 +51,13 @@ export function StarterTemplates({ onChoose, onHide, compact = false, disabled =
       <button type="button" onClick={onHide} className="shrink-0 rounded px-1 text-[13px] text-muted-foreground hover:text-foreground">隐藏</button>
     </div>
     <div className="flex gap-4 overflow-x-auto pb-1">
-      {visible.map((t) => <button key={t.id} type="button" disabled={disabled} onClick={() => onChoose(t)} className="group h-[162px] w-[150px] shrink-0 overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={t.id}>
-        <span className="block truncate px-2.5 pt-2 text-[12px] font-medium">{t.name}</span>
-        <TemplatePreview template={t} />
-      </button>)}
+      {visible.map((t) => <span key={t.id} className="group relative shrink-0">
+        <button type="button" disabled={disabled} onClick={() => onChoose(t)} className="h-[162px] w-[150px] overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={t.id}>
+          <span className="flex items-center gap-1 px-2.5 pt-2 text-[12px] font-medium"><span className="truncate">{t.name}</span>{"userTemplateId" in t && <span className="shrink-0 rounded bg-[#e1eaff] px-1 text-[10px] font-normal text-primary">我的</span>}</span>
+          <TemplatePreview template={t} />
+        </button>
+        {"userTemplateId" in t && <button type="button" aria-label={`删除模板「${t.name}」`} title="删除模板" onClick={() => { void templatesApi.remove((t as { userTemplateId: number }).userTemplateId).then(() => qc.invalidateQueries({ queryKey: ["my-templates"] })); }} className="absolute right-1.5 top-1.5 hidden size-5 place-items-center rounded bg-surface text-[12px] text-muted-foreground shadow group-hover:grid hover:text-destructive" data-delete-template>×</button>}
+      </span>)}
       {!query.trim() && !expanded && <button type="button" disabled={disabled} onClick={() => setExpanded(true)} className="flex h-[162px] w-[150px] shrink-0 flex-col items-center justify-center gap-2 rounded-lg border bg-surface text-[13px] text-muted-foreground shadow-[0_2px_10px_rgba(31,35,41,0.05)] hover:bg-hover/40"><MoreTemplatesIcon />更多模板</button>}
       {items.length === 0 && <p className="py-8 text-[13px] text-subtle">没有找到匹配的模板</p>}
     </div>

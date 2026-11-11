@@ -20,6 +20,7 @@ import { DriveFilePage } from "@/pages/DriveFilePage";
 import { DriveUploadManager } from "@/pages/drive-upload";
 import { DriveUploadStatus } from "@/components/DriveUploadStatus";
 import { AskHost } from "@/components/ui/ask";
+import { AISettingsHost } from "@/components/AISettings";
 
 export default function App() {
   const route = useRoute();
@@ -87,6 +88,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
       <AskHost />
+      <AISettingsHost />
       <button className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout ? "md:top-3.5" : "md:hidden"}`} onClick={() => setSidebarOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
       {sidebarOpen && <button className={`fixed inset-0 z-40 bg-black/30 ${docLayout ? "" : "md:hidden"}`} aria-label="关闭导航" onClick={() => setSidebarOpen(false)} />}
       <div className={`${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docLayout ? "" : route.page === "base" || route.page === "slides" ? "md:hidden" : "md:static md:block"}`}>

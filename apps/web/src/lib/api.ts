@@ -225,6 +225,13 @@ export const baseApi = {
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
 };
+export interface UserTemplate { id: number; name: string; body: string; createdAt: string }
+/** 我的模板（仅本人可见）。 */
+export const templatesApi = {
+  list: () => request<{ templates: UserTemplate[] }>("GET", "/api/me/templates").then((r) => r.templates),
+  add: (name: string, body: string) => request<UserTemplate>("POST", "/api/me/templates", { name, body }),
+  remove: (id: number) => request<void>("DELETE", `/api/me/templates/${id}`),
+};
 export interface CommentReaction { emoji: string; userIds: number[] }
 /** 与服务端 store.ReactionEmojis 一致的固定表情集合。 */
 export const REACTION_EMOJIS = ["👍", "✅", "😄", "❤️", "🎉", "👀", "🙏", "💪"] as const;

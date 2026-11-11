@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ChevronRight, Copy, IndentDecrease, IndentIncrease, Link2, MessageSquarePlus, Palette, Scissors, Trash2 } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ChevronRight, Copy, IndentDecrease, IndentIncrease, Languages, LayoutTemplate, Link2, MessageSquarePlus, Palette, Scissors, Share2, Sparkles, Trash2 } from "lucide-react";
 import { MENU_ICONS } from "./menuIcons";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,10 @@ export type BlockMenuAction =
   | { kind: "convert"; type: string }
   | { kind: "indent"; delta: 1 | -1 }
   | { kind: "align"; value: "left" | "center" | "right" }
+  | { kind: "ai" }
+  | { kind: "translate"; lang: "translate-en" | "translate-zh" | "translate-ja" }
+  | { kind: "share" }
+  | { kind: "template" }
   | { kind: "color"; key: "color" | "bg"; value: string | null }
   | { kind: "copy" }
   | { kind: "cut" }
@@ -43,6 +47,9 @@ export interface BlockMenuAbilities {
   color?: boolean;
   indent?: boolean;
   align?: boolean;
+  ai?: boolean;
+  share?: boolean;
+  template?: boolean;
   copy?: boolean;
   cut?: boolean;
   link?: boolean;
@@ -80,7 +87,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   align?: string;
 }) {
   const root = useRef<HTMLSpanElement>(null);
-  const [sub, setSub] = useState<"layout" | "colors" | null>(null);
+  const [sub, setSub] = useState<"layout" | "colors" | "translate" | null>(null);
   useEffect(() => {
     if (!open) { setSub(null); return; }
     const onDown = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) onOpenChange(false); };
@@ -98,10 +105,10 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   const keep = (event: React.MouseEvent) => event.preventDefault();
   const layout = can.indent || can.align;
   const groupA = can.color || layout;
-  const groupB = (can.comment && !multi) || can.cut || can.copy || can.delete;
-  const groupC = (can.link && !multi) || (can.insertAfter && !multi);
+  const groupB = (can.comment && !multi) || can.cut || can.copy || (can.ai && !multi) || can.delete;
+  const groupC = (can.share && !multi) || can.template || (can.link && !multi) || (can.insertAfter && !multi);
   const section = "border-t border-[#D9DBDF] p-1 first:border-t-0 dark:border-border";
-  const subMenu = (name: "layout" | "colors") => ({ onMouseEnter: () => setSub(name), onMouseLeave: () => setSub((v) => (v === name ? null : v)) });
+  const subMenu = (name: "layout" | "colors" | "translate") => ({ onMouseEnter: () => setSub(name), onMouseLeave: () => setSub((v) => (v === name ? null : v)) });
   return <span ref={root} className="relative" contentEditable={false}>
     <button
       type="button"
@@ -123,6 +130,9 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
     </button>
     {open && <div role="menu" className="absolute left-2 top-[31px] z-40 w-[232px] rounded-lg border border-[#D9DBDF] bg-surface text-[14px] font-normal leading-normal tracking-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-block-menu>
       {multi && <div className="px-3 pb-1 pt-2 text-[12px] text-subtle">已选择 {count} 个块</div>}
+      {can.ai && !multi && <div className={section}>
+        <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "ai" })} data-block-ai><Sparkles size={16} strokeWidth={1.6} className="shrink-0 text-primary" />AI</button>
+      </div>}
       {can.convert && <div className={cn(section, "px-[11px] pb-3 pt-1")}>
         <div className="grid gap-x-[12.5px] gap-y-3" style={{ gridTemplateColumns: "repeat(6, 24px)" }}>
           {CONVERT_TARGETS.map((t) => <button key={t.type} type="button" role="menuitem" title={t.label} aria-label={`转换为${t.label}`} onMouseDown={keep} onClick={act({ kind: "convert", type: t.type })} className={cn("grid size-6 place-items-center rounded hover:bg-hover", t.type === type && !multi ? "bg-[#DBE5FE] text-primary dark:bg-primary/20" : "text-foreground")} data-convert-to={t.type}><TypeGlyph type={t.type} size={18} /></button>)}
@@ -159,9 +169,17 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
         {can.comment && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "comment" })} data-block-comment><MessageSquarePlus size={16} strokeWidth={1.6} className={icon} />评论</button>}
         {can.cut && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "cut" })} data-block-cut><Scissors size={16} strokeWidth={1.6} className={icon} />剪切</button>}
         {can.copy && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "copy" })} data-block-copy><Copy size={16} strokeWidth={1.6} className={icon} />复制</button>}
+        {can.ai && !multi && <div className="relative" {...subMenu("translate")}>
+          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "translate"} className={cn(item, sub === "translate" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "translate" ? null : "translate"))} data-block-translate><Languages size={16} strokeWidth={1.6} className={icon} />翻译<ChevronRight size={14} className="ml-auto text-subtle" /></button>
+          {sub === "translate" && <div role="menu" className="absolute left-full top-0 z-50 ml-1 w-[160px] rounded-lg border border-[#D9DBDF] bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border">
+            {([["translate-zh", "中文"], ["translate-en", "英文"], ["translate-ja", "日文"]] as const).map(([lang, label]) => <button key={lang} type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "translate", lang })} data-block-translate-to={lang}>{`翻译为${label}`}</button>)}
+          </div>}
+        </div>}
         {can.delete && <button type="button" role="menuitem" className={cn(item, "hover:text-destructive")} onClick={act({ kind: "delete" })} data-delete-block><Trash2 size={16} strokeWidth={1.6} className={icon} />{multi ? `删除 ${count} 个块` : "删除"}</button>}
       </div>}
       {groupC && <div className={section}>
+        {can.share && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "share" })} data-block-share><Share2 size={16} strokeWidth={1.6} className={icon} />分享</button>}
+        {can.template && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "template" })} data-block-template><LayoutTemplate size={16} strokeWidth={1.6} className={icon} />保存为模板</button>}
         {can.link && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "link" })} data-block-link><Link2 size={16} strokeWidth={1.6} className={icon} />复制链接</button>}
         {can.insertAfter && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "insertAfter" })} data-insert-after><ArrowDownToLine size={16} strokeWidth={1.6} className={icon} />在下方添加</button>}
       </div>}

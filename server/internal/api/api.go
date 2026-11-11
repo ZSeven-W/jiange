@@ -35,6 +35,11 @@ type Server struct {
 	WebUI         http.Handler // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
+	// AISecret (32 bytes, from JIANGE_SECRET_KEY) encrypts saved AI API keys; nil disables saving.
+	AISecret []byte
+	// AITransport / AIAllowHTTP let tests reach a local fake provider.
+	AITransport http.RoundTripper
+	AIAllowHTTP bool
 }
 
 func (s *Server) now() time.Time {
@@ -155,6 +160,18 @@ func (s *Server) Handler() http.Handler {
 
 		// 评论表情回应
 		"POST /api/bases/{id}/records/{rid}/comments/{cid}/reactions": s.setRecordCommentReaction,
+
+		// 个人 AI 设置与文档 AI
+		"GET /api/me/ai":         s.getAISettings,
+		"PUT /api/me/ai":         s.putAISettings,
+		"DELETE /api/me/ai":      s.deleteAISettings,
+		"POST /api/me/ai/test":   s.testAISettings,
+		"POST /api/docs/{id}/ai": s.docAI,
+
+		// 我的模板
+		"GET /api/me/templates":          s.listUserTemplates,
+		"POST /api/me/templates":         s.addUserTemplate,
+		"DELETE /api/me/templates/{tid}": s.deleteUserTemplate,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

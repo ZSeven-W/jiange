@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
-import { docsApi, driveApi, type DocMeta, type Me } from "@/lib/api";
+import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
@@ -30,7 +30,7 @@ import { DocumentIconEditor } from "@/components/DocumentIconEditor";
 import { DocumentCover } from "@/components/DocumentCover";
 import { DocumentGlyph, displayDocumentIcon } from "@/components/DocumentGlyph";
 import { publishDocumentIcon } from "@/components/documentIconCache";
-import { ask } from "@/components/ui/ask";
+import { ask, askText } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
 import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, mustRedactCommentAttemptQuote, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
@@ -43,12 +43,14 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendMarkdownOps } from "@/lib/mdImport";
+import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
+import { DocAIPanel } from "./DocAIPanel";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
 import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
-import { Check, Eye, MessageSquare, Star } from "lucide-react";
+import { Check, Eye, MessageSquare, Sparkles, Star } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -141,6 +143,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
   const [, setPendingRevision] = useState(0);
   const [sharing, setSharing] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [pageNotice, setPageNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [titleCheckTarget, setTitleCheckTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
@@ -372,6 +376,24 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     return n;
   }, [sync.client.doc, sync.version]);
+  // 个人 AI：仅在可复制该文档内容时可用（服务端同样校验）。
+  const aiAvailable = metadataVerified && canCopyDocument(meta.data);
+  const runAI = aiAvailable ? (messages: AIMessage[]) => aiApi.complete(id, messages) : undefined;
+  const docMarkdown = () => { const d = sync.client.doc; return d ? viewToMarkdown(d.view()) : ""; };
+  const appendMarkdown = (md: string) => {
+    const d = sync.client.doc;
+    if (!d || !canEditRef.current || !sync.client.caughtUp || !recordExternalUndo.current || !parseMarkdown(md).length) { setPageNotice({ ok: false, text: "当前无法写入文档，请确认编辑权限和同步状态。" }); return; }
+    const tx = appendMarkdownOps(d, md);
+    if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); setPageNotice({ ok: true, text: "已插入到文末。" }); }
+  };
+  const saveTemplate = async (md: string) => {
+    if (!md.trim()) { setPageNotice({ ok: false, text: "没有可保存的内容。" }); return; }
+    const name = await askText("保存为模板", "模板名称", (title || "未命名模板").slice(0, 100));
+    if (!name?.trim()) return;
+    try { await templatesApi.add(name.trim(), md); void qc.invalidateQueries({ queryKey: ["my-templates"] }); setPageNotice({ ok: true, text: `已保存为模板「${name.trim()}」，新建文档时可在模板中选择。` }); }
+    catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : "保存模板失败，请重试。" }); }
+  };
+  useEffect(() => { if (!pageNotice) return; const timer = window.setTimeout(() => setPageNotice(null), 4000); return () => window.clearTimeout(timer); }, [pageNotice]);
   const exportMd = async () => {
     if (exportingMarkdown.current || !permissionsVerified || !canCopyDocument(meta.data)) return;
     const d = sync.client.doc;
@@ -653,6 +675,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             setCommentsTarget(commentsOpen ? null : { doc: id, user: me.user.id, session: commentSession });
           }}
           onFind={() => openFind("replace")}
+          onAI={aiAvailable ? () => setAiOpen((v) => !v) : undefined}
+          aiOpen={aiOpen}
+          onSaveTemplate={aiAvailable ? () => void saveTemplate(docMarkdown()) : undefined}
           readingMode={readingMode}
           onToggleReading={() => setReadingMode((value) => !value)}
           onCreate={() => newDoc.mutate()}
@@ -677,6 +702,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           wordCount={wordCount}
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
+        {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
         {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
         {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
         {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
@@ -700,7 +726,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", ((commentsAvailable && commentsOpen) || history) && "xl:pr-96")} onScroll={onBodyScroll} data-doc-scroll>
+        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", ((commentsAvailable && commentsOpen) || history || (aiOpen && runAI)) && "xl:pr-96")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
           {outlineVisible && (
             <OutlinePanel
@@ -764,6 +790,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
                 onPreviewImage={(src, alt, mime) => setPreview({ src, alt, mime })}
+                ai={runAI}
+                onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: "已复制该段落的链接，可在分享面板中设置访问权限。" }); } : undefined}
+                onSaveTemplate={aiAvailable ? (md) => void saveTemplate(md) : undefined}
                 people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? "所有者" : "协作者" }))}
                 onMentionPerson={(uid, name) => {
                   // 文档内 @人 → 通知中心（mention）
@@ -811,6 +840,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         </div>}
       </div>
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
+      {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {history && (
@@ -927,6 +957,9 @@ function TopBar({
   onShare,
   onComments,
   onFind,
+  onAI,
+  aiOpen,
+  onSaveTemplate,
   readingMode,
   onToggleReading,
   onCreate,
@@ -948,6 +981,9 @@ function TopBar({
   onShare: () => void;
   onComments: () => void;
   onFind: () => void;
+  onAI?: () => void;
+  aiOpen?: boolean;
+  onSaveTemplate?: () => void;
   readingMode: boolean;
   onToggleReading: () => void;
   onCreate: () => void;
@@ -1014,10 +1050,11 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} wide={wide} onToggleWide={onToggleWide} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
+        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} wide={wide} onToggleWide={onToggleWide} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
+        {onAI && <button onClick={onAI} title="AI 助手" aria-label="AI 助手" aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
         <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
@@ -1096,6 +1133,8 @@ function DocMenu({
   onComments,
   onFind,
   onPrint,
+  onAI,
+  onSaveTemplate,
   wordCount,
 }: {
   meta?: DocMeta;
@@ -1107,6 +1146,8 @@ function DocMenu({
   wide?: boolean;
   onToggleWide?: () => void;
   onPrint: () => void;
+  onAI?: () => void;
+  onSaveTemplate?: () => void;
   onComments: () => void;
   onFind: () => void;
   wordCount: number;
@@ -1175,6 +1216,9 @@ function DocMenu({
         <div className="absolute right-0 top-9 z-30 w-44 rounded-lg border bg-surface p-1 shadow-lg" onMouseLeave={() => setOpen(false)}>
           <div className="px-3 py-1.5 text-[12px] text-subtle" data-word-count>字数统计：{wordCount}</div>
           <button className={item} onClick={() => { close(); onFind(); }}>查找和替换</button>
+          {onAI && <button className={cn(item, "sm:hidden")} onClick={() => { close(); onAI(); }}>AI 助手</button>}
+          {onSaveTemplate && <button className={item} onClick={() => { close(); onSaveTemplate(); }} data-save-template>保存为模板</button>}
+          <button className={item} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry>AI 设置</button>
           {onTitleCheck && <button className={item} onClick={() => { close(); onTitleCheck(); }}>检查文档名称</button>}
           <button className={cn(item, "sm:hidden")} onClick={() => { close(); onComments(); }}>评论</button>
           {meta && <StarMenuItem docId={meta.id} onDone={close} />}
