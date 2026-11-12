@@ -726,7 +726,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px]")} onScroll={onBodyScroll} data-doc-scroll>
+        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
           {outlineVisible && (
             <OutlinePanel
@@ -1029,15 +1029,15 @@ function TopBar({
         <span className="hidden shrink-0 text-primary sm:block">
           {meta?.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={meta?.icon} fallback={<DocIcon />} />}
         </span>
-        {ancestors.map((a) => (
+        {ancestors.map((a, i) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
-            <span className="text-subtle">/</span>
+            <span className={cn("text-subtle", i === 0 && "hidden sm:inline")}>/</span>
             <a href={a.kind === "base" ? `#/base/${a.id}` : `#/doc/${a.id}`} className="truncate text-muted-foreground hover:text-foreground">
               {docTitle(a)}
             </a>
           </span>
         ))}
-        <span className="text-subtle">/</span>
+        <span className={cn("text-subtle", !ancestors.length && "hidden sm:inline")}>/</span>
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
