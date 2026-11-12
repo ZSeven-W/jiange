@@ -147,7 +147,7 @@ export function listZip(bytes: Uint8Array): ZipEntry[] {
   return entries;
 }
 
-async function inflateRaw(data: Uint8Array, limit: number): Promise<Uint8Array> {
+export async function inflateRaw(data: Uint8Array, limit: number): Promise<Uint8Array> {
   if (typeof DecompressionStream === "undefined") throw new ZipError("DecompressionStream unavailable");
   const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   const reader = stream.getReader();

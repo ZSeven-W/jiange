@@ -40,6 +40,8 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
 import { AIBlockPanel } from "./AIPanel";
+import { FlowchartBlock } from "./flowchart/FlowchartBlock";
+import { flowWrites, readFlow, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./LinkCard";
@@ -156,6 +158,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const readOnlyRef = useRef(!!readOnly);
   const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction; range?: { start: number; end: number } } | null>(null);
   const aiRangeText = useRef("");
+  const [flowAutoOpen, setFlowAutoOpen] = useState<string | null>(null);
   const onShareBlockRef = useRef(onShareBlock);
   onShareBlockRef.current = onShareBlock;
   const onSaveTemplateRef = useRef(onSaveTemplate);
@@ -1291,6 +1294,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const nb = tx.create("paragraph", dv, info.parent);
         return { b: nb, o: 0 };
       }
+      if (it.id === "flowchart") {
+        const info = tx.doc.blockInfo(b);
+        const props = { "fc.v": "1", "fc.theme": "classic" };
+        let fb = b;
+        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) { tx.setProp(b, "type", "flowchart"); for (const [k, v] of Object.entries(props)) tx.setProp(b, k, v); }
+        else fb = tx.create("flowchart", b, info.parent, props);
+        const nb = tx.create("paragraph", fb, info.parent);
+        setFlowAutoOpen(idKey(fb));
+        return { b: nb, o: 0 };
+      }
       if (it.id === "callout") {
         tx.setProp(b, "type", "callout");
         if (!tx.doc.blockInfo(b).props.emoji) tx.setProp(b, "emoji", "💡");
@@ -1810,6 +1823,21 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 canCopy={!onCopyBlock}
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
+                flowAI={ai && !onCopyBlock ? ai : undefined}
+                flowAutoOpen={flowAutoOpen === k}
+                onFlowChange={readOnly ? undefined : (graph) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return;
+                  if (flowAutoOpen === k) setFlowAutoOpen(null);
+                  const tx = new Tx(doc);
+                  for (const [key, value] of Object.entries(flowWrites(doc.blockInfo(b).props, graph))) tx.setProp(b, key, value);
+                  if (!tx.ops.length) return;
+                  um.seal();
+                  um.record(tx, sel.current, sel.current, "prop");
+                  sync.client.push(tx.ops);
+                  um.seal();
+                  force((x) => x + 1);
+                  publish();
+                }}
                 onTableChange={readOnly ? undefined : (rows, merges, widths) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
                   const tx = new Tx(doc);
@@ -2042,6 +2070,10 @@ const BLOCK_CLASS: Record<string, string> = {
 };
 
 interface BlockProps {
+  /** 流程图块：写回图（逐对象属性）；未提供表示只读。 */
+  onFlowChange?: (graph: FlowGraph) => void;
+  flowAI?: (messages: AIMessage[]) => Promise<string>;
+  flowAutoOpen?: boolean;
   /** columns 容器：渲染其子块（每栏一个） */
   childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
   columnRemount?: Record<string, number>;
@@ -2092,7 +2124,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2204,6 +2236,11 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           />
         ) : null}
       </span>
+      {type === "flowchart" && (
+        <div className="my-2">
+          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} />
+        </div>
+      )}
       {type === "diagram" ? (
         <div
           contentEditable={false}
@@ -2253,7 +2290,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
           <MessageCircle size={11} strokeWidth={1.7} className="inline" /> {commentBadge}
         </button>
       )}
-      {type === "math" || type === "diagram" || type === "columns" ? null : type === "table" ? (
+      {type === "math" || type === "diagram" || type === "columns" || type === "flowchart" ? null : type === "table" ? (
         <TableBlock
           data={tableDataOf(props)}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}

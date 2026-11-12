@@ -59,7 +59,8 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "table", label: "表格", group: "其他", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
   { id: "divider", label: "分割线", group: "其他", icon: "—", py: ["fen", "ge", "xian"], en: ["divider", "hr", "line"] },
   { id: "math", label: "公式", group: "其他", icon: "∑", py: ["gong", "shi"], en: ["math", "latex", "formula"] },
-  { id: "diagram", label: "流程图", group: "其他", icon: "图", py: ["liu", "cheng", "tu"], en: ["diagram", "mermaid", "flowchart"] },
+  { id: "flowchart", label: "流程图", group: "其他", icon: "流", py: ["liu", "cheng", "tu"], en: ["flowchart", "flow", "drawio", "liuchengtu"] },
+  { id: "diagram", label: "Mermaid 图表", group: "其他", icon: "图", py: ["tu", "biao"], en: ["diagram", "mermaid"] },
   { id: "columns", label: "分栏", group: "其他", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
 ];
 

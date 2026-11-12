@@ -8,7 +8,7 @@ type ExportBlock = {
 };
 
 const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo"]);
-const SPECIAL_BLOCKS = new Set(["code", "math", "diagram", "divider"]);
+const SPECIAL_BLOCKS = new Set(["code", "math", "diagram", "divider", "flowchart"]);
 const MARKS = new Set(["bold", "italic", "strike", "code", "link"]);
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -35,6 +35,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
       losses.add("图片和附件不会打包，重新导入也无法还原原文件块");
       if (!block.props.url) losses.add("部分图片或附件没有可导出的链接");
     } else if (block.type === "callout") losses.add("高亮块的图标和样式会丢失");
+    else if (block.type === "flowchart") losses.add("流程图会导出为 Mermaid 文本，布局、颜色与风格不保留，重新导入为 Mermaid 图表");
     else if (block.type === "bookmark" || block.type === "video") losses.add("网页卡片或视频及其链接可能无法保留");
     else if (!TEXT_BLOCKS.has(block.type) && !SPECIAL_BLOCKS.has(block.type)) losses.add("部分特殊内容块无法完整导出");
 

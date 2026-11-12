@@ -24,6 +24,7 @@ import {
   SquareCheck,
   Table2,
   Type,
+  Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -46,6 +47,7 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   callout: Lightbulb,
   math: Sigma,
   diagram: DiagramFlowVertical,
+  flowchart: Workflow,
   video: Play,
   bookmark: Link2,
   table: Table2,
