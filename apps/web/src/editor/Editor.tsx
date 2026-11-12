@@ -71,6 +71,7 @@ import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
 import { applyTableHistory } from "./tableHistoryUndo";
+import { tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
 
 const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
@@ -313,6 +314,25 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       sel.current = at ? { a: at, f: at } : restored;
     }
   }, [sync.version, sync.client]);
+
+  // 表格单元格级存储的收敛：并发编辑后镜像过期、或旧客户端直接改了 tableData 时，
+  // 由在线的可编辑客户端补写（不进入撤销栈；多个客户端同时补写的值相同，自然收敛）。
+  useEffect(() => {
+    if (readOnly) return;
+    const timer = window.setTimeout(() => {
+      const d = sync.client.doc;
+      if (!d || readOnlyRef.current || !sync.client.caughtUp) return;
+      const tx = new Tx(d);
+      for (const b of bodyBlocks(d).flatMap((x) => [x, ...d.children(x)])) {
+        const info = d.blockInfo(b);
+        if (info.type !== "table") continue;
+        const writes = tableRepairWrites(info.props, d.client);
+        for (const [key, value] of Object.entries(writes ?? {})) tx.setProp(b, key, value);
+      }
+      if (tx.ops.length) sync.client.push(tx.ops);
+    }, 300 + Math.floor(Math.random() * 600));
+    return () => window.clearTimeout(timer);
+  }, [sync.version, sync.client, readOnly]);
 
   const publish = useCallback(() => {
     const d = sync.client.doc,
@@ -1757,19 +1777,20 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
                   if (info.type !== "table") return;
-                  const before = parseTableData(info.props.tableData);
+                  const before = tableRowsOf(info.props);
                   const old = before[r]?.[c];
                   if (r >= 0 && typeof old !== "string") return;
                   if (r >= 0 && old === v) return;
                   const previousVersion = doc.propVersion(b, "tableData");
                   const typeVersion = doc.propVersion(b, "type");
                   const rows = applyTableEdit(before, r, c, v);
-                  tx.setProp(b, "tableData", JSON.stringify(rows));
+                  // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
+                  writeTable(tx, b, info.props, rows, doc.client);
                   if (tx.ops.length) {
                     const next = doc.propVersion(b, "tableData");
                     const key = r < 0 ? `table:${idKey(b)}:-1:-1` : `table:${idKey(b)}:${r}:${c}`;
-                    const beforeValue = r < 0 ? (info.props.tableData ?? "") : old;
-                    const afterValue = r < 0 ? (doc.blockInfo(b).props.tableData ?? "") : v;
+                    const beforeValue = r < 0 ? tableDataOf(info.props) : old;
+                    const afterValue = r < 0 ? tableDataOf(doc.blockInfo(b).props) : v;
                     const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, typeVersion ? idKey(typeVersion) : null, kind, Date.now(), um.peekMarker(false) === key);
                     um.recordMarker(key, merged);
                   }
@@ -1792,7 +1813,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onTableChange={readOnly ? undefined : (rows, merges, widths) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
                   const tx = new Tx(doc);
-                  tx.setProp(b, "tableData", JSON.stringify(rows));
+                  writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
                   tx.setProp(b, "tableMerges", JSON.stringify(merges));
                   if (widths) tx.setProp(b, "tableWidths", JSON.stringify(widths));
                   um.seal(); // 不与此前的列宽拖拽等属性修改合并为同一步撤销
@@ -2234,7 +2255,7 @@ function Block({ id, type, props, number, spans, childBlocks, columnRemount, syn
       )}
       {type === "math" || type === "diagram" || type === "columns" ? null : type === "table" ? (
         <TableBlock
-          data={props.tableData ?? ""}
+          data={tableDataOf(props)}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
           header={props.tableHeader !== "none"}
           onHeader={onSetProp ? (on) => onSetProp("tableHeader", on ? "row" : "none") : undefined}

@@ -1,3 +1,4 @@
+import { tableDataOf } from "@/editor/tableCells";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
  *
@@ -105,7 +106,7 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
   const losses = new Set<string>();
   for (const block of view.blocks) {
     const text = block.spans.map((span) => span.text).join("");
-    const rows = block.type === "table" ? markdownTableRows(block.props.tableData) : null;
+    const rows = block.type === "table" ? markdownTableRows(tableDataOf(block.props)) : null;
     if (UNPAIRED_SURROGATE.test(text) || Object.values(block.props).some((value) => UNPAIRED_SURROGATE.test(value)) || rows?.some((row) => row.some((cell) => UNPAIRED_SURROGATE.test(cell)))) {
       losses.add("存在无效的 Unicode 字符，导出时会被替换");
     }
@@ -113,7 +114,7 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
     if (block.type === "columns") losses.add("分栏布局会被展开为普通段落");
     else if (block.type === "table") {
       if (!rows) losses.add("表格数据格式异常，原始数据会作为文本导出");
-      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && value)) losses.add("表格的额外内容或设置无法完整保留");
+      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && !key.startsWith("tbl.") && value)) losses.add("表格的额外内容或设置无法完整保留");
     } else if (block.type === "image") {
       if (!block.props.fileId || !options.images?.has(block.props.fileId)) losses.add("部分图片无法读取或格式不受支持（仅支持 PNG/JPEG/GIF），只导出图片名称");
     } else if (block.type === "file") losses.add("附件只导出为链接，不包含文件本身");
@@ -289,9 +290,9 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         out.push(paragraph(`<w:pStyle w:val="JiangeDivider"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="DEE0E3"/></w:pBdr>`, ""));
         break;
       case "table": {
-        const rows = markdownTableRows(block.props.tableData);
+        const rows = markdownTableRows(tableDataOf(block.props));
         if (rows) { out.push(tableXml(rows)); out.push(paragraph("", "")); }
-        else out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, w.run(block.props.tableData ?? "", { code: "true" })));
+        else out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, w.run(tableDataOf(block.props), { code: "true" })));
         break;
       }
       case "image": {

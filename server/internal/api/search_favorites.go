@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -129,8 +128,7 @@ func searchableDocument(view collab.DocView, needle string) bool {
 		case "title", "math", "diagram", "image", "divider", "columns":
 			continue
 		case "table":
-			var cells [][]string
-			if json.Unmarshal([]byte(block.Props["tableData"]), &cells) == nil {
+			if cells := tableRows(block.Props); cells != nil {
 				for _, row := range cells {
 					for _, cell := range row {
 						if contains(cell) {

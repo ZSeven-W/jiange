@@ -1,3 +1,4 @@
+import { tableDataOf } from "@/editor/tableCells";
 import { calloutStyle } from "@/editor/blockStyles";
 import { codeLangLabel } from "@/editor/CodeBlockHeader";
 import { imageAlign } from "@/editor/ImageBlock";
@@ -121,7 +122,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-[15px]" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
-        case "table": content = <ReadOnlyTable data={block.props.tableData} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
+        case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;

@@ -1,3 +1,4 @@
+import { tableDataOf } from "@/editor/tableCells";
 /**
  * Markdown import/export for Jiange documents (P6).
  *
@@ -424,11 +425,11 @@ export function toMarkdown(blocks: MdBlock[]): string {
         break;
       case "table": {
         orderedNo = 0;
-        const rows = markdownTableRows(b.props.tableData);
+        const rows = markdownTableRows(tableDataOf(b.props));
         if (rows) out.push("", ...tableAsMarkdown(rows), "");
         else {
           // Preserve malformed/legacy source instead of silently discarding it.
-          const source = b.props.tableData ?? "";
+          const source = tableDataOf(b.props);
           const fence = codeFence(source);
           out.push(fence + "json", source, fence);
         }
