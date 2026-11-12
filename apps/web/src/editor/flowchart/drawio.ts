@@ -130,6 +130,7 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
       w: Math.round(Number(g.width ?? 120)), h: Math.round(Number(g.height ?? 60)),
       fill: color(s.fillColor), stroke: color(s.strokeColor), color: color(s.fontColor),
       z: nodes.length - (isContainer(shape) ? 10000 : 0),
+      rot: Number(s.rotation ?? 0) || undefined,
     }, localId(c.attrs.id ?? String(seq), "n"));
     if (node) nodes.push(node); else skipped++;
   }
@@ -164,7 +165,7 @@ export function toDrawio(graph: FlowGraph): string {
   const styleFor = (n: FlowNode) => {
     const base: Record<Shape, string> = { rect: "rounded=0;", round: "rounded=1;", terminator: "rounded=1;arcSize=50;", diamond: "rhombus;", parallelogram: "shape=parallelogram;perimeter=parallelogramPerimeter;", ellipse: "ellipse;", document: "shape=document;", cylinder: "shape=cylinder3;", hexagon: "shape=hexagon;perimeter=hexagonPerimeter2;", text: "text;",
       triangle: "triangle;direction=north;", note: "shape=note;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;" };
-    return `${base[n.shape]}jiangeShape=${n.shape};whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
+    return `${base[n.shape]}jiangeShape=${n.shape};${n.rot ? `rotation=${n.rot};` : ""}whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
   };
   const cells = [
     `<mxCell id="0"/>`, `<mxCell id="1" parent="0"/>`,

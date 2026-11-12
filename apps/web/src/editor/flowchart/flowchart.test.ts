@@ -146,3 +146,29 @@ describe("flowchart shapes and templates", () => {
     expect(normalizeNode({ id: "x", shape: "class", align: "justify" })?.align).toBeUndefined();
   });
 });
+
+describe("rotation and bends", () => {
+  it("rotates ports with the shape and keeps edges facing the other node", async () => {
+    const { portPoint, worldSide } = await import("./model");
+    const n = { id: "r", shape: "rect" as const, text: "", x: 0, y: 0, w: 100, h: 40, rot: 90 };
+    const top = portPoint(n, "top");
+    expect(Math.round(top.x)).toBe(70);
+    expect(Math.round(top.y)).toBe(20);
+    expect(worldSide(n, "top")).toBe("right");
+    const a = { ...n, id: "a" }, b = { id: "b", shape: "rect" as const, text: "", x: 0, y: 200, w: 100, h: 40 };
+    // Auto ports: the rotated node still leaves from its world-bottom side.
+    const { d } = edgePath({ id: "e", from: "a", to: "b" }, a, b);
+    expect(d.startsWith("M50,70")).toBe(true);
+  });
+
+  it("pins the orthogonal middle segment and normalizes rot/mid", async () => {
+    const a = { id: "a", shape: "rect" as const, text: "", x: 0, y: 0, w: 100, h: 40 }, b = { id: "b", shape: "rect" as const, text: "", x: 100, y: 300, w: 100, h: 40 };
+    const { d } = edgePath({ id: "e", from: "a", to: "b", mid: 150 }, a, b);
+    expect(d).toContain("50,150");
+    expect(d).toContain("150,150");
+    expect(normalizeNode({ id: "x", rot: 450 })?.rot).toBe(90);
+    expect(normalizeNode({ id: "x", rot: 360 })?.rot).toBeUndefined();
+    const back = await parseDrawio(toDrawio({ theme: "feishu", nodes: [{ ...a, rot: 45 }], edges: [] }));
+    expect(back.graph.nodes[0].rot).toBe(45);
+  });
+});

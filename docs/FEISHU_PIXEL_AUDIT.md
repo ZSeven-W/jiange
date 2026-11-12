@@ -99,7 +99,11 @@
 
 | 画布交互 | 框选、吸附参考线、复制粘贴、抓手 | 已实现（第二轮） |
 | 模板 | 从模板创建 | 5 个模板，空画布直接显示 |
-| 旋转 | 有旋转手柄 | 未实现 |
+| 旋转 | 有旋转手柄 | 已实现（第三轮），含吸附 |
+| 评论 | 样式条评论 | 已实现：转到文档评论面板，引用图形文字 |
+| 多人协作 | 显示协作者光标 | 已实现：指针、名字、选中描边 |
+
+第三轮截图：`screenshots/flowchart-r3-{1-peer-view,2-rotated,3-bend,4-comment}-20261112.jpg`。
 
 第二轮截图：`screenshots/flowchart-r2-{1-templates,3-guides,5-align-menu,7-more-menu,8-all-templates}-20261112.jpg`。
 

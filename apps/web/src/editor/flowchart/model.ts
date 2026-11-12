@@ -13,8 +13,8 @@ export type TextAlign = "left" | "center" | "right";
 export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
 
-export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; z?: number }
-export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none" }
+export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; z?: number }
+export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
 
 export const FC_VERSION = "fc.v";
@@ -97,6 +97,7 @@ export function normalizeNode(raw: unknown, id?: string): FlowNode | null {
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
     ...(typeof r.size === "number" && r.size >= 10 && r.size <= 48 ? { size: Math.round(r.size) } : {}),
     ...(r.align === "left" || r.align === "right" ? { align: r.align } : {}),
+    ...(typeof r.rot === "number" && Number.isFinite(r.rot) && Math.round(((r.rot % 360) + 360) % 360) % 360 ? { rot: Math.round(((r.rot % 360) + 360) % 360) % 360 } : {}),
     ...(typeof r.z === "number" && Number.isFinite(r.z) ? { z: r.z } : {}),
   };
 }
@@ -115,6 +116,7 @@ export function normalizeEdge(raw: unknown, id?: string): FlowEdge | null {
     ...(r.dashed === true ? { dashed: true } : {}),
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
     ...(r.arrow === "both" || r.arrow === "none" ? { arrow: r.arrow } : {}),
+    ...(typeof r.mid === "number" && Number.isFinite(r.mid) ? { mid: Math.round(Math.min(40000, Math.max(-40000, r.mid))) } : {}),
   };
 }
 
@@ -181,13 +183,26 @@ export function bounds(nodes: FlowNode[]): { x: number; y: number; w: number; h:
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
+/** Rotate a point around the node centre by the node's rotation. */
+export function rotatePoint(n: FlowNode, p: { x: number; y: number }): { x: number; y: number } {
+  if (!n.rot) return p;
+  const a = (n.rot * Math.PI) / 180, cx = n.x + n.w / 2, cy = n.y + n.h / 2, dx = p.x - cx, dy = p.y - cy;
+  return { x: cx + dx * Math.cos(a) - dy * Math.sin(a), y: cy + dx * Math.sin(a) + dy * Math.cos(a) };
+}
+
 export function portPoint(n: FlowNode, port: Port): { x: number; y: number } {
-  switch (port) {
-    case "top": return { x: n.x + n.w / 2, y: n.y };
-    case "bottom": return { x: n.x + n.w / 2, y: n.y + n.h };
-    case "left": return { x: n.x, y: n.y + n.h / 2 };
-    default: return { x: n.x + n.w, y: n.y + n.h / 2 };
-  }
+  const local = port === "top" ? { x: n.x + n.w / 2, y: n.y } : port === "bottom" ? { x: n.x + n.w / 2, y: n.y + n.h } : port === "left" ? { x: n.x, y: n.y + n.h / 2 } : { x: n.x + n.w, y: n.y + n.h / 2 };
+  return rotatePoint(n, local);
+}
+
+const ORDER: Port[] = ["top", "right", "bottom", "left"];
+/** World-facing side of a local port after rotation (snapped to 90°). */
+export function worldSide(n: FlowNode, port: Port): Port {
+  return ORDER[(ORDER.indexOf(port) + Math.round((n.rot ?? 0) / 90)) % 4];
+}
+/** Local port that faces the given world side. */
+function localFor(n: FlowNode, side: Port): Port {
+  return ORDER[(ORDER.indexOf(side) - (Math.round((n.rot ?? 0) / 90) % 4) + 4) % 4];
 }
 
 /** Pick facing ports when an edge does not pin them. */
@@ -200,10 +215,17 @@ export function autoPorts(a: FlowNode, b: FlowNode): [Port, Port] {
 const dir: Record<Port, [number, number]> = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
 
 /** SVG path for an edge plus its label anchor. */
+/** Whether the orthogonal middle segment is horizontal (its `mid` is a y coordinate). */
+export function midIsY(e: FlowEdge, a: FlowNode, b: FlowNode): boolean {
+  const [ap] = autoPorts(a, b);
+  return dir[worldSide(a, e.fromPort ?? localFor(a, ap))][1] !== 0;
+}
+
 export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mid: { x: number; y: number } } {
   const [ap, bp] = autoPorts(a, b);
-  const p1 = portPoint(a, e.fromPort ?? ap), p2 = portPoint(b, e.toPort ?? bp);
-  const d1 = dir[e.fromPort ?? ap], d2 = dir[e.toPort ?? bp];
+  const fp = e.fromPort ?? localFor(a, ap), tp = e.toPort ?? localFor(b, bp);
+  const p1 = portPoint(a, fp), p2 = portPoint(b, tp);
+  const d1 = dir[worldSide(a, fp)], d2 = dir[worldSide(b, tp)];
   if (e.kind === "straight") return { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
   if (e.kind === "curve") {
     const k = Math.max(40, Math.hypot(p2.x - p1.x, p2.y - p1.y) / 3);
@@ -213,9 +235,11 @@ export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mi
   const g = 20;
   const s = { x: p1.x + d1[0] * g, y: p1.y + d1[1] * g }, t = { x: p2.x + d2[0] * g, y: p2.y + d2[1] * g };
   const vertical = d1[1] !== 0;
+  // `mid` pins the middle segment (dragged by the user); otherwise it sits halfway.
+  const my = e.mid ?? (s.y + t.y) / 2, mx = e.mid ?? (s.x + t.x) / 2;
   const pts = vertical
-    ? [p1, s, { x: s.x, y: (s.y + t.y) / 2 }, { x: t.x, y: (s.y + t.y) / 2 }, t, p2]
-    : [p1, s, { x: (s.x + t.x) / 2, y: s.y }, { x: (s.x + t.x) / 2, y: t.y }, t, p2];
+    ? [p1, s, { x: s.x, y: my }, { x: t.x, y: my }, t, p2]
+    : [p1, s, { x: mx, y: s.y }, { x: mx, y: t.y }, t, p2];
   const mid = { x: (pts[2].x + pts[3].x) / 2, y: (pts[2].y + pts[3].y) / 2 };
   return { d: "M" + pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" L"), mid };
 }
@@ -281,7 +305,7 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
   });
   const nodes = graph.nodes.map((n) => ({ ...n, ...placed.get(n.id)! }));
   const b = bounds(nodes);
-  return { ...graph, nodes: nodes.map((n) => ({ ...n, x: Math.round(n.x - b.x + 40), y: Math.round(n.y - b.y + 40) })), edges: graph.edges.map(({ fromPort: _f, toPort: _t, ...e }) => e) };
+  return { ...graph, nodes: nodes.map((n) => ({ ...n, x: Math.round(n.x - b.x + 40), y: Math.round(n.y - b.y + 40) })), edges: graph.edges.map(({ fromPort: _f, toPort: _t, mid: _m, ...e }) => e) };
 }
 const avg = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
 

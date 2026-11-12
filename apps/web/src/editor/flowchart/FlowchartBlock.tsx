@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, LayoutTemplate, Loader2, Maximize2, Minus, MoreHorizontal, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
-import { autoLayout, bounds, isContainer, textArea, edgePath, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
+import { autoLayout, bounds, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
@@ -100,7 +100,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -115,6 +115,12 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   transparent?: boolean;
   guides?: { x1: number; y1: number; x2: number; y2: number }[];
   marquee?: { x: number; y: number; w: number; h: number } | null;
+  /** Node id that shows a rotation handle (single selection). */
+  rotateHandle?: string | null;
+  /** Edge id that shows a draggable middle-segment handle. */
+  bendHandle?: string | null;
+  /** Collaborators' selections, outlined in their colour. */
+  peerSel?: { color: string; ids: string[] }[];
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -134,16 +140,19 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const { d, mid } = edgePath(e, a, t);
         const color = e.color ?? theme.edge;
         const sel = selected?.has(e.id);
+        const bend = bendHandle === e.id && (e.kind ?? "orthogonal") === "orthogonal" && onEdgeDown;
         return <g key={e.id} data-flow-edge={e.id}>
           <path d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: onEdgeDown ? "pointer" : undefined }} onPointerDown={onEdgeDown ? (ev) => onEdgeDown(ev, e) : undefined} onDoubleClick={onEdgeDouble ? () => onEdgeDouble(e) : undefined} />
           <path d={d} fill="none" stroke={sel ? "#3370FF" : color} strokeWidth={sel ? 2.2 : 1.5} strokeDasharray={e.dashed ? "6 4" : undefined} filter={theme.sketch ? filter : undefined} markerEnd={e.arrow === "none" ? undefined : `url(#${idPrefix}-arrow)`} markerStart={e.arrow === "both" ? `url(#${idPrefix}-arrow)` : undefined} pointerEvents="none" />
           {e.label && <g pointerEvents="none"><rect x={mid.x - measureLabel(e.label, 0) / 2 + 10} y={mid.y - 10} width={Math.max(20, measureLabel(e.label, 0) - 20)} height={20} rx={4} fill={theme.canvas} /><text x={mid.x} y={mid.y + 4} textAnchor="middle" fontSize={12} fill={theme.text}>{e.label}</text></g>}
+          {bend && <circle cx={mid.x} cy={mid.y} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: midIsY(e, a, t) ? "ns-resize" : "ew-resize" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-bend={e.id} />}
         </g>;
       })}
       {graph.nodes.map((n) => {
         const c = nodeColors(n, theme);
         const sel = selected?.has(n.id);
-        return <g key={n.id} data-flow-node={n.id} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
+        const peer = peerSel?.find((p) => p.ids.includes(n.id));
+        return <g key={n.id} data-flow-node={n.id} transform={n.rot ? `rotate(${n.rot} ${n.x + n.w / 2} ${n.y + n.h / 2})` : undefined} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
           <g filter={filter}><ShapeOutline n={n} theme={theme} fill={c.fill} stroke={c.stroke} /></g>
           {editing !== n.id && <NodeText n={n} fill={c.text} />}
           {sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke="#3370FF" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />}
@@ -153,6 +162,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
             return <circle key={p} cx={pt[0]} cy={pt[1]} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: "crosshair" }} onPointerDown={(ev) => { ev.stopPropagation(); onPortDown(ev, n, p); }} data-flow-port={p} />;
           })}
           {sel && onPortDown && <rect x={n.x + n.w - 5} y={n.y + n.h - 5} width={10} height={10} fill="#3370FF" style={{ cursor: "nwse-resize" }} data-flow-resize={n.id} />}
+          {rotateHandle === n.id && onPortDown && <g data-flow-rotate={n.id} style={{ cursor: "grab" }}><circle cx={n.x + n.w + 16} cy={n.y - 16} r={7} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} data-flow-rotate={n.id} /><path d={`M${n.x + n.w + 12.5},${n.y - 17} a3.6,3.6 0 1 1 1.4,3`} fill="none" stroke="#3370FF" strokeWidth={1.3} pointerEvents="none" /></g>}
+          {peer && !sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke={peer.color} strokeWidth={2} pointerEvents="none" data-flow-peer-sel />}
         </g>;
       })}
       {guides?.map((g, i) => <line key={i} x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2} stroke="#F54A45" strokeWidth={1} pointerEvents="none" data-flow-guide />)}
@@ -165,10 +176,13 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
 /* ---------------- inline block ---------------- */
 
 /** 文档内的流程图块：预览 + 打开全屏编辑器（对应飞书在文档中打开画板）。 */
-export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange }: {
+export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment }: {
   graph: FlowGraph; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph) => void;
+  peers?: FlowPeer[];
+  onPresence?: (p: FlowPresence | null) => void;
+  onComment?: (quote: string) => void;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
@@ -176,7 +190,8 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
-    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => setOpen(false)} />}
+    {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
+    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} />}
   </div>;
 }
 
@@ -187,7 +202,13 @@ type Drag =
   | { kind: "resize"; id: string; startX: number; startY: number; w: number; h: number }
   | { kind: "pan"; startX: number; startY: number; vx: number; vy: number }
   | { kind: "connect"; from: string; port: Port; x: number; y: number }
-  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; base: Set<string> };
+  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
+  | { kind: "rotate"; id: string; cx: number; cy: number; a0: number; rot0: number }
+  | { kind: "bend"; id: string; isY: boolean };
+
+/** A collaborator inside the same flowchart (from awareness). */
+export interface FlowPeer { id: number; name: string; color: string; x?: number; y?: number; sel?: string[] }
+export interface FlowPresence { x?: number; y?: number; sel?: string[] }
 
 type FlowClip = { nodes: FlowNode[]; edges: FlowEdge[] };
 const CLIP_MARK = "jiange-flowchart:";
@@ -197,11 +218,14 @@ type Guide = { x1: number; y1: number; x2: number; y2: number };
 
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
 
-export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
+export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment }: {
   initial: FlowGraph; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph) => void;
   onClose: () => void;
+  peers?: FlowPeer[];
+  onPresence?: (p: FlowPresence | null) => void;
+  onComment?: (quote: string) => void;
 }) {
   const [graph, setGraph] = useState(initial);
   const [undo, setUndo] = useState<FlowGraph[]>([]);
@@ -217,6 +241,21 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
   const space = useRef(false);
   const pasteCount = useRef(0);
+  // 协作感知：广播指针位置与选中对象（节流），离开时清空。
+  const presence = useRef<{ x?: number; y?: number; t: number }>({ t: 0 });
+  const presenceRef = useRef(onPresence);
+  presenceRef.current = onPresence;
+  const selectedKey = [...selected].sort().join(",");
+  useEffect(() => { presenceRef.current?.({ x: presence.current.x, y: presence.current.y, sel: selectedKey ? selectedKey.split(",").slice(0, 50) : [] }); }, [selectedKey]);
+  useEffect(() => () => presenceRef.current?.(null), []);
+  const trackPointer = (clientX: number, clientY: number) => {
+    if (!presenceRef.current || !svgWrap.current) return;
+    const now = Date.now();
+    if (now - presence.current.t < 80) return;
+    const p = toWorld(clientX, clientY);
+    presence.current = { x: Math.round(p.x), y: Math.round(p.y), t: now };
+    presenceRef.current({ x: presence.current.x, y: presence.current.y, sel: selectedKey ? selectedKey.split(",").slice(0, 50) : [] });
+  };
   const [library, setLibrary] = useState(true);
   const [libQuery, setLibQuery] = useState("");
   const [aiText, setAiText] = useState("");
@@ -342,11 +381,21 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
   useEffect(() => { if (initial.nodes.length) requestAnimationFrame(() => fit(initial)); /* fit once */ }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onPointerMove = (e: React.PointerEvent) => {
+    trackPointer(e.clientX, e.clientY);
     if (!drag) return;
     if (drag.kind === "pan") { setView((v) => ({ ...v, x: drag.vx - (e.clientX - drag.startX) / v.zoom, y: drag.vy - (e.clientY - drag.startY) / v.zoom })); return; }
     const p = toWorld(e.clientX, e.clientY);
     if (drag.kind === "connect") { setDrag({ ...drag, x: p.x, y: p.y }); return; }
     if (drag.kind === "marquee") { setDrag({ ...drag, x1: p.x, y1: p.y }); return; }
+    if (drag.kind === "rotate") {
+      // 自由旋转；接近 0/90/180/270° 时吸附，按住 Shift 以 15° 为步进。
+      let rot = drag.rot0 + (Math.atan2(p.y - drag.cy, p.x - drag.cx) * 180) / Math.PI - drag.a0;
+      rot = e.shiftKey ? Math.round(rot / 15) * 15 : Math.abs(rot - Math.round(rot / 90) * 90) < 4 ? Math.round(rot / 90) * 90 : Math.round(rot);
+      rot = ((rot % 360) + 360) % 360;
+      setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === drag.id ? { ...n, rot: rot || undefined } : n)) }));
+      return;
+    }
+    if (drag.kind === "bend") { setGraph((g) => ({ ...g, edges: g.edges.map((x) => (x.id === drag.id ? { ...x, mid: Math.round(drag.isY ? p.y : p.x) } : x)) })); return; }
     let dx = (e.clientX - drag.startX) / view.zoom, dy = (e.clientY - drag.startY) / view.zoom;
     if (drag.kind === "move") {
       // 对齐吸附：移动对象的左/中/右、上/中/下与其他图形对齐时吸附并显示参考线（按住 Alt 关闭）。
@@ -369,7 +418,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
       setGuides(lines);
       setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => { const o = drag.origin.get(n.id); return o ? { ...n, x: Math.round(o.x + dx), y: Math.round(o.y + dy) } : n; }) }));
     }
-    if (drag.kind === "resize") setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === drag.id ? { ...n, w: Math.max(40, Math.round(drag.w + dx)), h: Math.max(24, Math.round(drag.h + dy)) } : n)) }));
+    if (drag.kind === "resize") setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => {
+      if (n.id !== drag.id) return n;
+      // Resize along the shape's own axes when it is rotated.
+      const a = (-(n.rot ?? 0) * Math.PI) / 180, lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
+      return { ...n, w: Math.max(20, Math.round(drag.w + lx)), h: Math.max(16, Math.round(drag.h + ly)) };
+    }) }));
   };
   const onPointerUp = (e: React.PointerEvent) => {
     if (!drag) return;
@@ -391,7 +445,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
       }
       return;
     }
-    if (d.kind === "move" || d.kind === "resize") {
+    if (d.kind === "bend") {
+      const base = lastInitial.current;
+      if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { setUndo((u) => [...u.slice(-99), base]); setRedo([]); lastInitial.current = graph; onChange?.(graph); }
+      return;
+    }
+    if (d.kind === "move" || d.kind === "resize" || d.kind === "rotate") {
       const before = undo.length ? null : null; void before;
       // Commit the gesture result relative to the pre-drag graph.
       const base = lastInitial.current;
@@ -528,6 +587,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
         onNodeDown={(e, n) => {
           e.stopPropagation(); setMenu(null);
           if (hand || space.current || e.button === 1) { setDrag({ kind: "pan", startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y }); return; }
+          if ((e.target as Element).getAttribute("data-flow-rotate")) {
+            if (readOnly) return;
+            const p = toWorld(e.clientX, e.clientY), cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+            setDrag({ kind: "rotate", id: n.id, cx, cy, a0: (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI, rot0: n.rot ?? 0 });
+            return;
+          }
           if ((e.target as Element).getAttribute("data-flow-resize")) { if (!readOnly) setDrag({ kind: "resize", id: n.id, startX: e.clientX, startY: e.clientY, w: n.w, h: n.h }); return; }
           const next = e.shiftKey ? new Set(selected).add(n.id) : selected.has(n.id) ? selected : new Set([n.id]);
           setSelected(next);
@@ -536,13 +601,24 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
           for (const c of graph.nodes) if (next.has(c.id) && isContainer(c.shape)) for (const x of graph.nodes) if (!isContainer(x.shape) && x.x >= c.x && x.y >= c.y && x.x + x.w <= c.x + c.w && x.y + x.h <= c.y + c.h) moving.add(x.id);
           if (!readOnly) setDrag({ kind: "move", ids: [...moving], startX: e.clientX, startY: e.clientY, origin: new Map(graph.nodes.filter((x) => moving.has(x.id)).map((x) => [x.id, { x: x.x, y: x.y }])) });
         }}
-        onEdgeDown={(e, edge) => { e.stopPropagation(); setMenu(null); setSelected(e.shiftKey ? new Set(selected).add(edge.id) : new Set([edge.id])); }}
+        onEdgeDown={(e, edge) => {
+          e.stopPropagation(); setMenu(null);
+          if ((e.target as Element).getAttribute("data-flow-bend") && !readOnly) {
+            const a = graph.nodes.find((n) => n.id === edge.from), t = graph.nodes.find((n) => n.id === edge.to);
+            if (a && t) setDrag({ kind: "bend", id: edge.id, isY: midIsY(edge, a, t) });
+            return;
+          }
+          setSelected(e.shiftKey ? new Set(selected).add(edge.id) : new Set([edge.id]));
+        }}
         onPortDown={readOnly ? undefined : (e, n, port) => { const p = toWorld(e.clientX, e.clientY); setDrag({ kind: "connect", from: n.id, port, x: p.x, y: p.y }); }}
         onNodeDouble={readOnly ? undefined : (n) => setEditing({ id: n.id, kind: "node", value: n.text })}
         onEdgeDouble={readOnly ? undefined : (edge) => setEditing({ id: edge.id, kind: "edge", value: edge.label ?? "" })}
         guides={guides}
+        rotateHandle={!readOnly && selectedNodes.length === 1 && !isContainer(selectedNodes[0].shape) ? selectedNodes[0].id : null}
+        bendHandle={!readOnly && selectedEdges.length === 1 && !selectedNodes.length ? selectedEdges[0].id : null}
+        peerSel={peers.filter((p) => p.sel?.length).map((p) => ({ color: p.color, ids: p.sel! }))}
         marquee={drag?.kind === "marquee" ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null}
-        connectPreview={drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = drag.port === "top" ? [n.x + n.w / 2, n.y] : drag.port === "bottom" ? [n.x + n.w / 2, n.y + n.h] : drag.port === "left" ? [n.x, n.y + n.h / 2] : [n.x + n.w, n.y + n.h / 2]; return { x1: pt[0], y1: pt[1], x2: drag.x, y2: drag.y }; })() : null}
+        connectPreview={drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = portPoint(n, drag.port); return { x1: pt.x, y1: pt.y, x2: drag.x, y2: drag.y }; })() : null}
       />
       {editing && (editNode || editEdge) && (() => {
         const anchor = editNode ? { x: editNode.x, y: editNode.y, w: editNode.w, h: editNode.h } : (() => { const e = editEdge!; const a = graph.nodes.find((n) => n.id === e.from)!, t = graph.nodes.find((n) => n.id === e.to)!; const m = edgePath(e, a, t).mid; return { x: m.x - 70, y: m.y - 16, w: 140, h: 32 }; })();
@@ -556,6 +632,11 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
           <div className="mt-3 text-[12px] text-subtle">也可以从左侧图形库选择图形后点击画布放置，或在右上角使用「AI 生成」「导入 draw.io」，支持直接粘贴 draw.io 内容。</div>
         </div>
       </div>}
+      {/* 协作者指针 */}
+      {peers.filter((p) => typeof p.x === "number" && typeof p.y === "number").map((p) => <div key={p.id} className="pointer-events-none absolute z-10 transition-[left,top] duration-100" style={{ left: (p.x! - view.x) * view.zoom, top: (p.y! - view.y) * view.zoom }} data-flow-peer-cursor={p.name}>
+        <svg width="16" height="18" viewBox="0 0 16 18"><path d="M1,1 L15,8 L8,10 L5,17 Z" fill={p.color} stroke="#FFFFFF" strokeWidth="1.2" /></svg>
+        <span className="ml-3 block whitespace-nowrap rounded px-1.5 py-0.5 text-[12px] text-white" style={{ background: p.color }}>{p.name}</span>
+      </div>)}
       {/* 选中对象的浮动样式栏 */}
       {!readOnly && barPos && !drag && !editing && <div className={cn(floatBar, "absolute z-20 -translate-x-1/2")} style={barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
         {selectedNodes.length > 0 && <>
@@ -586,18 +667,21 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
           </div>
         </>}
         {selectedEdges.length > 0 && <>
-          {([["orthogonal", "折线"], ["straight", "直线"], ["curve", "曲线"]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined })} className={cn(barBtn, (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
+          {([["orthogonal", "折线"], ["straight", "直线"], ["curve", "曲线"]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined, mid: undefined })} className={cn(barBtn, (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
           <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn(barBtn, selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>虚线</button>
           <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className={barBtn}>箭头：{selectedEdges[0].arrow === "none" ? "无" : selectedEdges[0].arrow === "both" ? "双向" : "单向"}</button>
           <button type="button" onClick={() => setEditing({ id: selectedEdges[0].id, kind: "edge", value: selectedEdges[0].label ?? "" })} className={barBtn}>文字</button>
         </>}
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
+        {onComment && selectedNodes.length > 0 && <button type="button" className={tb} title="评论" onClick={() => { const n = selectedNodes[0]; finishEdit(); onComment(n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形"); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
         <div className="relative"><button type="button" className={tb} title="更多" onClick={() => setMenu(menu === "more" ? null : "more")} data-flow-more-btn><MoreHorizontal size={16} /></button>
           {menu === "more" && <div className={cn(pop, "right-0 w-44")} data-flow-more-menu>
             {selectedNodes.length > 0 && <>
               <button type="button" className={menuItem} onClick={() => { const c = clipOfSelection(); if (c) pasteClip(c, 20); setMenu(null); }}><Copy size={14} />创建副本<span className="ml-auto text-[12px] text-subtle">⌘D</span></button>
               <button type="button" className={menuItem} onClick={() => { layer("front"); setMenu(null); }}><ArrowUpToLine size={14} />置于顶层</button>
               <button type="button" className={menuItem} onClick={() => { layer("back"); setMenu(null); }}><ArrowDownToLine size={14} />置于底层</button>
+              <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: ((n.rot ?? 0) + 90) % 360 || undefined } : n)) }); setMenu(null); }} data-flow-rotate90><RotateCw size={14} />旋转 90°</button>
+              {selectedNodes.some((n) => n.rot) && <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: undefined } : n)) }); setMenu(null); }}><RotateCcw size={14} />取消旋转</button>}
               <span className="my-1 block h-px bg-[#DEE0E3]" />
             </>}
             <button type="button" className={cn(menuItem, "text-destructive")} onClick={() => { removeSelected(); setMenu(null); }}><Trash2 size={14} />删除<span className="ml-auto text-[12px] text-subtle">Del</span></button>
