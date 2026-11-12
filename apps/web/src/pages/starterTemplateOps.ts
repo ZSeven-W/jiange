@@ -1,6 +1,6 @@
 import { ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
 import { bodyBlocks, TITLE } from "@/editor/model";
-import { parseMarkdown } from "@/lib/markdown";
+import { parseMarkdown, type MdBlock } from "@/lib/markdown";
 
 /** Do not replace an existing block or nested content when inserting a starter. */
 export function isEmptyStarterDocument(doc: Doc): boolean {
@@ -13,8 +13,12 @@ export function isEmptyStarterDocument(doc: Doc): boolean {
 
 /** Insert new blocks ahead of the original empty paragraph; never mutate or delete it. */
 export function insertStarterTemplate(doc: Doc, markdown: string): Tx | null {
+  return insertStarterBlocks(doc, parseMarkdown(markdown));
+}
+
+/** Same as insertStarterTemplate for already-parsed seeds (e.g. a staged Word import). */
+export function insertStarterBlocks(doc: Doc, seeds: MdBlock[]): Tx | null {
   if (!isEmptyStarterDocument(doc)) return null;
-  const seeds = parseMarkdown(markdown);
   if (!seeds.length || seeds.some((s) => s.type === "image" || s.type === "file")) return null;
   const tx = new Tx(doc);
   let after: OpId | null = doc.hasBlock(TITLE) ? TITLE : null;

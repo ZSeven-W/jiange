@@ -1,5 +1,5 @@
 import { Doc, ROOT, Tx, type OpId } from "@jiange/collab";
-import { parseMarkdown } from "./markdown";
+import { parseMarkdown, type MdBlock } from "./markdown";
 
 /**
  * Builds the ops that replace a doc's content with a markdown import:
@@ -38,10 +38,15 @@ export function importMarkdownOps(doc: Doc, md: string) {
 
 /** Append imported blocks without deleting or mutating existing collaborative content. */
 export function appendMarkdownOps(doc: Doc, md: string) {
+  return appendBlocksOps(doc, parseMarkdown(md));
+}
+
+/** Append already-parsed seeds (Markdown or Word import) as one transaction. */
+export function appendBlocksOps(doc: Doc, seeds: MdBlock[]) {
   const tx = new Tx(doc);
   const children = doc.children(ROOT);
   let after = children.at(-1) ?? null;
-  for (const seed of parseMarkdown(md)) {
+  for (const seed of seeds) {
     const id = tx.create(seed.type, after, ROOT, seed.props);
     if (seed.spans.length && seed.type !== "code") {
       const text = seed.spans.map((s) => s.text).join("");

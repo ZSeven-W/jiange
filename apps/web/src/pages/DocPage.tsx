@@ -17,7 +17,7 @@ import { Avatar } from "@/components/brand";
 import { AddIcon, BuildingIcon, DownBoldIcon, EditIcon, MoreIcon, SearchIcon } from "@/components/FeishuIcons";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { TitleConsistency } from "./TitleConsistency";
-import { hasUnsupportedImportBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starterTemplateOps";
+import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starterTemplateOps";
 import { peekStarter, takeStarter } from "./pendingStarter";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
 import { go } from "@/lib/route";
@@ -42,7 +42,9 @@ import { OutlinePanel, activeOutlineId, loadOutlinePinned, outlineOf, saveOutlin
 import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
-import { appendMarkdownOps } from "@/lib/mdImport";
+import { appendBlocksOps, appendMarkdownOps } from "@/lib/mdImport";
+import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxImportResult } from "@/lib/docx";
+import { fetchDocxImages } from "./docxImages";
 import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./DocAIPanel";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
@@ -50,7 +52,7 @@ import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
-import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -394,7 +396,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : "保存模板失败，请重试。" }); }
   };
   useEffect(() => { if (!pageNotice) return; const timer = window.setTimeout(() => setPageNotice(null), 4000); return () => window.clearTimeout(timer); }, [pageNotice]);
-  const exportMd = async () => {
+  const exportDocument = async (format: "md" | "docx" = "md") => {
     if (exportingMarkdown.current || !permissionsVerified || !canCopyDocument(meta.data)) return;
     const d = sync.client.doc;
     if (!d) return;
@@ -404,11 +406,14 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     const view = d.view();
     const snapshot = JSON.stringify(view);
-    const losses = markdownExportLosses(view);
     exportingMarkdown.current = true;
     setExportNotice(null);
     try {
-      if (losses.length && !await ask("Markdown 导出可能丢失内容", `${losses.join("；")}。仍要下载吗？`, false)) return;
+      // Word export embeds images; fetch them first so the loss list is accurate.
+      const images = format === "docx" ? await fetchDocxImages(view.blocks) : undefined;
+      const losses = format === "docx" ? docxExportLosses(view, { images, origin: location.origin }) : markdownExportLosses(view);
+      const label = format === "docx" ? "Word" : "Markdown";
+      if (losses.length && !await ask(`${label} 导出可能丢失内容`, `${losses.join("；")}。仍要下载吗？`, false)) return;
       const before = exportContext.current;
       if (!before.mounted || before.id !== id || before.user !== me.user.id || before.client !== sync.client || before.client.doc !== d || !before.verified || !canCopyDocument(before.meta)) return;
       // Confirm access with the server after the dialog. The cached policy may
@@ -433,12 +438,15 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
         setExportNotice({ id, user: me.user.id, text: "文档内容已变化，请重新导出并确认。" });
         return;
       }
-      const md = viewToMarkdown(view);
+      const name = (title || current.meta?.title || "未命名").trim() || "未命名";
+      const blob = format === "docx"
+        ? new Blob([buildDocx(view, { title: name, images, origin: location.origin })], { type: DOCX_MIME })
+        : new Blob([viewToMarkdown(view)], { type: "text/markdown;charset=utf-8" });
       const a = document.createElement("a");
-      const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
+      const url = URL.createObjectURL(blob);
       try {
         a.href = url;
-        a.download = `${(title || current.meta?.title || "未命名").trim() || "未命名"}.md`;
+        a.download = `${name}.${format}`;
         a.click();
       } finally {
         setTimeout(() => URL.revokeObjectURL(url), 0);
@@ -463,6 +471,20 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
     setTemplateError("");
   };
+  const importWord = async (file: File) => {
+    const d = sync.client.doc;
+    if (!d) return;
+    if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
+    let result: DocxImportResult;
+    // Parse fully before touching the document: a broken file never applies partially.
+    try { result = await readDocxFile(file); } catch (error) { setTemplateError(docxImportErrorMessage(error)); return; }
+    if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+    if (d !== sync.client.doc || !canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || !recordExternalUndo.current) { setTemplateError("请等待文档同步完成后再导入。"); return; }
+    const tx = appendBlocksOps(d, result.blocks);
+    if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
+    setTemplateError("");
+  };
+  const importFile = (file: File) => { void (isDocxFile(file) ? importWord(file) : importMd(file)); };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
   // Commenting and editing are separate capabilities: a viewer may comment
@@ -538,7 +560,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     if (!content || !doc || submittedStarter.current) return;
     if (!canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.droppedOnResync > 0 || !recordExternalUndo.current) { setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
     submittedStarter.current = true;
-    const tx = insertStarterTemplate(doc, content.markdown);
+    const tx = content.blocks ? insertStarterBlocks(doc, content.blocks) : insertStarterTemplate(doc, content.markdown);
     if (!tx) { submittedStarter.current = false; setTemplateError("文档已有内容或含不支持的内容，未导入。原文已保留。"); return; }
     recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
     setPendingSubmitted(true);
@@ -684,8 +706,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
-          onExport={downloadAllowed ? exportMd : undefined}
-          onImport={canEditContent ? importMd : undefined}
+          onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
+          onImport={canEditContent ? importFile : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
           wide={wide}
           onToggleWide={() => setWide((w) => { writeDocWide(me.user.id, id, !w); return !w; })}
@@ -993,7 +1015,7 @@ function TopBar({
   onToggleWide: () => void;
   onHistory: () => void;
   onTitleCheck: () => void;
-  onExport?: () => void;
+  onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
   allowContentCopy: boolean;
@@ -1140,7 +1162,7 @@ function DocMenu({
   meta?: DocMeta;
   onHistory?: () => void;
   onTitleCheck?: () => void;
-  onExport?: () => void;
+  onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
   wide?: boolean;
@@ -1246,8 +1268,9 @@ function DocMenu({
             {canCopyDocument(meta) && <button className={cn(row, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate><Copy size={15} className={icon} />创建副本</button>}
             {<div className="relative" onMouseEnter={() => setSub("download")} onMouseLeave={() => setSub(null)}>
               <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub((v) => (v === "download" ? null : "download"))} data-download-menu><Download size={15} className={icon} /><span className="flex-1">下载为</span><ChevronRight size={14} className="text-subtle" /></button>
-              <div role="menu" className={cn("absolute right-full top-0 z-40 mr-1 w-40 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", sub !== "download" && "hidden")}>
-                {onExport && <button className={row} onClick={() => { close(); onExport(); }}><FileText size={15} className={icon} />导出 Markdown</button>}
+              <div role="menu" className={cn("absolute right-full top-0 z-40 mr-1 w-44 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", sub !== "download" && "hidden")}>
+                {onExport && <button className={row} onClick={() => { close(); onExport("md"); }}><FileText size={15} className={icon} />导出 Markdown</button>}
+                {onExport && <button className={row} onClick={() => { close(); onExport("docx"); }} data-export-docx><FileType size={15} className={icon} />导出 Word（.docx）</button>}
                 {<button className={row} onClick={() => { close(); onPrint(); }} data-export-pdf><FileDown size={15} className={icon} />导出 PDF（打印）</button>}
               </div>
             </div>}
@@ -1255,6 +1278,12 @@ function DocMenu({
               <label className={cn(row, "cursor-pointer")} data-import-md>
                 <FileUp size={15} className={icon} />导入 Markdown
                 <input type="file" accept=".md,.markdown,text/markdown" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; close(); }} />
+              </label>
+            )}
+            {onImport && (
+              <label className={cn(row, "cursor-pointer")} data-import-docx>
+                <FileUp size={15} className={icon} />导入 Word
+                <input type="file" accept={`.docx,${DOCX_MIME}`} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; close(); }} />
               </label>
             )}
           </div>
