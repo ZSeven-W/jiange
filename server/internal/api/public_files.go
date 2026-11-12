@@ -52,6 +52,9 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 				imageReference = imageReference || block.Type == "image"
 				fileReference = fileReference || block.Type == "file"
 			}
+			if block.Type == "flowchart" && flowchartReferencesImage(block.Props, strconv.FormatInt(fileID, 10)) {
+				imageReference = true
+			}
 		}
 		currentDoc, currentRole, err := s.Store.DocByToken(r.Context(), tok)
 		if errors.Is(err, store.ErrNotFound) || err == nil && (currentDoc != docID || currentRole != "anon") {

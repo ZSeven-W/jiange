@@ -23,6 +23,12 @@ func collectCopyFileIDs(src *collab.Doc) ([]int64, error) {
 	}
 	seen := map[int64]bool{}
 	for _, b := range src.View().Blocks {
+		if b.Type == "flowchart" {
+			for _, n := range flowchartImageNodes(b.Props) {
+				seen[n.FileID] = true
+			}
+			continue
+		}
 		if b.Type != "image" && b.Type != "file" {
 			continue
 		}
@@ -113,7 +119,13 @@ func buildCopyOps(src *collab.Doc, title string, files map[int64]int64) ([]store
 	titleID := collab.OpID{Client: 0, Clock: 1}
 	// Deleting a character run can consume one operation per character; keep
 	// enough room for title changes and attachment rewrites in the wire clock.
-	reserve := uint64(utf8.RuneCountInString(target.Text(titleID))) + uint64(utf8.RuneCountInString(title)) + uint64(len(blocks)) + 2
+	imageNodes := 0
+	for _, b := range blocks {
+		if b.Type == "flowchart" {
+			imageNodes += len(flowchartImageNodes(b.Props))
+		}
+	}
+	reserve := uint64(utf8.RuneCountInString(target.Text(titleID))) + uint64(utf8.RuneCountInString(title)) + uint64(len(blocks)) + uint64(imageNodes) + 2
 	if target.Clock() > maxCopyClock || reserve > maxCopyClock-target.Clock() {
 		return nil, fmt.Errorf("source clock has no room for copy projection")
 	}
@@ -126,6 +138,24 @@ func buildCopyOps(src *collab.Doc, title string, files map[int64]int64) ([]store
 		}
 	}
 	for _, b := range blocks {
+		if b.Type == "flowchart" {
+			// Flowchart image nodes keep their file ID inside the node JSON.
+			blockID, err := parseCopyBlockID(b.ID)
+			if err != nil {
+				return nil, fmt.Errorf("flowchart block ID: %w", err)
+			}
+			for _, n := range flowchartImageNodes(b.Props) {
+				value, err := rewriteFlowchartImage(b.Props[n.Key], files[n.FileID])
+				if err != nil {
+					return nil, fmt.Errorf("flowchart image node: %w", err)
+				}
+				op := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: 0, Clock: target.Clock() + 1}, Block: blockID, Key: n.Key, Value: &value}
+				if !target.Apply(op) || target.Pending() != 0 {
+					return nil, fmt.Errorf("cannot rewrite flowchart image reference")
+				}
+			}
+			continue
+		}
 		if b.Type != "image" && b.Type != "file" {
 			continue
 		}

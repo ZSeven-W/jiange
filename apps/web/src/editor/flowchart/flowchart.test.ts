@@ -172,3 +172,15 @@ describe("rotation and bends", () => {
     expect(back.graph.nodes[0].rot).toBe(45);
   });
 });
+
+describe("image nodes", () => {
+  it("keeps a positive file id only on image nodes", () => {
+    expect(normalizeNode({ id: "i", shape: "image", fileId: 12 })?.fileId).toBe(12);
+    expect(normalizeNode({ id: "i", shape: "image", fileId: -1 })?.fileId).toBeUndefined();
+    expect(normalizeNode({ id: "i", shape: "image", fileId: "12" })?.fileId).toBeUndefined();
+    expect(normalizeNode({ id: "r", shape: "rect", fileId: 12 })?.fileId).toBeUndefined();
+    const g: FlowGraph = { theme: "feishu", nodes: [{ id: "i", shape: "image", text: "", fileId: 5, x: 0, y: 0, w: 100, h: 80 }], edges: [] };
+    expect(readFlow(flowWrites({}, g)).nodes[0].fileId).toBe(5);
+    expect(toMermaid(g)).toContain("图片");
+  });
+});

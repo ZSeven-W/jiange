@@ -164,12 +164,12 @@ export function toDrawio(graph: FlowGraph): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "&#10;");
   const styleFor = (n: FlowNode) => {
     const base: Record<Shape, string> = { rect: "rounded=0;", round: "rounded=1;", terminator: "rounded=1;arcSize=50;", diamond: "rhombus;", parallelogram: "shape=parallelogram;perimeter=parallelogramPerimeter;", ellipse: "ellipse;", document: "shape=document;", cylinder: "shape=cylinder3;", hexagon: "shape=hexagon;perimeter=hexagonPerimeter2;", text: "text;",
-      triangle: "triangle;direction=north;", note: "shape=note;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;" };
+      triangle: "triangle;direction=north;", note: "shape=note;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;", image: "rounded=0;dashed=1;" };
     return `${base[n.shape]}jiangeShape=${n.shape};${n.rot ? `rotation=${n.rot};` : ""}whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
   };
   const cells = [
     `<mxCell id="0"/>`, `<mxCell id="1" parent="0"/>`,
-    ...graph.nodes.map((n) => `<mxCell id="${n.id}" value="${esc(n.text)}" style="${styleFor(n)}" vertex="1" parent="1"><mxGeometry x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" as="geometry"/></mxCell>`),
+    ...graph.nodes.map((n) => `<mxCell id="${n.id}" value="${esc(n.text || (n.shape === "image" ? "[图片]" : ""))}" style="${styleFor(n)}" vertex="1" parent="1"><mxGeometry x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" as="geometry"/></mxCell>`),
     ...graph.edges.map((e) => `<mxCell id="${e.id}" value="${esc(e.label ?? "")}" style="${e.kind === "straight" ? "" : e.kind === "curve" ? "curved=1;" : "edgeStyle=orthogonalEdgeStyle;"}${e.dashed ? "dashed=1;" : ""}${e.arrow === "none" ? "endArrow=none;" : e.arrow === "both" ? "startArrow=classic;" : ""}${e.color ? `strokeColor=${e.color};` : ""}html=0;" edge="1" parent="1" source="${e.from}" target="${e.to}"><mxGeometry relative="1" as="geometry"/></mxCell>`),
   ];
   return `<mxfile host="jiange"><diagram name="第 1 页" id="jiange"><mxGraphModel><root>${cells.join("")}</root></mxGraphModel></diagram></mxfile>`;

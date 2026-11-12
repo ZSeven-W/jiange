@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, bounds, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
@@ -42,7 +42,7 @@ function readableOn(hex: string): string {
   return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#1F2329" : "#FFFFFF";
 }
 
-export function ShapeOutline({ n, theme, fill, stroke }: { n: FlowNode; theme: FlowTheme; fill: string; stroke: string }) {
+export function ShapeOutline({ n, theme, fill, stroke, fileUrl }: { n: FlowNode; theme: FlowTheme; fill: string; stroke: string; fileUrl?: (id: number) => string }) {
   const { x, y, w, h } = n;
   const common = { fill, stroke, strokeWidth: theme.strokeWidth };
   switch (n.shape) {
@@ -55,6 +55,9 @@ export function ShapeOutline({ n, theme, fill, stroke }: { n: FlowNode; theme: F
     case "document": { const k = h * 0.14; return <path d={`M${x},${y} H${x + w} V${y + h - k} C${x + w * 0.75},${y + h - 2.6 * k} ${x + w * 0.25},${y + h + 0.6 * k} ${x},${y + h - k} Z`} {...common} />; }
     case "cylinder": { const k = Math.min(14, h / 5); return <g><path d={`M${x},${y + k} A${w / 2},${k} 0 0 1 ${x + w},${y + k} V${y + h - k} A${w / 2},${k} 0 0 1 ${x},${y + h - k} Z`} {...common} /><path d={`M${x},${y + k} A${w / 2},${k} 0 0 0 ${x + w},${y + k}`} fill="none" stroke={stroke} strokeWidth={theme.strokeWidth} /></g>; }
     case "text": return <rect x={x} y={y} width={w} height={h} fill="transparent" stroke="none" />;
+    case "image": return n.fileId && fileUrl
+      ? <g><rect x={x} y={y} width={w} height={h} fill="transparent" stroke="none" /><image href={fileUrl(n.fileId)} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" data-flow-image={n.fileId} /></g>
+      : <g><rect x={x} y={y} width={w} height={h} rx={4} fill="#F5F6F7" stroke="#BBBFC4" strokeDasharray="5 4" /><path d={`M${x + w / 2 - 14},${y + h / 2 + 10} l9,-12 l7,8 l5,-5 l7,9 z`} fill="#BBBFC4" /></g>;
     case "triangle": return <polygon points={`${x + w / 2},${y} ${x + w},${y + h} ${x},${y + h}`} {...common} />;
     case "note": { const k = Math.min(18, w / 5, h / 3); return <g><path d={`M${x},${y} H${x + w - k} L${x + w},${y + k} V${y + h} H${x} Z`} {...common} /><path d={`M${x + w - k},${y} V${y + k} H${x + w}`} fill="none" stroke={stroke} strokeWidth={theme.strokeWidth} /></g>; }
     // 泳道主体不填充（点击穿透到画布，可在泳道内框选），只有标题栏可选中。
@@ -73,7 +76,7 @@ export function ShapeOutline({ n, theme, fill, stroke }: { n: FlowNode; theme: F
 
 /** Node label inside its text area (header for lanes/classes/lifelines, below the figure for actors). */
 function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
-  if (!n.text) return null;
+  if (!n.text || n.shape === "image") return null;
   const fs = n.size ?? 14, lh = Math.round(fs * 1.3), a = textArea(n);
   const anchor = n.align === "left" ? "start" : n.align === "right" ? "end" : "middle";
   const ax = (box: { x: number; w: number }) => (n.align === "left" ? box.x + 10 : n.align === "right" ? box.x + box.w - 10 : box.x + box.w / 2);
@@ -100,7 +103,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -121,6 +124,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   bendHandle?: string | null;
   /** Collaborators' selections, outlined in their colour. */
   peerSel?: { color: string; ids: string[] }[];
+  /** URL for image nodes (public share pages use a token path). */
+  fileUrl?: (id: number) => string;
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -151,7 +156,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const sel = selected?.has(n.id);
         const peer = peerSel?.find((p) => p.ids.includes(n.id));
         return <g key={n.id} data-flow-node={n.id} transform={n.rot ? `rotate(${n.rot} ${n.x + n.w / 2} ${n.y + n.h / 2})` : undefined} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
-          <g filter={filter}><ShapeOutline n={n} theme={theme} fill={c.fill} stroke={c.stroke} /></g>
+          <g filter={n.shape === "image" ? undefined : filter}><ShapeOutline n={n} theme={theme} fill={c.fill} stroke={c.stroke} fileUrl={fileUrl} /></g>
           {editing !== n.id && <NodeText n={n} fill={c.text} />}
           {sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke="#3370FF" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />}
           {sel && onPortDown && (["top", "right", "bottom", "left"] as Port[]).map((p) => {
@@ -184,13 +189,16 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
 /* ---------------- inline block ---------------- */
 
 /** 文档内的流程图块：预览 + 打开全屏编辑器（对应飞书在文档中打开画板）。 */
-export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment }: {
+export type FlowUpload = (f: File) => Promise<{ id: number; name: string; mime: string }>;
+
+export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment, upload }: {
   graph: FlowGraph; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph) => void;
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
+  upload?: FlowUpload;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
@@ -199,7 +207,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
     {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
-    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} />}
+    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} upload={upload} />}
   </div>;
 }
 
@@ -227,7 +235,7 @@ type Guide = { x1: number; y1: number; x2: number; y2: number };
 
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
 
-export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment }: {
+export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, upload }: {
   initial: FlowGraph; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph) => void;
@@ -235,6 +243,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
+  upload?: FlowUpload;
 }) {
   const [graph, setGraph] = useState(initial);
   const [undo, setUndo] = useState<FlowGraph[]>([]);
@@ -272,6 +281,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const svgWrap = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   // Remote edits arrive through `initial`; adopt them when not mid-gesture.
   const lastInitial = useRef(initial);
@@ -288,6 +298,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     setUndo((u) => [...u.slice(-99), graph]); setRedo([]);
     setGraph(next); lastInitial.current = next; onChange?.(next);
   };
+  // Latest graph/commit for async work (image upload) that finishes after re-renders.
+  const graphRef = useRef(graph); graphRef.current = graph;
+  const commitRef = useRef(commit); commitRef.current = commit;
   const toWorld = (clientX: number, clientY: number) => {
     const r = svgWrap.current!.getBoundingClientRect();
     return { x: view.x + (clientX - r.left) / view.zoom, y: view.y + (clientY - r.top) / view.zoom };
@@ -326,6 +339,26 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     commit({ ...graph, nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] });
     setSelected(new Set(nodes.map((n) => n.id)));
   };
+  /** Upload an image and place it (Feishu: 插入图片 / 粘贴 / 拖入画板). Max 360px on the long side. */
+  const insertImage = async (file: File, at?: { x: number; y: number }) => {
+    if (!upload || readOnly) return;
+    if (!/^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(file.type)) { setNotice({ ok: false, text: "仅支持 PNG、JPG、GIF、WebP、SVG 图片" }); return; }
+    if (file.size > 20 * 1024 * 1024) { setNotice({ ok: false, text: "图片不能超过 20 MB" }); return; }
+    setBusy(true); setNotice({ ok: true, text: "正在上传图片…" });
+    try {
+      const url = URL.createObjectURL(file);
+      const size = await new Promise<{ w: number; h: number }>((resolve) => { const img = new Image(); img.onload = () => resolve({ w: img.naturalWidth || 240, h: img.naturalHeight || 160 }); img.onerror = () => resolve({ w: 240, h: 160 }); img.src = url; });
+      URL.revokeObjectURL(url);
+      const k = Math.min(1, 360 / Math.max(size.w, size.h));
+      const w = Math.max(40, Math.round(size.w * k)), h = Math.max(30, Math.round(size.h * k));
+      const asset = await upload(file);
+      const c = at ?? { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
+      const node: FlowNode = { id: newFlowId("n"), shape: "image", text: "", fileId: asset.id, x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2), w, h, z: Math.max(0, ...graphRef.current.nodes.map((n) => n.z ?? 0)) + 1 };
+      const next = { ...graphRef.current, nodes: [...graphRef.current.nodes, node] };
+      commitRef.current(next); setSelected(new Set([node.id])); setNotice(null);
+    } catch { setNotice({ ok: false, text: "图片上传失败，请重试" }); }
+    finally { setBusy(false); }
+  };
   const nudge = (dx: number, dy: number) => commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)) });
   const doUndo = () => { const prev = undo.at(-1); if (!prev) return; setUndo(undo.slice(0, -1)); setRedo([...redo, graph]); setGraph(prev); lastInitial.current = prev; onChange?.(prev); };
   const doRedo = () => { const next = redo.at(-1); if (!next) return; setRedo(redo.slice(0, -1)); setUndo([...undo, graph]); setGraph(next); lastInitial.current = next; onChange?.(next); };
@@ -357,6 +390,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     };
     const onPaste = (e: ClipboardEvent) => {
       if (inField(e.target) || readOnly) return;
+      const pastedImage = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+      if (pastedImage && upload) { e.preventDefault(); e.stopPropagation(); void insertImage(pastedImage); return; }
       const text = e.clipboardData?.getData("text/plain") ?? "";
       e.preventDefault(); e.stopPropagation();
       pasteCount.current += 1;
@@ -519,7 +554,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const exportAs = async (kind: "svg" | "png" | "drawio") => {
     setMenu(null);
     if (kind === "drawio") return download("流程图.drawio", new Blob([toDrawio(graph)], { type: "application/xml" }));
-    const svg = svgMarkup(graph);
+    const svg = await inlineImages(svgMarkup(graph));
     if (kind === "svg") return download("流程图.svg", new Blob([svg], { type: "image/svg+xml" }));
     const b = bounds(graph.nodes), scale = 2, w = (b.w + 80) * scale, h = (b.h + 80) * scale;
     const img = new Image();
@@ -575,7 +610,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const menuItem = "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover";
   const railBtn = "grid size-9 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground";
   const libraryGroups: { title: string; shapes: Shape[] }[] = [
-    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "note", "text"] },
+    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "note", "text", ...(upload ? ["image" as const] : [])] },
     { title: "泳道", shapes: ["swimlane", "swimlaneV"] },
     { title: "流程图", shapes: ["terminator", "rect", "diamond", "parallelogram", "document", "cylinder", "hexagon"] },
     { title: "类图", shapes: ["class", "note"] },
@@ -591,6 +626,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
     {/* 画布 */}
     <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library ? 260 : 0, background: theme.canvas, backgroundImage: `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
+      onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
+      onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
       <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent
         onCanvasDown={(e) => {
@@ -662,7 +699,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       </div>)}
       {/* 选中对象的浮动样式栏 */}
       {!readOnly && barPos && !drag && !editing && <div className={cn(floatBar, "absolute z-20 -translate-x-1/2")} style={barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
-        {selectedNodes.length > 0 && <>
+        {selectedNodes.length > 0 && !selectedNodes.every((n) => n.shape === "image") && <>
           <div className="relative"><button type="button" className={barBtn} title="图形" onClick={() => setMenu(menu === "shape" ? null : "shape")}>{shapeIcon(selectedNodes[0].shape)}<ChevronDown size={12} /></button>
             {menu === "shape" && <div className={cn(pop, "left-0 grid w-[208px] grid-cols-5 gap-1 p-2")}>{SHAPES.map((s) => <button key={s.id} type="button" title={s.label} onClick={() => { patchNodes({ shape: s.id }); setMenu(null); }} className={cn("grid size-9 place-items-center rounded-md hover:bg-hover", selectedNodes[0].shape === s.id && "bg-[#E1EAFF] text-primary")}>{shapeIcon(s.id)}</button>)}</div>}
           </div>
@@ -718,7 +755,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <div className="flex h-12 shrink-0 items-center gap-2 px-4"><span className="text-[14px] font-medium">图形库</span><button type="button" title="收起" onClick={() => setLibrary(false)} className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover"><ChevronLeft size={16} /></button></div>
       <label className="mx-4 flex h-8 items-center gap-2 rounded-md border px-2 text-subtle focus-within:border-primary"><Search size={14} /><input value={libQuery} onChange={(e) => setLibQuery(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={`${spec.label}（点击后在画布上放置，双击直接添加）`} onClick={() => setTool(id)} onDoubleClick={() => addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
+        {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={`${spec.label}（点击后在画布上放置，双击直接添加）`} onClick={() => (id === "image" ? imageRef.current?.click() : setTool(id))} onDoubleClick={() => id !== "image" && addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
         {!libQuery.trim() && <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />直线</div>
           <div className="grid grid-cols-5 gap-1">{([["orthogonal", "折线", "M10,78 H48 V18 H86"], ["straight", "直线", "M10,86 L86,10"], ["curve", "曲线", "M10,80 C40,80 56,16 86,16"]] as const).map(([k, l, d]) => <button key={k} type="button" title={`新连线默认使用${l}`} onClick={() => setEdgeKind(k)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", edgeKind === k && "bg-[#E1EAFF] text-primary")} data-flow-edge-kind={k}><svg viewBox="0 0 96 96" className="size-6" fill="none" stroke="currentColor" strokeWidth={6}><path d={d} /></svg></button>)}</div>
           <p className="mt-1 text-[12px] leading-5 text-subtle">选中图形后，从四周的蓝色圆点拖到另一个图形即可连线。</p>
@@ -733,6 +770,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => setTool("text")}><Type size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => setTool("diamond")}><Diamond size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "note" && "bg-[#E1EAFF] text-primary")} title="便签" onClick={() => setTool("note")}><svg viewBox="0 0 96 96" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={7}><path d="M14,12 H66 L82,28 V84 H14 Z M66,12 V28 H82" /></svg></button>
+      {upload && <button type="button" className={railBtn} title="插入图片（也可粘贴或拖入画板）" onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
+      <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
 
     {/* 左上：返回 */}
@@ -787,6 +826,20 @@ export function appendGraph(base: FlowGraph, add: FlowGraph): FlowGraph {
     nodes: [...base.nodes, ...add.nodes.map((n) => ({ ...n, id: map.get(n.id)!, x: n.x + dx, y: n.y + dy }))],
     edges: [...base.edges, ...add.edges.map((e) => ({ ...e, id: newFlowId("e"), from: map.get(e.from)!, to: map.get(e.to)! }))],
   };
+}
+
+/** Embed image nodes as data URLs so exported SVG/PNG files are self-contained. */
+async function inlineImages(svg: string): Promise<string> {
+  const hrefs = [...new Set([...svg.matchAll(/<image [^>]*href="([^"]+)"/g)].map((m) => m[1]))];
+  let out = svg;
+  for (const href of hrefs) {
+    try {
+      const blob = await (await fetch(href, { credentials: "same-origin" })).blob();
+      const data = await new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = reject; r.readAsDataURL(blob); });
+      out = out.split(`href="${href}"`).join(`href="${data}"`);
+    } catch { /* leave the reference; the image will be missing in the export */ }
+  }
+  return out;
 }
 
 /** Standalone SVG markup for export (theme colours inlined). */
