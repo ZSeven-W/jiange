@@ -121,3 +121,28 @@ describe("AI flowchart", () => {
     expect(flowchartPrompt("注册流程")[0].content).toContain("terminator");
   });
 });
+
+describe("flowchart shapes and templates", () => {
+  it("builds every template as a valid, storable graph", async () => {
+    const { FLOW_TEMPLATES } = await import("./templates");
+    for (const t of FLOW_TEMPLATES) {
+      const g = t.build("feishu");
+      expect(g.nodes.length).toBeGreaterThan(1);
+      const back = readFlow(flowWrites({}, g));
+      expect(back.nodes).toHaveLength(g.nodes.length);
+      expect(back.edges).toHaveLength(g.edges.length);
+    }
+    // Swimlanes stay beneath the shapes inside them.
+    const lanes = FLOW_TEMPLATES.find((t) => t.id === "swimlane")!.build("feishu");
+    const order = readFlow(flowWrites({}, lanes)).nodes.map((n) => n.shape);
+    expect(order.lastIndexOf("swimlane")).toBeLessThan(order.indexOf("terminator"));
+  });
+
+  it("round-trips lane, class, actor and lifeline shapes through draw.io", async () => {
+    const g: FlowGraph = { theme: "feishu", nodes: (["swimlane", "swimlaneV", "class", "actor", "lifeline", "note", "triangle"] as const).map((shape, i) => ({ id: `s${i}`, shape, text: shape, x: i * 200, y: 0, w: 160, h: 120, align: i === 2 ? "left" : undefined })), edges: [] };
+    const back = await parseDrawio(toDrawio(g));
+    expect(back.graph.nodes.map((n) => n.shape).sort()).toEqual(g.nodes.map((n) => n.shape).sort());
+    expect(normalizeNode({ id: "x", shape: "class", align: "left" })?.align).toBe("left");
+    expect(normalizeNode({ id: "x", shape: "class", align: "justify" })?.align).toBeUndefined();
+  });
+});

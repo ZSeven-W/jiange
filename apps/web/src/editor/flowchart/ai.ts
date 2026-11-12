@@ -2,8 +2,11 @@ import type { AIMessage } from "@/lib/ai";
 import { autoLayout, measureLabel, normalizeEdge, normalizeNode, SHAPES, type FlowGraph, type FlowNode, type Shape } from "./model";
 
 /** AI 生成流程图：要求模型输出节点/连线 JSON，严格校验后自动排版。 */
+/** AI 只生成流程图图形（泳道、类图、时序图图形由模板/手动添加）。 */
+const FLOW_SHAPES = new Set<Shape>(["rect", "round", "diamond", "ellipse", "terminator", "parallelogram", "document", "cylinder", "hexagon"]);
+
 export function flowchartPrompt(request: string, context = ""): AIMessage[] {
-  const shapes = SHAPES.filter((s) => s.id !== "text").map((s) => `${s.id}（${s.label}）`).join("、");
+  const shapes = SHAPES.filter((s) => FLOW_SHAPES.has(s.id)).map((s) => `${s.id}（${s.label}）`).join("、");
   return [
     { role: "system", content: `你把用户的描述转换为流程图 JSON，只输出 JSON，不要解释。格式：{"direction":"TB"|"LR","nodes":[{"id":"n1","text":"开始","shape":"terminator"}],"edges":[{"from":"n1","to":"n2","label":"可选"}]}。shape 只能是：${shapes}。开始/结束用 terminator，判断用 diamond 并在出边写「是/否」等标签，输入输出用 parallelogram，存储用 cylinder。节点文字简洁（不超过 20 字），节点不超过 40 个。id 只用字母数字。` },
     { role: "user", content: `${request.slice(0, 1000)}${context ? `\n\n参考内容：\n${context.slice(0, 6000)}` : ""}` },
@@ -18,7 +21,7 @@ export function parseFlowchartAnswer(answer: string): { graph: FlowGraph; droppe
   const r = raw as { direction?: unknown; nodes?: unknown; edges?: unknown };
   if (!Array.isArray(r.nodes)) return null;
   let dropped = 0;
-  const shapeSize = new Map(SHAPES.map((s) => [s.id, s]));
+  const shapeSize = new Map(SHAPES.filter((s) => FLOW_SHAPES.has(s.id)).map((s) => [s.id, s]));
   const nodes: FlowNode[] = [];
   for (const item of r.nodes.slice(0, 60)) {
     const it = item as { id?: unknown; text?: unknown; shape?: unknown };

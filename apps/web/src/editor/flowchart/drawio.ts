@@ -1,6 +1,6 @@
 import { children, parseXml, type XmlElement } from "@/lib/xml";
 import { inflateRaw } from "@/lib/zip";
-import { normalizeEdge, normalizeNode, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type Shape } from "./model";
+import { isContainer, normalizeEdge, normalizeNode, SHAPES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type Shape } from "./model";
 
 /**
  * draw.io / diagrams.net 导入：支持 .drawio/.xml（mxfile，含压缩与未压缩的 diagram）
@@ -26,6 +26,13 @@ function styleMap(style: string | undefined): Record<string, string> {
 
 function shapeOf(s: Record<string, string>): Shape {
   const shape = s.shape ?? "";
+  const own = s.jiangeShape as Shape | undefined;
+  if (own && SHAPES.some((x) => x.id === own)) return own;
+  if ("swimlane" in s || shape === "swimlane") return s.horizontal === "0" ? "swimlane" : "swimlaneV";
+  if (shape === "umlActor") return "actor";
+  if (shape === "umlLifeline") return "lifeline";
+  if (shape === "note") return "note";
+  if ("triangle" in s || shape === "triangle") return "triangle";
   if ("text" in s || shape === "text") return "text";
   if ("rhombus" in s || shape === "rhombus") return "diamond";
   if ("ellipse" in s || shape === "ellipse") return "ellipse";
@@ -116,12 +123,13 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
     if ("edgeLabel" in s) continue;
     if (s.shape === "image" || "image" in s) { skipped++; continue; }
     if (nodes.length >= MAX_NODES) { skipped++; continue; }
-    const g = geo(c), o = offset(c);
+    const g = geo(c), o = offset(c), shape = shapeOf(s);
     const node = normalizeNode({
-      shape: shapeOf(s), text: labelText(c.attrs.value),
+      shape, text: labelText(c.attrs.value),
       x: Math.round(o.x + Number(g.x ?? 0)), y: Math.round(o.y + Number(g.y ?? 0)),
       w: Math.round(Number(g.width ?? 120)), h: Math.round(Number(g.height ?? 60)),
       fill: color(s.fillColor), stroke: color(s.strokeColor), color: color(s.fontColor),
+      z: nodes.length - (isContainer(shape) ? 10000 : 0),
     }, localId(c.attrs.id ?? String(seq), "n"));
     if (node) nodes.push(node); else skipped++;
   }
@@ -154,8 +162,9 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
 export function toDrawio(graph: FlowGraph): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "&#10;");
   const styleFor = (n: FlowNode) => {
-    const base: Record<Shape, string> = { rect: "rounded=0;", round: "rounded=1;", terminator: "rounded=1;arcSize=50;", diamond: "rhombus;", parallelogram: "shape=parallelogram;perimeter=parallelogramPerimeter;", ellipse: "ellipse;", document: "shape=document;", cylinder: "shape=cylinder3;", hexagon: "shape=hexagon;perimeter=hexagonPerimeter2;", text: "text;" };
-    return `${base[n.shape]}whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
+    const base: Record<Shape, string> = { rect: "rounded=0;", round: "rounded=1;", terminator: "rounded=1;arcSize=50;", diamond: "rhombus;", parallelogram: "shape=parallelogram;perimeter=parallelogramPerimeter;", ellipse: "ellipse;", document: "shape=document;", cylinder: "shape=cylinder3;", hexagon: "shape=hexagon;perimeter=hexagonPerimeter2;", text: "text;",
+      triangle: "triangle;direction=north;", note: "shape=note;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;" };
+    return `${base[n.shape]}jiangeShape=${n.shape};whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
   };
   const cells = [
     `<mxCell id="0"/>`, `<mxCell id="1" parent="0"/>`,

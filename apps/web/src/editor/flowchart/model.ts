@@ -7,11 +7,13 @@
  *   fc.n.<id> = 节点 JSON          fc.e.<id> = 连线 JSON
  */
 
-export type Shape = "rect" | "round" | "diamond" | "ellipse" | "terminator" | "parallelogram" | "document" | "cylinder" | "hexagon" | "text";
+export type Shape = "rect" | "round" | "diamond" | "ellipse" | "terminator" | "parallelogram" | "document" | "cylinder" | "hexagon" | "text"
+  | "triangle" | "note" | "swimlane" | "swimlaneV" | "class" | "actor" | "lifeline";
+export type TextAlign = "left" | "center" | "right";
 export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
 
-export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; z?: number }
+export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none" }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
 
@@ -32,7 +34,29 @@ export const SHAPES: { id: Shape; label: string; w: number; h: number }[] = [
   { id: "cylinder", label: "数据库", w: 110, h: 80 },
   { id: "hexagon", label: "准备", w: 150, h: 64 },
   { id: "text", label: "文本", w: 120, h: 36 },
+  { id: "triangle", label: "三角形", w: 100, h: 86 },
+  { id: "note", label: "便签", w: 140, h: 90 },
+  { id: "swimlane", label: "横向泳道", w: 640, h: 160 },
+  { id: "swimlaneV", label: "纵向泳道", w: 220, h: 480 },
+  { id: "class", label: "类", w: 180, h: 120 },
+  { id: "actor", label: "参与者", w: 60, h: 96 },
+  { id: "lifeline", label: "生命线", w: 120, h: 320 },
 ];
+
+/** 容器类图形（泳道）：总在底层，拖动时带着内部图形一起移动。 */
+export const isContainer = (shape: Shape) => shape === "swimlane" || shape === "swimlaneV";
+
+/** 文字区域：泳道写在标题栏，类图第一行写在类名栏，参与者写在图形下方。 */
+export function textArea(n: FlowNode): { x: number; y: number; w: number; h: number; vertical?: boolean } {
+  switch (n.shape) {
+    case "swimlane": return { x: n.x, y: n.y, w: 32, h: n.h, vertical: true };
+    case "swimlaneV": return { x: n.x, y: n.y, w: n.w, h: 36 };
+    case "class": return { x: n.x, y: n.y, w: n.w, h: 32 };
+    case "actor": return { x: n.x - 30, y: n.y + n.h - 20, w: n.w + 60, h: 20 };
+    case "lifeline": return { x: n.x, y: n.y, w: n.w, h: 44 };
+    default: return { x: n.x, y: n.y, w: n.w, h: n.h };
+  }
+}
 
 export interface FlowTheme { id: string; label: string; fill: string; stroke: string; text: string; edge: string; canvas: string; font: string; radius: number; strokeWidth: number; sketch?: boolean; palette?: string[]; shadow?: boolean }
 
@@ -72,6 +96,7 @@ export function normalizeNode(raw: unknown, id?: string): FlowNode | null {
     ...(COLOR.test(r.stroke as string) ? { stroke: r.stroke as string } : {}),
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
     ...(typeof r.size === "number" && r.size >= 10 && r.size <= 48 ? { size: Math.round(r.size) } : {}),
+    ...(r.align === "left" || r.align === "right" ? { align: r.align } : {}),
     ...(typeof r.z === "number" && Number.isFinite(r.z) ? { z: r.z } : {}),
   };
 }
@@ -269,7 +294,7 @@ export function measureLabel(text: string, minW: number): number {
 /** Mermaid text for Markdown export (shapes mapped to the closest Mermaid node syntax). */
 export function toMermaid(graph: FlowGraph): string {
   const q = (s: string) => `"${s.replace(/"/g, "'").replace(/\n/g, "<br/>")}"`;
-  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"] };
+  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"], triangle: ["[", "]"], note: ["[", "]"], swimlane: ["[", "]"], swimlaneV: ["[", "]"], class: ["[", "]"], actor: ["((", "))"], lifeline: ["[", "]"] };
   const ids = new Map(graph.nodes.map((n, i) => [n.id, `N${i + 1}`]));
   const lines = ["flowchart TD"];
   for (const n of graph.nodes) { const [a, b] = wrap[n.shape]; lines.push(`  ${ids.get(n.id)}${a}${q(n.text || " ")}${b}`); }
