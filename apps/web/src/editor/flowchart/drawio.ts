@@ -144,9 +144,13 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
     if (edges.length >= MAX_EDGES) { skipped++; continue; }
     const s = styleMap(c.attrs.style);
     const kind: EdgeKind = s.curved === "1" ? "curve" : s.edgeStyle && s.edgeStyle !== "none" ? "orthogonal" : "straight";
+    const geom = children(c, "mxGeometry")[0];
+    const arr = geom ? children(geom, "Array").find((x) => x.attrs.as === "points") : undefined;
+    const o = offset(c);
+    const pts = arr ? children(arr, "mxPoint").map((p) => ({ x: Math.round(o.x + Number(p.attrs.x ?? 0)), y: Math.round(o.y + Number(p.attrs.y ?? 0)) })) : [];
     const edge = normalizeEdge({
       from, to, kind, label: labelText(c.attrs.value) || edgeLabels.get(c.attrs.id ?? "") || undefined,
-      dashed: s.dashed === "1", color: color(s.strokeColor),
+      dashed: s.dashed === "1", color: color(s.strokeColor), ...(pts.length ? { pts } : {}),
       arrow: s.endArrow === "none" && (!s.startArrow || s.startArrow === "none") ? "none" : s.startArrow && s.startArrow !== "none" ? "both" : undefined,
     }, localId(c.attrs.id ?? String(seq), "e"));
     if (edge) edges.push(edge);
@@ -156,7 +160,7 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
   if (skipped) warnings.push(`${skipped} 个图片或超出上限的对象已忽略`);
   // Normalize to a positive origin.
   const minX = Math.min(...nodes.map((n) => n.x)), minY = Math.min(...nodes.map((n) => n.y));
-  return { graph: { theme: "feishu", nodes: nodes.map((n) => ({ ...n, x: n.x - minX + 40, y: n.y - minY + 40 })), edges }, warnings };
+  return { graph: { theme: "feishu", nodes: nodes.map((n) => ({ ...n, x: n.x - minX + 40, y: n.y - minY + 40 })), edges: edges.map((e) => (e.pts ? { ...e, pts: e.pts.map((p) => ({ x: p.x - minX + 40, y: p.y - minY + 40 })) } : e)) }, warnings };
 }
 
 /** Export back to an uncompressed draw.io file (opens in diagrams.net). */
@@ -170,7 +174,7 @@ export function toDrawio(graph: FlowGraph): string {
   const cells = [
     `<mxCell id="0"/>`, `<mxCell id="1" parent="0"/>`,
     ...graph.nodes.map((n) => `<mxCell id="${n.id}" value="${esc(n.text || (n.shape === "image" ? "[图片]" : ""))}" style="${styleFor(n)}" vertex="1" parent="1"><mxGeometry x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" as="geometry"/></mxCell>`),
-    ...graph.edges.map((e) => `<mxCell id="${e.id}" value="${esc(e.label ?? "")}" style="${e.kind === "straight" ? "" : e.kind === "curve" ? "curved=1;" : "edgeStyle=orthogonalEdgeStyle;"}${e.dashed ? "dashed=1;" : ""}${e.arrow === "none" ? "endArrow=none;" : e.arrow === "both" ? "startArrow=classic;" : ""}${e.color ? `strokeColor=${e.color};` : ""}html=0;" edge="1" parent="1" source="${e.from}" target="${e.to}"><mxGeometry relative="1" as="geometry"/></mxCell>`),
+    ...graph.edges.map((e) => `<mxCell id="${e.id}" value="${esc(e.label ?? "")}" style="${e.kind === "straight" ? "" : e.kind === "curve" ? "curved=1;" : "edgeStyle=orthogonalEdgeStyle;"}${e.dashed ? "dashed=1;" : ""}${e.arrow === "none" ? "endArrow=none;" : e.arrow === "both" ? "startArrow=classic;" : ""}${e.color ? `strokeColor=${e.color};` : ""}html=0;" edge="1" parent="1" source="${e.from}" target="${e.to}">${e.pts?.length ? `<mxGeometry relative="1" as="geometry"><Array as="points">${e.pts.map((p) => `<mxPoint x="${p.x}" y="${p.y}"/>`).join("")}</Array></mxGeometry>` : `<mxGeometry relative="1" as="geometry"/>`}</mxCell>`),
   ];
   return `<mxfile host="jiange"><diagram name="第 1 页" id="jiange"><mxGraphModel><root>${cells.join("")}</root></mxGraphModel></diagram></mxfile>`;
 }

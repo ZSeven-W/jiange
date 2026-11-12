@@ -103,7 +103,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -124,6 +124,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   bendHandle?: string | null;
   /** Collaborators' selections, outlined in their colour. */
   peerSel?: { color: string; ids: string[] }[];
+  /** Double-click on a waypoint handle removes it. */
+  onWaypointRemove?: (edge: FlowEdge, index: number) => void;
   /** URL for image nodes (public share pages use a token path). */
   fileUrl?: (id: number) => string;
 }) {
@@ -176,7 +178,18 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const { mid, start, end } = edgePath(e, a, t);
         return <g data-flow-edge-handles>
           {([["from", start], ["to", end]] as const).map(([k, p]) => <circle key={k} cx={p.x} cy={p.y} r={5} fill="#3370FF" stroke="#FFFFFF" strokeWidth={1.5} style={{ cursor: "move" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-end={k} />)}
-          {(e.kind ?? "orthogonal") === "orthogonal" && <circle cx={mid.x} cy={mid.y} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: midIsY(e, a, t) ? "ns-resize" : "ew-resize" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-bend={e.id} />}
+          {(() => {
+            // 拐点：实心为已有拐点（拖动移动、双击删除），空心为可拖出新拐点的位置。
+            const chain = [start, ...(e.pts ?? []), end];
+            const adds = e.pts?.length || (e.kind ?? "orthogonal") !== "orthogonal"
+              ? chain.slice(1).map((p, i) => ({ i, x: (chain[i].x + p.x) / 2, y: (chain[i].y + p.y) / 2 }))
+              : [{ i: 0, x: (start.x + mid.x) / 2, y: (start.y + mid.y) / 2 }, { i: 0, x: (mid.x + end.x) / 2, y: (mid.y + end.y) / 2, after: true }];
+            return <>
+              {adds.map((p, k) => <circle key={`a${k}`} cx={p.x} cy={p.y} r={4} fill="#FFFFFF" fillOpacity={0.9} stroke="#3370FF" strokeWidth={1} strokeDasharray="2 1.5" style={{ cursor: "copy" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-wpadd={p.i} data-flow-wpafter={"after" in p ? "1" : undefined} />)}
+              {e.pts?.map((p, i) => <circle key={`w${i}`} cx={p.x} cy={p.y} r={5} fill="#3370FF" stroke="#FFFFFF" strokeWidth={1.5} style={{ cursor: "move" }} onPointerDown={(ev) => onEdgeDown(ev, e)} onDoubleClick={() => onWaypointRemove?.(e, i)} data-flow-wp={i} />)}
+              {!e.pts?.length && (e.kind ?? "orthogonal") === "orthogonal" && <circle cx={mid.x} cy={mid.y} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: midIsY(e, a, t) ? "ns-resize" : "ew-resize" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-bend={e.id} />}
+            </>;
+          })()}
         </g>;
       })()}
       {guides?.map((g, i) => <line key={i} x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2} stroke="#F54A45" strokeWidth={1} pointerEvents="none" data-flow-guide />)}
@@ -221,7 +234,8 @@ type Drag =
   | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
   | { kind: "rotate"; id: string; cx: number; cy: number; a0: number; rot0: number }
   | { kind: "bend"; id: string; isY: boolean }
-  | { kind: "reconnect"; id: string; end: "from" | "to"; x: number; y: number };
+  | { kind: "reconnect"; id: string; end: "from" | "to"; x: number; y: number }
+  | { kind: "waypoint"; id: string; index: number };
 
 /** A collaborator inside the same flowchart (from awareness). */
 export interface FlowPeer { id: number; name: string; color: string; x?: number; y?: number; sel?: string[] }
@@ -335,7 +349,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const map = new Map(clip.nodes.map((n) => [n.id, newFlowId("n")]));
     const top = Math.max(0, ...graph.nodes.map((n) => n.z ?? 0));
     const nodes = clip.nodes.map((n, i) => ({ ...n, id: map.get(n.id)!, x: n.x + offset, y: n.y + offset, z: isContainer(n.shape) ? n.z : top + 1 + i }));
-    const edges = clip.edges.filter((e) => map.has(e.from) && map.has(e.to)).map((e) => ({ ...e, id: newFlowId("e"), from: map.get(e.from)!, to: map.get(e.to)! }));
+    const edges = clip.edges.filter((e) => map.has(e.from) && map.has(e.to)).map((e) => ({ ...e, id: newFlowId("e"), from: map.get(e.from)!, to: map.get(e.to)!, ...(e.pts ? { pts: e.pts.map((q) => ({ x: q.x + offset, y: q.y + offset })) } : {}), ...(e.mid !== undefined ? { mid: e.mid + offset } : {}) }));
     commit({ ...graph, nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] });
     setSelected(new Set(nodes.map((n) => n.id)));
   };
@@ -440,6 +454,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       return;
     }
     if (drag.kind === "reconnect") { setDrag({ ...drag, x: p.x, y: p.y }); return; }
+    if (drag.kind === "waypoint") { setGraph((g) => ({ ...g, edges: g.edges.map((x) => (x.id === drag.id && x.pts ? { ...x, pts: x.pts.map((q, i) => (i === drag.index ? { x: Math.round(p.x), y: Math.round(p.y) } : q)) } : x)) })); return; }
     if (drag.kind === "bend") { setGraph((g) => ({ ...g, edges: g.edges.map((x) => (x.id === drag.id ? { ...x, mid: Math.round(drag.isY ? p.y : p.x) } : x)) })); return; }
     let dx = (e.clientX - drag.startX) / view.zoom, dy = (e.clientY - drag.startY) / view.zoom;
     if (drag.kind === "move") {
@@ -498,10 +513,10 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (!edge || !target) return;
       const other = d.end === "from" ? edge.to : edge.from;
       if (target.id === other || target.id === (d.end === "from" ? edge.from : edge.to)) return;
-      commit({ ...graph, edges: graph.edges.map((x) => (x.id === d.id ? (d.end === "from" ? { ...x, from: target.id, fromPort: undefined, mid: undefined } : { ...x, to: target.id, toPort: undefined, mid: undefined }) : x)) });
+      commit({ ...graph, edges: graph.edges.map((x) => (x.id === d.id ? (d.end === "from" ? { ...x, from: target.id, fromPort: undefined, mid: undefined, pts: undefined } : { ...x, to: target.id, toPort: undefined, mid: undefined, pts: undefined }) : x)) });
       return;
     }
-    if (d.kind === "bend") {
+    if (d.kind === "bend" || d.kind === "waypoint") {
       const base = lastInitial.current;
       if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { setUndo((u) => [...u.slice(-99), base]); setRedo([]); lastInitial.current = graph; onChange?.(graph); }
       return;
@@ -661,7 +676,26 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         }}
         onEdgeDown={(e, edge) => {
           e.stopPropagation(); setMenu(null);
-          const endAttr = (e.target as Element).getAttribute("data-flow-end");
+          const el = e.target as Element;
+          const wp = el.getAttribute("data-flow-wp"), wpAdd = el.getAttribute("data-flow-wpadd");
+          if (wp !== null && !readOnly) { setDrag({ kind: "waypoint", id: edge.id, index: Number(wp) }); return; }
+          if (wpAdd !== null && !readOnly) {
+            // Drag from a hollow handle to insert a waypoint (the orthogonal "mid" segment becomes explicit points).
+            const p = toWorld(e.clientX, e.clientY), pt = { x: Math.round(p.x), y: Math.round(p.y) };
+            const a = graph.nodes.find((n) => n.id === edge.from), t = graph.nodes.find((n) => n.id === edge.to);
+            if (!a || !t) return;
+            let pts = edge.pts ? [...edge.pts] : [];
+            let index = Number(wpAdd);
+            if (!edge.pts?.length && (edge.kind ?? "orthogonal") === "orthogonal") {
+              const m = edgePath(edge, a, t).mid;
+              pts = el.getAttribute("data-flow-wpafter") ? [{ x: Math.round(m.x), y: Math.round(m.y) }, pt] : [pt, { x: Math.round(m.x), y: Math.round(m.y) }];
+              index = el.getAttribute("data-flow-wpafter") ? 1 : 0;
+            } else pts.splice(index, 0, pt);
+            setGraph((g) => ({ ...g, edges: g.edges.map((x) => (x.id === edge.id ? { ...x, pts, mid: undefined } : x)) }));
+            setDrag({ kind: "waypoint", id: edge.id, index });
+            return;
+          }
+          const endAttr = el.getAttribute("data-flow-end");
           if ((endAttr === "from" || endAttr === "to") && !readOnly) { const p = toWorld(e.clientX, e.clientY); setDrag({ kind: "reconnect", id: edge.id, end: endAttr, x: p.x, y: p.y }); return; }
           if ((e.target as Element).getAttribute("data-flow-bend") && !readOnly) {
             const a = graph.nodes.find((n) => n.id === edge.from), t = graph.nodes.find((n) => n.id === edge.to);
@@ -676,6 +710,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         guides={guides}
         rotateHandle={!readOnly && selectedNodes.length === 1 && !isContainer(selectedNodes[0].shape) ? selectedNodes[0].id : null}
         bendHandle={!readOnly && selectedEdges.length === 1 && !selectedNodes.length ? selectedEdges[0].id : null}
+        onWaypointRemove={readOnly ? undefined : (edge, i) => commit({ ...graph, edges: graph.edges.map((x) => (x.id === edge.id ? { ...x, pts: (x.pts ?? []).filter((_, k) => k !== i) } : x)) })}
         peerSel={peers.filter((p) => p.sel?.length).map((p) => ({ color: p.color, ids: p.sel! }))}
         marquee={drag?.kind === "marquee" ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null}
         connectPreview={drag?.kind === "reconnect" ? (() => { const edge = graph.edges.find((x) => x.id === drag.id); const a = edge && graph.nodes.find((n) => n.id === edge.from), t = edge && graph.nodes.find((n) => n.id === edge.to); if (!edge || !a || !t) return null; const r = edgePath(edge, a, t); const fixed = drag.end === "from" ? r.end : r.start; return { x1: fixed.x, y1: fixed.y, x2: drag.x, y2: drag.y }; })() : drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = portPoint(n, drag.port); return { x1: pt.x, y1: pt.y, x2: drag.x, y2: drag.y }; })() : null}
@@ -731,6 +766,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn(barBtn, selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>虚线</button>
           <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className={barBtn}>箭头：{selectedEdges[0].arrow === "none" ? "无" : selectedEdges[0].arrow === "both" ? "双向" : "单向"}</button>
           <button type="button" onClick={() => setEditing({ id: selectedEdges[0].id, kind: "edge", value: selectedEdges[0].label ?? "" })} className={barBtn}>文字</button>
+          {selectedEdges.some((x) => x.pts?.length || x.mid !== undefined) && <button type="button" onClick={() => patchEdges({ pts: undefined, mid: undefined })} className={barBtn} title="恢复自动走线" data-flow-clear-points>清除拐点</button>}
         </>}
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
         {onComment && selectedNodes.length > 0 && <button type="button" className={tb} title="评论" onClick={() => { const n = selectedNodes[0]; finishEdit(); onComment(n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形"); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
@@ -824,7 +860,7 @@ export function appendGraph(base: FlowGraph, add: FlowGraph): FlowGraph {
   return {
     ...base,
     nodes: [...base.nodes, ...add.nodes.map((n) => ({ ...n, id: map.get(n.id)!, x: n.x + dx, y: n.y + dy }))],
-    edges: [...base.edges, ...add.edges.map((e) => ({ ...e, id: newFlowId("e"), from: map.get(e.from)!, to: map.get(e.to)! }))],
+    edges: [...base.edges, ...add.edges.map((e) => ({ ...e, id: newFlowId("e"), from: map.get(e.from)!, to: map.get(e.to)!, ...(e.pts ? { pts: e.pts.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : {}), ...(e.mid !== undefined ? { mid: undefined } : {}) }))],
   };
 }
 

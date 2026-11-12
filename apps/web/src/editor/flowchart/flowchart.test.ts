@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
-import { autoLayout, edgePath, flowWrites, normalizeNode, readFlow, toMermaid, type FlowGraph } from "./model";
+import { autoLayout, edgePath, flowWrites, normalizeEdge, normalizeNode, readFlow, toMermaid, type FlowGraph } from "./model";
 import { labelText, parseDrawio, toDrawio, DrawioError } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 
@@ -182,5 +182,30 @@ describe("image nodes", () => {
     const g: FlowGraph = { theme: "feishu", nodes: [{ id: "i", shape: "image", text: "", fileId: 5, x: 0, y: 0, w: 100, h: 80 }], edges: [] };
     expect(readFlow(flowWrites({}, g)).nodes[0].fileId).toBe(5);
     expect(toMermaid(g)).toContain("图片");
+  });
+});
+
+describe("edge waypoints", () => {
+  const a = { id: "a", shape: "rect" as const, text: "", x: 0, y: 0, w: 100, h: 40 };
+  const b = { id: "b", shape: "rect" as const, text: "", x: 0, y: 300, w: 100, h: 40 };
+  it("routes orthogonally through waypoints and validates them", () => {
+    const { d, mid } = edgePath({ id: "e", from: "a", to: "b", pts: [{ x: 250, y: 100 }, { x: 250, y: 250 }] }, a, b);
+    expect(d.startsWith("M100,20")).toBe(true); // leaves from the side facing the first waypoint
+    expect(d).toContain("250,100");
+    expect(d).toContain("250,250");
+    for (const seg of d.slice(1).split(" L").map((p) => p.split(",").map(Number)).reduce<number[][][]>((acc, p, i, all) => (i ? [...acc, [all[i - 1], p]] : acc), [])) {
+      expect(seg[0][0] === seg[1][0] || seg[0][1] === seg[1][1]).toBe(true);
+    }
+    expect(Number.isFinite(mid.x)).toBe(true);
+    expect(normalizeEdge({ id: "e", from: "a", to: "b", pts: [{ x: 1.4, y: 2 }, { x: "x", y: 1 }, null] })?.pts).toEqual([{ x: 1, y: 2 }]);
+    expect(normalizeEdge({ id: "e", from: "a", to: "b", pts: [] })?.pts).toBeUndefined();
+  });
+
+  it("keeps waypoints through draw.io round trips", async () => {
+    const g: FlowGraph = { theme: "feishu", nodes: [a, b], edges: [{ id: "e", from: "a", to: "b", pts: [{ x: 250, y: 100 }] }] };
+    const back = await parseDrawio(toDrawio(g));
+    // Import re-bases coordinates to a 40px margin; the waypoint shifts with the nodes.
+    const n = back.graph.nodes.find((x) => x.text === "" && x.y === 40)!;
+    expect(back.graph.edges[0].pts).toEqual([{ x: 250 - 0 + (n.x - 0), y: 100 + 40 }]);
   });
 });

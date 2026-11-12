@@ -14,7 +14,7 @@ export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
 
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
-export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number }
+export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
 
 export const FC_VERSION = "fc.v";
@@ -119,6 +119,12 @@ export function normalizeEdge(raw: unknown, id?: string): FlowEdge | null {
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
     ...(r.arrow === "both" || r.arrow === "none" ? { arrow: r.arrow } : {}),
     ...(typeof r.mid === "number" && Number.isFinite(r.mid) ? { mid: Math.round(Math.min(40000, Math.max(-40000, r.mid))) } : {}),
+    ...(() => {
+      if (!Array.isArray(r.pts)) return {};
+      const pts = r.pts.slice(0, 20).filter((p): p is { x: number; y: number } => !!p && typeof p === "object" && Number.isFinite((p as { x: unknown }).x) && Number.isFinite((p as { y: unknown }).y))
+        .map((p) => ({ x: Math.round(Math.min(40000, Math.max(-40000, p.x))), y: Math.round(Math.min(40000, Math.max(-40000, p.y))) }));
+      return pts.length ? { pts } : {};
+    })(),
   };
 }
 
@@ -223,7 +229,52 @@ export function midIsY(e: FlowEdge, a: FlowNode, b: FlowNode): boolean {
   return dir[worldSide(a, e.fromPort ?? localFor(a, ap))][1] !== 0;
 }
 
+type Pt = { x: number; y: number };
+const pointNode = (p: Pt): FlowNode => ({ id: "_", shape: "rect", text: "", x: p.x, y: p.y, w: 0, h: 0 });
+/** Point at half the length of a polyline (label anchor). */
+function halfway(pts: Pt[]): Pt {
+  const lens = pts.slice(1).map((p, i) => Math.hypot(p.x - pts[i].x, p.y - pts[i].y));
+  let left = lens.reduce((s, v) => s + v, 0) / 2;
+  for (let i = 0; i < lens.length; i++) {
+    if (left <= lens[i] || i === lens.length - 1) { const t = lens[i] ? Math.min(1, left / lens[i]) : 0; return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t }; }
+    left -= lens[i];
+  }
+  return pts[0];
+}
+
+/** Route through user waypoints (Feishu: 拖动连线添加拐点). */
+function waypointPath(e: FlowEdge, a: FlowNode, b: FlowNode, P: Pt[]) {
+  const fp = e.fromPort ?? localFor(a, autoPorts(a, pointNode(P[0]))[0]);
+  const tp = e.toPort ?? localFor(b, autoPorts(pointNode(P[P.length - 1]), b)[1]);
+  const p1 = portPoint(a, fp), p2 = portPoint(b, tp);
+  const chain = [p1, ...P, p2];
+  if (e.kind === "curve") {
+    // Catmull-Rom through all points, converted to cubic Béziers.
+    let d = `M${chain[0].x},${chain[0].y}`;
+    for (let i = 0; i < chain.length - 1; i++) {
+      const p0 = chain[i - 1] ?? chain[i], c = chain[i], n = chain[i + 1], n2 = chain[i + 2] ?? n;
+      d += ` C${c.x + (n.x - p0.x) / 6},${c.y + (n.y - p0.y) / 6} ${n.x - (n2.x - c.x) / 6},${n.y - (n2.y - c.y) / 6} ${n.x},${n.y}`;
+    }
+    return { d, mid: halfway(chain), start: p1, end: p2 };
+  }
+  let pts = chain;
+  if (e.kind !== "straight") {
+    // Orthogonal: one elbow per leg, leaving the source along its port direction.
+    pts = [chain[0]];
+    let vertical = dir[worldSide(a, fp)][1] !== 0;
+    for (let i = 1; i < chain.length; i++) {
+      const u = pts[pts.length - 1], v = chain[i];
+      if (u.x !== v.x && u.y !== v.y) { pts.push(vertical ? { x: u.x, y: v.y } : { x: v.x, y: u.y }); }
+      else vertical = u.x === v.x ? true : false;
+      pts.push(v);
+      vertical = !vertical;
+    }
+  }
+  return { d: "M" + pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" L"), mid: halfway(pts), start: p1, end: p2 };
+}
+
 export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mid: { x: number; y: number }; start: { x: number; y: number }; end: { x: number; y: number } } {
+  if (e.pts?.length) return waypointPath(e, a, b, e.pts);
   const [ap, bp] = autoPorts(a, b);
   const fp = e.fromPort ?? localFor(a, ap), tp = e.toPort ?? localFor(b, bp);
   const p1 = portPoint(a, fp), p2 = portPoint(b, tp);
@@ -307,7 +358,7 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
   });
   const nodes = graph.nodes.map((n) => ({ ...n, ...placed.get(n.id)! }));
   const b = bounds(nodes);
-  return { ...graph, nodes: nodes.map((n) => ({ ...n, x: Math.round(n.x - b.x + 40), y: Math.round(n.y - b.y + 40) })), edges: graph.edges.map(({ fromPort: _f, toPort: _t, mid: _m, ...e }) => e) };
+  return { ...graph, nodes: nodes.map((n) => ({ ...n, x: Math.round(n.x - b.x + 40), y: Math.round(n.y - b.y + 40) })), edges: graph.edges.map(({ fromPort: _f, toPort: _t, mid: _m, pts: _p, ...e }) => e) };
 }
 const avg = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
 
