@@ -8,12 +8,12 @@
  */
 
 export type Shape = "rect" | "round" | "diamond" | "ellipse" | "terminator" | "parallelogram" | "document" | "cylinder" | "hexagon" | "text"
-  | "triangle" | "note" | "swimlane" | "swimlaneV" | "class" | "actor" | "lifeline";
+  | "triangle" | "note" | "swimlane" | "swimlaneV" | "class" | "actor" | "lifeline" | "image";
 export type TextAlign = "left" | "center" | "right";
 export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
 
-export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; z?: number }
+export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
 
@@ -41,6 +41,7 @@ export const SHAPES: { id: Shape; label: string; w: number; h: number }[] = [
   { id: "class", label: "类", w: 180, h: 120 },
   { id: "actor", label: "参与者", w: 60, h: 96 },
   { id: "lifeline", label: "生命线", w: 120, h: 320 },
+  { id: "image", label: "图片", w: 240, h: 160 },
 ];
 
 /** 容器类图形（泳道）：总在底层，拖动时带着内部图形一起移动。 */
@@ -97,6 +98,7 @@ export function normalizeNode(raw: unknown, id?: string): FlowNode | null {
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
     ...(typeof r.size === "number" && r.size >= 10 && r.size <= 48 ? { size: Math.round(r.size) } : {}),
     ...(r.align === "left" || r.align === "right" ? { align: r.align } : {}),
+    ...(shape === "image" && typeof r.fileId === "number" && Number.isSafeInteger(r.fileId) && r.fileId > 0 ? { fileId: r.fileId } : {}),
     ...(typeof r.rot === "number" && Number.isFinite(r.rot) && Math.round(((r.rot % 360) + 360) % 360) % 360 ? { rot: Math.round(((r.rot % 360) + 360) % 360) % 360 } : {}),
     ...(typeof r.z === "number" && Number.isFinite(r.z) ? { z: r.z } : {}),
   };
@@ -318,10 +320,10 @@ export function measureLabel(text: string, minW: number): number {
 /** Mermaid text for Markdown export (shapes mapped to the closest Mermaid node syntax). */
 export function toMermaid(graph: FlowGraph): string {
   const q = (s: string) => `"${s.replace(/"/g, "'").replace(/\n/g, "<br/>")}"`;
-  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"], triangle: ["[", "]"], note: ["[", "]"], swimlane: ["[", "]"], swimlaneV: ["[", "]"], class: ["[", "]"], actor: ["((", "))"], lifeline: ["[", "]"] };
+  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"], triangle: ["[", "]"], note: ["[", "]"], swimlane: ["[", "]"], swimlaneV: ["[", "]"], class: ["[", "]"], actor: ["((", "))"], lifeline: ["[", "]"], image: ["[", "]"] };
   const ids = new Map(graph.nodes.map((n, i) => [n.id, `N${i + 1}`]));
   const lines = ["flowchart TD"];
-  for (const n of graph.nodes) { const [a, b] = wrap[n.shape]; lines.push(`  ${ids.get(n.id)}${a}${q(n.text || " ")}${b}`); }
+  for (const n of graph.nodes) { const [a, b] = wrap[n.shape]; lines.push(`  ${ids.get(n.id)}${a}${q(n.text || (n.shape === "image" ? "图片" : " "))}${b}`); }
   for (const e of graph.edges) {
     const arrow = e.arrow === "none" ? (e.dashed ? "-.-" : "---") : e.arrow === "both" ? (e.dashed ? "<-.->" : "<-->") : e.dashed ? "-.->" : "-->";
     lines.push(`  ${ids.get(e.from)} ${arrow}${e.label ? `|${q(e.label)}|` : ""} ${ids.get(e.to)}`);

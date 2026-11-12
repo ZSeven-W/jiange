@@ -36,7 +36,7 @@ func (s *Server) isProtectedImage(r *http.Request, file store.FileMeta) (bool, e
 	}
 	want := strconv.FormatInt(file.ID, 10)
 	for _, block := range doc.View().Blocks {
-		if block.Type == "image" && block.Props["fileId"] == want {
+		if block.Type == "image" && block.Props["fileId"] == want || block.Type == "flowchart" && flowchartReferencesImage(block.Props, want) {
 			return true, nil
 		}
 	}

@@ -40,7 +40,7 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
 import { AIBlockPanel } from "./AIPanel";
-import { FlowchartBlock, type FlowPeer, type FlowPresence } from "./flowchart/FlowchartBlock";
+import { FlowchartBlock, type FlowPeer, type FlowPresence, type FlowUpload } from "./flowchart/FlowchartBlock";
 import { flowOpenRequests } from "./flowchart/openRequests";
 import { flowWrites, readFlow, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
@@ -1828,6 +1828,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
                 flowAI={ai && !onCopyBlock ? ai : undefined}
                 flowAutoOpen={flowAutoOpen === k || flowOpenRequests.has(k)}
+                flowUpload={!readOnly && upload ? upload : undefined}
                 flowPeers={doc.blockInfo(b).type === "flowchart" ? sync.peers.filter((p) => p.state.flow?.block === k).map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, x: p.state.flow?.x, y: p.state.flow?.y, sel: Array.isArray(p.state.flow?.sel) ? p.state.flow!.sel : undefined })) : undefined}
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
@@ -2083,6 +2084,7 @@ interface BlockProps {
   flowPeers?: FlowPeer[];
   onFlowPresence?: (p: FlowPresence | null) => void;
   onFlowComment?: (quote: string) => void;
+  flowUpload?: FlowUpload;
   /** columns 容器：渲染其子块（每栏一个） */
   childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
   columnRemount?: Record<string, number>;
@@ -2133,7 +2135,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2247,7 +2249,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       </span>
       {type === "flowchart" && (
         <div className="my-2">
-          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} />
+          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} upload={flowUpload} />
         </div>
       )}
       {type === "diagram" ? (
