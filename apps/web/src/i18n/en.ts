@@ -223,6 +223,7 @@ export const en: Record<string, string> = {
   "复制链接": "Copy link",
   "复选框": "Checkbox",
   "多维表格": "Base",
+  "画板": "Whiteboard",
   "多维表格不存在或无权访问": "The base does not exist or you cannot access it",
   "多选": "Multi-select",
   "大于": "is greater than",

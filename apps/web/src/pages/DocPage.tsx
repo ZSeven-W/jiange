@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Tx, type OpId, type SyncStatus } from "@jiange/collab";
+import { idKey, Tx, type OpId, type SyncStatus } from "@jiange/collab";
+import { bodyBlocks } from "@/editor/model";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./docHeaderMeta";
 import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
@@ -19,6 +20,8 @@ import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { TitleConsistency } from "./TitleConsistency";
 import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starterTemplateOps";
 import { peekStarter, takeStarter } from "./pendingStarter";
+import { BOARD_SEED, hasBoard, takeBoard } from "./boardStarter";
+import { requestFlowOpen } from "@/editor/flowchart/openRequests";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
 import { go } from "@/lib/route";
 import { docWidthClass, readDocWide, writeDocWide } from "@/lib/docWidth";
@@ -553,7 +556,22 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const blankBody = !!sync.client.doc && isEmptyStarterDocument(sync.client.doc);
   const pendingStarter = peekStarter(me.user.id, id);
   const pendingImport = !!pendingStarter;
-  const showTemplates = !!meta.data && sync.ready && sync.caughtUp && sync.client.droppedOnResync === 0 && sync.status === "synced" && canEditContent && blankBody && !templatesHidden && !pendingImport;
+  const boardPending = hasBoard(me.user.id, id);
+  const showTemplates = !!meta.data && sync.ready && sync.caughtUp && sync.client.droppedOnResync === 0 && sync.status === "synced" && canEditContent && blankBody && !templatesHidden && !pendingImport && !boardPending;
+  // 「新建画板」：空文档同步完成后插入画板块并直接打开画板。
+  useEffect(() => {
+    if (!boardPending || !sync.ready || !sync.caughtUp || sync.status !== "synced" || sync.client.droppedOnResync > 0 || !canEditContent || !recordExternalUndo.current) return;
+    const doc = sync.client.doc;
+    if (!doc) return;
+    takeBoard(me.user.id, id);
+    if (!isEmptyStarterDocument(doc)) return;
+    const tx = insertStarterBlocks(doc, [BOARD_SEED]);
+    if (!tx) return;
+    const board = bodyBlocks(doc).find((b) => doc.blockInfo(b).type === "flowchart");
+    if (board) requestFlowOpen(idKey(board));
+    recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
+    sync.client.push(tx.ops);
+  });
   const applyPendingStarter = () => {
     const content = peekStarter(me.user.id, id);
     const doc = sync.client.doc;

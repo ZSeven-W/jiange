@@ -11,8 +11,9 @@ import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActio
 import { parseMarkdown } from "@/lib/markdown";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { stageStarter } from "./pendingStarter";
+import { BOARD_TITLE, stageBoard } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
-import { ChevronDown, FolderOpen, Plus, Star, Table2 } from "lucide-react";
+import { ChevronDown, FolderOpen, Plus, Shapes, Star, Table2 } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
@@ -52,6 +53,10 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
     mutationFn: (type: "doc" | "base") => type === "base" ? baseApi.create() : docsApi.create(""),
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
+  const createBoard = useMutation({
+    mutationFn: async () => { const doc = await docsApi.create(BOARD_TITLE); stageBoard(me.user.id, doc.id); return doc; },
+    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
+  });
   const createWithContent = useMutation({
     mutationFn: async ({ title, markdown }: { title: string; markdown: string }) => {
       const doc = await docsApi.create(title);
@@ -86,6 +91,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   const menu = newMenu && <div role="menu" className={`absolute top-[calc(100%+6px)] z-30 w-52 rounded-lg border bg-surface p-1.5 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("base"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="base" />{t("多维表格")}</button>
+    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate(); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover" data-new-board><BoardBadge />{t("画板")}</button>
   </div>;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
@@ -137,6 +143,11 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
   return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
+/** 画板图标（飞书画板为紫色图标）。 */
+function BoardBadge() {
+  return <span className="grid size-5 shrink-0 place-items-center rounded bg-[#7F3BF5] text-white"><Shapes size={13} /></span>;
+}
+
 function FileBadge({ kind, icon }: { kind: "doc" | "base"; icon?: string }) {
   return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <span className="grid size-5 shrink-0 place-items-center rounded-[4px] bg-[#6756d9] text-white"><Table2 size={13} strokeWidth={2}/></span>;
 }

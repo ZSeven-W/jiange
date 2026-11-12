@@ -41,6 +41,7 @@ import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
 import { AIBlockPanel } from "./AIPanel";
 import { FlowchartBlock, type FlowPeer, type FlowPresence } from "./flowchart/FlowchartBlock";
+import { flowOpenRequests } from "./flowchart/openRequests";
 import { flowWrites, readFlow, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
@@ -159,6 +160,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction; range?: { start: number; end: number } } | null>(null);
   const aiRangeText = useRef("");
   const [flowAutoOpen, setFlowAutoOpen] = useState<string | null>(null);
+  // Open requests are consumed once the block has mounted with autoOpen.
+  useEffect(() => { const d = sync.client.doc; if (!d) return; for (const k of flowOpenRequests) if (bodyBlocks(d).some((b) => idKey(b) === k)) flowOpenRequests.delete(k); });
   const onShareBlockRef = useRef(onShareBlock);
   onShareBlockRef.current = onShareBlock;
   const onSaveTemplateRef = useRef(onSaveTemplate);
@@ -1824,7 +1827,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
                 flowAI={ai && !onCopyBlock ? ai : undefined}
-                flowAutoOpen={flowAutoOpen === k}
+                flowAutoOpen={flowAutoOpen === k || flowOpenRequests.has(k)}
                 flowPeers={doc.blockInfo(b).type === "flowchart" ? sync.peers.filter((p) => p.state.flow?.block === k).map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, x: p.state.flow?.x, y: p.state.flow?.y, sel: Array.isArray(p.state.flow?.sel) ? p.state.flow!.sel : undefined })) : undefined}
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
