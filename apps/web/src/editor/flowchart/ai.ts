@@ -35,6 +35,6 @@ export function parseFlowchartAnswer(answer: string): { graph: FlowGraph; droppe
     if (!e || !ids.has(e.from) || !ids.has(e.to)) { dropped++; return []; }
     return [e];
   });
-  const graph = autoLayout({ theme: "classic", nodes, edges }, { direction: r.direction === "LR" ? "LR" : "TB" });
+  const graph = autoLayout({ theme: "feishu", nodes, edges }, { direction: r.direction === "LR" ? "LR" : "TB" });
   return { graph, dropped };
 }

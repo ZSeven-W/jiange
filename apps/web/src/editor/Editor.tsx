@@ -1296,7 +1296,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       }
       if (it.id === "flowchart") {
         const info = tx.doc.blockInfo(b);
-        const props = { "fc.v": "1", "fc.theme": "classic" };
+        const props = { "fc.v": "1", "fc.theme": "feishu" };
         let fb = b;
         if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) { tx.setProp(b, "type", "flowchart"); for (const [k, v] of Object.entries(props)) tx.setProp(b, k, v); }
         else fb = tx.create("flowchart", b, info.parent, props);

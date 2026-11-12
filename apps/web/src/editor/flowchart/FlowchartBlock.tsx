@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, Circle, Diamond, Download, FileUp, Hexagon, LayoutTemplate, Loader2, Maximize2, Minus, MousePointer2, Plus, Redo2, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, CornerRightDown, Diamond, Download, FileUp, Hand, Loader2, Maximize2, Minus, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, bounds, edgePath, measureLabel, newFlowId, SHAPES, themeOf, THEMES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
@@ -58,7 +58,7 @@ export function ShapeOutline({ n, theme, fill, stroke }: { n: FlowNode; theme: F
   }
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc" }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -69,6 +69,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   onEdgeDouble?: (edge: FlowEdge) => void;
   connectPreview?: { x1: number; y1: number; x2: number; y2: number } | null;
   idPrefix?: string;
+  /** 编辑器内使用：背景透明，露出点阵网格。 */
+  transparent?: boolean;
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -76,7 +78,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   const vb = viewBox ?? `${b.x - 40} ${b.y - 40} ${Math.max(200, b.w + 80)} ${Math.max(120, b.h + 80)}`;
   const filter = theme.sketch ? `url(#${idPrefix}-sketch)` : theme.shadow ? `url(#${idPrefix}-shadow)` : undefined;
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} style={{ background: theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
+    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} style={{ background: transparent ? "transparent" : theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
       <defs>
         <marker id={`${idPrefix}-arrow`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill={theme.edge} /></marker>
         <filter id={`${idPrefix}-sketch`} filterUnits="userSpaceOnUse" x="-20000" y="-20000" width="60000" height="60000"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3" /><feDisplacementMap in="SourceGraphic" scale="2.2" /></filter>
@@ -96,17 +98,19 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
       })}
       {graph.nodes.map((n) => {
         const c = nodeColors(n, theme);
-        const lines = wrapLines(n.text, n.w);
+        const fs = n.size ?? 14, lh = Math.round(fs * 1.3);
+        const lines = wrapLines(n.text, n.w * 14 / fs);
         const sel = selected?.has(n.id);
         return <g key={n.id} data-flow-node={n.id} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
           <g filter={filter}><ShapeOutline n={n} theme={theme} fill={c.fill} stroke={c.stroke} /></g>
-          {editing !== n.id && <text x={n.x + n.w / 2} y={n.y + n.h / 2 - ((lines.length - 1) * 18) / 2 + 5} textAnchor="middle" fontSize={14} fill={c.text} pointerEvents="none">
-            {lines.map((l, i) => <tspan key={i} x={n.x + n.w / 2} dy={i ? 18 : 0}>{l}</tspan>)}
+          {editing !== n.id && <text x={n.x + n.w / 2} y={n.y + n.h / 2 - ((lines.length - 1) * lh) / 2 + fs * 0.36} textAnchor="middle" fontSize={fs} fill={c.text} pointerEvents="none">
+            {lines.map((l, i) => <tspan key={i} x={n.x + n.w / 2} dy={i ? lh : 0}>{l}</tspan>)}
           </text>}
           {sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke="#3370FF" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />}
           {sel && onPortDown && (["top", "right", "bottom", "left"] as Port[]).map((p) => {
-            const pt = p === "top" ? [n.x + n.w / 2, n.y] : p === "bottom" ? [n.x + n.w / 2, n.y + n.h] : p === "left" ? [n.x, n.y + n.h / 2] : [n.x + n.w, n.y + n.h / 2];
-            return <circle key={p} cx={pt[0]} cy={pt[1]} r={6} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: "crosshair" }} onPointerDown={(ev) => { ev.stopPropagation(); onPortDown(ev, n, p); }} data-flow-port={p} />;
+            const o = 16; // 飞书的连接点在图形外侧
+            const pt = p === "top" ? [n.x + n.w / 2, n.y - o] : p === "bottom" ? [n.x + n.w / 2, n.y + n.h + o] : p === "left" ? [n.x - o, n.y + n.h / 2] : [n.x + n.w + o, n.y + n.h / 2];
+            return <circle key={p} cx={pt[0]} cy={pt[1]} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: "crosshair" }} onPointerDown={(ev) => { ev.stopPropagation(); onPortDown(ev, n, p); }} data-flow-port={p} />;
           })}
           {sel && onPortDown && <rect x={n.x + n.w - 5} y={n.y + n.h - 5} width={10} height={10} fill="#3370FF" style={{ cursor: "nwse-resize" }} data-flow-resize={n.id} />}
         </g>;
@@ -125,7 +129,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
   onChange?: (next: FlowGraph) => void;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
-  return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }} data-flowchart>
+  return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
     {graph.nodes.length ? <FlowSvg graph={graph} width="100%" height="100%" idPrefix="fcp" /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
@@ -143,7 +147,6 @@ type Drag =
   | { kind: "connect"; from: string; port: Port; x: number; y: number };
 
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
-const SHAPE_ICON: Partial<Record<Shape, React.ReactNode>> = { rect: <Square size={16} />, round: <Square size={16} className="rounded" />, diamond: <Diamond size={16} />, ellipse: <Circle size={16} />, hexagon: <Hexagon size={16} />, text: <Type size={16} /> };
 
 export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
   initial: FlowGraph; readOnly: boolean;
@@ -159,7 +162,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
   const [editing, setEditing] = useState<{ id: string; kind: "node" | "edge"; value: string } | null>(null);
   const [view, setView] = useState(() => { const b = bounds(initial.nodes); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
-  const [menu, setMenu] = useState<"theme" | "export" | "ai" | null>(null);
+  const [menu, setMenu] = useState<"theme" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | null>(null);
+  const [library, setLibrary] = useState(true);
+  const [libQuery, setLibQuery] = useState("");
   const [aiText, setAiText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -303,88 +308,133 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose }: {
   const tb = "grid size-8 place-items-center rounded-md text-[#1F2329] hover:bg-hover disabled:opacity-30 dark:text-foreground";
   const pop = "absolute top-10 z-20 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border";
 
-  return createPortal(<div className="fixed inset-0 z-[80] flex flex-col bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
-    <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-      <Workflow size={18} className="text-primary" /><span className="mr-3 text-[14px] font-medium">流程图</span>
+  const floatBar = "flex items-center gap-0.5 rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border";
+  const barBtn = "flex h-8 items-center gap-1 rounded-md px-2 text-[13px] text-[#1F2329] hover:bg-hover disabled:opacity-30 dark:text-foreground";
+  const railBtn = "grid size-9 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground";
+  const libraryGroups: { title: string; shapes: Shape[] }[] = [
+    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "hexagon", "parallelogram", "text"] },
+    { title: "流程图", shapes: ["terminator", "rect", "diamond", "parallelogram", "document", "cylinder", "hexagon"] },
+  ];
+  const shapeIcon = (id: Shape) => <svg viewBox="0 0 48 48" className="size-6" fill="none"><ShapeOutline n={{ id: "i", x: 5, y: 11, w: 38, h: 26, shape: id, text: "" }} theme={{ ...THEMES[0], radius: 2, strokeWidth: 3 }} fill="none" stroke="currentColor" />{id === "text" && <text x="24" y="33" textAnchor="middle" fontSize="26" fill="currentColor">T</text>}</svg>;
+  const filteredGroups = libraryGroups.map((g) => ({ ...g, shapes: g.shapes.filter((id) => !libQuery.trim() || SHAPES.find((x) => x.id === id)!.label.includes(libQuery.trim())) })).filter((g) => g.shapes.length);
+  // Floating style toolbar anchored above the selection (Feishu: shape ▾ / 填充 ▾ / 边框 ▾ / 字色 ▾ / 字号 ▾ / 更多).
+  const anchorBox = selectedNodes.length ? bounds(selectedNodes) : selectedEdges.length ? (() => { const e = selectedEdges[0]; const a = graph.nodes.find((n) => n.id === e.from), t = graph.nodes.find((n) => n.id === e.to); if (!a || !t) return null; const m = edgePath(e, a, t).mid; return { x: m.x, y: m.y, w: 0, h: 0 }; })() : null;
+  const barPos = anchorBox ? { left: (anchorBox.x + anchorBox.w / 2 - view.x) * view.zoom, top: Math.max(8, (anchorBox.y - view.y) * view.zoom - 16 * view.zoom - 58) } : null;
+
+  return createPortal(<div className="fixed inset-0 z-[80] bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    {/* 画布 */}
+    <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library ? 260 : 0, background: theme.canvas, backgroundImage: `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : "default" }}
+      onWheel={(e) => { if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
+      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent
+        onCanvasDown={(e) => {
+          if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
+          setMenu(null);
+          if (tool !== "select" && !readOnly) { addNode(tool, toWorld(e.clientX, e.clientY)); return; }
+          setSelected(new Set()); finishEdit();
+          setDrag({ kind: "pan", startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y });
+        }}
+        onNodeDown={(e, n) => {
+          e.stopPropagation(); setMenu(null);
+          if ((e.target as Element).getAttribute("data-flow-resize")) { if (!readOnly) setDrag({ kind: "resize", id: n.id, startX: e.clientX, startY: e.clientY, w: n.w, h: n.h }); return; }
+          const next = e.shiftKey ? new Set(selected).add(n.id) : selected.has(n.id) ? selected : new Set([n.id]);
+          setSelected(next);
+          if (!readOnly) setDrag({ kind: "move", ids: [...next], startX: e.clientX, startY: e.clientY, origin: new Map(graph.nodes.filter((x) => next.has(x.id)).map((x) => [x.id, { x: x.x, y: x.y }])) });
+        }}
+        onEdgeDown={(e, edge) => { e.stopPropagation(); setMenu(null); setSelected(e.shiftKey ? new Set(selected).add(edge.id) : new Set([edge.id])); }}
+        onPortDown={readOnly ? undefined : (e, n, port) => { const p = toWorld(e.clientX, e.clientY); setDrag({ kind: "connect", from: n.id, port, x: p.x, y: p.y }); }}
+        onNodeDouble={readOnly ? undefined : (n) => setEditing({ id: n.id, kind: "node", value: n.text })}
+        onEdgeDouble={readOnly ? undefined : (edge) => setEditing({ id: edge.id, kind: "edge", value: edge.label ?? "" })}
+        connectPreview={drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = drag.port === "top" ? [n.x + n.w / 2, n.y] : drag.port === "bottom" ? [n.x + n.w / 2, n.y + n.h] : drag.port === "left" ? [n.x, n.y + n.h / 2] : [n.x + n.w, n.y + n.h / 2]; return { x1: pt[0], y1: pt[1], x2: drag.x, y2: drag.y }; })() : null}
+      />
+      {editing && (editNode || editEdge) && (() => {
+        const anchor = editNode ? { x: editNode.x, y: editNode.y, w: editNode.w, h: editNode.h } : (() => { const e = editEdge!; const a = graph.nodes.find((n) => n.id === e.from)!, t = graph.nodes.find((n) => n.id === e.to)!; const m = edgePath(e, a, t).mid; return { x: m.x - 70, y: m.y - 16, w: 140, h: 32 }; })();
+        return <textarea autoFocus value={editing.value} placeholder="输入文本" onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
+          className="absolute resize-none rounded border-2 border-primary bg-surface p-1 text-center text-[14px] outline-none" style={{ left: (anchor.x - view.x) * view.zoom, top: (anchor.y - view.y) * view.zoom, width: anchor.w * view.zoom, height: Math.max(32, anchor.h * view.zoom) }} data-flow-text-editor />;
+      })()}
+      {!graph.nodes.length && !readOnly && <div className="pointer-events-none absolute inset-0 grid place-items-center text-[13px] text-subtle">从左侧图形库选择图形后点击画布放置，或在右上角使用「AI 生成」「导入 draw.io」</div>}
+      {/* 选中对象的浮动样式栏 */}
+      {!readOnly && barPos && !drag && !editing && <div className={cn(floatBar, "absolute z-20 -translate-x-1/2")} style={barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
+        {selectedNodes.length > 0 && <>
+          <div className="relative"><button type="button" className={barBtn} title="图形" onClick={() => setMenu(menu === "shape" ? null : "shape")}>{shapeIcon(selectedNodes[0].shape)}<ChevronDown size={12} /></button>
+            {menu === "shape" && <div className={cn(pop, "left-0 grid w-[208px] grid-cols-5 gap-1 p-2")}>{SHAPES.map((s) => <button key={s.id} type="button" title={s.label} onClick={() => { patchNodes({ shape: s.id }); setMenu(null); }} className={cn("grid size-9 place-items-center rounded-md hover:bg-hover", selectedNodes[0].shape === s.id && "bg-[#E1EAFF] text-primary")}>{shapeIcon(s.id)}</button>)}</div>}
+          </div>
+          <div className="relative"><button type="button" className={barBtn} title="填充" onClick={() => setMenu(menu === "fill" ? null : "fill")}><span className="size-4 rounded-full border border-[#BBBFC4]" style={{ background: selectedNodes[0].fill ?? theme.fill }} /><ChevronDown size={12} /></button>
+            {menu === "fill" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">填充</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const [fill] = p.split("/"); return <button key={p} type="button" onClick={() => { patchNodes({ fill }); setMenu(null); }} className="size-[18px] rounded-full border border-[#BBBFC4]" style={{ background: fill }} title={fill} />; })}</div><button type="button" onClick={() => { patchNodes({ fill: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">跟随风格</button></div>}
+          </div>
+          <div className="relative"><button type="button" className={barBtn} title="边框" onClick={() => setMenu(menu === "stroke" ? null : "stroke")}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: selectedNodes[0].stroke ?? theme.stroke }} /><ChevronDown size={12} /></button>
+            {menu === "stroke" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">边框</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const stroke = p.split("/")[1]; return <button key={p} type="button" onClick={() => { patchNodes({ stroke }); setMenu(null); }} className="size-[18px] rounded-full border-[3px] bg-white" style={{ borderColor: stroke }} title={stroke} />; })}</div><button type="button" onClick={() => { patchNodes({ stroke: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">跟随风格</button></div>}
+          </div>
+          <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
+          <div className="relative"><button type="button" className={barBtn} title="文字颜色" onClick={() => setMenu(menu === "color" ? null : "color")}><span className="grid size-[18px] place-items-center rounded-[3px] bg-[#FFE928] text-[12px] font-medium" style={{ color: selectedNodes[0].color ?? theme.text }}>A</span><ChevronDown size={12} /></button>
+            {menu === "color" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="grid grid-cols-8 gap-1">{["#1F2329", "#8F959E", "#D83931", "#DE7802", "#DC9B04", "#2EA121", "#245BDB", "#6425D0"].map((c) => <button key={c} type="button" onClick={() => { patchNodes({ color: c }); setMenu(null); }} className="grid size-[18px] place-items-center rounded border text-[11px] font-medium" style={{ color: c }}>A</button>)}</div></div>}
+          </div>
+          <select value={selectedNodes[0].size ?? 14} onChange={(e) => patchNodes({ size: Number(e.target.value) })} className="h-8 rounded-md border bg-surface px-1 text-[13px]" title="字号">{[12, 14, 16, 18, 20, 24, 28, 32].map((v) => <option key={v} value={v}>{v}</option>)}</select>
+        </>}
+        {selectedEdges.length > 0 && <>
+          {([["orthogonal", "折线"], ["straight", "直线"], ["curve", "曲线"]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined })} className={cn(barBtn, (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
+          <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn(barBtn, selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>虚线</button>
+          <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className={barBtn}>箭头：{selectedEdges[0].arrow === "none" ? "无" : selectedEdges[0].arrow === "both" ? "双向" : "单向"}</button>
+          <button type="button" onClick={() => setEditing({ id: selectedEdges[0].id, kind: "edge", value: selectedEdges[0].label ?? "" })} className={barBtn}>文字</button>
+        </>}
+        <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
+        <button type="button" title="删除" onClick={removeSelected} className="grid size-8 place-items-center rounded-md text-destructive hover:bg-[#fff2f0]"><Trash2 size={15} /></button>
+      </div>}
+    </div>
+
+    {/* 左侧：图形库面板 + 竖向工具条（飞书画板布局） */}
+    {!readOnly && library && <aside className="absolute bottom-0 left-0 top-0 z-10 flex w-[260px] flex-col border-r border-[#DEE0E3] bg-surface dark:border-border" aria-label="图形库" data-flow-library>
+      <div className="flex h-12 shrink-0 items-center gap-2 px-4"><span className="text-[14px] font-medium">图形库</span><button type="button" title="收起" onClick={() => setLibrary(false)} className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover"><ChevronLeft size={16} /></button></div>
+      <label className="mx-4 flex h-8 items-center gap-2 rounded-md border px-2 text-subtle focus-within:border-primary"><Search size={14} /><input value={libQuery} onChange={(e) => setLibQuery(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={`${spec.label}（点击后在画布上放置，双击直接添加）`} onClick={() => setTool(id)} onDoubleClick={() => addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
+        <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />连线</div><p className="text-[12px] leading-5 text-subtle">选中图形后，从四周的蓝色圆点拖到另一个图形即可连线；选中连线可切换折线/直线/曲线、虚线与箭头。</p></section>
+      </div>
+    </aside>}
+    {!readOnly && <aside className="absolute top-1/2 z-10 flex -translate-y-1/2 flex-col gap-0.5 rounded-xl border border-[#DEE0E3] bg-surface p-1.5 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border" style={{ left: library ? 272 : 12 }} aria-label="工具">
+      <button type="button" className={cn(railBtn, library && "bg-[#E1EAFF]")} title="图形库" onClick={() => setLibrary(!library)} data-flow-library-toggle><Shapes size={18} className="text-[#3370FF]" /></button>
+      <span className="mx-1 my-0.5 h-px bg-[#DEE0E3]" />
+      <button type="button" className={cn(railBtn, tool === "select" && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => setTool("select")}><MousePointer2 size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => setTool("round")}><Square size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => setTool("text")}><Type size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => setTool("diamond")}><Diamond size={18} /></button>
+      <button type="button" className={railBtn} title="连线：选中图形后拖动四周圆点" onClick={() => setNotice({ ok: true, text: "选中图形后，从四周的蓝色圆点拖到另一个图形即可连线" })}><CornerRightDown size={18} /></button>
+    </aside>}
+
+    {/* 左上：返回 */}
+    <button type="button" onClick={() => { finishEdit(); onClose(); }} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />流程图</button>
+
+    {/* 右上：风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
+    <div className={cn(floatBar, "absolute right-3 top-3 z-20")}>
       {!readOnly && <>
-        <button type="button" className={tb} title="撤销" disabled={!undo.length} onClick={doUndo}><Undo2 size={16} /></button>
-        <button type="button" className={tb} title="重做" disabled={!redo.length} onClick={doRedo}><Redo2 size={16} /></button>
-        <span className="mx-1 h-5 w-px bg-[#DEE0E3]" />
-        <div className="relative"><button type="button" className="flex h-8 items-center gap-1 rounded-md px-2 text-[13px] hover:bg-hover" onClick={() => setMenu(menu === "theme" ? null : "theme")} data-flow-theme-btn><LayoutTemplate size={15} />风格：{theme.label}</button>
-          {menu === "theme" && <div className={cn(pop, "left-0 grid w-[300px] grid-cols-3 gap-1.5 p-2")}>{THEMES.map((t) => <button key={t.id} type="button" onClick={() => { commit({ ...graph, theme: t.id }); setMenu(null); }} className={cn("rounded-md border p-1.5 text-center text-[12px] hover:border-primary", graph.theme === t.id && "border-primary text-primary")} data-flow-theme={t.id}><span className="mb-1 block h-8 rounded" style={{ background: t.canvas, border: `1px solid #DEE0E3` }}><span className="mx-auto mt-2 block h-4 w-10" style={{ background: t.palette ? t.palette[0].split("/")[0] : t.fill, border: `${t.strokeWidth}px solid ${t.palette ? t.palette[0].split("/")[1] : t.stroke}`, borderRadius: t.radius / 2 }} /></span>{t.label}</button>)}</div>}
+        <div className="relative"><button type="button" className={barBtn} onClick={() => setMenu(menu === "theme" ? null : "theme")} data-flow-theme-btn><Palette size={15} />风格</button>
+          {menu === "theme" && <div className={cn(pop, "right-0 grid w-[300px] grid-cols-3 gap-1.5 p-2")}>{THEMES.map((t) => <button key={t.id} type="button" onClick={() => { commit({ ...graph, theme: t.id }); setMenu(null); }} className={cn("rounded-md border p-1.5 text-center text-[12px] hover:border-primary", graph.theme === t.id && "border-primary text-primary")} data-flow-theme={t.id}><span className="mb-1 block h-8 rounded" style={{ background: t.canvas, border: `1px solid #DEE0E3` }}><span className="mx-auto mt-2 block h-4 w-10" style={{ background: t.palette ? t.palette[0].split("/")[0] : t.fill, border: `${t.strokeWidth}px solid ${t.palette ? t.palette[0].split("/")[1] : t.stroke}`, borderRadius: t.radius / 2 }} /></span>{t.label}</button>)}</div>}
         </div>
-        <button type="button" className="flex h-8 items-center gap-1 rounded-md px-2 text-[13px] hover:bg-hover" onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title="按连线关系自动排版"><Spline size={15} />自动排版</button>
-        <div className="relative"><button type="button" className={cn("flex h-8 items-center gap-1 rounded-md px-2 text-[13px] hover:bg-hover", !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? "用 AI 生成流程图" : "请先在 AI 设置中配置 API Key"} data-flow-ai-btn><Sparkles size={15} className="text-primary" />AI 生成</button>
-          {menu === "ai" && ai && <div className={cn(pop, "left-0 w-[360px] p-3")}>
+        <button type="button" className={barBtn} onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title="按连线关系自动排版"><Spline size={15} />自动排版</button>
+        <div className="relative"><button type="button" className={cn(barBtn, !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? "用 AI 生成流程图" : "请先在 AI 设置中配置 API Key"} data-flow-ai-btn><Sparkles size={15} className="text-primary" />AI 生成</button>
+          {menu === "ai" && ai && <div className={cn(pop, "right-0 w-[360px] p-3")}>
             <textarea autoFocus value={aiText} onChange={(e) => setAiText(e.target.value)} rows={4} maxLength={1000} placeholder="描述流程，例如：用户注册流程，包含填写信息、校验手机号、校验失败重试、创建账号、发送欢迎邮件" className="w-full resize-none rounded-md border p-2 text-[13px] outline-none focus:border-primary" data-flow-ai-input />
             <div className="mt-2 flex items-center gap-2"><span className="text-[12px] text-subtle">{graph.nodes.length ? "结果将追加到画布右侧" : "结果会自动排版"}</span><button type="button" disabled={busy || !aiText.trim()} onClick={() => void runAI()} className="ml-auto flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{busy && <Loader2 size={12} className="animate-spin" />}生成</button></div>
           </div>}
         </div>
-        <button type="button" className="flex h-8 items-center gap-1 rounded-md px-2 text-[13px] hover:bg-hover" onClick={() => fileRef.current?.click()} data-flow-import><FileUp size={15} />导入 draw.io</button>
+        <button type="button" className={barBtn} onClick={() => fileRef.current?.click()} data-flow-import><FileUp size={15} />导入 draw.io</button>
         <input ref={fileRef} type="file" accept=".drawio,.xml,.dio,application/xml,text/xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importDrawio(f); }} data-flow-import-input />
       </>}
-      <div className="relative"><button type="button" className="flex h-8 items-center gap-1 rounded-md px-2 text-[13px] hover:bg-hover" onClick={() => setMenu(menu === "export" ? null : "export")}><Download size={15} />导出</button>
-        {menu === "export" && <div className={cn(pop, "left-0 w-40")}>{([["png", "图片（PNG）"], ["svg", "矢量图（SVG）"], ["drawio", "draw.io 文件"]] as const).map(([k, l]) => <button key={k} type="button" className="flex h-8 w-full items-center rounded-md px-2 hover:bg-hover" onClick={() => void exportAs(k)}>{l}</button>)}</div>}
+      <div className="relative"><button type="button" className={barBtn} onClick={() => setMenu(menu === "export" ? null : "export")}><Download size={15} />导出</button>
+        {menu === "export" && <div className={cn(pop, "right-0 w-40")}>{([["png", "图片（PNG）"], ["svg", "矢量图（SVG）"], ["drawio", "draw.io 文件"]] as const).map(([k, l]) => <button key={k} type="button" className="flex h-8 w-full items-center rounded-md px-2 hover:bg-hover" onClick={() => void exportAs(k)}>{l}</button>)}</div>}
       </div>
-      {notice && <span role={notice.ok ? "status" : "alert"} className={cn("ml-2 max-w-[420px] truncate text-[12px]", notice.ok ? "text-subtle" : "text-destructive")} title={notice.text}>{notice.text}</span>}
-      <div className="ml-auto flex items-center gap-1">
-        <button type="button" className={tb} title="缩小" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.2, v.zoom / 1.2) }))}><Minus size={15} /></button>
-        <span className="w-12 text-center text-[12px] text-subtle">{Math.round(view.zoom * 100)}%</span>
-        <button type="button" className={tb} title="放大" onClick={() => setView((v) => ({ ...v, zoom: Math.min(3, v.zoom * 1.2) }))}><Plus size={15} /></button>
-        <button type="button" className={tb} title="适应画布" onClick={() => fit()}><Maximize2 size={15} /></button>
-        <button type="button" onClick={() => { finishEdit(); onClose(); }} className="ml-2 flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-[13px] text-white" data-flow-done><X size={14} />完成</button>
+    </div>
+    {notice && <div role={notice.ok ? "status" : "alert"} className={cn("absolute left-1/2 top-16 z-20 max-w-[520px] -translate-x-1/2 rounded-md border bg-surface px-3 py-1.5 text-[12px] shadow", notice.ok ? "text-[#1F2329]" : "text-destructive")}>{notice.text}<button type="button" className="ml-2 text-subtle" onClick={() => setNotice(null)}>×</button></div>}
+
+    {/* 右下：撤销重做、缩放 */}
+    <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
+      {!readOnly && <div className={floatBar}><button type="button" className={railBtn} title="撤销" disabled={!undo.length} onClick={doUndo}><Undo2 size={16} /></button><button type="button" className={railBtn} title="重做" disabled={!redo.length} onClick={doRedo}><Redo2 size={16} /></button></div>}
+      <div className={floatBar}>
+        <button type="button" className={railBtn} title="适应画布" onClick={() => fit()}><Hand size={16} /></button>
+        <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
+        <button type="button" className={railBtn} title="缩小" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.2, v.zoom / 1.2) }))}><Minus size={16} /></button>
+        <span className="w-12 text-center text-[13px]">{Math.round(view.zoom * 100)}%</span>
+        <button type="button" className={railBtn} title="放大" onClick={() => setView((v) => ({ ...v, zoom: Math.min(3, v.zoom * 1.2) }))}><Plus size={16} /></button>
       </div>
-    </header>
-    <div className="relative flex min-h-0 flex-1">
-      {!readOnly && <aside className="absolute left-3 top-3 z-10 flex flex-col gap-0.5 rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border" aria-label="图形">
-        <button type="button" className={cn(tb, tool === "select" && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => setTool("select")}><MousePointer2 size={16} /></button>
-        {SHAPES.map((s) => <button key={s.id} type="button" className={cn(tb, tool === s.id && "bg-[#E1EAFF] text-primary")} title={`${s.label}（点击画布放置）`} onClick={() => setTool(s.id)} onDoubleClick={() => addNode(s.id)} data-flow-shape={s.id}>{SHAPE_ICON[s.id] ?? <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5"><ShapeOutline n={{ id: "i", x: 2, y: 4, w: 16, h: 12, shape: s.id, text: "" }} theme={{ ...THEMES[0], strokeWidth: 1.5 }} fill="none" stroke="currentColor" /></svg>}</button>)}
-        <span className="my-0.5 h-px bg-[#DEE0E3]" />
-        <span className="px-1 py-1 text-center text-[10px] leading-3 text-subtle" title="选中图形后，从四周的圆点拖到另一个图形即可连线"><ArrowRight size={14} className="mx-auto" />拖圆点连线</span>
-      </aside>}
-      <div ref={svgWrap} className="min-h-0 flex-1 overflow-hidden" style={{ background: theme.canvas, backgroundImage: "radial-gradient(#DEE0E3 1px, transparent 1px)", backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : "default" }}
-        onWheel={(e) => { if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-        <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce"
-          onCanvasDown={(e) => {
-            if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
-            if (tool !== "select" && !readOnly) { addNode(tool, toWorld(e.clientX, e.clientY)); return; }
-            setSelected(new Set()); finishEdit();
-            setDrag({ kind: "pan", startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y });
-          }}
-          onNodeDown={(e, n) => {
-            e.stopPropagation();
-            if ((e.target as Element).getAttribute("data-flow-resize")) { if (!readOnly) setDrag({ kind: "resize", id: n.id, startX: e.clientX, startY: e.clientY, w: n.w, h: n.h }); return; }
-            const next = e.shiftKey ? new Set(selected).add(n.id) : selected.has(n.id) ? selected : new Set([n.id]);
-            setSelected(next);
-            if (!readOnly) setDrag({ kind: "move", ids: [...next], startX: e.clientX, startY: e.clientY, origin: new Map(graph.nodes.filter((x) => next.has(x.id)).map((x) => [x.id, { x: x.x, y: x.y }])) });
-          }}
-          onEdgeDown={(e, edge) => { e.stopPropagation(); setSelected(e.shiftKey ? new Set(selected).add(edge.id) : new Set([edge.id])); }}
-          onPortDown={readOnly ? undefined : (e, n, port) => { const p = toWorld(e.clientX, e.clientY); setDrag({ kind: "connect", from: n.id, port, x: p.x, y: p.y }); }}
-          onNodeDouble={readOnly ? undefined : (n) => setEditing({ id: n.id, kind: "node", value: n.text })}
-          onEdgeDouble={readOnly ? undefined : (edge) => setEditing({ id: edge.id, kind: "edge", value: edge.label ?? "" })}
-          connectPreview={drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = drag.port === "top" ? [n.x + n.w / 2, n.y] : drag.port === "bottom" ? [n.x + n.w / 2, n.y + n.h] : drag.port === "left" ? [n.x, n.y + n.h / 2] : [n.x + n.w, n.y + n.h / 2]; return { x1: pt[0], y1: pt[1], x2: drag.x, y2: drag.y }; })() : null}
-        />
-        {editing && (editNode || editEdge) && (() => {
-          const anchor = editNode ? { x: editNode.x, y: editNode.y, w: editNode.w, h: editNode.h } : (() => { const e = editEdge!; const a = graph.nodes.find((n) => n.id === e.from)!, t = graph.nodes.find((n) => n.id === e.to)!; const m = edgePath(e, a, t).mid; return { x: m.x - 70, y: m.y - 16, w: 140, h: 32 }; })();
-          return <textarea autoFocus value={editing.value} onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
-            className="absolute resize-none rounded border-2 border-primary bg-surface p-1 text-center text-[14px] outline-none" style={{ left: (anchor.x - view.x) * view.zoom, top: (anchor.y - view.y) * view.zoom, width: anchor.w * view.zoom, height: Math.max(32, anchor.h * view.zoom) }} data-flow-text-editor />;
-        })()}
-        {!graph.nodes.length && !readOnly && <div className="pointer-events-none absolute inset-0 grid place-items-center text-[13px] text-subtle">从左侧选择图形后点击画布放置，或使用「AI 生成」「导入 draw.io」</div>}
-      </div>
-      {!readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0) && <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-[#DEE0E3] bg-surface px-2 py-1 shadow-[0_4px_16px_rgba(31,35,41,0.12)] dark:border-border" data-flow-style-bar>
-        {selectedNodes.length > 0 && <>
-          {PALETTE.map((p) => { const [fill, stroke] = p.split("/"); return <button key={p} type="button" title="填充颜色" onClick={() => patchNodes({ fill, stroke })} className="size-6 rounded border-2" style={{ background: fill, borderColor: stroke }} />; })}
-          <button type="button" title="恢复主题配色" onClick={() => patchNodes({ fill: undefined, stroke: undefined })} className="h-6 rounded border px-1.5 text-[12px] hover:bg-hover">主题色</button>
-          <select value={selectedNodes[0].shape} onChange={(e) => patchNodes({ shape: e.target.value as Shape })} className="h-7 rounded border bg-surface px-1 text-[12px]" title="形状">{SHAPES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
-        </>}
-        {selectedEdges.length > 0 && <>
-          {([["orthogonal", "折线"], ["straight", "直线"], ["curve", "曲线"]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined })} className={cn("h-7 rounded px-2 text-[12px] hover:bg-hover", (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
-          <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn("h-7 rounded px-2 text-[12px] hover:bg-hover", selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>虚线</button>
-          <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className="h-7 rounded px-2 text-[12px] hover:bg-hover">箭头：{selectedEdges[0].arrow === "none" ? "无" : selectedEdges[0].arrow === "both" ? "双向" : "单向"}</button>
-        </>}
-        <span className="mx-1 h-5 w-px bg-[#DEE0E3]" />
-        <button type="button" title="删除" onClick={removeSelected} className="grid size-7 place-items-center rounded text-destructive hover:bg-[#fff2f0]"><Trash2 size={15} /></button>
-      </div>}
     </div>
   </div>, document.body);
 }

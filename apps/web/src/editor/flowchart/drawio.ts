@@ -147,7 +147,7 @@ export async function parseDrawio(source: string): Promise<DrawioResult> {
   if (skipped) warnings.push(`${skipped} 个图片或超出上限的对象已忽略`);
   // Normalize to a positive origin.
   const minX = Math.min(...nodes.map((n) => n.x)), minY = Math.min(...nodes.map((n) => n.y));
-  return { graph: { theme: "classic", nodes: nodes.map((n) => ({ ...n, x: n.x - minX + 40, y: n.y - minY + 40 })), edges }, warnings };
+  return { graph: { theme: "feishu", nodes: nodes.map((n) => ({ ...n, x: n.x - minX + 40, y: n.y - minY + 40 })), edges }, warnings };
 }
 
 /** Export back to an uncompressed draw.io file (opens in diagrams.net). */
