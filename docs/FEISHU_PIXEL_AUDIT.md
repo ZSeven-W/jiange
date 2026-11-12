@@ -102,6 +102,10 @@
 | 旋转 | 有旋转手柄 | 已实现（第三轮），含吸附 |
 | 评论 | 样式条评论 | 已实现：转到文档评论面板，引用图形文字 |
 | 多人协作 | 显示协作者光标 | 已实现：指针、名字、选中描边 |
+| 新建画板 | 主页新建菜单「画板」，创建只含画板的文档 | 已实现（主页、云空间），列表仍显示为文档图标 |
+| 连线改接 | 拖动连线端点改接 | 已实现 |
+
+第四轮截图：`screenshots/flowchart-r4-{1-new-menu,2-board-open,3-reconnecting,5-board-doc}-20261112.jpg`。
 
 第三轮截图：`screenshots/flowchart-r3-{1-peer-view,2-rotated,3-bend,4-comment}-20261112.jpg`。
 

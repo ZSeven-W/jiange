@@ -140,12 +140,10 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const { d, mid } = edgePath(e, a, t);
         const color = e.color ?? theme.edge;
         const sel = selected?.has(e.id);
-        const bend = bendHandle === e.id && (e.kind ?? "orthogonal") === "orthogonal" && onEdgeDown;
         return <g key={e.id} data-flow-edge={e.id}>
           <path d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: onEdgeDown ? "pointer" : undefined }} onPointerDown={onEdgeDown ? (ev) => onEdgeDown(ev, e) : undefined} onDoubleClick={onEdgeDouble ? () => onEdgeDouble(e) : undefined} />
           <path d={d} fill="none" stroke={sel ? "#3370FF" : color} strokeWidth={sel ? 2.2 : 1.5} strokeDasharray={e.dashed ? "6 4" : undefined} filter={theme.sketch ? filter : undefined} markerEnd={e.arrow === "none" ? undefined : `url(#${idPrefix}-arrow)`} markerStart={e.arrow === "both" ? `url(#${idPrefix}-arrow)` : undefined} pointerEvents="none" />
           {e.label && <g pointerEvents="none"><rect x={mid.x - measureLabel(e.label, 0) / 2 + 10} y={mid.y - 10} width={Math.max(20, measureLabel(e.label, 0) - 20)} height={20} rx={4} fill={theme.canvas} /><text x={mid.x} y={mid.y + 4} textAnchor="middle" fontSize={12} fill={theme.text}>{e.label}</text></g>}
-          {bend && <circle cx={mid.x} cy={mid.y} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: midIsY(e, a, t) ? "ns-resize" : "ew-resize" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-bend={e.id} />}
         </g>;
       })}
       {graph.nodes.map((n) => {
@@ -166,6 +164,16 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           {peer && !sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke={peer.color} strokeWidth={2} pointerEvents="none" data-flow-peer-sel />}
         </g>;
       })}
+      {/* 选中连线的端点与中段手柄画在图形之上，避免被图形遮挡 */}
+      {bendHandle && onEdgeDown && (() => {
+        const e = graph.edges.find((x) => x.id === bendHandle), a = e && byId.get(e.from), t = e && byId.get(e.to);
+        if (!e || !a || !t) return null;
+        const { mid, start, end } = edgePath(e, a, t);
+        return <g data-flow-edge-handles>
+          {([["from", start], ["to", end]] as const).map(([k, p]) => <circle key={k} cx={p.x} cy={p.y} r={5} fill="#3370FF" stroke="#FFFFFF" strokeWidth={1.5} style={{ cursor: "move" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-end={k} />)}
+          {(e.kind ?? "orthogonal") === "orthogonal" && <circle cx={mid.x} cy={mid.y} r={5} fill="#FFFFFF" stroke="#3370FF" strokeWidth={1.5} style={{ cursor: midIsY(e, a, t) ? "ns-resize" : "ew-resize" }} onPointerDown={(ev) => onEdgeDown(ev, e)} data-flow-bend={e.id} />}
+        </g>;
+      })()}
       {guides?.map((g, i) => <line key={i} x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2} stroke="#F54A45" strokeWidth={1} pointerEvents="none" data-flow-guide />)}
       {marquee && <rect x={marquee.x} y={marquee.y} width={marquee.w} height={marquee.h} fill="rgba(51,112,255,0.08)" stroke="#3370FF" strokeWidth={1} pointerEvents="none" data-flow-marquee />}
       {connectPreview && <line x1={connectPreview.x1} y1={connectPreview.y1} x2={connectPreview.x2} y2={connectPreview.y2} stroke="#3370FF" strokeWidth={1.5} strokeDasharray="5 4" markerEnd={`url(#${idPrefix}-arrow)`} pointerEvents="none" />}
@@ -204,7 +212,8 @@ type Drag =
   | { kind: "connect"; from: string; port: Port; x: number; y: number }
   | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
   | { kind: "rotate"; id: string; cx: number; cy: number; a0: number; rot0: number }
-  | { kind: "bend"; id: string; isY: boolean };
+  | { kind: "bend"; id: string; isY: boolean }
+  | { kind: "reconnect"; id: string; end: "from" | "to"; x: number; y: number };
 
 /** A collaborator inside the same flowchart (from awareness). */
 export interface FlowPeer { id: number; name: string; color: string; x?: number; y?: number; sel?: string[] }
@@ -395,6 +404,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === drag.id ? { ...n, rot: rot || undefined } : n)) }));
       return;
     }
+    if (drag.kind === "reconnect") { setDrag({ ...drag, x: p.x, y: p.y }); return; }
     if (drag.kind === "bend") { setGraph((g) => ({ ...g, edges: g.edges.map((x) => (x.id === drag.id ? { ...x, mid: Math.round(drag.isY ? p.y : p.x) } : x)) })); return; }
     let dx = (e.clientX - drag.startX) / view.zoom, dy = (e.clientY - drag.startY) / view.zoom;
     if (drag.kind === "move") {
@@ -443,6 +453,17 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         const edge: FlowEdge = { id: newFlowId("e"), from: d.from, to: target.id, fromPort: d.port, kind: edgeKind };
         commit({ ...graph, edges: [...graph.edges, edge] }); setSelected(new Set([edge.id]));
       }
+      return;
+    }
+    if (d.kind === "reconnect") {
+      // 拖动连线端点到另一个图形上即可改接（飞书画板行为）。
+      const p = toWorld(e.clientX, e.clientY);
+      const edge = graph.edges.find((x) => x.id === d.id);
+      const target = [...graph.nodes].reverse().find((n) => p.x >= n.x - 8 && p.x <= n.x + n.w + 8 && p.y >= n.y - 8 && p.y <= n.y + n.h + 8);
+      if (!edge || !target) return;
+      const other = d.end === "from" ? edge.to : edge.from;
+      if (target.id === other || target.id === (d.end === "from" ? edge.from : edge.to)) return;
+      commit({ ...graph, edges: graph.edges.map((x) => (x.id === d.id ? (d.end === "from" ? { ...x, from: target.id, fromPort: undefined, mid: undefined } : { ...x, to: target.id, toPort: undefined, mid: undefined }) : x)) });
       return;
     }
     if (d.kind === "bend") {
@@ -603,6 +624,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         }}
         onEdgeDown={(e, edge) => {
           e.stopPropagation(); setMenu(null);
+          const endAttr = (e.target as Element).getAttribute("data-flow-end");
+          if ((endAttr === "from" || endAttr === "to") && !readOnly) { const p = toWorld(e.clientX, e.clientY); setDrag({ kind: "reconnect", id: edge.id, end: endAttr, x: p.x, y: p.y }); return; }
           if ((e.target as Element).getAttribute("data-flow-bend") && !readOnly) {
             const a = graph.nodes.find((n) => n.id === edge.from), t = graph.nodes.find((n) => n.id === edge.to);
             if (a && t) setDrag({ kind: "bend", id: edge.id, isY: midIsY(edge, a, t) });
@@ -618,7 +641,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         bendHandle={!readOnly && selectedEdges.length === 1 && !selectedNodes.length ? selectedEdges[0].id : null}
         peerSel={peers.filter((p) => p.sel?.length).map((p) => ({ color: p.color, ids: p.sel! }))}
         marquee={drag?.kind === "marquee" ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) } : null}
-        connectPreview={drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = portPoint(n, drag.port); return { x1: pt.x, y1: pt.y, x2: drag.x, y2: drag.y }; })() : null}
+        connectPreview={drag?.kind === "reconnect" ? (() => { const edge = graph.edges.find((x) => x.id === drag.id); const a = edge && graph.nodes.find((n) => n.id === edge.from), t = edge && graph.nodes.find((n) => n.id === edge.to); if (!edge || !a || !t) return null; const r = edgePath(edge, a, t); const fixed = drag.end === "from" ? r.end : r.start; return { x1: fixed.x, y1: fixed.y, x2: drag.x, y2: drag.y }; })() : drag?.kind === "connect" ? (() => { const n = graph.nodes.find((x) => x.id === drag.from)!; const pt = portPoint(n, drag.port); return { x1: pt.x, y1: pt.y, x2: drag.x, y2: drag.y }; })() : null}
       />
       {editing && (editNode || editEdge) && (() => {
         const anchor = editNode ? { x: editNode.x, y: editNode.y, w: editNode.w, h: editNode.h } : (() => { const e = editEdge!; const a = graph.nodes.find((n) => n.id === e.from)!, t = graph.nodes.find((n) => n.id === e.to)!; const m = edgePath(e, a, t).mid; return { x: m.x - 70, y: m.y - 16, w: 140, h: 32 }; })();

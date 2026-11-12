@@ -221,15 +221,15 @@ export function midIsY(e: FlowEdge, a: FlowNode, b: FlowNode): boolean {
   return dir[worldSide(a, e.fromPort ?? localFor(a, ap))][1] !== 0;
 }
 
-export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mid: { x: number; y: number } } {
+export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mid: { x: number; y: number }; start: { x: number; y: number }; end: { x: number; y: number } } {
   const [ap, bp] = autoPorts(a, b);
   const fp = e.fromPort ?? localFor(a, ap), tp = e.toPort ?? localFor(b, bp);
   const p1 = portPoint(a, fp), p2 = portPoint(b, tp);
   const d1 = dir[worldSide(a, fp)], d2 = dir[worldSide(b, tp)];
-  if (e.kind === "straight") return { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+  if (e.kind === "straight") return { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }, start: p1, end: p2 };
   if (e.kind === "curve") {
     const k = Math.max(40, Math.hypot(p2.x - p1.x, p2.y - p1.y) / 3);
-    return { d: `M${p1.x},${p1.y} C${p1.x + d1[0] * k},${p1.y + d1[1] * k} ${p2.x + d2[0] * k},${p2.y + d2[1] * k} ${p2.x},${p2.y}`, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+    return { d: `M${p1.x},${p1.y} C${p1.x + d1[0] * k},${p1.y + d1[1] * k} ${p2.x + d2[0] * k},${p2.y + d2[1] * k} ${p2.x},${p2.y}`, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }, start: p1, end: p2 };
   }
   // Orthogonal: leave each port by 20px, then connect with a single elbow pair.
   const g = 20;
@@ -241,7 +241,7 @@ export function edgePath(e: FlowEdge, a: FlowNode, b: FlowNode): { d: string; mi
     ? [p1, s, { x: s.x, y: my }, { x: t.x, y: my }, t, p2]
     : [p1, s, { x: mx, y: s.y }, { x: mx, y: t.y }, t, p2];
   const mid = { x: (pts[2].x + pts[3].x) / 2, y: (pts[2].y + pts[3].y) / 2 };
-  return { d: "M" + pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" L"), mid };
+  return { d: "M" + pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" L"), mid, start: p1, end: p2 };
 }
 
 /**
