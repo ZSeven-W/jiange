@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -135,6 +136,21 @@ func searchableDocument(view collab.DocView, needle string) bool {
 							return true
 						}
 					}
+				}
+			}
+			continue
+		case "flowchart":
+			// Editable flowchart: node text and edge labels are stored per object (fc.n.* / fc.e.*).
+			for key, raw := range block.Props {
+				if raw == "" || !(strings.HasPrefix(key, "fc.n.") || strings.HasPrefix(key, "fc.e.")) {
+					continue
+				}
+				var obj struct {
+					Text  string `json:"text"`
+					Label string `json:"label"`
+				}
+				if json.Unmarshal([]byte(raw), &obj) == nil && (contains(obj.Text) || contains(obj.Label)) {
+					return true
 				}
 			}
 			continue

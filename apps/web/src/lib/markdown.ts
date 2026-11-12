@@ -1,3 +1,4 @@
+import { readFlow, toMermaid } from "@/editor/flowchart/model";
 import { tableDataOf } from "@/editor/tableCells";
 /**
  * Markdown import/export for Jiange documents (P6).
@@ -417,6 +418,14 @@ export function toMarkdown(blocks: MdBlock[]): string {
         {
           const fence = codeFence(b.text);
           out.push(fence + "mermaid", b.text, fence);
+        }
+        break;
+      case "flowchart":
+        orderedNo = 0;
+        {
+          // 可编辑流程图以 Mermaid 文本导出（布局、颜色与风格不保留）。
+          const mermaid = toMermaid(readFlow(b.props));
+          out.push("```mermaid", mermaid, "```");
         }
         break;
       case "divider":
