@@ -1,3 +1,4 @@
+import { tableDataOf } from "@/editor/tableCells";
 import { markdownTableRows } from "@/lib/markdown";
 
 type ExportBlock = {
@@ -17,7 +18,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
   for (const block of view.blocks) {
     const text = block.spans.map((span) => span.text).join("");
     // Blob converts lone UTF-16 surrogate code units to U+FFFD when encoding.
-    const rows = block.type === "table" ? markdownTableRows(block.props.tableData) : null;
+    const rows = block.type === "table" ? markdownTableRows(tableDataOf(block.props)) : null;
     if (UNPAIRED_SURROGATE.test(text) || Object.values(block.props).some((value) => UNPAIRED_SURROGATE.test(value)) || block.spans.some((span) => Object.values(span.marks).some((value) => UNPAIRED_SURROGATE.test(value))) || rows?.some((row) => row.some((cell) => UNPAIRED_SURROGATE.test(cell)))) {
       losses.add("存在无效的 Unicode 字符，导出时可能被替换");
     }
@@ -28,7 +29,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
     if (block.type === "columns") losses.add("分栏布局会被展开");
     else if (block.type === "table") {
       if (!rows) losses.add("表格数据格式异常，原始数据会作为代码块导出，无法还原为表格");
-      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && value)) losses.add("表格的额外内容或设置无法完整保留");
+      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && !key.startsWith("tbl.") && value)) losses.add("表格的额外内容或设置无法完整保留");
     }
     else if (block.type === "image" || block.type === "file") {
       losses.add("图片和附件不会打包，重新导入也无法还原原文件块");
