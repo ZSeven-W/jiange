@@ -5,7 +5,8 @@ import { BaseIcon, hrefOf } from "@/components/Sidebar";
 import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { parseMarkdown } from "@/lib/markdown";
+import { parseMarkdown, toMarkdown } from "@/lib/markdown";
+import { DOCX_MIME, DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stageStarter } from "./pendingStarter";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
@@ -126,6 +127,17 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
     if (importLock.current) return;
     importLock.current = true; setImporting(true); setError("");
     try {
+      if (isDocxFile(file)) {
+        // Parse the whole file before creating anything: a broken .docx leaves no empty document behind.
+        const result = await readDocxFile(file);
+        if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+        const title = file.name.replace(/\.docx$/i, "").trim() || result.title || "导入文档";
+        const doc = await driveApi.createNode("doc", title, folderId, scope);
+        stageStarter(userId, doc.id, toMarkdown(result.blocks), result.blocks);
+        invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
+        location.hash = hrefOf({ id: doc.id, kind: "doc" });
+        return;
+      }
       if (file.size > 5 * 1024 * 1024) throw new Error("Markdown 文件不能超过 5 MB。");
       const markdown = await file.text();
       if (!parseMarkdown(markdown).length) throw new Error("文件没有可导入的内容。");
@@ -135,7 +147,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       stageStarter(userId, doc.id, markdown);
       invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
       location.hash = hrefOf({ id: doc.id, kind: "doc" });
-    } catch (err) { setError(err instanceof Error ? err.message : "导入未完成，请检查目录后重试。"); }
+    } catch (err) { setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : "导入未完成，请检查目录后重试。"); }
     finally { importLock.current = false; setImporting(false); }
   };
   const chooseTemplate = async (template: StarterTemplate) => {
@@ -170,7 +182,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
           {uploadMenu && <><div className="fixed inset-0 z-30" onClick={() => setUploadMenu(false)}/><div role="menu" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setUploadMenu(false); uploadTrigger.current?.focus(); } }} className="absolute right-0 top-[70px] z-40 w-48 rounded-lg border border-[#dee0e3] bg-white py-1.5 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)] sm:left-0 sm:right-auto">
             <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>上传文件<input type="file" aria-label="上传云盘文件" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); if (files.length) void uploads.start(files, "files", folderId, scope); }}/></label>
             {nativePicker && !useFallbackPicker ? <button type="button" role="menuitem" onClick={openNativeDirectory} className="flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹</button> : fallbackPickerSupported ? <label role="menuitem" tabIndex={0} title="浏览器选择器不包含空文件夹" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label="选择上传文件夹" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); setUseFallbackPicker(false); if (files.length) void uploads.start(files, "folder", folderId, scope); }}/></label> : <button type="button" role="menuitem" disabled title="当前浏览器不支持选择文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button>}
-            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>导入为在线文档<input type="file" aria-label="导入 Markdown 文件" tabIndex={-1} accept=".md,.markdown,text/markdown" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
+            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>导入为在线文档<input type="file" aria-label="导入 Markdown 或 Word 文件" tabIndex={-1} accept={`.md,.markdown,text/markdown,.docx,${DOCX_MIME}`} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
           </div></>}
         </div>
         <button type="button" disabled title="暂不支持添加快捷方式" className="flex h-16 min-w-0 items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left opacity-50"><span className="grid size-6 shrink-0 place-items-center text-[#7652ed]"><Link2 size={21}/></span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">添加</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">添加云文档的快捷方式</span></span><ChevronDown size={15} className="shrink-0 text-[#646a73]"/></button>
