@@ -11,7 +11,7 @@ export type Shape = "rect" | "round" | "diamond" | "ellipse" | "terminator" | "p
 export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
 
-export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; z?: number }
+export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none" }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
 
@@ -38,6 +38,8 @@ export interface FlowTheme { id: string; label: string; fill: string; stroke: st
 
 /** 多种风格：节点未单独设置颜色时使用主题配色。 */
 export const THEMES: FlowTheme[] = [
+  // 飞书画板默认图形（2026-11-12 实测）：浅蓝填充、深色 2px 描边、8px 圆角。
+  { id: "feishu", label: "飞书默认", fill: "#EEF3FE", stroke: "#1F2329", text: "#1F2329", edge: "#1F2329", canvas: "#FFFFFF", font: "PingFang SC, Microsoft YaHei, sans-serif", radius: 8, strokeWidth: 2 },
   { id: "classic", label: "经典蓝", fill: "#E1EAFF", stroke: "#3370FF", text: "#1F2329", edge: "#646A73", canvas: "#FFFFFF", font: "PingFang SC, Microsoft YaHei, sans-serif", radius: 8, strokeWidth: 1.5 },
   { id: "minimal", label: "简约黑白", fill: "#FFFFFF", stroke: "#1F2329", text: "#1F2329", edge: "#1F2329", canvas: "#FFFFFF", font: "PingFang SC, Microsoft YaHei, sans-serif", radius: 2, strokeWidth: 1.5 },
   { id: "colorful", label: "多彩", fill: "#FFF1E8", stroke: "#FF8800", text: "#1F2329", edge: "#8F959E", canvas: "#FFFFFF", font: "PingFang SC, Microsoft YaHei, sans-serif", radius: 10, strokeWidth: 1.5, palette: ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#F1E8FF/#7B61FF", "#FFE8EF/#E63995", "#E0F7F7/#14A3A3"] },
@@ -69,6 +71,7 @@ export function normalizeNode(raw: unknown, id?: string): FlowNode | null {
     ...(COLOR.test(r.fill as string) ? { fill: r.fill as string } : {}),
     ...(COLOR.test(r.stroke as string) ? { stroke: r.stroke as string } : {}),
     ...(COLOR.test(r.color as string) ? { color: r.color as string } : {}),
+    ...(typeof r.size === "number" && r.size >= 10 && r.size <= 48 ? { size: Math.round(r.size) } : {}),
     ...(typeof r.z === "number" && Number.isFinite(r.z) ? { z: r.z } : {}),
   };
 }
@@ -126,7 +129,7 @@ function canonicalStored(raw: string | undefined, kind: "n" | "e", id: string): 
 export function flowWrites(props: Record<string, string>, next: FlowGraph): Record<string, string> {
   const writes: Record<string, string> = {};
   if (props[FC_VERSION] !== "1") writes[FC_VERSION] = "1";
-  if ((props[FC_THEME] ?? "classic") !== next.theme) writes[FC_THEME] = next.theme;
+  if (props[FC_THEME] !== next.theme) writes[FC_THEME] = next.theme;
   const seenN = new Set<string>(), seenE = new Set<string>();
   // Compare canonical encodings so key order or redundant fields never cause a
   // rewrite of untouched objects (which could clobber a collaborator's edit).
