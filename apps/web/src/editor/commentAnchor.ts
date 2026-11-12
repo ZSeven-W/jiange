@@ -7,7 +7,7 @@ export const COMMENTABLE_BLOCKS = new Set([...TEXTLESS].filter((type) => type !=
 
 const isBlockComment = (c: Pick<Comment, "startChar" | "endChar">) => !c.startChar && !c.endChar;
 
-const BLOCK_LABEL: Record<string, string> = { image: "图片", file: "附件", table: "表格", video: "视频", bookmark: "网页卡片", math: "公式", diagram: "图表" };
+const BLOCK_LABEL: Record<string, string> = { image: "图片", file: "附件", table: "表格", video: "视频", bookmark: "网页卡片", math: "公式", diagram: "图表", flowchart: "流程图" };
 
 /** Anchor a comment to a whole non-text block, without character IDs. */
 export function blockCommentAnchor(doc: Doc, block: OpId): CommentSelection {

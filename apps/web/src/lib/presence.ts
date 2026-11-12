@@ -4,6 +4,8 @@ export interface Presence {
   name: string;
   color: string;
   cursor?: { block: OpId; anchor: Anchor; focus?: Anchor } | null;
+  /** Pointer and selection inside a flowchart block's editor (block = idKey). */
+  flow?: { block: string; x?: number; y?: number; sel?: string[] } | null;
 }
 
 // first entries are the design tokens primary, peer-1, peer-2, peer-3
