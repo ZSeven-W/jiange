@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type Me } from "@/lib/api";
@@ -23,6 +23,7 @@ import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/AISettings";
 import { SidebarFoldIcon } from "@/components/FeishuIcons";
 import { isDocumentSidebarShortcut } from "@/lib/sidebarShortcut";
+import { browserSidebarStorage, decodeSidebarPreference, readSidebarPreference, sidebarPreferenceKey, writeSidebarPreference } from "@/lib/sidebarPreference";
 
 export default function App() {
   const route = useRoute();
@@ -83,26 +84,52 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   const [uploads] = useState(() => new DriveUploadManager(me.user.id, () => { void sessionClient.invalidateQueries({ queryKey: ["drive"] }); void sessionClient.invalidateQueries({ queryKey: ["drive-nav"] }); void sessionClient.invalidateQueries({ queryKey: ["docs"] }); }));
   useEffect(() => { uploads.activate(); return () => uploads.dispose(); }, [uploads]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [docSidebarDocked, setDocSidebarDocked] = useState(true);
+  const [sidebarStorage] = useState(browserSidebarStorage);
+  const [docSidebarDocked, setDocSidebarDocked] = useState(() => readSidebarPreference(sidebarStorage, me.user.id));
+  const docSidebarDockedRef = useRef(docSidebarDocked);
   const openSidebarButton = useRef<HTMLButtonElement>(null);
   const sidebarContainer = useRef<HTMLDivElement>(null);
-  useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
+  const restoreRemoteSidebarFocus = useRef(false);
   const docLayout = route.page === "doc";
+  const setDocumentSidebar = (expanded: boolean) => {
+    docSidebarDockedRef.current = expanded;
+    setDocSidebarDocked(expanded);
+    writeSidebarPreference(sidebarStorage, me.user.id, expanded);
+  };
+  useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
+  useEffect(() => {
+    if (!sidebarStorage) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== sidebarStorage || (event.key !== sidebarPreferenceKey(me.user.id) && event.key !== null)) return;
+      const expanded = decodeSidebarPreference(event.key === null ? null : event.newValue);
+      const focusWasInside = docLayout && !expanded && docSidebarDockedRef.current && window.matchMedia("(min-width: 768px)").matches && !!sidebarContainer.current?.contains(document.activeElement);
+      restoreRemoteSidebarFocus.current = focusWasInside;
+      docSidebarDockedRef.current = expanded;
+      setDocSidebarDocked(expanded);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [sidebarStorage, me.user.id, docLayout]);
+  useLayoutEffect(() => {
+    if (!docSidebarDocked && restoreRemoteSidebarFocus.current) openSidebarButton.current?.focus();
+    restoreRemoteSidebarFocus.current = false;
+  }, [docSidebarDocked]);
   useEffect(() => {
     if (!docLayout) return;
     const keydown = (event: KeyboardEvent) => {
       if (!isDocumentSidebarShortcut(event) || !window.matchMedia("(min-width: 768px)").matches || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       event.preventDefault();
       const focusWasInside = !!sidebarContainer.current?.contains(document.activeElement);
-      setDocSidebarDocked((value) => !value);
-      if (docSidebarDocked && focusWasInside) requestAnimationFrame(() => openSidebarButton.current?.focus());
+      const wasDocked = docSidebarDockedRef.current;
+      setDocumentSidebar(!wasDocked);
+      if (wasDocked && focusWasInside) requestAnimationFrame(() => openSidebarButton.current?.focus());
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
-  }, [docLayout, docSidebarDocked]);
+  }, [docLayout, sidebarStorage, me.user.id]);
   const openSidebar = () => {
     const dock = docLayout && window.matchMedia("(min-width: 768px)").matches;
-    if (dock) setDocSidebarDocked(true);
+    if (dock) setDocumentSidebar(true);
     else setSidebarOpen(true);
     requestAnimationFrame(() => sidebarContainer.current?.querySelector<HTMLButtonElement>(dock ? "[data-collapse-navigation]" : "[data-close-navigation]")?.focus());
   };
@@ -111,7 +138,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
     requestAnimationFrame(() => openSidebarButton.current?.focus());
   };
   const collapseDocumentSidebar = () => {
-    setDocSidebarDocked(false);
+    setDocumentSidebar(false);
     requestAnimationFrame(() => openSidebarButton.current?.focus());
   };
   const sidebarClass = docLayout

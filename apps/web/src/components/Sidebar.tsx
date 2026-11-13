@@ -8,7 +8,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
-import { DocColorIcon, SidebarFoldIcon } from "./FeishuIcons";
+import { DocColorIcon, DriveNavIcon, SidebarFoldIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
 import { LocaleToggle } from "./LocaleToggle";
@@ -217,9 +217,9 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
           <kbd className="hidden shrink-0 font-sans text-[11px] text-[#b3b8bf] sm:inline">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</kbd>
         </label>
       </div>
-      <nav className="mt-4 space-y-1 px-3">
-        <NavItem icon={<HomeIcon />} label={t("主页")} active={route.page === "home"} onClick={() => go("#/")} />
-        <NavItem icon={<FolderIcon size={16} strokeWidth={1.7} />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
+      <nav className="mt-4 space-y-1 px-2 [&>button]:gap-2">
+        <NavItem icon={<HomeIcon width={18} height={18} />} label={t("主页")} active={route.page === "home"} onClick={() => go("#/")} />
+        <NavItem icon={<DriveNavIcon className="size-[18px]" />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<TrashIcon />} label={t("回收站")} active={route.page === "trash"} onClick={() => go("#/trash")} />
@@ -468,9 +468,9 @@ const svg = {
 } as const;
 export const DocIcon = (props: React.ComponentProps<typeof FileText>) => <FileText size={16} strokeWidth={1.7} {...props} />;
 const HomeIcon = (props: React.SVGProps<SVGSVGElement>) => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}><path d="m20 10-8-5.939L4 10v10h5v-3.8a2.2 2.2 0 0 1 2.2-2.2h1.6a2.2 2.2 0 0 1 2.2 2.2V20h5zm-9 11a1 1 0 0 1-1 1H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .75-1.562l8-5.938a2 2 0 0 1 2.5 0l8 5.938A2 2 0 0 1 22 10v10a2 2 0 0 1-2 2h-6a1 1 0 0 1-1-1v-4.8a.2.2 0 0 0-.2-.2h-1.6a.2.2 0 0 0-.2.2z" /></svg>;
-const ClockIcon = (props: React.ComponentProps<typeof Clock3>) => <Clock3 size={16} strokeWidth={1.7} {...props} />;
-const StarIcon = (props: React.ComponentProps<typeof Star>) => <Star size={16} strokeWidth={1.7} {...props} />;
-const TrashIcon = (props: React.ComponentProps<typeof Trash2>) => <Trash2 size={16} strokeWidth={1.7} {...props} />;
+const ClockIcon = (props: React.ComponentProps<typeof Clock3>) => <Clock3 size={18} strokeWidth={1.7} {...props} />;
+const StarIcon = (props: React.ComponentProps<typeof Star>) => <Star size={18} strokeWidth={1.7} {...props} />;
+const TrashIcon = (props: React.ComponentProps<typeof Trash2>) => <Trash2 size={18} strokeWidth={1.7} {...props} />;
 const SearchIcon = (props: React.SVGProps<SVGSVGElement>) => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}><path d="M16.473 17.887A9.46 9.46 0 0 1 10.5 20a9.5 9.5 0 1 1 9.5-9.5 9.46 9.46 0 0 1-2.113 5.973l3.773 3.773a.996.996 0 0 1-.007 1.407.996.996 0 0 1-1.407.007l-3.773-3.773ZM18 10.5a7.5 7.5 0 1 0-15 0 7.5 7.5 0 0 0 15 0Z" /></svg>;
 export const Chevron = ({ className }: { className?: string }) => <ChevronDown size={12} strokeWidth={1.7} className={className} />;
 
