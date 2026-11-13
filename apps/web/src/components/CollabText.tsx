@@ -4,6 +4,8 @@ import { diff } from "@/lib/textdiff";
 import { cpIndex, utf16Index, type Presence } from "@/lib/presence";
 import type { SyncDoc } from "@/lib/useSyncDoc";
 import { cn } from "@/lib/utils";
+import type { FindMatch } from "@/editor/findReplace";
+import { titleFindFlags, titleMirrorRange } from "./titleFind";
 
 interface Props {
   readOnly?: boolean;
@@ -15,6 +17,8 @@ interface Props {
   className?: string;
   onLocalEdit?: (text: string) => void;
   onEnter?: () => void;
+  findMatches?: readonly FindMatch[];
+  activeFindMatch?: FindMatch | null;
 }
 
 /**
@@ -22,7 +26,7 @@ interface Props {
  * Fugue ops; remote edits keep the caret in place via anchors; remote carets
  * are drawn on a mirror layer that shares the textarea's text metrics.
  */
-export function CollabText({ sync, block, me, placeholder, singleLine, className, onLocalEdit, onEnter, readOnly }: Props) {
+export function CollabText({ sync, block, me, placeholder, singleLine, className, onLocalEdit, onEnter, readOnly, findMatches = [], activeFindMatch = null }: Props) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const shown = useRef("");
@@ -137,15 +141,16 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
         .sort((x, y) => x.at - y.at)
     : [];
   const cps = [...text];
+  const flags = titleFindFlags(doc, block, findMatches, activeFindMatch);
   const pieces: React.ReactNode[] = [];
   let last = 0;
   for (const c of carets) {
     // keep the caret glued to the character before it so CJK line breaking can't separate them
-    const glue = c.at > last ? cps[c.at - 1] : "";
-    pieces.push(cps.slice(last, Math.max(last, c.at - 1)).join(""));
+    const glueStart = c.at > last ? c.at - 1 : last;
+    pieces.push(...titleMirrorRange(cps, flags, last, glueStart, `before:${c.id}`));
     pieces.push(
       <span key={c.id} className="whitespace-nowrap">
-        {glue}
+        {titleMirrorRange(cps, flags, glueStart, c.at, `caret:${c.id}`)}
         <span className="relative inline-block w-0 align-baseline" data-peer={c.name}>
           <span className="absolute -left-px top-[-1.05em] h-[1.25em] w-[2px] rounded-full" style={{ background: c.color }} />
           <span
@@ -159,7 +164,7 @@ export function CollabText({ sync, block, me, placeholder, singleLine, className
     );
     last = c.at;
   }
-  pieces.push(cps.slice(last).join("") + "\u200b");
+  pieces.push(...titleMirrorRange(cps, flags, last, cps.length, "tail"), "\u200b");
 
   const shared: CSSProperties = {
     whiteSpace: "pre-wrap",

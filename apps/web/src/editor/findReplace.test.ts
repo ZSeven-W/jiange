@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, type OpId } from "@jiange/collab";
 import { findMatches, replaceMatches, resolveFindMatch } from "./findReplace";
+import { TITLE } from "./model";
 
 function setup(...entries: [string, string][]) {
   const doc = new Doc(1);
@@ -41,7 +42,7 @@ describe("findMatches", () => {
     expect(findMatches(doc, "😀")[0]).toMatchObject({ start: 0, end: 1 });
   });
 
-  it("ignores hidden source, inline formula source, tables and title while finding visible column text", () => {
+  it("ignores hidden source, inline formula source and tables while finding visible column text", () => {
     const { doc, blocks } = setup(["paragraph", "xabcx"], ["math", "x"], ["diagram", "x"], ["table", "x"], ["columns", ""]);
     new Tx(doc).format(blocks[0], 1, 4, "math", "abc");
     const childTx = new Tx(doc);
@@ -50,6 +51,21 @@ describe("findMatches", () => {
     expect(findMatches(doc, "x").map((m) => [m.block, m.start])).toEqual([[blocks[0], 0], [blocks[0], 4], [child, 0]]);
     expect(findMatches(doc, "abc")).toHaveLength(0);
     expect(findMatches(doc, "xabc")).toHaveLength(0);
+  });
+
+  it("finds the title before body matches while refusing unsafe title replacement", () => {
+    const doc = new Doc(1);
+    doc.apply({ t: "bcreate", id: TITLE, parent: ROOT, pos: "U", type: "title" });
+    doc.insertText(TITLE, 0, "😀项目计划");
+    const body = new Tx(doc).create("paragraph", TITLE, ROOT);
+    new Tx(doc).insert(body, 0, "项目说明");
+    const matches = findMatches(doc, "项目");
+    expect(matches.map((m) => [m.block, m.start, m.end])).toEqual([[TITLE, 1, 3], [body, 0, 2]]);
+    expect(resolveFindMatch(doc, matches[0])).toEqual({ start: 1, end: 3 });
+    const tx = new Tx(doc);
+    expect(replaceMatches(tx, [matches[0]], "产品")).toEqual({ replaced: 0, skipped: 1 });
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(TITLE)).toBe("😀项目计划");
   });
 
   it("finds columns in canvas order, excludes hidden child source, and resolves Unicode offsets", () => {

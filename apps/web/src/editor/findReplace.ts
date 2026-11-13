@@ -1,8 +1,8 @@
 import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
 import { TITLE } from "./model";
 
-// Only blocks whose text is visibly and directly editable by the body editor.
-// The title has a separate editor and table cells have their own representation.
+// Body types whose text is visibly and directly editable by the body editor.
+// The title is searched separately; table cells have their own representation.
 // In particular, math/diagram text is hidden source.
 const SEARCHABLE_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "code", "callout"]);
 
@@ -30,7 +30,7 @@ export interface FindOptions {
   caseSensitive?: boolean;
 }
 
-/** Visible text blocks in canvas order, with each column at its container's position. */
+/** Visible title and text blocks in canvas order, with each column at its container's position. */
 export function searchableLocations(doc: Doc): { block: OpId; parent: OpId }[] {
   const out: { block: OpId; parent: OpId }[] = [];
   const rootKey = idKey(ROOT);
@@ -45,7 +45,10 @@ export function searchableLocations(doc: Doc): { block: OpId; parent: OpId }[] {
   for (const item of doc.view().blocks) {
     const block = parse(item.id);
     if (item.parent === rootKey) {
-      if (eqId(block, TITLE)) continue;
+      if (eqId(block, TITLE)) {
+        if (item.type === "title") out.push({ block, parent: ROOT });
+        continue;
+      }
       if (isSearchableBlockType(item.type)) out.push({ block, parent: ROOT });
       else if (item.type === "columns") columns.set(item.id, block);
     } else {
@@ -61,7 +64,7 @@ function literalRegExp(query: string, caseSensitive: boolean): RegExp {
 }
 
 /**
- * Finds non-overlapping matches in visible editable body and column blocks.
+ * Finds non-overlapping matches in the title and visible body/column blocks.
  * Offsets are Unicode code points, never UTF-16 indices. Unicode's simple
  * case folding is used without normalization or length-changing full folding.
  * Inline formula marks form boundaries, since their source is not visible text.
@@ -124,7 +127,9 @@ function sharedMarks(marks: Record<string, string>[]): Record<string, string> {
 
 /**
  * Replaces snapshots from the end of the current document towards the start.
- * All operations go into the caller's one Tx for one undo step. Stale, moved
+ * Title matches are deliberately skipped until metadata and collaborative
+ * title writes share a safe commit path. All other operations go into the
+ * caller's one Tx for one undo step. Stale, moved
  * outside the body, overlapping or wrong-document snapshots are skipped.
  * Remote inserts arriving later are not deleted: Tx deletes only captured IDs.
  * This function is synchronous: it validates one snapshot of each affected

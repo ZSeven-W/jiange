@@ -597,6 +597,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   // of markup nodes inside the contenteditable document.
   const displayedMatches = matches.length > 500 ? (activeMatch ? [activeMatch] : []) : matches;
   const findCanReplace = !findUpdating && canEditContent && sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0;
+  const activeIsTitle = !!activeMatch && idKey(activeMatch.block) === idKey(TITLE);
+  const hasTitleMatches = matches.some((match) => idKey(match.block) === idKey(TITLE));
   const requestFindScroll = useCallback(() => setFindNavigation(findScrollIntent.current.request()), []);
   const openFind = useCallback((mode: FindReplaceMode) => {
     setFindMode(mode);
@@ -632,7 +634,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     if (ticket === null) return;
     if (activeFindIndex < 0) { findScrollIntent.current.complete(ticket); return; }
     const frame = requestAnimationFrame(() => {
-      if (findScrollIntent.current.complete(ticket)) body.current?.querySelector<HTMLElement>('[data-find-active="true"]')?.scrollIntoView({ block: window.matchMedia("(max-width: 479px)").matches ? "start" : "center", inline: "nearest" });
+      if (findScrollIntent.current.complete(ticket)) scrollArea.current?.querySelector<HTMLElement>('[data-find-active="true"]')?.scrollIntoView({ block: window.matchMedia("(max-width: 479px)").matches ? "start" : "center", inline: "nearest" });
     });
     return () => cancelAnimationFrame(frame);
   }, [findOpen, activeFindIndex, findNavigation, findUpdating]);
@@ -795,6 +797,10 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     }
     const selected = all ? matches : activeMatch ? [activeMatch] : [];
     if (!selected.length) return;
+    if (selected.some((match) => idKey(match.block) === idKey(TITLE))) {
+      setFindMessage("暂不支持替换标题；请选择正文结果。全部替换需要先排除标题匹配。");
+      return;
+    }
     if (all && selected.some((match) => match.table)) {
       const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
       if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容，文档未修改。`); requestFindScroll(); }
@@ -1008,6 +1014,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
               readOnly={!canEditContent || history || presenting}
               placeholder="请输入标题"
               onLocalEdit={onTitle}
+              findMatches={displayedMatches}
+              activeFindMatch={activeMatch}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
               className="text-[32px] font-medium leading-[1.3] tracking-tight [&_textarea]:font-medium [&_textarea]:leading-[1.3]"
             /></DocumentIconEditor>{metadataVerified && meta.data && <DocAuthorLine name={meta.data.creatorName} seed={meta.data.creatorId} updatedAt={meta.data.updatedAt} />}</div>
@@ -1084,9 +1092,9 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
             replacement={findReplacement}
             matchCount={matches.length}
             activeIndex={activeFindIndex}
-            canReplace={findCanReplace}
-            canReplaceAll={findCanReplace}
-            scopeNotice={`搜索正文、分栏和表格；标题和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            canReplace={findCanReplace && !activeIsTitle}
+            canReplaceAll={findCanReplace && !hasTitleMatches}
+            scopeNotice={`搜索标题、正文、分栏和表格；公式不在范围内。${hasTitleMatches && findMode === "replace" ? "标题暂不支持替换，含标题匹配时无法全部替换。" : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
