@@ -68,7 +68,7 @@ import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType,
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
 
-export function DocPage({ id, me }: { id: number; me: Me }) {
+export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me; sidebarDocked?: boolean }) {
   const qc = useQueryClient();
   const meta = useQuery({
     queryKey: docMetaKey(id, me.user.id),
@@ -887,6 +887,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     <div className="flex min-w-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col">
         <TopBar
+          sidebarDocked={sidebarDocked}
           ancestors={ancestors.data ?? []}
           shareAnchor={shareAnchor}
           onShare={() => setSharing((v) => !v)}
@@ -1124,6 +1125,7 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
 };
 
 function TopBar({
+  sidebarDocked,
   ancestors,
   meta,
   title,
@@ -1157,6 +1159,7 @@ function TopBar({
   allowDocumentPrint,
   metadataVerified,
 }: {
+  sidebarDocked: boolean;
   ancestors: import("@/lib/api").DocMeta[];
   shareAnchor: React.RefObject<HTMLButtonElement | null>;
   onShare: () => void;
@@ -1203,7 +1206,7 @@ function TopBar({
   const metaText = headerMetaText(status, savedFlag.saved, meta?.updatedAt);
   const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
-    <header className="flex h-14 shrink-0 md:h-16 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:pr-5">
+    <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:h-16 md:pr-5", sidebarDocked && "md:pl-5")}>
       <div className="min-w-0 flex-1">
       <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" data-document-print-restricted={!allowDocumentPrint ? "true" : undefined} onCopy={(event) => { if (!allowContentCopy) event.preventDefault(); }} onCut={(event) => { if (!allowContentCopy) event.preventDefault(); }}>
         <a href="#/" className="hidden truncate text-muted-foreground hover:text-foreground sm:block">

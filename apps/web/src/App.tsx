@@ -81,22 +81,41 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   const [uploads] = useState(() => new DriveUploadManager(me.user.id, () => { void sessionClient.invalidateQueries({ queryKey: ["drive"] }); void sessionClient.invalidateQueries({ queryKey: ["drive-nav"] }); void sessionClient.invalidateQueries({ queryKey: ["docs"] }); }));
   useEffect(() => { uploads.activate(); return () => uploads.dispose(); }, [uploads]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [docSidebarDocked, setDocSidebarDocked] = useState(true);
+  const openSidebarButton = useRef<HTMLButtonElement>(null);
+  const sidebarContainer = useRef<HTMLDivElement>(null);
   useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
-  // 飞书文档页不常驻应用侧栏：目录贴视口左侧，导航从左上角按钮以浮层打开。
   const docLayout = route.page === "doc";
+  const openSidebar = () => {
+    const dock = docLayout && window.matchMedia("(min-width: 768px)").matches;
+    if (dock) setDocSidebarDocked(true);
+    else setSidebarOpen(true);
+    requestAnimationFrame(() => sidebarContainer.current?.querySelector<HTMLButtonElement>(dock ? "[data-collapse-navigation]" : "[data-close-navigation]")?.focus());
+  };
+  const closeSidebar = () => {
+    setSidebarOpen(false);
+    requestAnimationFrame(() => openSidebarButton.current?.focus());
+  };
+  const collapseDocumentSidebar = () => {
+    setDocSidebarDocked(false);
+    requestAnimationFrame(() => openSidebarButton.current?.focus());
+  };
+  const sidebarClass = docLayout
+    ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
       <AskHost />
       <AISettingsHost />
-      <button className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout ? "md:top-3.5" : "md:hidden"}`} onClick={() => setSidebarOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
-      {sidebarOpen && <button className={`fixed inset-0 z-40 bg-black/30 ${docLayout ? "" : "md:hidden"}`} aria-label="关闭导航" onClick={() => setSidebarOpen(false)} />}
-      <div className={`${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docLayout ? "" : route.page === "base" || route.page === "slides" ? "md:hidden" : "md:static md:block"}`}>
-        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} />
-        <button className={`absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover ${docLayout ? "" : "md:hidden"}`} onClick={() => setSidebarOpen(false)} aria-label="关闭导航"><X size={16} /></button>
+      <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation"><Menu size={20} /></button>
+      {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
+      <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
+        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} />
+        <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
-        <DocPage key={route.id} id={route.id} me={me} />
+        <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} />
       ) : route.page === "base" ? (
         <BasePage key={route.id} id={route.id} />
       ) : route.page === "join" ? (

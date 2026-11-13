@@ -1,5 +1,6 @@
 import { openAISettings } from "@/lib/ai";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PanelLeftClose } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { go, nodeHref, type Route } from "@/lib/route";
@@ -26,7 +27,7 @@ export function renameErrorMessage(error: unknown): string {
   return t("无法确认重命名是否完成，请刷新后查看。");
 }
 
-export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogout: () => void }) {
+export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void }) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const docs = useQuery({
@@ -202,9 +203,9 @@ export function Sidebar({ me, route, onLogout }: { me: Me; route: Route; onLogou
   if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={() => setSearchOpen(true)} onCloseSearch={() => setSearchOpen(false)} />;
 
   return (
-    <aside className="flex h-full w-[268px] max-w-[85vw] xl:w-[300px] shrink-0 flex-col border-r bg-sidebar">
+    <aside className={cn("flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar", onCollapse ? "xl:w-[278px]" : "xl:w-[300px]")}>
       <div className="relative px-3 pt-4">
-        <div className="flex h-8 items-center px-2"><Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">{t("云文档")}</span></div>
+        <div className="flex h-8 items-center px-2">{onCollapse && <button type="button" onClick={onCollapse} aria-label={t("关闭导航")} title={t("关闭导航")} data-collapse-navigation className="-ml-2 mr-1 hidden size-8 shrink-0 place-items-center rounded text-muted-foreground hover:bg-hover md:grid"><PanelLeftClose size={16} strokeWidth={1.6} /></button>}<Logo className="gap-1.5" markClassName="size-6" wordmarkClassName="h-[14px]" /><span className="ml-1.5 text-[14px] font-semibold tracking-[-0.01em]">{t("云文档")}</span></div>
         <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-transparent bg-white/70 px-2.5 text-[13px] text-subtle transition-colors focus-within:border-primary/50 focus-within:bg-surface dark:bg-white/5">
           <SearchIcon />
           <input ref={searchTrigger} type="search" readOnly aria-label={t("搜索标题和正文")} onFocus={() => {
