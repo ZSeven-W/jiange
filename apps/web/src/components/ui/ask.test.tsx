@@ -5,6 +5,15 @@ import { AskHost, _askVersion, ask, askArea, askText, cancelOutstandingAsks, sub
 afterEach(cancelOutstandingAsks);
 
 describe("dialogs during session changes", () => {
+  it("exposes a focused cancel action and an accessible confirmation dialog", async () => {
+    const pending = ask("还原到该版本？");
+    const html = renderToStaticMarkup(<AskHost />);
+    expect(html).toContain('role="alertdialog"');
+    expect(html).toContain('aria-label="还原到该版本？"');
+    expect(html).toContain("autofocus");
+    cancelOutstandingAsks();
+    await expect(pending).resolves.toBe(false);
+  });
   it("cancels pending decisions and removes their sensitive content", async () => {
     const confirm = ask("旧账号私有文档");
     const prompt = askText("重命名", "名称", "旧账号私有标题");

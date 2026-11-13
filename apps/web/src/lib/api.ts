@@ -468,7 +468,7 @@ export const docsApi = {
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
   createNamedVersion: (id: number, label: string, expectedSeq: number, historyEpoch: number, userId: number, signal: AbortSignal) => request<Version>("POST", `/api/docs/${id}/named-version`, { label, expectedSeq, historyEpoch }, signal, { "X-Jiange-User-Id": String(userId) }),
   versionPreview: (id: number, seq: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`),
-  restoreVersion: (id: number, seq: number) => request<{ restored: number }>("POST", `/api/docs/${id}/versions/${seq}/restore`),
+  restoreVersion: (id: number, seq: number, userId: number, signal?: AbortSignal) => request<{ restored: number }>("POST", `/api/docs/${id}/versions/${seq}/restore-guarded`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
   listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
   restore: (id: number) => request<void>("POST", `/api/trash/${id}/restore`),

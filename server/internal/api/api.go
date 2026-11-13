@@ -92,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/version-entries":                 s.createVersionEntry,
 		"GET /api/docs/{id}/versions/{seq}":                   s.getVersion,
 		"POST /api/docs/{id}/versions/{seq}/restore":          s.restoreVersion,
+		"POST /api/docs/{id}/versions/{seq}/restore-guarded":  s.restoreVersionBound,
 		"GET /api/bases/{id}":                                 s.getBase,
 		"POST /api/bases/{id}/fields":                         s.addField,
 		"POST /api/bases/{id}/fields/reorder":                 s.reorderFields,

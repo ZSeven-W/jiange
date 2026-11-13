@@ -149,6 +149,26 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"seq": seq, "view": doc.View()})
 }
 
+// restoreVersionBound rejects an account switch and fails closed on older servers.
+func (s *Server) restoreVersionBound(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFrom(r.Context())
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "请重新登录")
+		return
+	}
+	raw := r.Header.Get("X-Jiange-User-Id")
+	expected, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || expected <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "missing_account", "还原账号未确认")
+		return
+	}
+	if expected != user.ID {
+		httpx.Error(w, http.StatusUnauthorized, "session_changed", "登录账号已变化，请重新打开文档")
+		return
+	}
+	s.restoreVersion(w, r)
+}
+
 // restoreVersion transforms the current doc into the version's state by
 // submitting ordinary ops (history is never rewritten; online users converge
 // in realtime through the sync hub).

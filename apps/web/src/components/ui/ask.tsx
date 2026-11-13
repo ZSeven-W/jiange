@@ -104,13 +104,21 @@ export function AskHost() {
       onMouseDown={() => (c ? closeConfirm(false) : p ? closePrompt(null) : closeArea(null))}
       data-ask
     >
-      <div className="w-[360px] rounded-xl bg-surface p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="w-[360px] rounded-xl bg-surface p-5 shadow-2xl" role={c ? "alertdialog" : undefined} aria-modal={c ? true : undefined} aria-label={c?.title} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(event) => {
+        if (!c) return;
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeConfirm(false); return; }
+        if (event.key !== "Tab") return;
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
+        if (!buttons.length) return;
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === buttons.length - 1) { event.preventDefault(); buttons[event.shiftKey ? buttons.length - 1 : 0].focus(); }
+      }}>
         {c && (
           <>
             <h3 className="text-[16px] font-semibold text-foreground">{c.title}</h3>
             {c.description && <p className="mt-2 text-[13px] leading-5 text-muted-foreground">{c.description}</p>}
             <div className="mt-5 flex justify-end gap-2">
-              <button className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={() => closeConfirm(false)}>
+              <button autoFocus className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover" onClick={() => closeConfirm(false)}>
                 {t("取消")}
               </button>
               <button

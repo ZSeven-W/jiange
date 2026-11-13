@@ -13,4 +13,12 @@ describe("account-bound version entries", () => {
     expect(fetcher.mock.calls[1][1]).toMatchObject({ method: "POST", credentials: "same-origin", headers: { "X-Jiange-User-Id": "4" }, signal: controller.signal });
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ label: "初稿", expectedSeq: 3, historyEpoch: 2, requestId: "a".repeat(32) });
   });
+  it("binds restore to the initiating account and exposes cancellation", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ restored: 1 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const controller = new AbortController();
+    await docsApi.restoreVersion(8, 3, 4, controller.signal);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/docs/8/versions/3/restore-guarded");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", credentials: "same-origin", headers: { "X-Jiange-User-Id": "4" }, signal: controller.signal });
+  });
 });

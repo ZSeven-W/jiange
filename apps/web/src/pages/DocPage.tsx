@@ -185,6 +185,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
   useEffect(() => { setWidth(readDocWidth(me.user.id, id)); }, [me.user.id, id]);
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 1280px)");
+    const change = (event: MediaQueryListEvent) => { if (!event.matches) setOutlineOpen(false); };
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
   const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
   const scrollArea = useRef<HTMLDivElement>(null);
@@ -874,7 +881,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               block={TITLE}
               me={presence}
               singleLine
-              readOnly={!canEditContent}
+              readOnly={!canEditContent || history}
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
@@ -887,7 +894,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
                 me={presence}
-                readOnly={!canEditContent}
+                readOnly={!canEditContent || history}
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
@@ -975,6 +982,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           userId={me.user.id}
           onCreateVersion={() => setVersionTarget({ doc: id, user: me.user.id })}
           canEdit={canEditContent}
+          canRestore={!!namedVersionPoint(sync.client, canEditContent, permissionsVerified)}
           allowCopy={contentCopyAllowed}
           disableFileDownloads={!downloadAllowed}
           currentView={sync.client.doc?.view()}
