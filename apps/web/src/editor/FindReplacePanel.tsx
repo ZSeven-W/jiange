@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, type KeyboardEvent } from "react";
-import { X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { CircleHelp, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type FindReplaceMode = "find" | "replace";
@@ -14,6 +14,8 @@ export interface FindReplacePanelProps {
   canReplace: boolean;
   canReplaceAll?: boolean;
   scopeNotice?: string;
+  /** Constraints that affect the current results and should remain visible. */
+  warningMessage?: string;
   /** Result, conflict, or limit feedback from the caller. */
   statusMessage?: string;
   className?: string;
@@ -28,11 +30,12 @@ export interface FindReplacePanelProps {
 
 /** Controlled document find/replace panel. The caller owns matching and edits. */
 export function FindReplacePanel({
-  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, statusMessage, className,
+  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, warningMessage, statusMessage, className,
   onModeChange, onQueryChange, onReplacementChange, onNavigate, onReplace, onReplaceAll, onClose,
 }: FindReplacePanelProps) {
   const id = useId();
   const queryRef = useRef<HTMLInputElement>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const count = Math.max(0, matchCount);
   const current = count > 0 && activeIndex >= 0 ? Math.min(activeIndex + 1, count) : 0;
   const hasMatch = count > 0 && activeIndex >= 0;
@@ -82,7 +85,8 @@ export function FindReplacePanel({
             className={cn("relative mr-7 text-[16px] text-foreground hover:text-primary", mode === value && "font-medium text-[#1456f0] after:absolute after:inset-x-0 after:bottom-[-1px] after:h-[3px] after:rounded-full after:bg-[#1456f0]")}
           >{label}</button>
         ))}
-        <button type="button" aria-label="关闭查找和替换" onClick={onClose} className="ml-auto grid size-8 self-center place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground"><X size={18} strokeWidth={1.5} /></button>
+        {scopeNotice && <button type="button" aria-label="搜索范围" aria-expanded={scopeOpen} aria-controls={`${id}-scope`} onClick={() => setScopeOpen((open) => !open)} className="ml-auto grid size-8 self-center place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground"><CircleHelp size={15} strokeWidth={1.5} /></button>}
+        <button type="button" aria-label="关闭查找和替换" onClick={onClose} className={cn("grid size-8 self-center place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground", !scopeNotice && "ml-auto")}><X size={18} strokeWidth={1.5} /></button>
       </div>
 
       <div id={`${id}-content`} role="tabpanel" aria-labelledby={`${id}-${mode}`} className={replaceMode ? "pt-[17px]" : "pt-6"}>
@@ -106,7 +110,8 @@ export function FindReplacePanel({
           <label htmlFor={`${id}-replacement`} className="mb-2 block text-[14px] text-foreground">替换为</label>
           <input id={`${id}-replacement`} value={replacement} onChange={(event) => onReplacementChange(event.target.value)} autoComplete="off" placeholder="请输入文字" className="h-8 w-full rounded-[5px] border bg-surface px-2.5 text-base outline-none placeholder:text-subtle focus:border-[#1456f0] sm:text-[14px]" />
         </div>}
-        {scopeNotice && <p id={`${id}-scope`} className="mt-3 text-[12px] leading-5 text-subtle">{scopeNotice}</p>}
+        {scopeNotice && <p id={`${id}-scope`} className={scopeOpen ? "mt-3 text-[12px] leading-5 text-subtle" : "sr-only"}>{scopeNotice}</p>}
+        {warningMessage && <p role="status" className="mt-3 text-[12px] leading-5 text-muted-foreground">{warningMessage}</p>}
         {statusMessage && <p role="status" aria-live="polite" className="mt-2 text-[12px] leading-5 text-muted-foreground">{statusMessage}</p>}
         <div className={cn("mt-6 grid gap-3", replaceMode ? "grid-cols-2 min-[480px]:grid-cols-4" : "grid-cols-[80px_80px] justify-end")}>
           {replaceMode && <>

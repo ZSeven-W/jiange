@@ -24,9 +24,16 @@ describe("FindReplacePanel", () => {
     const html = renderToStaticMarkup(<FindReplacePanel {...base} />);
     expect(html).toContain("2 / 3");
     expect(html).toContain("仅查找普通正文，暂不包含表格和公式。");
+    expect(html).toMatch(/aria-label="搜索范围" aria-expanded="false"/);
+    expect(html).toMatch(/class="sr-only">仅查找普通正文/);
     expect(html).toContain('role="search"');
     expect(html).toContain('aria-label="查找"');
     expect(html).not.toContain("替换为</label>");
+  });
+
+  it("keeps result-specific restrictions visible", () => {
+    const html = renderToStaticMarkup(<FindReplacePanel {...base} mode="replace" warningMessage="标题暂不支持替换。" />);
+    expect(html).toMatch(/<p role="status"[^>]*>标题暂不支持替换。<\/p>/);
   });
 
   it("disables replacements when the document is read-only", () => {

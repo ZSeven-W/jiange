@@ -1094,7 +1094,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
             activeIndex={activeFindIndex}
             canReplace={findCanReplace && !activeIsTitle}
             canReplaceAll={findCanReplace && !hasTitleMatches}
-            scopeNotice={`搜索标题、正文、分栏和表格；公式不在范围内。${hasTitleMatches && findMode === "replace" ? "标题暂不支持替换，含标题匹配时无法全部替换。" : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            scopeNotice="搜索标题、正文、分栏和表格；公式不在范围内。"
+            warningMessage={`${hasTitleMatches && findMode === "replace" ? "标题暂不支持替换，含标题匹配时无法全部替换。" : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
