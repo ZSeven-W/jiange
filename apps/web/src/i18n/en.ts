@@ -459,6 +459,8 @@ export const en: Record<string, string> = {
   "未命名多维表格": "Untitled base",
   "未命名字段": "Untitled field",
   "未命名文件夹": "Untitled folder",
+  "未命名幻灯片": "Untitled slides",
+  "文档应用": "Document apps",
   "未命名文档": "Untitled doc",
   "未命名记录": "Untitled record",
   "未填写": "Empty",

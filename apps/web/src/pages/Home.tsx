@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { baseApi, docsApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
+import { baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { go } from "@/lib/route";
 import { docTitle, hrefOf } from "@/components/Sidebar";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
-import { DocColorIcon } from "@/components/FeishuIcons";
+import { BaseColorIcon, DocColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/FeishuIcons";
 import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { parseMarkdown } from "@/lib/markdown";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { stageStarter } from "./pendingStarter";
 import { BOARD_TITLE, stageBoard } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
-import { ChevronDown, FolderOpen, Plus, Shapes, Star, Table2 } from "lucide-react";
+import { askText } from "@/components/ui/ask";
+import { ChevronDown, Folder, FolderOpen, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
@@ -57,6 +58,15 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
     mutationFn: async () => { const doc = await docsApi.create(BOARD_TITLE); stageBoard(me.user.id, doc.id); return doc; },
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
+  const createDriveItem = useMutation({
+    mutationFn: ({ kind, title }: { kind: "slides" | "folder"; title: string }) => driveApi.createNode(kind, title, null, true),
+    onSuccess: (entry) => {
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      void qc.invalidateQueries({ queryKey: ["drive"] });
+      void qc.invalidateQueries({ queryKey: ["drive-nav"] });
+      go(entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: "slides" }));
+    },
+  });
   const createWithContent = useMutation({
     mutationFn: async ({ title, markdown }: { title: string; markdown: string }) => {
       const doc = await docsApi.create(title);
@@ -88,10 +98,14 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
     .filter((d) => (kind === "all" || (d.kind ?? "doc") === kind) && (selected !== "mine" || d.creatorId === me.user.id))
     .sort((a, b) => selected === "recent" ? 0 : Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   const pageTitle = favorites ? t("收藏") : recent ? t("最近访问") : t("主页");
-  const menu = newMenu && <div role="menu" className={`absolute top-[calc(100%+6px)] z-30 w-52 rounded-lg border bg-surface p-1.5 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
-    <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
-    <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("base"); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover"><FileBadge kind="base" />{t("多维表格")}</button>
-    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate(); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-[13px] hover:bg-hover" data-new-board><BoardBadge />{t("画板")}</button>
+  const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
+    <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
+    <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "slides", title: t("未命名幻灯片") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="slides" />{t("幻灯片")}</button>
+    <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("base"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="base" />{t("多维表格")}</button>
+    <div className="my-1 border-t" />
+    <button role="menuitem" disabled={createDriveItem.isPending} onClick={async () => { setNewMenu(false); const title = await askText(t("新建文件夹"), t("文件夹名称"), t("未命名文件夹")); if (title?.trim()) createDriveItem.mutate({ kind: "folder", title: title.trim() }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="folder" />{t("文件夹")}</button>
+    <div className="mt-1 border-t px-4 pb-1 pt-3 text-[13px] text-subtle">{t("文档应用")}</div>
+    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate(); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-board><BoardBadge />{t("画板")}</button>
   </div>;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
@@ -108,16 +122,17 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
             <div ref={newMenuRef} className="relative">
               <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary">
                 <span className="grid size-8 shrink-0 place-items-center"><NewDocGlyph /></span>
-                <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{t("新建")}</span><span className="mt-0.5 block truncate text-[12px] text-subtle">{t("新建文档开始协作")}</span></span><ChevronDown size={15} className="shrink-0 text-subtle" />
+                <span className="min-w-0 flex-1 text-[14px] font-medium">{t("新建")}</span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
               </button>{menu}
             </div>
             <label className="flex h-16 w-full cursor-pointer items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-within:outline-2 focus-within:outline-primary">
-              <span className="grid size-8 shrink-0 place-items-center"><UploadGlyph /></span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{t("上传")}</span><span className="mt-0.5 block truncate text-[12px] text-subtle">{t("导入 Markdown 文档")}</span></span><ChevronDown size={15} className="text-subtle" />
+              <span className="grid size-8 shrink-0 place-items-center"><UploadGlyph /></span><span className="min-w-0 flex-1 text-[14px] font-medium">{t("上传")}</span><ChevronDown size={15} className="text-subtle" />
               <input type="file" aria-label={t("上传 Markdown 文件")} accept=".md,.markdown,text/markdown" disabled={createWithContent.isPending} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importFile(file); }} />
             </label>
-            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} description={t("选择模板快速新建")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
+            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
           </div>}
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
+          {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
           {importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}
           {createWithContent.isPending && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
@@ -141,18 +156,19 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   );
 }
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
-  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
+  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
-/** 画板图标（飞书画板为紫色图标）。 */
 function BoardBadge() {
-  return <span className="grid size-5 shrink-0 place-items-center rounded bg-[#7F3BF5] text-white"><Shapes size={13} /></span>;
+  return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;
 }
 
-function FileBadge({ kind, icon }: { kind: "doc" | "base"; icon?: string }) {
-  return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <span className="grid size-5 shrink-0 place-items-center rounded-[4px] bg-[#6756d9] text-white"><Table2 size={13} strokeWidth={2}/></span>;
+function FileBadge({ kind, icon }: { kind: "doc" | "base" | "slides" | "folder" | "file"; icon?: string }) {
+  if (kind === "folder") return <Folder size={20} fill="#ffcc4d" stroke="#f5a623" />;
+  if (kind === "slides") return <SlidesColorIcon className="size-5 shrink-0" />;
+  return kind === "doc" || kind === "file" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <BaseColorIcon className="size-5 shrink-0" />;
 }
-function ActionCard({ icon, title, description, disabled, onClick }: { icon: React.ReactNode; title: string; description: string; disabled?: boolean; onClick: () => void }) {
-  return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{title}</span><span className="mt-0.5 block truncate text-[12px] text-subtle">{description}</span></span></button>;
+function ActionCard({ icon, title, disabled, onClick }: { icon: React.ReactNode; title: string; disabled?: boolean; onClick: () => void }) {
+  return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1 text-[14px] font-medium">{title}</span></button>;
 }
 function dateLabel(value: string) {
   const date = new Date(value);
@@ -160,7 +176,7 @@ function dateLabel(value: string) {
 }
 function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?: string; workspaceName?: string }) {
   return <button onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} group h-14 w-full items-center gap-3 border-b px-2 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
-    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind === "base" ? "base" : "doc"} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
+    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
     <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>

@@ -4,6 +4,7 @@ import { ApiError, docsApi, slidesApi, type SlidesPage as Page, type SlideShape 
 import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
+import { createVisitRecorder } from "@/lib/recentVisit";
 import { SlidesDraftQueue } from "./slidesDraft";
 import { copyErrorMessage } from "./documentCopy";
 import { SlideShapes } from "./slides-shapes";
@@ -42,6 +43,16 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const activePageRef = useRef<number | null>(null);
   const canEditRef = useRef(false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
+  const visitRecorder = useMemo(() => createVisitRecorder(
+    () => docsApi.recordVisit(deckId),
+    () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
+    () => { void qc.invalidateQueries({ queryKey: ["slides-meta", deckId] }); },
+  ), [deckId, userId, qc]);
+  useEffect(() => {
+    if (!meta.isSuccess || meta.isError || meta.isFetching || meta.data.kind !== "slides") return;
+    visitRecorder.start();
+    return () => visitRecorder.stop();
+  }, [meta.isSuccess, meta.isError, meta.isFetching, meta.data?.kind, visitRecorder]);
   const canEdit = !copyingDeck && !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
   const queue = useMemo(() => new SlidesDraftQueue(

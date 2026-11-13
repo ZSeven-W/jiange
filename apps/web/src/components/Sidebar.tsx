@@ -9,7 +9,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
-import { DocColorIcon, DriveNavIcon, SidebarFoldIcon } from "./FeishuIcons";
+import { BaseColorIcon, DocColorIcon, DriveNavIcon, SidebarFoldIcon, SlidesColorIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./searchFocus";
@@ -166,7 +166,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           <TreeRow
             depth={depth}
             label={docTitle(d)}
-            base={d.kind === "base"}
+            kind={d.kind}
             icon={d.icon}
             muted={!d.title.trim()}
             active={activeId === d.id}
@@ -254,7 +254,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       <div className="mt-6 px-3">
         <div className="px-2 pb-1 text-xs font-medium text-subtle">{t("置顶文档")}</div>
         <div data-pinned-docs>
-          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
         </div>
         {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
       </div>
@@ -284,7 +284,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">{t("与我共享")}</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={d.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
+              <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
@@ -356,6 +356,13 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
   </aside>;
 }
 
+function SidebarNodeIcon({ kind, icon }: { kind: DocMeta["kind"]; icon?: string }) {
+  if (kind === "base") return <BaseColorIcon className="size-[18px] shrink-0" />;
+  if (kind === "slides") return <SlidesColorIcon className="size-[18px] shrink-0" />;
+  if (kind === "folder") return <FolderIcon size={18} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
+  return <DocumentGlyph icon={icon} fallback={<DocColorIcon className="size-[18px] shrink-0" />} />;
+}
+
 function TreeRow({
   depth,
   label,
@@ -366,7 +373,7 @@ function TreeRow({
   onToggle,
   onClick,
   onAdd,
-  base,
+  kind,
   icon,
   starred,
   onStar,
@@ -376,7 +383,7 @@ function TreeRow({
   onCopyLink,
   onDelete,
 }: {
-  base?: boolean;
+  kind?: DocMeta["kind"];
   icon?: string;
   depth: number;
   label: string;
@@ -431,7 +438,7 @@ function TreeRow({
         title={label}
         className="flex h-9 min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-primary/50"
       >
-        {base ? <span aria-hidden className="grid size-[18px] shrink-0 place-items-center rounded-[4px] bg-[#7159d8] text-white"><BaseIcon size={12} /></span> : <DocumentGlyph icon={icon} fallback={<DocColorIcon className="size-[18px] shrink-0" />} />}
+        <SidebarNodeIcon kind={kind} icon={icon} />
         <span className="min-w-0 truncate">{label}</span>
       </button>
       <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">

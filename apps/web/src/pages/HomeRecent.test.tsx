@@ -33,4 +33,12 @@ describe("home recent visits", () => {
     expect(failed).toContain("加载失败");
     expect(failed).not.toContain(first.title);
   });
+
+  it("shows a recently visited slide with its own icon and type filter", () => {
+    const slide = { ...first, title: "演示文稿", kind: "slides" as const, viewedAt: "2026-11-07T10:00:00Z" };
+    const html = render([slide]);
+    expect(html).toContain("演示文稿");
+    expect(html).toContain('value="slides"');
+    expect(html).toContain('fill="#ED6D0C"');
+  });
 });
