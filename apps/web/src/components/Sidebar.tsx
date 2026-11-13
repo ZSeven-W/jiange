@@ -1,5 +1,5 @@
 import { openAISettings } from "@/lib/ai";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
@@ -15,6 +15,8 @@ import { GlobalSearch } from "./GlobalSearch";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./searchFocus";
 import { LocaleToggle } from "./LocaleToggle";
 import { t, useI18n } from "@/lib/i18n";
+import { browserSidebarStorage } from "@/lib/sidebarPreference";
+import { decodeSidebarSection, readSidebarSection, sidebarSectionKey, writeSidebarSection, type SidebarSection } from "@/lib/sidebarSections";
 
 export const hrefOf = nodeHref;
 export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || t("未命名文档");
@@ -32,6 +34,37 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
   const { t } = useI18n();
   const shortcutModifier = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
   const qc = useQueryClient();
+  const sectionId = useId();
+  const [sectionStorage] = useState(browserSidebarStorage);
+  const [pinnedOpen, setPinnedOpen] = useState(() => readSidebarSection(sectionStorage, me.user.id, "pinned"));
+  const [documentsOpen, setDocumentsOpen] = useState(() => readSidebarSection(sectionStorage, me.user.id, "documents"));
+  const pinnedBody = useRef<HTMLDivElement>(null), documentsBody = useRef<HTMLDivElement>(null);
+  const pinnedTrigger = useRef<HTMLButtonElement>(null), documentsTrigger = useRef<HTMLButtonElement>(null);
+  const remoteFocus = useRef<SidebarSection | null>(null);
+  const setSection = (section: SidebarSection, expanded: boolean) => {
+    (section === "pinned" ? setPinnedOpen : setDocumentsOpen)(expanded);
+    writeSidebarSection(sectionStorage, me.user.id, section, expanded);
+  };
+  useEffect(() => {
+    if (!sectionStorage) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== sectionStorage) return;
+      for (const section of ["pinned", "documents"] as const) {
+        if (event.key !== null && event.key !== sidebarSectionKey(me.user.id, section)) continue;
+        const expanded = decodeSidebarSection(event.key === null ? null : event.newValue);
+        const body = section === "pinned" ? pinnedBody.current : documentsBody.current;
+        if (!expanded && body?.contains(document.activeElement)) remoteFocus.current = section;
+        (section === "pinned" ? setPinnedOpen : setDocumentsOpen)(expanded);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [me.user.id, sectionStorage]);
+  useLayoutEffect(() => {
+    if (remoteFocus.current === "pinned" && !pinnedOpen) pinnedTrigger.current?.focus();
+    if (remoteFocus.current === "documents" && !documentsOpen) documentsTrigger.current?.focus();
+    remoteFocus.current = null;
+  }, [pinnedOpen, documentsOpen]);
   const docs = useQuery({
     queryKey: ["docs"],
     queryFn: docsApi.list,
@@ -113,6 +146,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
   const create = useMutation({
     mutationFn: (parent: Pick<DocMeta, "id" | "workspaceId"> | null = null) => docsApi.create("", parent?.id ?? null, parent?.workspaceId),
     onSuccess: (d) => {
+      setSection("documents", true);
       if (d.parentId) setOpen((o) => ({ ...o, [d.parentId!]: true }));
       qc.invalidateQueries({ queryKey: ["docs"] });
       go(`#/doc/${d.id}`);
@@ -121,6 +155,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
   const createBase = useMutation({
     mutationFn: () => baseApi.create(),
     onSuccess: (d) => {
+      setSection("documents", true);
       qc.invalidateQueries({ queryKey: ["docs"] });
       go(hrefOf(d));
     },
@@ -252,14 +287,14 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         <NavItem icon={<TrashIcon />} label={t("回收站")} active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-6 px-3">
-        <div className="px-2 pb-1 text-xs font-medium text-subtle">{t("置顶文档")}</div>
-        <div data-pinned-docs>
+        <button ref={pinnedTrigger} type="button" aria-expanded={pinnedOpen} aria-controls={`${sectionId}-pinned`} onClick={() => setSection("pinned", !pinnedOpen)} className="flex items-center gap-1 rounded px-2 pb-1 text-xs font-medium text-subtle hover:text-foreground"><span>{t("置顶文档")}</span><ChevronRight size={12} className={cn("transition-transform", pinnedOpen && "rotate-90")}/></button>
+        <div id={`${sectionId}-pinned`} ref={pinnedBody} hidden={!pinnedOpen} data-pinned-docs>
           {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+          {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
         </div>
-        {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
       </div>
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
-        <span>{t("我的文档库")}</span>
+        <button ref={documentsTrigger} type="button" aria-expanded={documentsOpen} aria-controls={`${sectionId}-documents`} onClick={() => setSection("documents", !documentsOpen)} className="flex items-center gap-1 rounded hover:text-foreground"><span>{t("我的文档库")}</span><ChevronRight size={12} className={cn("transition-transform", documentsOpen && "rotate-90")}/></button>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <button aria-label={t("新建多维表格")} title={t("新建多维表格")} onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
             <Table2 size={14} strokeWidth={1.7} />
@@ -270,6 +305,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         </span>
       </div>
       <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-2">
+        <div id={`${sectionId}-documents`} ref={documentsBody} hidden={!documentsOpen}>
         {(create.isError || createBase.isError) && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">{t("新建失败，请稍后重试")}</p>}
         {rename.isError && <div role="alert" className="px-2 py-1.5 text-xs text-destructive">
           <p>{renameErrorMessage(rename.error)}</p>
@@ -288,6 +324,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
             ))}
           </>
         )}
+        </div>
       </div>
       <div ref={accountMenu} className="relative border-t px-3 py-2">
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
