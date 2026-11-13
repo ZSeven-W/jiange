@@ -6,8 +6,15 @@ export function stepImageZoom(current: number, direction: -1 | 1): number {
 }
 
 /** Fit the image without enlarging it, then apply zoom relative to that fit. */
-export function previewImageSize(natural: { width: number; height: number } | null, viewport: { width: number; height: number }, zoom: number): { width: number; height: number } | undefined {
+export function previewImageSize(natural: { width: number; height: number } | null, viewport: { width: number; height: number }, zoom: number, rotation = 0): { width: number; height: number } | undefined {
   if (!natural || ![natural.width, natural.height, viewport.width, viewport.height, zoom].every((value) => Number.isFinite(value) && value > 0)) return undefined;
-  const fit = Math.min(1, viewport.width / natural.width, viewport.height / natural.height);
-  return { width: Math.max(1, Math.round(natural.width * fit * zoom)), height: Math.max(1, Math.round(natural.height * fit * zoom)) };
+  const sideways = Math.abs(rotation % 180) === 90;
+  const width = sideways ? natural.height : natural.width, height = sideways ? natural.width : natural.height;
+  const fit = Math.min(1, viewport.width / width, viewport.height / height);
+  return { width: Math.max(1, Math.round(width * fit * zoom)), height: Math.max(1, Math.round(height * fit * zoom)) };
+}
+
+export function pinchImageZoom(initial: number, startDistance: number, distance: number): number {
+  if (![initial, startDistance, distance].every((value) => Number.isFinite(value) && value > 0)) return initial;
+  return Math.max(IMAGE_ZOOM_LEVELS[0], Math.min(IMAGE_ZOOM_LEVELS[IMAGE_ZOOM_LEVELS.length - 1], initial * distance / startDistance));
 }

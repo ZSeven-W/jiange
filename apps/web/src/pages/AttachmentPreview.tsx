@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Minus, Plus } from "lucide-react";
+import { Maximize2, Minus, Plus, RotateCw } from "lucide-react";
 import { IMAGE_ZOOM_LEVELS, previewImageSize, stepImageZoom } from "./imagePreviewZoom";
+import { useImagePreviewTouch } from "./useImagePreviewTouch";
 
 /**
  * 附件在线预览遮罩：图片大图、PDF 内嵌、文本/代码内容预览；
@@ -24,12 +25,14 @@ export function AttachmentPreview({
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const imageFrame = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [imageError, setImageError] = useState(false);
   const isImage = !!mime?.startsWith("image/");
-  useEffect(() => { setNatural(null); setZoom(1); setImageError(false); }, [src]);
+  useEffect(() => { setNatural(null); setZoom(1); setRotation(0); setImageError(false); }, [src]);
   useEffect(() => {
     const node = viewport.current;
     if (!isImage || !node) return;
@@ -47,7 +50,9 @@ export function AttachmentPreview({
   }, []);
   const isPdf = mime === "application/pdf";
   const isText = !!mime && (mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
-  const size = previewImageSize(natural, viewportSize, zoom);
+  const size = previewImageSize(natural, viewportSize, zoom, rotation);
+  const sideways = rotation % 180 !== 0;
+  const touch = useImagePreviewTouch(viewport, imageFrame, zoom, setZoom, src, rotation);
   return (
     <div
       ref={root}
@@ -84,9 +89,9 @@ export function AttachmentPreview({
           ✕
         </button>
       </div>
-      <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "grid min-h-0 flex-1 place-items-center overflow-auto"} onClick={(e) => e.stopPropagation()}>
+      <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "grid min-h-0 flex-1 place-items-center overflow-auto"} style={isImage ? { touchAction: "none" } : undefined} {...(isImage && natural && !imageError ? touch : {})} onClick={(e) => e.stopPropagation()}>
         {isImage ? (
-          imageError ? <p role="status" className="m-auto text-[13px] text-white/70">图片加载失败</p> : <img
+          imageError ? <p role="status" className="m-auto text-[13px] text-white/70">图片加载失败</p> : <div ref={imageFrame} style={size} className={size ? "relative m-auto shrink-0" : "m-auto flex max-h-full max-w-full shrink-0"}><img
             src={src}
             alt={name}
             onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
@@ -96,9 +101,9 @@ export function AttachmentPreview({
             onContextMenu={(event) => {
               if (!allowPrint) event.preventDefault();
             }}
-            style={size ? { width: size.width, height: size.height } : undefined}
-            className={size ? "m-auto max-h-none max-w-none shrink-0 rounded-lg object-contain shadow-2xl" : "m-auto max-h-full max-w-full rounded-lg object-contain shadow-2xl"}
-          />
+            style={size ? { width: sideways ? size.height : size.width, height: sideways ? size.width : size.height, transform: `translate(-50%, -50%) rotate(${rotation}deg)` } : undefined}
+            className={size ? "absolute left-1/2 top-1/2 max-h-none max-w-none rounded-lg object-contain shadow-2xl" : "m-auto max-h-full max-w-full rounded-lg object-contain shadow-2xl"}
+          /></div>
         ) : isPdf ? (
           <iframe src={src} title={name} className="h-full w-full max-w-5xl rounded-lg bg-white shadow-2xl" data-pdf-frame />
         ) : isText ? (
@@ -121,6 +126,7 @@ export function AttachmentPreview({
         <button type="button" aria-label="放大图片" title="放大" aria-disabled={imageError || zoom >= IMAGE_ZOOM_LEVELS[IMAGE_ZOOM_LEVELS.length - 1]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, 1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Plus size={17}/></button>
         <span className="mx-1 h-5 w-px bg-white/20"/>
         <button type="button" aria-label="适应窗口" title="适应窗口" aria-disabled={imageError || zoom === 1} onClick={() => { if (!imageError) setZoom(1); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Maximize2 size={16}/></button>
+        <button type="button" aria-label="顺时针旋转图片" title="顺时针旋转" aria-disabled={imageError} onClick={() => { if (!imageError) setRotation((value) => (value + 90) % 360); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><RotateCw size={17}/></button>
       </div></div>}
     </div>
   );
