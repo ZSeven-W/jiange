@@ -27,6 +27,8 @@ import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
 import { go } from "@/lib/route";
 import { docWidthClass, readDocWidth, writeDocWidth, type DocWidth } from "@/lib/docWidth";
 import { DocWidthOptions } from "./DocWidthOptions";
+import { DocumentInfoDialog } from "./DocumentInfoDialog";
+import { documentTextStats } from "./docInfoStats";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
@@ -168,6 +170,9 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [pageNotice, setPageNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [titleCheckTarget, setTitleCheckTarget] = useState<{ doc: number; user: number } | null>(null);
+  const [infoTarget, setInfoTarget] = useState<{ doc: number; user: number } | null>(null);
+  const closeDocumentInfo = useCallback(() => setInfoTarget(null), []);
+  useEffect(() => { setInfoTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
@@ -388,16 +393,10 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { onBodyScroll(); }, [onBodyScroll]);
   useEffect(() => () => { if (outlineFrame.current) cancelAnimationFrame(outlineFrame.current); }, []);
 
-  const wordCount = useMemo(() => {
+  const infoStats = useMemo(() => {
     const d = sync.client.doc;
-    if (!d) return 0;
-    let n = 0;
-    for (const b of d.view().blocks) {
-      if (b.type === "title") continue;
-      for (const span of b.spans) n += [...span.text].length;
-    }
-    return n;
-  }, [sync.client.doc, sync.version]);
+    return infoTarget?.doc === id && infoTarget.user === me.user.id && d ? documentTextStats(d.view()) : null;
+  }, [infoTarget, id, me.user.id, sync.client.doc, sync.version]);
   // 个人 AI：仅在可复制该文档内容时可用（服务端同样校验）。
   const aiAvailable = metadataVerified && canCopyDocument(meta.data);
   const runAI = aiAvailable ? (messages: AIMessage[]) => aiApi.complete(id, messages) : undefined;
@@ -778,6 +777,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
+          onDocumentInfo={() => setInfoTarget({ doc: id, user: me.user.id })}
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
           onImport={canEditContent ? importFile : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
@@ -793,7 +793,6 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           status={metadataVerified ? sync.status : "offline"}
           peers={sync.peers}
           me={presence}
-          wordCount={wordCount}
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
@@ -946,6 +945,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {history && (
         <VersionPanel
@@ -1056,7 +1056,6 @@ function TopBar({
   status,
   peers,
   me,
-  wordCount,
   shareAnchor,
   onShare,
   onComments,
@@ -1070,6 +1069,7 @@ function TopBar({
   creating,
   onHistory,
   onTitleCheck,
+  onDocumentInfo,
   onExport,
   onImport,
   onOutline,
@@ -1097,6 +1097,7 @@ function TopBar({
   onWidthChange: (value: DocWidth) => void;
   onHistory: () => void;
   onTitleCheck: () => void;
+  onDocumentInfo: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
@@ -1109,7 +1110,6 @@ function TopBar({
   status: SyncStatus;
   peers: RemotePeer[];
   me: Presence;
-  wordCount: number;
 }) {
   const s = STATUS[status];
   const [saved, setSaved] = useState({ doc: meta?.id, seenSynced: false, saved: false });
@@ -1154,7 +1154,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
+        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1229,6 +1229,7 @@ function DocMenu({
   meta,
   onHistory,
   onTitleCheck,
+  onDocumentInfo,
   onExport,
   onImport,
   onOutline,
@@ -1239,11 +1240,11 @@ function DocMenu({
   onPrint,
   onAI,
   onSaveTemplate,
-  wordCount,
 }: {
   meta?: DocMeta;
   onHistory?: () => void;
   onTitleCheck?: () => void;
+  onDocumentInfo?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
@@ -1254,7 +1255,6 @@ function DocMenu({
   onSaveTemplate?: () => void;
   onComments: () => void;
   onFind: () => void;
-  wordCount: number;
 }) {
   const [open, setOpen] = useState(false);
   const [sub, setSub] = useState<"download" | "width" | null>(null);
@@ -1378,7 +1378,7 @@ function DocMenu({
           </div>
           {<div className={group}><button className={row} onClick={() => { close(); onPrint(); }}><Printer size={15} className={icon} />打印</button></div>}
           <div className={group}>
-            <div className="flex h-8 items-center gap-2 px-3 text-subtle" data-word-count><Info size={15} className={icon} />字数统计：{wordCount}</div>
+            {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
             {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}
             {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
             <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>
