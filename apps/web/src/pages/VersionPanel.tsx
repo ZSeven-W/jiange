@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocView } from "@/lib/api";
-import { ask, askText } from "@/components/ui/ask";
+import { ask } from "@/components/ui/ask";
 import { diffViews, type DiffRow } from "./VersionDiff";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 
@@ -25,9 +25,9 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 }
 
 /** Right drawer: version list, read-only preview and restore (P6). */
-export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloads, currentView, onClose }: { id: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void }) {
+export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["versions", id], queryFn: () => docsApi.versions(id) });
+  const list = useQuery({ queryKey: ["versions", userId, id], queryFn: () => docsApi.versions(id) });
   const [previewing, setPreviewing] = useState<number | null>(null);
   const [diffMode, setDiffMode] = useState(false);
   const latest = useRef({ id, canEdit, previewing });
@@ -36,18 +36,14 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
   const confirming = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const preview = useQuery({
-    queryKey: ["versions", id, previewing],
+    queryKey: ["versions", userId, id, previewing],
     queryFn: () => docsApi.versionPreview(id, previewing!),
     enabled: previewing !== null,
-  });
-  const create = useMutation({
-    mutationFn: (label: string) => docsApi.createVersion(id, label),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["versions", id] }),
   });
   const restore = useMutation({
     mutationFn: (seq: number) => docsApi.restoreVersion(id, seq),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["versions", id] });
+      qc.invalidateQueries({ queryKey: ["versions", userId, id] });
       setPreviewing(null);
     },
   });
@@ -75,10 +71,7 @@ export function VersionPanel({ id, canEdit, allowCopy = true, disableFileDownloa
         {canEdit && (
           <button
             className="mb-3 h-8 w-full rounded-md bg-primary text-[13px] font-medium text-white hover:opacity-90"
-            onClick={async () => {
-              const label = await askText("创建版本", "版本名称", "手动版本");
-              if (label !== null) create.mutate(label.trim() || "手动版本");
-            }}
+            onClick={onCreateVersion}
             data-create-version
           >
             + 创建当前版本

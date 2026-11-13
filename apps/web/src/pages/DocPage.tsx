@@ -39,6 +39,8 @@ import { DocumentGlyph, displayDocumentIcon } from "@/components/DocumentGlyph";
 import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask, askText } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
+import { NamedVersionDialog } from "./NamedVersionDialog";
+import { namedVersionPoint } from "./namedVersionSafety";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
 import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, mustRedactCommentAttemptQuote, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
 import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
@@ -176,6 +178,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
+  const [versionTarget, setVersionTarget] = useState<{ doc: number; user: number } | null>(null);
+  useEffect(() => { setVersionTarget(null); }, [id, me.user.id, metadataVerified]);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
   const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
@@ -529,6 +533,21 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
   const canEditContent = canEditRole && !readingMode && !sync.blocked;
   canEditRef.current = canEditContent;
+  const saveNamedVersion = async (label: string) => {
+    const client = sync.client;
+    const notReady = (text: string) => Object.assign(new Error(text), { name: "VersionNotReady" });
+    const point = namedVersionPoint(client, canEditRef.current, permissionsVerified);
+    if (!point) throw notReady("请确认编辑权限并等待文档同步完成后再保存。");
+    const { seq, epoch } = point;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      await docsApi.createNamedVersion(id, label, seq, epoch, me.user.id, controller.signal);
+      await qc.invalidateQueries({ queryKey: ["versions", me.user.id, id] });
+      const current = exportContext.current;
+      if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: "已保存文档版本，可在历史记录中查看。" });
+    } finally { clearTimeout(timeout); }
+  };
   const findDoc = sync.client.doc;
   const currentFindResult = findOpen && findDoc && findQuery && findResult?.doc === findDoc && findResult.query === findQuery && findResult.version === sync.version ? findResult : null;
   const findUpdating = !!(findOpen && findDoc && findQuery && !currentFindResult);
@@ -776,6 +795,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onCreate={() => newDoc.mutate()}
           creating={newDoc.isPending}
           onHistory={() => setHistory((v) => !v)}
+          onCreateVersion={canEditContent ? () => setVersionTarget({ doc: id, user: me.user.id }) : undefined}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
           onDocumentInfo={() => setInfoTarget({ doc: id, user: me.user.id })}
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
@@ -947,9 +967,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
-      {history && (
+      {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
+      {metadataVerified && history && (
         <VersionPanel
+          key={`version-history:${me.user.id}:${id}`}
           id={id}
+          userId={me.user.id}
+          onCreateVersion={() => setVersionTarget({ doc: id, user: me.user.id })}
           canEdit={canEditContent}
           allowCopy={contentCopyAllowed}
           disableFileDownloads={!downloadAllowed}
@@ -1068,6 +1092,7 @@ function TopBar({
   onCreate,
   creating,
   onHistory,
+  onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
   onExport,
@@ -1096,6 +1121,7 @@ function TopBar({
   width: DocWidth;
   onWidthChange: (value: DocWidth) => void;
   onHistory: () => void;
+  onCreateVersion?: () => void;
   onTitleCheck: () => void;
   onDocumentInfo: () => void;
   onExport?: (format: "md" | "docx") => void;
@@ -1154,7 +1180,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1228,6 +1254,7 @@ function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) 
 function DocMenu({
   meta,
   onHistory,
+  onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
   onExport,
@@ -1243,6 +1270,7 @@ function DocMenu({
 }: {
   meta?: DocMeta;
   onHistory?: () => void;
+  onCreateVersion?: () => void;
   onTitleCheck?: () => void;
   onDocumentInfo?: () => void;
   onExport?: (format: "md" | "docx") => void;
@@ -1377,6 +1405,7 @@ function DocMenu({
             )}
           </div>
           {<div className={group}><button className={row} onClick={() => { close(); onPrint(); }}><Printer size={15} className={icon} />打印</button></div>}
+          {onCreateVersion && <div className={group}><button className={row} onClick={() => { close(); onCreateVersion(); }} data-save-named-version><FileText size={15} className={icon} />另存为版本</button></div>}
           <div className={group}>
             {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
             {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}

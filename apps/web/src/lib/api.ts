@@ -463,6 +463,7 @@ export const docsApi = {
     request<{ mapping: Record<string, number> }>("POST", `/api/docs/${id}/clipboard-assets`, { sourceDocId, fileIds, requestId }, signal, { "X-Jiange-User-Id": String(userId) }),
   versions: (id: number) => request<{ versions: Version[] }>("GET", `/api/docs/${id}/versions`).then((r) => r.versions),
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
+  createNamedVersion: (id: number, label: string, expectedSeq: number, historyEpoch: number, userId: number, signal: AbortSignal) => request<Version>("POST", `/api/docs/${id}/named-version`, { label, expectedSeq, historyEpoch }, signal, { "X-Jiange-User-Id": String(userId) }),
   versionPreview: (id: number, seq: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`),
   restoreVersion: (id: number, seq: number) => request<{ restored: number }>("POST", `/api/docs/${id}/versions/${seq}/restore`),
   trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
