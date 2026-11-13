@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/docs/{id}/version-entries":                  s.listVersionEntries,
 		"POST /api/docs/{id}/version-entries":                 s.createVersionEntry,
 		"POST /api/docs/{id}/conditional-ops":                 s.commitConditionalOps,
+		"GET /api/docs/{id}/conditional-ops/{requestId}":      s.getConditionalOpsStatus,
 		"GET /api/docs/{id}/versions/{seq}":                   s.getVersion,
 		"POST /api/docs/{id}/versions/{seq}/restore":          s.restoreVersion,
 		"POST /api/docs/{id}/versions/{seq}/restore-guarded":  s.restoreVersionBound,

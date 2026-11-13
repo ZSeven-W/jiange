@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, commitConditionalOps, conditionalBatchBase64 } from "./api";
+import { ApiError, commitConditionalOps, conditionalBatchBase64, queryConditionalOpsStatus } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 const base = { docId: 8, userId: 4, historyEpoch: 2, expectedSeq: 3, requestId: "a".repeat(32), batch: new Uint8Array([0, 1, 254, 255]), opCount: 2, signal: new AbortController().signal };
@@ -25,5 +25,24 @@ describe("conditional operation client", () => {
     const decoded = atob(conditionalBatchBase64(data));
     expect(decoded.length).toBe(data.length);
     expect(decoded.charCodeAt(199999)).toBe(data[199999]);
+  });
+  it("binds status lookup to the account and distinguishes unknown from committed", async () => {
+    const scope = { docId: 8, userId: 4, requestId: "a".repeat(32), signal: base.signal };
+    const common = { docId: 8, userId: 4, requestId: scope.requestId, currentEpoch: 2, currentHead: 5 };
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...common, state: "unknown" }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ ...common, state: "committed", historyEpoch: 2, expectedSeq: 3, firstSeq: 4, opCount: 2, digest: "b".repeat(64) }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await queryConditionalOpsStatus(scope)).state).toBe("unknown");
+    expect((await queryConditionalOpsStatus(scope)).state).toBe("committed");
+    expect(fetcher.mock.calls[0][0]).toBe(`/api/docs/8/conditional-ops/${scope.requestId}`);
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ credentials: "same-origin", cache: "no-store", headers: { "X-Jiange-User-Id": "4" }, signal: base.signal });
+  });
+  it("rejects cross-account, inconsistent and malformed status receipts", async () => {
+    const scope = { docId: 8, userId: 4, requestId: "a".repeat(32), signal: base.signal };
+    const receipt = { docId: 8, userId: 4, requestId: scope.requestId, state: "committed", currentEpoch: 2, currentHead: 5, historyEpoch: 2, expectedSeq: 3, firstSeq: 4, opCount: 2, digest: "b".repeat(64) };
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...receipt, userId: 5 }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ ...receipt, currentEpoch: 3 }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ ...receipt, state: "history_changed", currentEpoch: 3 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(queryConditionalOpsStatus(scope)).rejects.toMatchObject({ code: "invalid_receipt" });
+    await expect(queryConditionalOpsStatus(scope)).rejects.toMatchObject({ code: "invalid_receipt" });
+    expect((await queryConditionalOpsStatus(scope)).state).toBe("history_changed");
   });
 });

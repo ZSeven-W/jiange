@@ -18,6 +18,26 @@ type ConditionalOpsCommitter interface {
 	LookupConditionalOps(context.Context, RestoreGuard, int64, int64, int64, string, []RawOp) ([]int64, error)
 }
 
+// A missing receipt is only an observation: a concurrent submission may
+// still be in flight and commit after the lookup returns.
+type ConditionalOpsStatus struct {
+	DocID        int64  `json:"docId"`
+	UserID       int64  `json:"userId"`
+	RequestID    string `json:"requestId"`
+	State        string `json:"state"` // unknown | committed | history_changed
+	CurrentEpoch int64  `json:"currentEpoch"`
+	CurrentHead  int64  `json:"currentHead"`
+	Epoch        int64  `json:"historyEpoch"`
+	BaseHead     int64  `json:"expectedSeq"`
+	First        int64  `json:"firstSeq"`
+	Count        int64  `json:"opCount"`
+	Digest       string `json:"digest,omitempty"`
+}
+
+type ConditionalOpsStatusReader interface {
+	ConditionalOpsStatus(context.Context, RestoreGuard, int64, string) (ConditionalOpsStatus, error)
+}
+
 type conditionalOpsKey struct {
 	doc, user int64
 	request   string

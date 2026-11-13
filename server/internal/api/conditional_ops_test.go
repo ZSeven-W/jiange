@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
@@ -77,11 +78,39 @@ func checkConditionalOpsAPI(t *testing.T, st store.Store) {
 		return r.StatusCode, bodyBytes
 	}
 	account := strconv.FormatInt(me.User.ID, 10)
+	statusURL := url + "/" + request.Request
+	getStatus := func(account string) (int, store.ConditionalOpsStatus) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, statusURL, nil)
+		if account != "" {
+			req.Header.Set("X-Jiange-User-Id", account)
+		}
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		var result store.ConditionalOpsStatus
+		_ = json.NewDecoder(r.Body).Decode(&result)
+		if r.Header.Get("Cache-Control") != "private, no-store" {
+			t.Fatalf("status cache policy: %q", r.Header.Get("Cache-Control"))
+		}
+		return r.StatusCode, result
+	}
 	if status, _ := do("", request); status != http.StatusBadRequest {
 		t.Fatalf("missing account: %d", status)
 	}
 	if status, _ := do(strconv.FormatInt(me.User.ID+1, 10), request); status != http.StatusUnauthorized {
 		t.Fatalf("wrong account: %d", status)
+	}
+	if status, _ := getStatus(""); status != http.StatusBadRequest {
+		t.Fatalf("status missing account: %d", status)
+	}
+	if status, _ := getStatus(strconv.FormatInt(me.User.ID+1, 10)); status != http.StatusUnauthorized {
+		t.Fatalf("status wrong account: %d", status)
+	}
+	if status, value := getStatus(account); status != http.StatusOK || value.State != "unknown" || value.CurrentHead != head {
+		t.Fatalf("unknown status: %d %+v", status, value)
 	}
 	status, body := do(account, request)
 	var receipt struct {
@@ -89,6 +118,9 @@ func checkConditionalOpsAPI(t *testing.T, st store.Store) {
 	}
 	if status != http.StatusOK || json.Unmarshal(body, &receipt) != nil || len(receipt.Sequences) != 1 || receipt.Sequences[0] != head+1 {
 		t.Fatalf("commit: %d %s", status, body)
+	}
+	if status, value := getStatus(account); status != http.StatusOK || value.State != "committed" || value.DocID != doc.ID || value.UserID != me.User.ID || value.BaseHead != head || value.First != head+1 || value.Count != 1 || len(value.Digest) != 64 {
+		t.Fatalf("committed status: %d %+v", status, value)
 	}
 	actual, newHead, err := StateAtHead(ctx, st, doc.ID)
 	if err != nil || newHead != head+1 || actual.Text(collab.OpID{Client: 0, Clock: 2}) != "目标" {
@@ -157,8 +189,96 @@ func checkConditionalOpsAPI(t *testing.T, st store.Store) {
 	if err = st.BumpHistoryEpoch(ctx, doc.ID); err != nil {
 		t.Fatal(err)
 	}
+	if status, value := getStatus(account); status != http.StatusOK || value.State != "history_changed" || value.CurrentEpoch == value.Epoch {
+		t.Fatalf("changed history status: %d %+v", status, value)
+	}
 	if status, _ = do(account, request); status != http.StatusConflict {
 		t.Fatalf("receipt from old epoch: %d", status)
+	}
+}
+
+func TestConditionalOpsUnknownCanStillCommit(t *testing.T) {
+	ctx := context.Background()
+	base := store.NewMemory()
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	wrapped := &racingConditionalStore{Store: base, ConditionalOpsCommitter: base, hook: func(ctx context.Context) error {
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	ts, client := newTestServer(t, wrapped, nil)
+	r := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "conditional-unknown@test.dev", "name": "Tester", "password": "password123"})
+	var me struct {
+		User store.User `json:"user"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&me)
+	r.Body.Close()
+	r = post(t, client, ts.URL+"/api/docs", map[string]string{"title": "未确认"})
+	var doc store.DocMeta
+	_ = json.NewDecoder(r.Body).Decode(&doc)
+	r.Body.Close()
+	replica, _ := base.AllocClient(ctx, me.User.ID, doc.ID)
+	epoch, head, _ := base.HeadVersion(ctx, doc.ID)
+	state, _, _ := StateAtHead(ctx, base, doc.ID)
+	op := state.InsertText(uint64(replica), collab.OpID{Client: 0, Clock: 2}, 0, "稍后提交")
+	batch, _ := collab.EncodeOps([]collab.Op{op})
+	request := "1234567890abcdef1234567890abcdef"
+	body, _ := json.Marshal(conditionalOpsInput{epoch, head, request, batch})
+	url := ts.URL + "/api/docs/" + strconv.FormatInt(doc.ID, 10) + "/conditional-ops"
+	done := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Jiange-User-Id", strconv.FormatInt(me.User.ID, 10))
+		r, err := client.Do(req)
+		if err != nil {
+			done <- 0
+			return
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+		done <- r.StatusCode
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("submission did not reach commit")
+	}
+	check := func() store.ConditionalOpsStatus {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, url+"/"+request, nil)
+		req.Header.Set("X-Jiange-User-Id", strconv.FormatInt(me.User.ID, 10))
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		var result store.ConditionalOpsStatus
+		if r.StatusCode != http.StatusOK || json.NewDecoder(r.Body).Decode(&result) != nil {
+			t.Fatalf("status lookup: %d", r.StatusCode)
+		}
+		return result
+	}
+	if result := check(); result.State != "unknown" {
+		t.Fatalf("in-flight status: %+v", result)
+	}
+	close(release)
+	if status := <-done; status != http.StatusOK {
+		t.Fatalf("submission status: %d", status)
+	}
+	if result := check(); result.State != "committed" {
+		t.Fatalf("confirmed status: %+v", result)
 	}
 }
 
@@ -385,6 +505,10 @@ type racingConditionalStore struct {
 	once sync.Once
 	hook func(context.Context) error
 	err  error
+}
+
+func (s *racingConditionalStore) ConditionalOpsStatus(ctx context.Context, guard store.RestoreGuard, doc int64, request string) (store.ConditionalOpsStatus, error) {
+	return s.Store.(store.ConditionalOpsStatusReader).ConditionalOpsStatus(ctx, guard, doc, request)
 }
 
 func (s *racingConditionalStore) CommitConditionalOps(ctx context.Context, guard store.RestoreGuard, doc, epoch, head int64, request string, ops []store.RawOp) ([]int64, error) {

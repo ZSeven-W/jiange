@@ -66,7 +66,7 @@ export function FindReplacePanel({
     <section
       role="search"
       aria-label="文档内查找和替换"
-      className={cn("absolute bottom-4 right-4 top-auto z-40 max-h-[calc(100dvh-88px)] w-[405px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[4px] border bg-surface px-6 pb-6 shadow-[0_4px_16px_rgba(31,35,41,0.16)] min-[480px]:bottom-auto min-[480px]:top-[72px]", className)}
+      className={cn("absolute bottom-4 right-4 top-auto z-40 max-h-[calc(100dvh-88px)] w-[405px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-lg border bg-surface px-6 pb-6 shadow-[0_4px_16px_rgba(31,35,41,0.16)] min-[480px]:bottom-auto min-[480px]:top-[72px]", className)}
       data-find-replace-panel
     >
       <div className="flex h-12 items-stretch border-b" role="tablist" aria-label="查找和替换">

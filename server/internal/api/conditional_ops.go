@@ -26,6 +26,42 @@ type conditionalOpsInput struct {
 	Batch     []byte `json:"batch"`
 }
 
+// getConditionalOpsStatus never claims that an absent receipt is final: an
+// earlier submission may still be in flight. It exposes no operation bytes.
+func (s *Server) getConditionalOpsStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	d, ok := s.need(w, r, store.RoleView)
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if r.Header.Get("X-Jiange-User-Id") == "" {
+		httpx.Error(w, http.StatusBadRequest, "missing_account", "未确认当前账号")
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	request := r.PathValue("requestId")
+	if !versionEntryRequest.MatchString(request) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_request", "请求标识无效")
+		return
+	}
+	st, ok := s.Store.(store.ConditionalOpsStatusReader)
+	if !ok {
+		httpx.Error(w, http.StatusServiceUnavailable, "unavailable", "条件提交查询暂不可用")
+		return
+	}
+	result, err := st.ConditionalOpsStatus(r.Context(), guard, d.ID, request)
+	if driveWriteErr(w, err, "conditional operation status") {
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
+}
+
 func conditionalTableKey(key string) bool {
 	switch key {
 	case "tableData", "tbl.v", "tbl.base", "tbl.rows", "tbl.cols", "tbl.m":
