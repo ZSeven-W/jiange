@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SyncClient, type Peer, type SyncStatus } from "@jiange/collab";
 import type { Presence } from "./presence";
@@ -13,6 +13,8 @@ export interface SyncDoc {
   client: SyncClient;
   /** Bumped on every content change; read it to re-render. */
   version: number;
+  /** Synchronous change counter for guarding selections across an overlay. */
+  getChangeRevision: () => number;
   status: SyncStatus;
   peers: RemotePeer[];
   ready: boolean;
@@ -35,6 +37,8 @@ function syncURL() {
 export function useSyncDoc(docId: number, userId: number): SyncDoc {
   const qc = useQueryClient();
   const [version, setVersion] = useState(0);
+  const changeRevision = useRef(0);
+  const getChangeRevision = useCallback(() => changeRevision.current, []);
   const [, setStatusRevision] = useState(0);
   const [, setCatchUpRevision] = useState(0);
   const [, setBlockedRevision] = useState(0);
@@ -51,7 +55,7 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
     () => {
       const c = new SyncClient(docId, {
         beforeRemote: () => before.current.forEach((fn) => fn()),
-        change: () => { persist.current(c); setVersion((v) => v + 1); },
+        change: () => { changeRevision.current++; persist.current(c); setVersion((v) => v + 1); },
         status: () => setStatusRevision((revision) => revision + 1),
         caughtUp: () => setCatchUpRevision((revision) => revision + 1),
         blocked: () => { persist.current(c); setBlockedRevision((revision) => revision + 1); },
@@ -176,5 +180,5 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
   );
 
   const status = client.status;
-  return { client, version, status, peers, ready: client.doc !== null && status !== "connecting", caughtUp: client.caughtUp, blocked: client.blocked, storageError, legacyPending, otherPending, onBeforeRemote };
+  return { client, version, getChangeRevision, status, peers, ready: client.doc !== null && status !== "connecting", caughtUp: client.caughtUp, blocked: client.blocked, storageError, legacyPending, otherPending, onBeforeRemote };
 }

@@ -22,6 +22,7 @@ import { DriveUploadStatus } from "@/components/DriveUploadStatus";
 import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/AISettings";
 import { SidebarFoldIcon } from "@/components/FeishuIcons";
+import type { SearchGuardCapture } from "@/components/searchFocus";
 import { isDocumentSidebarShortcut } from "@/lib/sidebarShortcut";
 import { browserSidebarStorage, decodeSidebarPreference, readSidebarPreference, sidebarPreferenceKey, writeSidebarPreference } from "@/lib/sidebarPreference";
 
@@ -82,6 +83,12 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
 }) {
   const [sessionClient] = useState(() => createSessionQueryClient(authClient));
   const [uploads] = useState(() => new DriveUploadManager(me.user.id, () => { void sessionClient.invalidateQueries({ queryKey: ["drive"] }); void sessionClient.invalidateQueries({ queryKey: ["drive-nav"] }); void sessionClient.invalidateQueries({ queryKey: ["docs"] }); }));
+  const globalSearch = useRef<(() => void) | null>(null);
+  const globalSearchGuard = useRef<SearchGuardCapture | null>(null);
+  const registerGlobalSearch = useCallback((open: (() => void) | null) => { globalSearch.current = open; }, []);
+  const registerGlobalSearchGuard = useCallback((capture: SearchGuardCapture | null) => { globalSearchGuard.current = capture; }, []);
+  const openGlobalSearch = useCallback(() => globalSearch.current?.(), []);
+  const captureGlobalSearchGuard = useCallback(() => globalSearchGuard.current?.() ?? null, []);
   useEffect(() => { uploads.activate(); return () => uploads.dispose(); }, [uploads]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarStorage] = useState(browserSidebarStorage);
@@ -152,11 +159,11 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
       <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
-        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} />
+        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} onSearchRegistrar={registerGlobalSearch} captureSearchGuard={captureGlobalSearchGuard} />
         <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
-        <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} />
+        <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
       ) : route.page === "base" ? (
         <BasePage key={route.id} id={route.id} />
       ) : route.page === "join" ? (

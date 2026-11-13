@@ -37,6 +37,7 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { DocumentIconEditor } from "@/components/DocumentIconEditor";
 import { DocumentCover } from "@/components/DocumentCover";
 import { DocumentGlyph, displayDocumentIcon } from "@/components/DocumentGlyph";
+import type { SearchGuardCapture } from "@/components/searchFocus";
 import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask, askText } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
@@ -69,7 +70,7 @@ import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType,
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
 
-export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me; sidebarDocked?: boolean }) {
+export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearchGuardRegistrar }: { id: number; me: Me; sidebarDocked?: boolean; onGlobalSearch?: () => void; onSearchGuardRegistrar?: (capture: SearchGuardCapture | null) => void }) {
   const qc = useQueryClient();
   const meta = useQuery({
     queryKey: docMetaKey(id, me.user.id),
@@ -171,6 +172,17 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
   const findBatchReplace = useRef<FindBatchReplacer | null>(null);
   const onFindBatchRegistrar = useCallback((replace: FindBatchReplacer | null) => { findBatchReplace.current = replace; }, []);
   const canEditRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!onSearchGuardRegistrar) return;
+    onSearchGuardRegistrar(() => {
+      const client = sync.client, doc = client.doc, revision = sync.getChangeRevision(), historyChanges = client.droppedOnResync;
+      return () => {
+        const current = exportContext.current;
+        return current.mounted && current.id === id && current.user === me.user.id && current.client === client && !!doc && client.doc === doc && sync.getChangeRevision() === revision && client.droppedOnResync === historyChanges && !client.blocked && canEditRef.current;
+      };
+    });
+    return () => onSearchGuardRegistrar(null);
+  }, [id, me.user.id, onSearchGuardRegistrar, sync.client, sync.getChangeRevision]);
   const submittedStarter = useRef(false);
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
   const [, setPendingRevision] = useState(0);
@@ -899,6 +911,7 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
       <div className="relative flex min-w-0 flex-1 flex-col">
         <TopBar
           sidebarDocked={sidebarDocked}
+          onGlobalSearch={onGlobalSearch}
           ancestors={ancestors.data ?? []}
           shareAnchor={shareAnchor}
           onShare={() => setSharing((v) => !v)}
@@ -980,7 +993,7 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -1137,6 +1150,7 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
 
 function TopBar({
   sidebarDocked,
+  onGlobalSearch,
   ancestors,
   meta,
   title,
@@ -1171,6 +1185,7 @@ function TopBar({
   metadataVerified,
 }: {
   sidebarDocked: boolean;
+  onGlobalSearch?: () => void;
   ancestors: import("@/lib/api").DocMeta[];
   shareAnchor: React.RefObject<HTMLButtonElement | null>;
   onShare: () => void;
@@ -1249,7 +1264,7 @@ function TopBar({
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
         <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
-        <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
+        <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
         {onAI && <button onClick={onAI} title="AI 助手" aria-label="AI 助手" aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>

@@ -1,5 +1,6 @@
 import { openAISettings } from "@/lib/ai";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { go, nodeHref, type Route } from "@/lib/route";
@@ -11,6 +12,7 @@ import { colorFor } from "@/lib/presence";
 import { DocColorIcon, DriveNavIcon, SidebarFoldIcon } from "./FeishuIcons";
 import { DocumentGlyph } from "./DocumentGlyph";
 import { GlobalSearch } from "./GlobalSearch";
+import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./searchFocus";
 import { LocaleToggle } from "./LocaleToggle";
 import { t, useI18n } from "@/lib/i18n";
 
@@ -26,7 +28,7 @@ export function renameErrorMessage(error: unknown): string {
   return t("无法确认重命名是否完成，请刷新后查看。");
 }
 
-export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void }) {
+export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, captureSearchGuard }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void; onSearchRegistrar?: (open: (() => void) | null) => void; captureSearchGuard?: () => SearchFocusGuard | null }) {
   const { t } = useI18n();
   const shortcutModifier = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
   const qc = useQueryClient();
@@ -43,6 +45,24 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
   const [searchOpen, setSearchOpen] = useState(false);
   const searchTrigger = useRef<HTMLInputElement>(null);
   const skipSearchFocus = useRef(false);
+  const searchOpenRef = useRef(false);
+  const searchMounted = useRef(false);
+  const searchReturnFocus = useRef<SearchFocus | null>(null);
+  const [searchFocusNotice, setSearchFocusNotice] = useState(false);
+  useEffect(() => { searchMounted.current = true; return () => { searchMounted.current = false; }; }, []);
+  const openSearch = useCallback(() => {
+    if (searchOpenRef.current) return;
+    setSearchFocusNotice(false);
+    let guard: (() => boolean) | null = null;
+    try { guard = captureSearchGuard?.() ?? null; } catch { /* No proof means editable selections cannot be restored. */ }
+    searchReturnFocus.current = captureSearchFocus(document.activeElement instanceof HTMLElement ? document.activeElement : null, guard);
+    searchOpenRef.current = true;
+    setSearchOpen(true);
+  }, [captureSearchGuard]);
+  useLayoutEffect(() => {
+    onSearchRegistrar?.(openSearch);
+    return () => onSearchRegistrar?.(null);
+  }, [onSearchRegistrar, openSearch]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
@@ -50,19 +70,26 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
       // ⌘/Ctrl+J 与飞书云文档一致；⌘/Ctrl+K 在非输入区域也打开搜索（编辑区内留给链接等快捷键）。
       const target = event.target as HTMLElement | null;
       const typing = !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-      if (k === "j" || (k === "k" && !typing)) { event.preventDefault(); setSearchOpen(true); }
+      if (k === "j" || (k === "k" && !typing)) { event.preventDefault(); openSearch(); }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, []);
+  }, [openSearch]);
   const closeSearch = (restoreFocus: boolean) => {
+    const snapshot = searchReturnFocus.current;
+    searchReturnFocus.current = null;
+    searchOpenRef.current = false;
     setSearchOpen(false);
     if (restoreFocus) requestAnimationFrame(() => {
-      skipSearchFocus.current = true;
-      searchTrigger.current?.focus();
+      if (!snapshot || !searchMounted.current || searchOpenRef.current) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== document.documentElement && active !== snapshot.opener) return;
+      skipSearchFocus.current = snapshot.opener === searchTrigger.current;
+      const restored = restoreSearchFocus(snapshot);
       // Focus events run synchronously. If the sidebar is hidden, focus can
       // fail entirely; never leave the next real focus suppressed.
       skipSearchFocus.current = false;
+      if (!restored && snapshot.documentEditor) setSearchFocusNotice(true);
     });
   };
   const [menu, setMenu] = useState(false);
@@ -200,7 +227,7 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
   const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
   const shown = [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
 
-  if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={() => setSearchOpen(true)} onCloseSearch={() => setSearchOpen(false)} />;
+  if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={openSearch} onCloseSearch={closeSearch} />;
 
   return (
     <aside className={cn("flex h-full w-[268px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar", onCollapse ? "xl:w-[278px]" : "xl:w-[300px]")}>
@@ -210,9 +237,9 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
           <SearchIcon />
           <input ref={searchTrigger} type="search" readOnly aria-label={t("搜索标题和正文")} onFocus={() => {
             if (skipSearchFocus.current) { skipSearchFocus.current = false; return; }
-            setSearchOpen(true);
-          }} onClick={() => setSearchOpen(true)} onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSearchOpen(true); }
+            openSearch();
+          }} onClick={openSearch} onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openSearch(); }
           }} placeholder={t("搜索标题和正文")} className="w-full min-w-0 cursor-pointer bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]" data-search />
           <kbd className="hidden shrink-0 font-sans text-[11px] text-[#b3b8bf] sm:inline">{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"} + J</kbd>
         </label>
@@ -283,11 +310,12 @@ export function Sidebar({ me, route, onLogout, onCollapse }: { me: Me; route: Ro
         </div>
       </div>
       {searchOpen && <GlobalSearch userId={me.user.id} onClose={closeSearch} />}
+      {searchFocusNotice && createPortal(<div role="status" className="fixed bottom-4 left-1/2 z-[90] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md border bg-surface px-4 py-2 text-[13px] text-foreground shadow-lg"><span>{t("文档内容或编辑位置已变化，请重新选择后继续输入。")}</span><button type="button" className="shrink-0 text-primary hover:underline" onClick={() => setSearchFocusNotice(false)}>{t("关闭")}</button></div>, document.body)}
     </aside>
   );
 }
 
-function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { route: Extract<Route, { page: "drive" }>; userId: number; searchOpen: boolean; onSearch: () => void; onCloseSearch: () => void }) {
+function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { route: Extract<Route, { page: "drive" }>; userId: number; searchOpen: boolean; onSearch: () => void; onCloseSearch: (restoreFocus: boolean) => void }) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState({ personal: true, shared: true });

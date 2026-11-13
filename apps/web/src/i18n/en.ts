@@ -4,6 +4,7 @@
  * this dictionary complete for every t() literal in src/.
  */
 export const en: Record<string, string> = {
+  "文档内容或编辑位置已变化，请重新选择后继续输入。": "The document or editing position changed. Select a position before continuing.",
   " · {time}访问": " · viewed {time}",
   " · 只读": " · read-only",
   " · 所有者：{name}": " · owner: {name}",
