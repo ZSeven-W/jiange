@@ -365,6 +365,8 @@ export const driveApi = {
     request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
   createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
+  createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number) =>
+    request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared" }, undefined, { "X-Jiange-User-Id": String(userId) }),
   children: (parentId: number | null = null, personal = false) =>
     request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}${personal ? `${parentId ? "&" : "?"}scope=personal` : ""}`).then((r) => r.entries),
   move: (id: number, parentId: number | null, expected: number) =>

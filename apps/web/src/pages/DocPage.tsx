@@ -20,6 +20,7 @@ import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { TitleConsistency } from "./TitleConsistency";
 import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starterTemplateOps";
 import { peekStarter, takeStarter } from "./pendingStarter";
+import { clearPendingWord, loadPendingWord, type PendingWord } from "./pendingWord";
 import { BOARD_SEED, hasBoard, takeBoard } from "./boardStarter";
 import { requestFlowOpen } from "@/editor/flowchart/openRequests";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
@@ -119,6 +120,19 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const exportContext = useRef({ id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true });
   const exportingMarkdown = useRef(false);
   const importingWord = useRef(false);
+  const importingPendingWord = useRef(false);
+  const [pendingWordState, setPendingWordState] = useState<{ user: number; doc: number; value: PendingWord } | null>(null);
+  const pendingWord = pendingWordState?.user === me.user.id && pendingWordState.doc === id ? pendingWordState.value : null;
+  const [pendingWordLoading, setPendingWordLoading] = useState(true);
+  const [pendingWordError, setPendingWordError] = useState("");
+  const [pendingWordSubmitted, setPendingWordSubmitted] = useState(false);
+  const [pendingWordBusy, setPendingWordBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setPendingWordState(null); setPendingWordLoading(true); setPendingWordError(""); setPendingWordSubmitted(false);
+    void loadPendingWord(me.user.id, id).then((value) => { if (active && value) setPendingWordState({ user: me.user.id, doc: id, value }); }).catch(() => { if (active) setPendingWordError("无法读取本地 Word 暂存，请检查浏览器存储后重新打开文档。"); }).finally(() => { if (active) setPendingWordLoading(false); });
+    return () => { active = false; };
+  }, [id, me.user.id]);
   const [exportNotice, setExportNotice] = useState<{ id: number; user: number; text: string } | null>(null);
   useLayoutEffect(() => {
     exportContext.current = { id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true };
@@ -570,7 +584,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   }, [findOpen, activeFindIndex, findNavigation, findUpdating]);
   const blankBody = !!sync.client.doc && isEmptyStarterDocument(sync.client.doc);
   const pendingStarter = peekStarter(me.user.id, id);
-  const pendingImport = !!pendingStarter;
+  const pendingImport = !!pendingStarter || !!pendingWord || pendingWordLoading || !!pendingWordError;
   const boardPending = hasBoard(me.user.id, id);
   const showTemplates = !!meta.data && sync.ready && sync.caughtUp && sync.client.droppedOnResync === 0 && sync.status === "synced" && canEditContent && blankBody && !templatesHidden && !pendingImport && !boardPending;
   // 「新建画板」：空文档同步完成后插入画板块并直接打开画板。
@@ -599,6 +613,30 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     setPendingSubmitted(true);
     setTemplateError("");
     sync.client.push(tx.ops);
+  };
+  const applyPendingWord = async () => {
+    const file = pendingWord?.file;
+    const doc = sync.client.doc;
+    if (!file || !doc || pendingWordSubmitted || importingPendingWord.current) return;
+    const ready = () => {
+      const context = exportContext.current;
+      return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && doc === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && sync.client.droppedOnResync === 0 && !!recordExternalUndo.current && isEmptyStarterDocument(doc);
+    };
+    if (!ready()) { setTemplateError("文档不为空或当前无法安全导入，原 Word 文件仍保存在本地。"); return; }
+    importingPendingWord.current = true; setPendingWordBusy(true); setTemplateError("");
+    try {
+      const parsed = await readDocxFile(file, { images: true });
+      const blocks = await uploadDocxImportImages(parsed, (image) => docsApi.uploadImportImage(id, image, me.user.id), ready);
+      if (!ready() || !recordExternalUndo.current) throw new Error("document changed");
+      const tx = insertStarterBlocks(doc, blocks, true);
+      if (!tx) throw new Error("document changed");
+      recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
+      setPendingWordSubmitted(true);
+      sync.client.push(tx.ops);
+    } catch {
+      const context = exportContext.current;
+      if (context.mounted && context.id === id && context.user === me.user.id) setTemplateError("导入未完成，原 Word 文件仍保存在本地；已上传的图片可能作为未引用附件保留，请检查文档后重试。");
+    } finally { importingPendingWord.current = false; setPendingWordBusy(false); }
   };
   const applyStarter = (template: StarterTemplate) => {
     const doc = sync.client.doc;
@@ -866,6 +904,15 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 {!pendingSubmitted && <button type="button" disabled={!canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={applyPendingStarter} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">导入内容</button>}
                 <button type="button" className="text-primary hover:underline" onClick={() => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([pendingStarter.markdown], { type: "text/markdown" })); a.download = "待导入内容.md"; a.click(); URL.revokeObjectURL(a.href); }}>下载原文</button>
                 <button type="button" className="text-muted-foreground hover:underline" onClick={() => { takeStarter(me.user.id, id); submittedStarter.current = false; setPendingSubmitted(false); setPendingRevision((n) => n + 1); setTemplateError(""); }}>清除暂存</button>
+              </div>
+            </div>}
+            {metadataVerified && pendingWordError && <p role="alert" className="mt-4 text-[13px] text-destructive">{pendingWordError}</p>}
+            {metadataVerified && pendingWord && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status" data-pending-word>
+              <p className="text-muted-foreground">{pendingWord.missing ? "本地暂存已失效，请使用原文件重新导入。" : pendingWordSubmitted ? "导入操作已发送，请核对内容；原 Word 文件仍暂存在本地。" : !sync.ready || !sync.caughtUp ? "正在检查文档状态，原 Word 文件仍暂存在本地。" : !blankBody ? "文档已有内容，请核对是否已导入；原 Word 文件仍暂存在本地。" : `待导入 Word：${pendingWord.name}。确认文档为空后导入。`}{!pendingWord.persistent && !pendingWord.missing && " 浏览器持久暂存不可用，请勿刷新或关闭页面。"}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                {!pendingWordSubmitted && pendingWord.file && <button type="button" disabled={pendingWordBusy || !canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingWord()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">{pendingWordBusy ? "正在导入…" : "导入内容"}</button>}
+                {pendingWord.file && <button type="button" disabled={pendingWordBusy || !downloadAllowed} className="text-primary hover:underline disabled:opacity-50" onClick={() => { const a = document.createElement("a"); const url = URL.createObjectURL(pendingWord.file!); a.href = url; a.download = pendingWord.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }}>下载原 Word</button>}
+                <button type="button" disabled={pendingWordBusy} className="text-muted-foreground hover:underline disabled:opacity-50" onClick={() => { void clearPendingWord(me.user.id, id, pendingWord).then(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) { setPendingWordState(null); setPendingWordSubmitted(false); setTemplateError(""); } }).catch(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) setTemplateError("无法清除本地暂存，请检查浏览器存储后重试。"); }); }}>清除暂存</button>
               </div>
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}

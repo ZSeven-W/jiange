@@ -52,6 +52,17 @@ describe("staged Word import", () => {
     expect(doc.richChars(ids[1])[0].marks).toMatchObject({ underline: "true", color: "#D83931" });
     expect(insertStarterBlocks(doc, seeds)).toBeNull();
   });
+
+  it("allows only explicitly uploaded image references in a staged Word import", () => {
+    const makeDoc = () => { const doc = new Doc(1); new Tx(doc).create("paragraph", null, ROOT); return doc; };
+    const image: MdBlock = { type: "image", text: "", props: { fileId: "42", mime: "image/png", name: "插图" }, spans: [] };
+    expect(insertStarterBlocks(makeDoc(), [image])).toBeNull();
+    expect(insertStarterBlocks(makeDoc(), [{ ...image, props: { fileId: "../42" } }], true)).toBeNull();
+    expect(insertStarterBlocks(makeDoc(), [{ ...image, props: { fileId: "42", url: "https://example.test" } }], true)).toBeNull();
+    const doc = makeDoc();
+    expect(insertStarterBlocks(doc, [image], true)).not.toBeNull();
+    expect(doc.blockInfo(bodyBlocks(doc)[0]).props.fileId).toBe("42");
+  });
 });
 
 describe("Word export image loading", () => {

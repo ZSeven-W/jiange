@@ -5,9 +5,10 @@ import { BaseIcon, hrefOf } from "@/components/Sidebar";
 import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
-import { parseMarkdown, toMarkdown } from "@/lib/markdown";
+import { parseMarkdown } from "@/lib/markdown";
 import { DOCX_MIME, DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stageStarter } from "./pendingStarter";
+import { stagePendingWord } from "./pendingWord";
 import { stageBoard } from "./boardStarter";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
@@ -82,6 +83,8 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   const [notice, setNotice] = useState("");
   const [importing, setImporting] = useState(false);
   const importLock = useRef(false);
+  const importGeneration = useRef(0);
+  useEffect(() => { importGeneration.current++; return () => { importGeneration.current++; }; }, [userId, folderId, personalRoot]);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); void qc.invalidateQueries({ queryKey: ["drive-ancestors"] }); };
   const failure = () => { setError("操作结果未能确认，请刷新后检查。"); invalidate(); };
   const rename = useMutation({ mutationFn: ({ id, title, expected }: { id: number; title: string; expected: number }) => driveApi.rename(id, title, expected), onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); }, onError: failure });
@@ -132,15 +135,19 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   };
   const importMarkdown = async (file: File) => {
     if (importLock.current) return;
+    const generation = importGeneration.current;
+    const stillHere = () => generation === importGeneration.current;
     importLock.current = true; setImporting(true); setError("");
     try {
       if (isDocxFile(file)) {
         // Parse the whole file before creating anything: a broken .docx leaves no empty document behind.
-        const result = await readDocxFile(file);
+        const result = await readDocxFile(file, { images: true });
         if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+        if (!stillHere()) return;
         const title = file.name.replace(/\.docx$/i, "").trim() || result.title || "导入文档";
-        const doc = await driveApi.createNode("doc", title, folderId, scope);
-        stageStarter(userId, doc.id, toMarkdown(result.blocks), result.blocks);
+        const doc = await driveApi.createWordImportNode(title, folderId, scope, userId);
+        await stagePendingWord(userId, doc.id, file);
+        if (!stillHere()) return;
         invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
         location.hash = hrefOf({ id: doc.id, kind: "doc" });
         return;
@@ -154,7 +161,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       stageStarter(userId, doc.id, markdown);
       invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
       location.hash = hrefOf({ id: doc.id, kind: "doc" });
-    } catch (err) { setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : "导入未完成，请检查目录后重试。"); }
+    } catch (err) { if (stillHere()) setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : "导入未完成，请检查目录后重试。"); }
     finally { importLock.current = false; setImporting(false); }
   };
   const chooseTemplate = async (template: StarterTemplate) => {

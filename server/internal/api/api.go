@@ -137,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/drive/files/{id}":                           s.getDriveFile,
 		"POST /api/drive/folders":                             s.postDriveFolder,
 		"POST /api/drive/nodes":                               s.postDriveNode,
+		"POST /api/drive/word-import-nodes":                   s.postWordImportNode,
 		"GET /api/drive/children":                             s.listDriveChildren,
 		"POST /api/drive/move/{id}":                           s.postDriveMove,
 		"POST /api/drive/trash/{id}":                          s.postDriveTrash,

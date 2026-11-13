@@ -17,9 +17,9 @@ export function insertStarterTemplate(doc: Doc, markdown: string): Tx | null {
 }
 
 /** Same as insertStarterTemplate for already-parsed seeds (e.g. a staged Word import). */
-export function insertStarterBlocks(doc: Doc, seeds: MdBlock[]): Tx | null {
+export function insertStarterBlocks(doc: Doc, seeds: MdBlock[], allowUploadedImages = false): Tx | null {
   if (!isEmptyStarterDocument(doc)) return null;
-  if (!seeds.length || seeds.some((s) => s.type === "image" || s.type === "file")) return null;
+  if (!seeds.length || seeds.some((s) => s.type === "file" || (s.type === "image" && (!allowUploadedImages || !/^[1-9]\d*$/.test(s.props.fileId ?? "") || !!s.props.url || !!s.props.importImageId)))) return null;
   const tx = new Tx(doc);
   let after: OpId | null = doc.hasBlock(TITLE) ? TITLE : null;
   for (const seed of seeds) {
