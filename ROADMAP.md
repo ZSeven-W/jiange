@@ -126,3 +126,8 @@
 - [表格工具栏](https://www.feishu.cn/hc/zh-CN/articles/594614613907-%E4%BD%BF%E7%94%A8%E8%A1%A8%E6%A0%BC%E7%9A%84%E5%B7%A5%E5%85%B7%E6%A0%8F)、[表格函数](https://www.feishu.cn/hc/zh-CN/articles/360025092793-%E4%BD%BF%E7%94%A8%E8%A1%A8%E6%A0%BC%E5%87%BD%E6%95%B0)、[幻灯片入门](https://www.feishu.cn/hc/en-US/articles/047096658995-get-started-with-slides)。
 - [画板中的思维导图](https://www.feishu.cn/hc/zh-CN/articles/728977871585-%E5%9C%A8%E7%94%BB%E6%9D%BF%E4%B8%AD%E6%8F%92%E5%85%A5%E6%80%9D%E7%BB%B4%E5%AF%BC%E5%9B%BE)、[知识库权限](https://www.feishu.cn/hc/zh-CN/articles/821998241087)、[智能纪要](https://www.feishu.cn/hc/zh-CN/articles/244959839578)。
 - 当前代码与既有证据：`README.md`、`docs/FEISHU_DOCS_GAP_ANALYSIS.md`、`docs/FEISHU_DOCS_VISUAL_REPORT.md`、`spec/PROTOCOL.md`、`packages/collab/`、`server/collab/`。先核对实际 HEAD、文件和测试，勿将历史截图/旧状态当成当前完成证明。
+
+## 2026-11-13：仪表盘移动端补充
+
+- [x] 数据表与仪表盘手机入口、窄屏统计卡片、自适应分布图；同名成员按 ID 分别统计，非法数字不污染汇总。390×690 模拟视口与合成数据截图见 `docs/FEISHU_DOCS_VISUAL_REPORT.md`。
+- [ ] 对照实际飞书实现可配置的仪表盘图表、布局与持久化；补真机触控、筛选范围、权限与协作验证。当前移动端导航与统计卡片不是飞书一比一复刻。

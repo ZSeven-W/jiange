@@ -261,6 +261,11 @@ export function BasePage({ id }: { id: number }) {
           {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />{t("工作流")}</button>}
           {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
         </aside>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <nav aria-label={t("多维表格导航")} className="flex shrink-0 gap-1 border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
+            <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
+            <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+          </nav>
         {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
         <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", pane === "dashboard" && "hidden")}>
           <div className="flex min-h-0 flex-1 flex-col bg-surface">
@@ -382,9 +387,6 @@ export function BasePage({ id }: { id: number }) {
       {current?.type === "gantt" && (
         <Gantt baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} startFieldId={cfg.group} onMutate={refresh} onOpen={(r) => setDetailRecord(r.id)} />
       )}
-      {autoOpen && (
-        <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />
-      )}
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         const at = records.findIndex((r) => r.id === detailRecord);
@@ -432,7 +434,9 @@ export function BasePage({ id }: { id: number }) {
       ) : null}
           </div>
         </div>
+        </div>
       </div>
+      {autoOpen && <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />}
       {sharing && <ShareDialog meta={base} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
     </div>
   );

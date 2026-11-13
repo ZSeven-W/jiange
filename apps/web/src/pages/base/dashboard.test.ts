@@ -29,6 +29,17 @@ describe("dashboard stats", () => {
   });
   it("buckets person fields per member, counting multi-member cells once each", () => {
     const s = dashboardStats(recs, fields, members);
-    expect(s.selects[1].buckets).toEqual([{ key: "张三", count: 2 }, { key: "李四", count: 1 }, { key: "", count: 1 }]);
+    expect(s.selects[1].buckets).toEqual([{ key: "张三", count: 2, memberId: 7 }, { key: "李四", count: 1, memberId: 9 }, { key: "", count: 1 }]);
+  });
+  it("keeps same-named members separate and counts a repeated member only once per record", () => {
+    const sameNames = [{ ...members[0], name: "小李" }, { ...members[1], name: "小李" }];
+    const records = [{ ...recs[0], cells: { 5: [7, 7, 9] } }, { ...recs[1], cells: { 5: 7 } }];
+    expect(dashboardStats(records, fields, sameNames).selects[1].buckets).toEqual([
+      { key: "小李 (#7)", count: 2, memberId: 7 }, { key: "小李 (#9)", count: 1, memberId: 9 },
+    ]);
+  });
+  it("does not allow invalid numeric values to corrupt totals", () => {
+    const records = [{ ...recs[0], cells: { 3: Infinity } }, { ...recs[1], cells: { 3: 3 } }];
+    expect(dashboardStats(records, fields, members).numbers[0]).toMatchObject({ sum: 3, avg: 3, filled: 1 });
   });
 });

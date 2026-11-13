@@ -70,6 +70,8 @@ export const en: Record<string, string> = {
   "今天": "Today",
   "从协作开始。": "start with collaboration.",
   "仪表盘": "Dashboard",
+  "多维表格导航": "Bitable navigation",
+  "统计你有权访问的全部记录": "Statistics for all records you can access",
   "任一条件（或）": "Any condition (OR)",
   "任何人可读": "Anyone with the link",
   "企业微信": "WeCom",
