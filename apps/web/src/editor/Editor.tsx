@@ -40,14 +40,14 @@ import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
 import { AIBlockPanel } from "./AIPanel";
-import { FlowchartBlock, type FlowPeer, type FlowPresence, type FlowUpload } from "./flowchart/FlowchartBlock";
+import { FlowchartBlock, type FlowPeer, type FlowPresence, type FlowUpload, type FlowAssets } from "./flowchart/FlowchartBlock";
 import { flowOpenRequests } from "./flowchart/openRequests";
 import { flowIntentWrites, readFlow, type FlowChangeOutcome, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
-import { linkApi } from "@/lib/api";
+import { ApiError, linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import { parseMerges, type CellRange, type Merge, type Widths } from "./tableOps";
@@ -68,6 +68,7 @@ import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSaf
 import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboardPayload";
+import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboardAssets";
 import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
@@ -112,6 +113,7 @@ interface Props {
   people?: MemberInfo[];
   /** stores a file and returns its id; enables image/file blocks */
   upload?: (f: File, onProgress?: (percent: number) => void) => Promise<Uploaded>;
+  copyClipboardAssets?: (sourceDocId: number, fileIds: number[], requestId: string, signal: AbortSignal) => Promise<{ mapping: Record<string, number> }>;
   me: Presence;
   /** unresolved comments anchor-highlighted in the text */
   comments?: Comment[];
@@ -145,7 +147,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -160,6 +162,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const copyBlockedRef = useRef(!!onCopyBlock);
   copyBlockedRef.current = !!onCopyBlock;
   const blockClipboardBusy = useRef(false);
+  const copyClipboardAssetsRef = useRef(copyClipboardAssets);
+  copyClipboardAssetsRef.current = copyClipboardAssets;
+  const assetPasteController = useRef<AbortController | null>(null);
+  const assetPasteRetry = useRef<{ key: string; requestId: string } | null>(null);
+  useEffect(() => () => { assetPasteController.current?.abort(); assetPasteController.current = null; assetPasteRetry.current = null; }, [sync.client]);
   const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction; range?: { start: number; end: number } } | null>(null);
   const aiRangeText = useRef("");
   const [flowAutoOpen, setFlowAutoOpen] = useState<string | null>(null);
@@ -583,7 +590,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           if (!multi && CLIPPABLE_BLOCKS.has(info.type)) {
             if (copyBlockedRef.current || blockClipboardBusy.current) return;
             if (action.kind === "cut" && (!sync.client.caughtUp || sync.client.status !== "synced")) { setToast("请等待文档同步完成后剪切，原内容已保留。"); return; }
-            const source: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [] }];
+            const source: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [], source: { origin: location.origin, docId: sync.client.docId } }];
             const serialized = JSON.stringify(source);
             if (serialized.length > 2 * 1024 * 1024) { setToast("块内容过大，原内容已保留。"); return; }
             const clip = clipboardBlocks(serialized, "");
@@ -1494,7 +1501,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) { if (cut) { e.preventDefault(); setColumnNotice("暂不支持跨栏剪切，请在同一栏内选择内容。"); } return; }
     e.preventDefault();
-    const clip = copyRange(d, s);
+    const clip = copyRange(d, s).map((block) => ({ ...block, source: { origin: location.origin, docId: sync.client.docId } }));
     e.clipboardData.setData("text/plain", clipText(clip));
     e.clipboardData.setData(CLIP_MIME, JSON.stringify(clip));
     if (cut) run((tx, s2) => deleteRange(tx, s2));
@@ -1543,6 +1550,53 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     }
     const clip = clipboardBlocks(raw, plain);
     if (!clip) { setColumnNotice("剪贴板中没有可粘贴的内容，原内容已保留。"); return; }
+    const assetPlan = planClipboardAssets(clip, location.origin);
+    if (!assetPlan.ok) { setColumnNotice(assetPlan.message); return; }
+    if (assetPlan.assets) {
+      const assets = assetPlan.assets, copy = copyClipboardAssetsRef.current, client = sync.client, d = client.doc, selection = sel.current;
+      if (!copy || !d || !selection || !validEditorSelection(d, selection) || readOnlyRef.current || !client.caughtUp || client.status !== "synced") { setColumnNotice("当前无法安全复制附件，请确认编辑权限和同步状态。"); return; }
+      if (assetPasteController.current) { setColumnNotice("正在处理上一次附件粘贴，请稍候。"); return; }
+      const captured: Sel = { a: { b: { ...selection.a.b }, o: selection.a.o }, f: { b: { ...selection.f.b }, o: selection.f.o } };
+      let before: Uint8Array;
+      try { before = d.encodeState(); } catch { setColumnNotice("无法确认文档状态，原内容已保留。"); return; }
+      const key = JSON.stringify([assets.sourceDocId, assets.fileIds]);
+      let requestId = assetPasteRetry.current?.key === key ? assetPasteRetry.current.requestId : "";
+      if (!requestId) {
+        try { const random = crypto.getRandomValues(new Uint8Array(16)); requestId = Array.from(random, (v) => v.toString(16).padStart(2, "0")).join(""); }
+        catch { setColumnNotice("无法创建安全的粘贴请求，原内容已保留。"); return; }
+        assetPasteRetry.current = { key, requestId };
+      }
+      const controller = new AbortController();
+      assetPasteController.current = controller;
+      const stillCurrent = () => {
+        const selected = sel.current;
+        if (!mounted.current || currentClient.current !== client || client.doc !== d || readOnlyRef.current || !copyClipboardAssetsRef.current || !client.caughtUp || client.status !== "synced" || !selected || !eqId(selected.a.b, captured.a.b) || selected.a.o !== captured.a.o || !eqId(selected.f.b, captured.f.b) || selected.f.o !== captured.f.o || !validEditorSelection(d, captured)) return false;
+        try { const now = d.encodeState(); return before.length === now.length && !before.some((v, i) => v !== now[i]); } catch { return false; }
+      };
+      changeSlash(null);
+      setColumnNotice("正在复制附件并准备粘贴…");
+      void (async () => {
+        try {
+          const mapped = await copyClipboardAssetsWithRetry(copy, clip, assets, requestId, client.docId, controller.signal, stillCurrent);
+          if (!stillCurrent()) { if (mounted.current && currentClient.current === client) setColumnNotice("文档或选区已变化，未粘贴；请重新选择位置后再试。"); return; }
+          sel.current = captured;
+          run((tx, s) => {
+            let at = collapsed(s) ? s.a : deleteRange(tx, s);
+            if (isSourceBlock(tx.doc, at.b)) at = { b: tx.create("paragraph", at.b, tx.doc.blockInfo(at.b).parent), o: 0 };
+            return pasteBlocks(tx, at, mapped);
+          });
+          assetPasteRetry.current = null;
+          setColumnNotice("");
+          um.seal();
+        } catch (error) {
+          if (!mounted.current || currentClient.current !== client) return;
+          if (!stillCurrent()) setColumnNotice("文档或选区已变化，未粘贴；请重新选择位置后再试。");
+          else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) setColumnNotice(error.message || "无权复制源附件，原内容已保留。");
+          else setColumnNotice("无法确认附件复制结果，原内容已保留；在此页面再次粘贴可安全重试。");
+        } finally { if (assetPasteController.current === controller) assetPasteController.current = null; }
+      })();
+      return;
+    }
     run((tx, s) => {
       let at = collapsed(s) ? s.a : deleteRange(tx, s);
       if (isSourceBlock(tx.doc, at.b)) at = { b: tx.create("paragraph", at.b, tx.doc.blockInfo(at.b).parent), o: 0 };
@@ -1886,6 +1940,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 flowAI={ai && !onCopyBlock ? ai : undefined}
                 flowAutoOpen={flowAutoOpen === k || flowOpenRequests.has(k)}
                 flowUpload={!readOnly && upload ? upload : undefined}
+                flowAssets={{ docId: sync.client.docId, copy: copyClipboardAssets }}
                 flowPeers={doc.blockInfo(b).type === "flowchart" ? sync.peers.filter((p) => p.state.flow?.block === k).map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, x: p.state.flow?.x, y: p.state.flow?.y, sel: Array.isArray(p.state.flow?.sel) ? p.state.flow!.sel : undefined })) : undefined}
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
@@ -2145,6 +2200,7 @@ interface BlockProps {
   onFlowPresence?: (p: FlowPresence | null) => void;
   onFlowComment?: (quote: string) => void;
   flowUpload?: FlowUpload;
+  flowAssets?: FlowAssets;
   /** columns 容器：渲染其子块（每栏一个） */
   childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
   columnRemount?: Record<string, number>;
@@ -2197,7 +2253,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2311,7 +2367,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       </span>
       {type === "flowchart" && (
         <div className="my-2">
-          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} upload={flowUpload} />
+          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} upload={flowUpload} assets={flowAssets} canCopy={canCopy} />
         </div>
       )}
       {type === "diagram" ? (

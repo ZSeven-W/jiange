@@ -140,7 +140,7 @@ export function clipboardBlocks(raw: string, plain: string): ClipBlock[] | null 
     try {
       const value: unknown = JSON.parse(raw);
       if (Array.isArray(value) && value.length > 0 && value.every((block) =>
-        block && typeof block === "object" && typeof block.type === "string" && !!block.type && stringRecord(block.props) && Array.isArray(block.chars) && block.chars.every((char: unknown) => {
+        block && typeof block === "object" && typeof block.type === "string" && !!block.type && stringRecord(block.props) && (block.source === undefined || !!block.source && typeof block.source === "object" && typeof block.source.origin === "string" && block.source.origin.length <= 512 && Number.isSafeInteger(block.source.docId) && block.source.docId > 0) && Array.isArray(block.chars) && block.chars.every((char: unknown) => {
           if (!char || typeof char !== "object") return false;
           const item = char as { ch?: unknown; marks?: unknown };
           return typeof item.ch === "string" && [...item.ch].length === 1 && stringRecord(item.marks);

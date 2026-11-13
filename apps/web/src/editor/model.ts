@@ -316,6 +316,8 @@ export interface ClipBlock {
   type: string;
   props: Record<string, string>;
   chars: { ch: string; marks: Record<string, string> }[];
+  /** Provenance is required before copying attachment references across documents. */
+  source?: { origin: string; docId: number };
 }
 
 export function copyRange(doc: Doc, sel: Sel): ClipBlock[] {

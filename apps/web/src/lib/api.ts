@@ -459,6 +459,8 @@ export const docsApi = {
     if (!response.ok) throw new ApiError(response.status, data.error ?? "error", data.message ?? response.statusText);
     return data as FileMeta;
   },
+  copyClipboardAssets: (id: number, sourceDocId: number, fileIds: number[], requestId: string, userId: number, signal: AbortSignal) =>
+    request<{ mapping: Record<string, number> }>("POST", `/api/docs/${id}/clipboard-assets`, { sourceDocId, fileIds, requestId }, signal, { "X-Jiange-User-Id": String(userId) }),
   versions: (id: number) => request<{ versions: Version[] }>("GET", `/api/docs/${id}/versions`).then((r) => r.versions),
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
   versionPreview: (id: number, seq: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`),

@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/shared":                                     s.sharedWithMe,
 		"POST /api/docs/{id}/files":                           s.uploadFile,
 		"POST /api/docs/{id}/import-images":                   s.uploadImportImage,
+		"POST /api/docs/{id}/clipboard-assets":                s.copyClipboardAssets,
 		"POST /api/slides/{id}/images":                        s.uploadSlidesImage,
 		"GET /api/files/{id}":                                 s.getFile,
 		"DELETE /api/files/{id}":                              s.deleteFile,

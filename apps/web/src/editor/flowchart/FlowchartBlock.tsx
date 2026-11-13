@@ -9,6 +9,8 @@ import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
 import { fitInsertedImage, pinchViewport, placeSelectionToolbar, type FlowPoint, type FlowViewport } from "./viewport";
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
+import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
+import type { ClipBlock } from "../model";
 
 /* ---------------- rendering ---------------- */
 
@@ -207,8 +209,9 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
 
 /** 文档内的流程图块：预览 + 打开全屏编辑器（对应飞书在文档中打开画板）。 */
 export type FlowUpload = (f: File) => Promise<{ id: number; name: string; mime: string }>;
+export type FlowAssets = { docId: number; copy?: (sourceDocId: number, fileIds: number[], requestId: string, signal: AbortSignal) => Promise<{ mapping: Record<string, number> }> };
 
-export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment, upload }: {
+export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment, upload, assets, canCopy = true }: {
   graph: FlowGraph; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
@@ -216,6 +219,8 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
   upload?: FlowUpload;
+  assets?: FlowAssets;
+  canCopy?: boolean;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
@@ -224,7 +229,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
     {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
-    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} upload={upload} />}
+    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} upload={upload} assets={assets} canCopy={canCopy} />}
   </div>;
 }
 
@@ -245,7 +250,7 @@ type Drag =
 export interface FlowPeer { id: number; name: string; color: string; x?: number; y?: number; sel?: string[] }
 export interface FlowPresence { x?: number; y?: number; sel?: string[] }
 
-type FlowClip = { nodes: FlowNode[]; edges: FlowEdge[] };
+type FlowClip = { nodes: FlowNode[]; edges: FlowEdge[]; source?: { origin: string; docId: number } };
 type FlowHistory = { before: FlowGraph; after: FlowGraph };
 const CLIP_MARK = "jiange-flowchart:";
 /** In-app clipboard so copy/paste works between flowchart blocks even without clipboard permission. */
@@ -254,7 +259,7 @@ type Guide = { x1: number; y1: number; x2: number; y2: number };
 
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
 
-export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, upload }: {
+export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, upload, assets, canCopy = true }: {
   initial: FlowGraph; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
@@ -263,6 +268,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
   upload?: FlowUpload;
+  assets?: FlowAssets;
+  canCopy?: boolean;
 }) {
   const [graph, setGraph] = useState(initial);
   const [undo, setUndo] = useState<FlowHistory[]>([]);
@@ -308,11 +315,15 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
   const space = useRef(false);
   const pasteCount = useRef(0);
+  const assetPaste = useRef<AbortController | null>(null);
+  const assetRetry = useRef<{ key: string; id: string } | null>(null);
+  useEffect(() => () => { assetPaste.current?.abort(); }, []);
   // 协作感知：广播指针位置与选中对象（节流），离开时清空。
   const presence = useRef<{ x?: number; y?: number; t: number }>({ t: 0 });
   const presenceRef = useRef(onPresence);
   presenceRef.current = onPresence;
   const selectedKey = [...selected].sort().join(",");
+  const selectedKeyRef = useRef(selectedKey); selectedKeyRef.current = selectedKey;
   useEffect(() => { presenceRef.current?.({ x: presence.current.x, y: presence.current.y, sel: selectedKey ? selectedKey.split(",").slice(0, 50) : [] }); }, [selectedKey]);
   useEffect(() => () => presenceRef.current?.(null), []);
   const trackPointer = (clientX: number, clientY: number) => {
@@ -405,7 +416,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const clipOfSelection = (): FlowClip | null => {
     const ids = new Set(graph.nodes.filter((n) => selected.has(n.id)).map((n) => n.id));
     if (!ids.size) return null;
-    return { nodes: graph.nodes.filter((n) => ids.has(n.id)), edges: graph.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
+    return { nodes: graph.nodes.filter((n) => ids.has(n.id)), edges: graph.edges.filter((e) => ids.has(e.from) && ids.has(e.to)), ...(assets ? { source: { origin: location.origin, docId: assets.docId } } : {}) };
   };
   const pasteClip = (clip: FlowClip, offset: number) => {
     const map = new Map(clip.nodes.map((n) => [n.id, newFlowId("n")]));
@@ -459,6 +470,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (inField(e.target)) return;
       const c = clipOfSelection();
       if (!c) return;
+      if (!canCopy) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
       flowClipboard = c;
       e.clipboardData?.setData("text/plain", CLIP_MARK + JSON.stringify(c));
       e.preventDefault(); e.stopPropagation();
@@ -473,8 +485,41 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       pasteCount.current += 1;
       if (text.startsWith(CLIP_MARK) || (!text && flowClipboard)) {
         let clip = flowClipboard;
-        try { if (text) { const raw = JSON.parse(text.slice(CLIP_MARK.length)) as { nodes?: unknown[]; edges?: unknown[] }; clip = { nodes: (raw.nodes ?? []).map((n) => normalizeNode(n)).filter((n): n is FlowNode => !!n), edges: (raw.edges ?? []).map((x) => normalizeEdge(x)).filter((x): x is FlowEdge => !!x) }; } } catch { /* fall back to the in-app clipboard */ }
-        if (clip?.nodes.length) pasteClip(clip, 24 * pasteCount.current);
+        try {
+          if (text) {
+            const raw = JSON.parse(text.slice(CLIP_MARK.length)) as FlowClip;
+            if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges)) throw new Error("invalid clip");
+            clip = { nodes: raw.nodes.map((n) => normalizeNode(n)).filter((n): n is FlowNode => !!n), edges: raw.edges.map((x) => normalizeEdge(x)).filter((x): x is FlowEdge => !!x), source: raw.source };
+          }
+        } catch { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; }
+        if (!clip?.nodes.length) return;
+        const block: ClipBlock = { type: "flowchart", props: Object.fromEntries(clip.nodes.map((n) => [`fc.n.${n.id}`, JSON.stringify(n)])), chars: [], source: clip.source };
+        const plan = planClipboardAssets([block], location.origin);
+        if (!plan.ok) { setNotice({ ok: false, text: plan.message }); return; }
+        if (!plan.assets) { pasteClip(clip, 24 * pasteCount.current); return; }
+        if (!assets?.copy || assetPaste.current) { setNotice({ ok: false, text: "当前无法安全复制图片，请确认编辑权限并稍后重试。" }); return; }
+        const copy = assets.copy, source = clip, offset = 24 * pasteCount.current, snapshot = JSON.stringify(graphRef.current), selection = selectedKeyRef.current;
+        const key = JSON.stringify([plan.assets.sourceDocId, plan.assets.fileIds]);
+        let requestId = assetRetry.current?.key === key ? assetRetry.current.id : "";
+        if (!requestId) {
+          try { requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (v) => v.toString(16).padStart(2, "0")).join(""); }
+          catch { setNotice({ ok: false, text: "无法创建安全的粘贴请求。" }); return; }
+          assetRetry.current = { key, id: requestId };
+        }
+        const controller = new AbortController(); assetPaste.current = controller;
+        const stillCurrent = () => !controller.signal.aborted && editableRef.current && selectedKeyRef.current === selection && JSON.stringify(graphRef.current) === snapshot;
+        setNotice({ ok: true, text: "正在复制图片…" });
+        void (async () => {
+          try {
+            const [mapped] = await copyClipboardAssetsWithRetry(copy, [block], plan.assets!, requestId, assets.docId, controller.signal, stillCurrent);
+            if (!stillCurrent()) return;
+            const nodes = source.nodes.map((node) => normalizeNode(JSON.parse(mapped.props[`fc.n.${node.id}`]))).filter((node): node is FlowNode => !!node);
+            if (nodes.length !== source.nodes.length) throw new Error("invalid nodes");
+            pasteClip({ ...source, nodes }, offset); assetRetry.current = null; setNotice(null);
+          } catch {
+            if (!controller.signal.aborted) setNotice({ ok: false, text: stillCurrent() ? "无法确认图片复制结果，可再次粘贴重试。" : "画板已变化，未粘贴；请重新选择后再试。" });
+          } finally { if (assetPaste.current === controller) assetPaste.current = null; }
+        })();
         return;
       }
       if (/<mxfile|<mxGraphModel/.test(text)) { void importDrawioText(text); return; }

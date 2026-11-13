@@ -37,6 +37,7 @@ type Memory struct {
 	links            map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
 	automations      []Automation
 	nextAutomationID int64
+	clipboardCopies  map[clipboardCopyKey]clipboardCopyResult
 }
 
 func NewMemory() *Memory {

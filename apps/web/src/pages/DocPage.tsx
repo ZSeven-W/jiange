@@ -872,6 +872,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
                 upload={canEditContent ? (f, progress) => docsApi.upload(id, f, progress) : undefined}
+                copyClipboardAssets={canEditContent ? (source, ids, request, signal) => docsApi.copyClipboardAssets(id, source, ids, request, me.user.id, signal) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}
                 activeThread={activeThread}
                 onActivateThread={(cid) => {
