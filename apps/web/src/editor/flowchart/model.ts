@@ -16,6 +16,7 @@ export type EdgeKind = "orthogonal" | "straight" | "curve";
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
+export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean };
 
 export const FC_VERSION = "fc.v";
 export const FC_THEME = "fc.theme";
@@ -176,6 +177,101 @@ export function flowWrites(props: Record<string, string>, next: FlowGraph): Reco
     if (key.startsWith("fc.e.") && !seenE.has(key.slice(5))) writes[key] = "";
   }
   return writes;
+}
+
+export type FlowIntentResult = { writes: Record<string, string>; conflicts: string[] };
+
+/**
+ * Apply only the objects changed between the editor's base and proposed graph.
+ * If a touched object changed remotely, keep the remote value and report the
+ * local intent instead of silently overwriting it.
+ */
+export function flowIntentWrites(props: Record<string, string>, base: FlowGraph, next: FlowGraph): FlowIntentResult {
+  const writes: Record<string, string> = {}, conflicts = new Set<string>();
+  const oldNodes = new Map(base.nodes.map((n) => [n.id, n]));
+  const newNodes = new Map(next.nodes.map((n) => [n.id, n]));
+  const oldEdges = new Map(base.edges.map((e) => [e.id, e]));
+  const newEdges = new Map(next.edges.map((e) => [e.id, e]));
+  const nodeIDs = new Set([...oldNodes.keys(), ...newNodes.keys()]);
+  const current = readFlow(props);
+  const blockedNodes = new Set<string>();
+  const stored = (key: string, kind: "n" | "e", id: string) => canonicalStored(props[key], kind, id);
+  const malformed = (key: string, value: string | null) => !!props[key] && value === null;
+  const edgesByNode = new Map<string, FlowEdge[]>();
+  for (const [key, raw] of Object.entries(props)) {
+    if (!key.startsWith("fc.e.") || !raw) continue;
+    let edge: FlowEdge | null = null;
+    try { edge = normalizeEdge(JSON.parse(raw), key.slice(5)); } catch { /* preserve unreadable objects */ }
+    if (!edge) continue;
+    for (const id of new Set([edge.from, edge.to])) {
+      const list = edgesByNode.get(id) ?? [];
+      list.push(edge); edgesByNode.set(id, list);
+    }
+  }
+
+  // Detect all touched-node conflicts before applying dependent deletions.
+  for (const id of nodeIDs) {
+    const beforeNode = oldNodes.get(id), nextNode = newNodes.get(id), key = nodeKey(id);
+    const before = beforeNode ? canonicalNode(beforeNode) : null, after = nextNode ? canonicalNode(nextNode) : null;
+    if (before === after) continue;
+    const now = stored(key, "n", id);
+    if (malformed(key, now) || (now !== before && now !== after)) { blockedNodes.add(id); conflicts.add(key); }
+  }
+
+  for (const [id, node] of oldNodes) {
+    if (newNodes.has(id) || blockedNodes.has(id)) continue;
+    const key = nodeKey(id), before = canonicalNode(node), now = stored(key, "n", id);
+    if (malformed(key, now) || (now !== null && now !== before)) { blockedNodes.add(id); conflicts.add(key); continue; }
+    for (const edge of edgesByNode.get(id) ?? []) {
+      const prior = oldEdges.get(edge.id);
+      if (!prior || newEdges.has(edge.id) || canonicalEdge(prior) !== canonicalEdge(edge)) { blockedNodes.add(id); conflicts.add(key); break; }
+    }
+  }
+
+  // A rejected endpoint deletion also protects the other locally deleted
+  // endpoint; otherwise an unchanged connecting edge would become dangling.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const edge of oldEdges.values()) {
+      if (newEdges.has(edge.id)) continue;
+      for (const [id, other] of [[edge.from, edge.to], [edge.to, edge.from]]) {
+        if (blockedNodes.has(other) && oldNodes.has(id) && !newNodes.has(id) && !blockedNodes.has(id)) {
+          blockedNodes.add(id); conflicts.add(nodeKey(id)); changed = true;
+        }
+      }
+    }
+  }
+
+  for (const id of nodeIDs) {
+    const beforeNode = oldNodes.get(id), nextNode = newNodes.get(id), key = nodeKey(id);
+    const before = beforeNode ? canonicalNode(beforeNode) : null, after = nextNode ? canonicalNode(nextNode) : null;
+    if (before === after || blockedNodes.has(id)) continue;
+    const now = stored(key, "n", id);
+    if (now !== after) writes[key] = after ?? "";
+  }
+
+  const effectiveNodes = new Set(current.nodes.map((n) => n.id));
+  for (const [key, value] of Object.entries(writes)) if (key.startsWith("fc.n.")) { if (value) effectiveNodes.add(key.slice(5)); else effectiveNodes.delete(key.slice(5)); }
+  const edgeIDs = new Set([...oldEdges.keys(), ...newEdges.keys()]);
+  for (const id of edgeIDs) {
+    const beforeEdge = oldEdges.get(id), nextEdge = newEdges.get(id), key = edgeKey(id);
+    const before = beforeEdge ? canonicalEdge(beforeEdge) : null, after = nextEdge ? canonicalEdge(nextEdge) : null;
+    if (before === after) continue;
+    if (!nextEdge && beforeEdge && (blockedNodes.has(beforeEdge.from) || blockedNodes.has(beforeEdge.to))) { conflicts.add(key); continue; }
+    if (nextEdge && (!effectiveNodes.has(nextEdge.from) || !effectiveNodes.has(nextEdge.to) || blockedNodes.has(nextEdge.from) || blockedNodes.has(nextEdge.to))) { conflicts.add(key); continue; }
+    const now = stored(key, "e", id);
+    if (malformed(key, now) || (now !== before && now !== after)) { conflicts.add(key); continue; }
+    if (now !== after) writes[key] = after ?? "";
+  }
+
+  if (base.theme !== next.theme) {
+    const now = themeOf(props[FC_THEME]).id;
+    if (now !== base.theme && now !== next.theme) conflicts.add(FC_THEME);
+    else if (now !== next.theme) writes[FC_THEME] = next.theme;
+  }
+  if (Object.keys(writes).length && props[FC_VERSION] !== "1") writes[FC_VERSION] = "1";
+  return { writes, conflicts: [...conflicts] };
 }
 
 let counter = 0;

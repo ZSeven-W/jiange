@@ -42,7 +42,7 @@ import { CodeLineNumbers } from "./CodeLineNumbers";
 import { AIBlockPanel } from "./AIPanel";
 import { FlowchartBlock, type FlowPeer, type FlowPresence, type FlowUpload } from "./flowchart/FlowchartBlock";
 import { flowOpenRequests } from "./flowchart/openRequests";
-import { flowWrites, readFlow, type FlowGraph } from "./flowchart/model";
+import { flowIntentWrites, readFlow, type FlowChangeOutcome, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./LinkCard";
@@ -1832,18 +1832,21 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 flowPeers={doc.blockInfo(b).type === "flowchart" ? sync.peers.filter((p) => p.state.flow?.block === k).map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, x: p.state.flow?.x, y: p.state.flow?.y, sel: Array.isArray(p.state.flow?.sel) ? p.state.flow!.sel : undefined })) : undefined}
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
-                onFlowChange={readOnly ? undefined : (graph) => {
-                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return;
+                onFlowChange={readOnly ? undefined : (graph, base) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return { graph: base, conflicts: ["document"], applied: false };
                   if (flowAutoOpen === k) setFlowAutoOpen(null);
                   const tx = new Tx(doc);
-                  for (const [key, value] of Object.entries(flowWrites(doc.blockInfo(b).props, graph))) tx.setProp(b, key, value);
-                  if (!tx.ops.length) return;
-                  um.seal();
-                  um.record(tx, sel.current, sel.current, "prop");
-                  sync.client.push(tx.ops);
-                  um.seal();
-                  force((x) => x + 1);
+                  const intent = flowIntentWrites(doc.blockInfo(b).props, base, graph);
+                  for (const [key, value] of Object.entries(intent.writes)) tx.setProp(b, key, value);
+                  if (tx.ops.length) {
+                    um.seal();
+                    um.record(tx, sel.current, sel.current, "prop");
+                    sync.client.push(tx.ops);
+                    um.seal();
+                    force((x) => x + 1);
+                  }
                   // No publish(): it would drop the flowchart pointer/selection presence.
+                  return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0 };
                 }}
                 onTableChange={readOnly ? undefined : (rows, merges, widths) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
@@ -2078,7 +2081,7 @@ const BLOCK_CLASS: Record<string, string> = {
 
 interface BlockProps {
   /** 流程图块：写回图（逐对象属性）；未提供表示只读。 */
-  onFlowChange?: (graph: FlowGraph) => void;
+  onFlowChange?: (graph: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
   flowAI?: (messages: AIMessage[]) => Promise<string>;
   flowAutoOpen?: boolean;
   flowPeers?: FlowPeer[];

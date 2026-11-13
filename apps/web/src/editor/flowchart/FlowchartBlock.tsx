@@ -3,11 +3,12 @@ import { createPortal } from "react-dom";
 import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
-import { autoLayout, bounds, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
+import { autoLayout, bounds, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
 import { fitInsertedImage, pinchViewport, placeSelectionToolbar, type FlowPoint, type FlowViewport } from "./viewport";
+import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 
 /* ---------------- rendering ---------------- */
 
@@ -210,7 +211,7 @@ export type FlowUpload = (f: File) => Promise<{ id: number; name: string; mime: 
 export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment, upload }: {
   graph: FlowGraph; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
-  onChange?: (next: FlowGraph) => void;
+  onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
@@ -245,6 +246,7 @@ export interface FlowPeer { id: number; name: string; color: string; x?: number;
 export interface FlowPresence { x?: number; y?: number; sel?: string[] }
 
 type FlowClip = { nodes: FlowNode[]; edges: FlowEdge[] };
+type FlowHistory = { before: FlowGraph; after: FlowGraph };
 const CLIP_MARK = "jiange-flowchart:";
 /** In-app clipboard so copy/paste works between flowchart blocks even without clipboard permission. */
 let flowClipboard: FlowClip | null = null;
@@ -255,7 +257,7 @@ const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8
 export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, upload }: {
   initial: FlowGraph; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
-  onChange?: (next: FlowGraph) => void;
+  onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
   onClose: () => void;
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
@@ -263,8 +265,37 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   upload?: FlowUpload;
 }) {
   const [graph, setGraph] = useState(initial);
-  const [undo, setUndo] = useState<FlowGraph[]>([]);
-  const [redo, setRedo] = useState<FlowGraph[]>([]);
+  const [undo, setUndo] = useState<FlowHistory[]>([]);
+  const [redo, setRedo] = useState<FlowHistory[]>([]);
+  const [recovery, setRecovery] = useState<UnappliedFlow[]>([]);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const recoveryRef = useRef<UnappliedFlow[]>([]);
+  const recoveryBannerRef = useRef<HTMLDivElement>(null);
+  const recoveryDialogRef = useRef<HTMLDivElement>(null);
+  const [recoveryBannerHeight, setRecoveryBannerHeight] = useState(0);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (recoveryRef.current.length) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+  useEffect(() => {
+    if (!recoveryOpen || !recoveryDialogRef.current) return;
+    const dialog = recoveryDialogRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setRecoveryOpen(false); return; }
+      if (event.key !== "Tab") return;
+      const items = [...dialog.querySelectorAll<HTMLElement>("textarea,button:not([disabled])")];
+      if (!items.length) return;
+      const index = items.indexOf(document.activeElement as HTMLElement);
+      if (index < 0 || (event.shiftKey && index === 0) || (!event.shiftKey && index === items.length - 1)) {
+        event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus();
+      }
+    };
+    document.addEventListener("keydown", trap, true);
+    return () => { document.removeEventListener("keydown", trap, true); if (previous?.isConnected) previous.focus(); };
+  }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [tool, setTool] = useState<Shape | "select">("select");
@@ -325,14 +356,25 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  const submit = (base: FlowGraph, next: FlowGraph): FlowChangeOutcome => {
+    const result = readOnly ? { graph: base, conflicts: ["permission"], applied: false } : onChange?.(next, base) ?? { graph: next, conflicts: [], applied: true };
+    if (result.conflicts.length) {
+      const nextRecovery = [...recoveryRef.current, { before: base, proposed: next, conflicts: result.conflicts }];
+      recoveryRef.current = nextRecovery;
+      setRecovery(nextRecovery);
+    }
+    setGraph(result.graph); lastInitial.current = result.graph;
+    return result;
+  };
   const commit = (next: FlowGraph) => {
     if (readOnly) return;
-    setUndo((u) => [...u.slice(-99), graph]); setRedo([]);
-    setGraph(next); lastInitial.current = next; onChange?.(next);
+    const result = submit(graph, next);
+    if (result.applied) { setUndo((u) => [...u.slice(-99), { before: graph, after: next }]); setRedo([]); }
   };
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
   const commitRef = useRef(commit); commitRef.current = commit;
+  const editableRef = useRef(!readOnly); editableRef.current = !readOnly;
   const toWorld = (clientX: number, clientY: number) => {
     const r = svgWrap.current!.getBoundingClientRect();
     return { x: view.x + (clientX - r.left) / view.zoom, y: view.y + (clientY - r.top) / view.zoom };
@@ -385,6 +427,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       URL.revokeObjectURL(url);
       const { w, h } = fitInsertedImage(imageSize, size, view.zoom);
       const asset = await upload(file);
+      if (!editableRef.current) { setNotice({ ok: false, text: "编辑权限已变化，图片未插入画板。" }); return; }
       const c = at ?? { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
       const node: FlowNode = { id: newFlowId("n"), shape: "image", text: "", fileId: asset.id, x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2), w, h, z: Math.max(0, ...graphRef.current.nodes.map((n) => n.z ?? 0)) + 1 };
       const next = { ...graphRef.current, nodes: [...graphRef.current.nodes, node] };
@@ -393,12 +436,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     finally { setBusy(false); }
   };
   const nudge = (dx: number, dy: number) => commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)) });
-  const doUndo = () => { const prev = undo.at(-1); if (!prev) return; setUndo(undo.slice(0, -1)); setRedo([...redo, graph]); setGraph(prev); lastInitial.current = prev; onChange?.(prev); };
-  const doRedo = () => { const next = redo.at(-1); if (!next) return; setRedo(redo.slice(0, -1)); setUndo([...undo, graph]); setGraph(next); lastInitial.current = next; onChange?.(next); };
+  const doUndo = () => { const step = undo.at(-1); if (!step) return; submit(step.after, step.before); setUndo(undo.slice(0, -1)); setRedo([...redo, step]); };
+  const doRedo = () => { const step = redo.at(-1); if (!step) return; submit(step.before, step.after); setRedo(redo.slice(0, -1)); setUndo([...undo, step]); };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (editing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
-      if (e.key === "Escape") { if (selected.size) setSelected(new Set()); else onClose(); }
+      if (recoveryOpen || editing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
+      if (e.key === "Escape") { if (selected.size) setSelected(new Set()); else requestClose(); }
       if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); removeSelected(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !readOnly) { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelected(new Set(graph.nodes.map((n) => n.id))); }
@@ -551,19 +594,27 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
     if (d.kind === "bend" || d.kind === "waypoint") {
       const base = lastInitial.current;
-      if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { setUndo((u) => [...u.slice(-99), base]); setRedo([]); lastInitial.current = graph; onChange?.(graph); }
+      if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { const result = submit(base, graph); if (result.applied) { setUndo((u) => [...u.slice(-99), { before: base, after: graph }]); setRedo([]); } }
       return;
     }
     if (d.kind === "move" || d.kind === "resize" || d.kind === "rotate") {
-      const before = undo.length ? null : null; void before;
       // Commit the gesture result relative to the pre-drag graph.
       const base = lastInitial.current;
-      if (JSON.stringify(base.nodes) !== JSON.stringify(graph.nodes)) { setUndo((u) => [...u.slice(-99), base]); setRedo([]); lastInitial.current = graph; onChange?.(graph); }
+      if (JSON.stringify(base.nodes) !== JSON.stringify(graph.nodes)) { const result = submit(base, graph); if (result.applied) { setUndo((u) => [...u.slice(-99), { before: base, after: graph }]); setRedo([]); } }
     }
   };
 
   const selectedNodes = graph.nodes.filter((n) => selected.has(n.id));
   const selectedEdges = graph.edges.filter((e) => selected.has(e.id));
+  useEffect(() => {
+    const node = recoveryBannerRef.current;
+    if (!node) return;
+    const measure = () => setRecoveryBannerHeight(node.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [recovery.length, compact]);
   useEffect(() => {
     const node = styleBarRef.current;
     if (!node) return;
@@ -579,10 +630,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const editEdge = editing?.kind === "edge" ? graph.edges.find((x) => x.id === editing.id) : null;
   const finishEdit = () => {
     if (!editing) return;
-    if (editing.kind === "node" && editNode && editNode.text !== editing.value) commit({ ...graph, nodes: graph.nodes.map((n) => (n.id === editing.id ? { ...n, text: editing.value.slice(0, 500), w: Math.max(n.w, n.shape === "text" ? measureLabel(editing.value, n.w) : n.w) } : n)) });
-    if (editing.kind === "edge" && editEdge && (editEdge.label ?? "") !== editing.value) commit({ ...graph, edges: graph.edges.map((x) => (x.id === editing.id ? { ...x, label: editing.value.slice(0, 200) || undefined } : x)) });
+    const save = (next: FlowGraph) => { if (readOnly) submit(graph, next); else commit(next); };
+    if (editing.kind === "node" && editNode && editNode.text !== editing.value) save({ ...graph, nodes: graph.nodes.map((n) => (n.id === editing.id ? { ...n, text: editing.value.slice(0, 500), w: Math.max(n.w, n.shape === "text" ? measureLabel(editing.value, n.w) : n.w) } : n)) });
+    if (editing.kind === "edge" && editEdge && (editEdge.label ?? "") !== editing.value) save({ ...graph, edges: graph.edges.map((x) => (x.id === editing.id ? { ...x, label: editing.value.slice(0, 200) || undefined } : x)) });
     setEditing(null);
   };
+  const requestClose = () => { finishEdit(); if (recoveryRef.current.length) setRecoveryOpen(true); else onClose(); };
 
   const importDrawio = async (file: File) => importDrawioText(await file.text());
   const importDrawioText = async (text: string) => {
@@ -678,12 +731,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const filteredGroups = libraryGroups.map((g) => ({ ...g, shapes: g.shapes.filter((id) => !libQuery.trim() || SHAPES.find((x) => x.id === id)!.label.includes(libQuery.trim())) })).filter((g) => g.shapes.length);
   // Floating style toolbar anchored above the selection (Feishu: shape ▾ / 填充 ▾ / 边框 ▾ / 字色 ▾ / 字号 ▾ / 更多).
   const anchorBox = selectedNodes.length ? bounds(selectedNodes) : selectedEdges.length ? (() => { const e = selectedEdges[0]; const a = graph.nodes.find((n) => n.id === e.from), t = graph.nodes.find((n) => n.id === e.to); if (!a || !t) return null; const m = edgePath(e, a, t).mid; return { x: m.x, y: m.y, w: 0, h: 0 }; })() : null;
-  const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x) * view.zoom, y: (anchorBox.y - view.y) * view.zoom - 16 * view.zoom, w: anchorBox.w * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize) : null;
+  const obstaclePadding = Math.max(12, 20 * view.zoom);
+  const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x - 16) * view.zoom, y: (anchorBox.y - view.y - 16) * view.zoom, w: (anchorBox.w + 32) * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize, graph.nodes.map((node) => ({ x: (node.x - view.x) * view.zoom - obstaclePadding, y: (node.y - view.y) * view.zoom - obstaclePadding, w: node.w * view.zoom + 2 * obstaclePadding, h: node.h * view.zoom + 2 * obstaclePadding }))) : null;
   const reserveStyleBar = compact && !readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0);
 
   return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { touchPlacement.current = null; if (drag && !["pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
-    <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
+    <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
       onTouchStart={(e) => {
         if (e.touches.length !== 2) return;
         if (e.target instanceof Element && e.target.closest("[data-flow-style-bar],[data-flow-template-picker],textarea")) return;
@@ -814,7 +868,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         <span className="ml-3 block whitespace-nowrap rounded px-1.5 py-0.5 text-[12px] text-white" style={{ background: p.color }}>{p.name}</span>
       </div>)}
       {/* 选中对象的浮动样式栏 */}
-      {!readOnly && barPos && !drag && !editing && svgWrap.current && createPortal(<div ref={styleBarRef} className={cn(floatBar, compact ? "fixed bottom-[68px] left-3 right-3 z-[90] flex-wrap [&>*]:shrink-0" : "absolute z-20 -translate-x-1/2")} style={compact ? undefined : barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
+      {!readOnly && barPos && !drag && !editing && !recoveryOpen && svgWrap.current && createPortal(<div ref={styleBarRef} className={cn(floatBar, compact ? "fixed bottom-[68px] left-3 right-3 z-[90] flex-wrap [&>*]:shrink-0" : "absolute z-20 -translate-x-1/2")} style={compact ? undefined : barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
         {compact && <button type="button" className={tb} aria-label="完成选择" onClick={() => { setSelected(new Set()); setMenu(null); }}><X size={16}/></button>}
         {compact && selectedNodes.length === 1 && selectedNodes[0].shape !== "image" && <button type="button" className={barBtn} onClick={() => setEditing({ id: selectedNodes[0].id, kind: "node", value: selectedNodes[0].text })} data-flow-edit-text>编辑文字</button>}
         {compact && selectedNodes.length === 1 && <button type="button" className={barBtn} onClick={() => { setConnectFrom(selectedNodes[0].id); setSelected(new Set()); setMenu(null); }} data-flow-connect-tap>连接图形</button>}
@@ -853,7 +907,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           {selectedEdges.some((x) => x.pts?.length || x.mid !== undefined) && <button type="button" onClick={() => patchEdges({ pts: undefined, mid: undefined })} className={barBtn} title="恢复自动走线" data-flow-clear-points>清除拐点</button>}
         </>}
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
-        {onComment && selectedNodes.length > 0 && <button type="button" className={tb} title="评论" onClick={() => { const n = selectedNodes[0]; finishEdit(); onComment(n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形"); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
+        {onComment && selectedNodes.length > 0 && <button type="button" className={tb} title="评论" onClick={() => { const n = selectedNodes[0]; finishEdit(); if (recoveryRef.current.length) { setRecoveryOpen(true); return; } onComment(n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形"); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
         <div className="relative"><button type="button" className={tb} title="更多" onClick={() => setMenu(menu === "more" ? null : "more")} data-flow-more-btn><MoreHorizontal size={16} /></button>
           {menu === "more" && <div className={cn(pop, "right-0 w-44")} data-flow-more-menu>
             {selectedNodes.length > 0 && <>
@@ -897,7 +951,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </aside>}
 
     {/* 左上：返回 */}
-    <button type="button" onClick={() => { finishEdit(); onClose(); }} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />流程图</button>
+    <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />流程图</button>
 
     {/* 右上：风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
     <div className={cn(floatBar, "absolute right-3 top-3 z-20")}>
@@ -923,6 +977,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       </div>
     </div>
     {notice && <div role={notice.ok ? "status" : "alert"} className={cn("absolute left-1/2 top-16 z-20 max-w-[520px] -translate-x-1/2 rounded-md border bg-surface px-3 py-1.5 text-[12px] shadow", notice.ok ? "text-[#1F2329]" : "text-destructive")}>{notice.text}<button type="button" className="ml-2 text-subtle" onClick={() => setNotice(null)}>×</button></div>}
+
+    {recovery.length > 0 && <div className="pointer-events-none absolute right-0 top-16 z-[95] flex justify-center px-3" style={{ left: !readOnly && library && !compact ? 260 : 0 }}><div ref={recoveryBannerRef} role="alert" className="pointer-events-auto flex w-full max-w-[480px] items-center gap-2 rounded-lg border border-[#ffd591] bg-[#fff7e6] px-3 py-2 text-[12px] text-[#7a4b00] shadow-md"><span>{recovery.some((item) => item.conflicts.includes("permission") || item.conflicts.includes("document")) ? "文档状态或编辑权限已变化" : "协作者修改了同一对象"}，部分操作未应用；原输入已暂存。</span><button type="button" className="ml-auto shrink-0 underline" onClick={() => setRecoveryOpen(true)}>查看未应用内容</button></div></div>}
+    {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="未应用的流程图内容"><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">未应用的流程图内容</h2><p className="mt-2 text-[13px] text-subtle">请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。</p><textarea aria-label="未应用内容" readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download("流程图未应用内容.json", new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>下载完整备份</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>继续编辑</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>已保留，清除暂存</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>丢弃并退出</button></div></div></div>}
 
     {/* 右下：撤销重做、缩放 */}
     <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">

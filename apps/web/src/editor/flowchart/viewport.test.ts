@@ -40,4 +40,10 @@ describe("flowchart selection toolbar", () => {
   it("keeps the toolbar visible when the selected node is offscreen", () => {
     expect(placeSelectionToolbar({ x: -200, y: -200, w: 40, h: 40 }, { w: 800, h: 700 }, { w: 300, h: 40 })).toEqual({ left: 158, top: 64 });
   });
+  it("moves beside a node when the space below contains another node", () => {
+    const anchor = { x: 350, y: 70, w: 100, h: 50 };
+    const pos = placeSelectionToolbar(anchor, { w: 1000, h: 700 }, { w: 300, h: 40 }, [anchor, { x: 330, y: 130, w: 140, h: 80 }]);
+    const left = pos.left - 150, right = pos.left + 150;
+    expect(right <= 330 || left >= 470 || pos.top + 40 <= 130 || pos.top >= 210).toBe(true);
+  });
 });
