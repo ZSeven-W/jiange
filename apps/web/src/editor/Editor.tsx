@@ -50,8 +50,8 @@ import { FileCard, fmtSize } from "./FileCard";
 import { linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
-import { parseMerges, type Merge, type Widths } from "./tableOps";
-import { planTablePaste } from "./tableClipboard";
+import { parseMerges, type CellRange, type Merge, type Widths } from "./tableOps";
+import { planTableCut, planTablePaste } from "./tableClipboard";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
@@ -67,7 +67,7 @@ import { captureCompositionSelection, resolveCompositionSelection, type Composit
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
-import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
+import { CLIP_MIME, clipboardBlocks, columnClipboardBlocks, writeBlockClipboard } from "./clipboardPayload";
 import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
@@ -75,9 +75,8 @@ import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
 import { applyTableHistory, tableHistoryGuard } from "./tableHistoryUndo";
-import { tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
+import { applyTableWrites, tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
 
-const CLIP_MIME = "application/x-jiange-blocks";
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
 export interface MentionDoc {
@@ -334,7 +333,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         const info = d.blockInfo(b);
         if (info.type !== "table") continue;
         const writes = tableRepairWrites(info.props, d.client);
-        for (const [key, value] of Object.entries(writes ?? {})) tx.setProp(b, key, value);
+        if (writes) applyTableWrites(tx, b, info.props, writes);
       }
       if (tx.ops.length) sync.client.push(tx.ops);
     }, 300 + Math.floor(Math.random() * 600));
@@ -582,11 +581,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
             // 图片/附件/表格等整块复制：经一次性 copy 事件写入块剪贴板数据。
             const clip: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [] }];
             const plain = info.props.caption || info.props.name || info.props.url || "";
-            const write = (ev: ClipboardEvent) => { ev.preventDefault(); ev.clipboardData?.setData("text/plain", plain); ev.clipboardData?.setData(CLIP_MIME, JSON.stringify(clip)); };
-            document.addEventListener("copy", write, { once: true, capture: true });
-            const ok = document.execCommand("copy");
-            document.removeEventListener("copy", write, { capture: true });
-            if (!ok) { setToast("浏览器阻止了剪贴板操作。"); return; }
+            if (!writeBlockClipboard(document, plain, clip)) { setToast("无法确认剪贴板写入，原内容已保留。"); return; }
             if (action.kind === "cut" && !readOnlyRef.current) {
               sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
               run((tx) => { tx.deleteBlock(b); return undefined; });
@@ -1730,6 +1725,29 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
             const info = doc.blockInfo(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
             const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), type: version("type") } : null;
+            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut"; range: CellRange }): string | null => {
+              if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
+              const current = doc.blockInfo(b);
+              if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
+              const beforeRows = tableRowsOf(current.props);
+              const merges = parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0);
+              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : planTableCut(beforeRows, merges, operation.range);
+              if (!result.ok) return result.message;
+              if (!result.changed) return null;
+              const tx = new Tx(doc);
+              writeTable(tx, b, current.props, result.rows, doc.client);
+              if (!tx.ops.length) return null;
+              const next = doc.propVersion(b, "tableData");
+              const key = `table:${idKey(b)}:-1:-1`;
+              tableHistory.record(sync.client, key, JSON.stringify(beforeRows), tableDataOf(doc.blockInfo(b).props), tableSnapshot.data, next ? idKey(next) : null, tableHistoryGuard(doc, b), operation.kind, Date.now(), false);
+              um.seal();
+              um.recordMarker(key, false);
+              sync.client.push(tx.ops);
+              um.seal();
+              force((x) => x + 1);
+              publish();
+              return null;
+            };
             const commentProjection = projectCommentAnchors(doc, b, comments, activeThread);
             return (
               <Block
@@ -1819,28 +1837,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   force((x) => x + 1);
                   publish();
                 }}
-                onTablePaste={readOnly ? undefined : (r, c, text) => {
-                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，未粘贴。";
-                  const current = doc.blockInfo(b);
-                  if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择后粘贴。";
-                  const beforeRows = tableRowsOf(current.props);
-                  const result = planTablePaste(beforeRows, parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0), r, c, text);
-                  if (!result.ok) return result.message;
-                  if (!result.changed) return null;
-                  const tx = new Tx(doc);
-                  writeTable(tx, b, current.props, result.rows, doc.client);
-                  if (!tx.ops.length) return null;
-                  const next = doc.propVersion(b, "tableData");
-                  const key = `table:${idKey(b)}:-1:-1`;
-                  tableHistory.record(sync.client, key, JSON.stringify(beforeRows), tableDataOf(doc.blockInfo(b).props), tableSnapshot.data, next ? idKey(next) : null, tableHistoryGuard(doc, b), "paste", Date.now(), false);
-                  um.seal();
-                  um.recordMarker(key, false);
-                  sync.client.push(tx.ops);
-                  um.seal();
-                  force((x) => x + 1);
-                  publish();
-                  return null;
-                }}
+                onTablePaste={readOnly ? undefined : (row, col, text) => tableClipboard({ kind: "paste", row, col, text })}
+                onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={readOnly ? undefined : () => toggleTodo(b)}
                 onDragStart={readOnly ? undefined : () => {
@@ -2132,6 +2130,7 @@ interface BlockProps {
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   onTablePaste?: (r: number, c: number, text: string) => string | null;
+  onTableCut?: (range: CellRange) => string | null;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   /** The insertion affordance is visible on an otherwise blank document. */
@@ -2166,7 +2165,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2342,6 +2341,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
           onPasteCells={onTablePaste}
+          onCutCells={onTableCut}
           onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}

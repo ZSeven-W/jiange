@@ -118,12 +118,23 @@ export function cellTableWrites(props: Record<string, string>, next: string[][],
   return writes;
 }
 
+/** Apply cell writes with their inherited values, including explicit clears. */
+export function applyTableWrites(tx: Tx, block: OpId, props: Record<string, string>, writes: Record<string, string>): void {
+  const base = isCellTable(props) ? baseOf(props) : parseTableData(props.tableData);
+  for (const [key, value] of Object.entries(writes)) {
+    const cell = /^tbl\.c\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(key);
+    // Missing per-cell registers inherit migration-time text, so writing an
+    // explicit empty value must not be treated as an already-empty register.
+    tx.setProp(block, key, value, cell ? cellValue(props, base, cell[1], cell[2]) : "");
+  }
+}
+
 /** Apply a full-table change through cell props. Always rewrites the mirror (keeps tableData versioning). */
 export function writeTable(tx: Tx, block: OpId, props: Record<string, string>, next: string[][], client: number): void {
   const writes = cellTableWrites(props, next, client);
   // Ensure the tableData register always advances so version-based history checks see the write.
   if (!("tableData" in writes)) writes.tableData = props.tableData ?? JSON.stringify(next);
-  for (const [key, value] of Object.entries(writes)) tx.setProp(block, key, value);
+  applyTableWrites(tx, block, props, writes);
 }
 
 /**

@@ -28,13 +28,14 @@ export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string
 
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onDelete, readOnly, canCopy = true, initialGrip = null }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
   onPasteCells?: (r: number, c: number, text: string) => string | null;
+  onCutCells?: (range: CellRange) => string | null;
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
   initialGrip?: GripSel | null;
@@ -71,7 +72,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
     const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
   };
-  const selected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range ? expandRange(range, merges) : null;
+  const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
+  const selected = rawSelected ? expandRange(rawSelected, merges) : null;
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
   const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols)); setGrip(null); setRange(null); };
@@ -83,10 +85,18 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
         if (!multi || !selected) return;
-        event.preventDefault(); event.stopPropagation(); event.clipboardData.setData("text/plain", formatTableTSV(rows, selected));
+        event.preventDefault(); event.stopPropagation(); event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges));
       }}
       onCut={(event) => {
-        if (!canCopy || multi) { event.preventDefault(); event.stopPropagation(); if (canCopy) setClipboardNotice("暂不支持剪切多个单元格，请使用复制。"); }
+        if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
+        if (!multi || !selected) return;
+        event.preventDefault(); event.stopPropagation();
+        if (!onCutCells) { setClipboardNotice("当前无法剪切选区，表格未修改。"); return; }
+        try { event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges)); }
+        catch { setClipboardNotice("无法写入剪贴板，表格未修改。"); return; }
+        const error = onCutCells(selected);
+        setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
+        if (!error) { setRange(null); setGrip(null); }
       }}>
       {!readOnly && <div className="mb-1 h-[34px] max-w-full overflow-x-auto"><span className="invisible flex w-max items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] group-hover/t:visible group-focus-within/t:visible" data-table-toolbar>
         {editable && multi && <button type="button" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] text-primary hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={merge} data-table-merge><Combine size={14} strokeWidth={1.7} />合并单元格</button>}

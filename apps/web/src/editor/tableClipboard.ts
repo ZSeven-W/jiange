@@ -1,4 +1,4 @@
-import type { CellRange, Merge } from "./tableOps";
+import { coverMap, expandRange, normRange, type CellRange, type Merge } from "./tableOps";
 
 const MAX_TEXT = 256 * 1024;
 const MAX_PASTE_CELLS = 1000;
@@ -30,13 +30,18 @@ export function parseTableTSV(text: string): string[][] | null {
   return rows;
 }
 
-export function formatTableTSV(rows: string[][], range: CellRange): string {
-  return rows.slice(range.r0, range.r1 + 1).map((row) => row.slice(range.c0, range.c1 + 1).map((value) => /[\t\r\n"]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value).join("\t")).join("\n");
+export function formatTableTSV(rows: string[][], range: CellRange, merges: Merge[] = []): string {
+  const covered = coverMap(merges);
+  return rows.slice(range.r0, range.r1 + 1).map((row, ri) => row.slice(range.c0, range.c1 + 1).map((cell, ci) => {
+    // Hidden cells can hold concurrent edits; do not copy invisible content.
+    const value = covered.get(`${range.r0 + ri}:${range.c0 + ci}`) === "hidden" ? "" : cell;
+    return /[\t\r\n"]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  }).join("\t")).join("\n");
 }
 
 export type TablePasteResult = { ok: true; rows: string[][]; changed: boolean } | { ok: false; message: string };
 
-/** Compute all changes first; do not partially paste over merged cells or limits. */
+/** Compute all changes first; merged cells accept only a compatible source shape. */
 export function planTablePaste(rows: string[][], merges: Merge[], startRow: number, startCol: number, text: string): TablePasteResult {
   const grid = parseTableTSV(text);
   if (!grid?.length) return { ok: false, message: "粘贴内容格式无效或过大，表格未修改。" };
@@ -44,11 +49,36 @@ export function planTablePaste(rows: string[][], merges: Merge[], startRow: numb
   const width = Math.max(...grid.map((r) => r.length));
   const nr = Math.max(rows.length, startRow + grid.length), nc = Math.max(rows[0].length, startCol + width);
   if (nr > MAX_ROWS || nc > MAX_COLS || nr * nc > MAX_TABLE_CELLS) return { ok: false, message: "粘贴范围超过表格大小限制，表格未修改。" };
-  for (let r = 0; r < grid.length; r++) for (let c = 0; c < grid[r].length; c++) {
-    if (merges.some(([mr, mc, rs, cs]) => startRow + r >= mr && startRow + r < mr + rs && startCol + c >= mc && startCol + c < mc + cs)) return { ok: false, message: "粘贴范围包含合并单元格，请先拆分后重试。" };
+  for (const [mr, mc, rs, cs] of merges) {
+    let touched = false, fullyCovered = true, hiddenContent = false;
+    for (let r = mr; r < mr + rs; r++) for (let c = mc; c < mc + cs; c++) {
+      const gr = r - startRow, gc = c - startCol;
+      const present = gr >= 0 && gr < grid.length && gc >= 0 && gc < grid[gr].length;
+      touched ||= present;
+      fullyCovered &&= present;
+      if (present && (r !== mr || c !== mc) && grid[gr][gc] !== "") hiddenContent = true;
+    }
+    const singleAnchor = grid.length === 1 && grid[0].length === 1 && startRow === mr && startCol === mc;
+    if (touched && ((!fullyCovered && !singleAnchor) || hiddenContent)) return { ok: false, message: "粘贴内容与合并单元格不匹配，请调整选区或先拆分。" };
   }
+  const covered = coverMap(merges);
   const next = Array.from({ length: nr }, (_, r) => Array.from({ length: nc }, (_, c) => rows[r]?.[c] ?? ""));
-  for (let r = 0; r < grid.length; r++) for (let c = 0; c < grid[r].length; c++) next[startRow + r][startCol + c] = grid[r][c];
+  for (let r = 0; r < grid.length; r++) for (let c = 0; c < grid[r].length; c++) {
+    if (covered.get(`${startRow + r}:${startCol + c}`) !== "hidden") next[startRow + r][startCol + c] = grid[r][c];
+  }
   if (new TextEncoder().encode(JSON.stringify(next)).length > 1024 * 1024) return { ok: false, message: "粘贴后的表格过大，表格未修改。" };
+  return { ok: true, rows: next, changed: JSON.stringify(rows) !== JSON.stringify(next) };
+}
+
+/** Clear visible anchors in a complete selection, retaining hidden cell data. */
+export function planTableCut(rows: string[][], merges: Merge[], selection: CellRange): TablePasteResult {
+  const range = normRange(selection);
+  if (![range.r0, range.r1, range.c0, range.c1].every(Number.isInteger) || range.r0 < 0 || range.c0 < 0 || range.r1 >= rows.length || range.c1 >= (rows[0]?.length ?? 0)) return { ok: false, message: "表格位置已变化，请重新选择单元格。" };
+  const expanded = expandRange(range, merges);
+  if (expanded.r0 !== range.r0 || expanded.r1 !== range.r1 || expanded.c0 !== range.c0 || expanded.c1 !== range.c1) return { ok: false, message: "选区未完整包含合并单元格，请重新选择。" };
+  if ((range.r1 - range.r0 + 1) * (range.c1 - range.c0 + 1) > MAX_PASTE_CELLS) return { ok: false, message: "剪切范围过大，表格未修改。" };
+  const covered = coverMap(merges);
+  const next = rows.map((row, r) => row.map((value, c) => r >= range.r0 && r <= range.r1 && c >= range.c0 && c <= range.c1 && covered.get(`${r}:${c}`) !== "hidden" ? "" : value));
+  if (new TextEncoder().encode(JSON.stringify(next)).length > 1024 * 1024) return { ok: false, message: "表格过大，无法安全剪切。" };
   return { ok: true, rows: next, changed: JSON.stringify(rows) !== JSON.stringify(next) };
 }

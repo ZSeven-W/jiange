@@ -4,7 +4,7 @@ import { applyTableEdit, parseTableData } from "./model";
 import { TableCellHistory } from "./tableCellHistory";
 import { applyTableHistory, tableHistoryGuard } from "./tableHistoryUndo";
 import { tableDataOf, tableRowsOf, writeTable } from "./tableCells";
-import { planTablePaste } from "./tableClipboard";
+import { planTableCut, planTablePaste } from "./tableClipboard";
 
 function setup() {
   const doc = new Doc(1), tx = new Tx(doc);
@@ -122,6 +122,24 @@ describe("table and document undo ordering", () => {
     expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["A", "B"], ["C", "D"]]);
     expect(step(ctx, true)).toBe("ready");
     expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["A", "B", ""], ["C", "甲", "乙"], ["", "丙", "丁"]]);
+  });
+
+  it("undoes and redoes a cut while retaining hidden merged-cell data", () => {
+    const ctx = setup(), { doc, table, session, undo, history } = ctx;
+    doc.setProp(table, "tableMerges", "[[0,0,1,2]]");
+    const info = doc.blockInfo(table), before = tableRowsOf(info.props);
+    const cut = planTableCut(before, [[0, 0, 1, 2]], { r0: 0, r1: 1, c0: 0, c1: 1 });
+    if (!cut.ok) throw new Error(cut.message);
+    const previous = version(ctx, "tableData"), guard = tableHistoryGuard(doc, table), tx = new Tx(doc);
+    writeTable(tx, table, info.props, cut.rows, doc.client);
+    const key = `table:${idKey(table)}:-1:-1`;
+    history.record(session, key, JSON.stringify(before), tableDataOf(doc.blockInfo(table).props), previous, version(ctx, "tableData"), guard, "cut");
+    undo.recordMarker(key);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "B"], ["", ""]]);
+    expect(step(ctx)).toBe("ready");
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual(before);
+    expect(step(ctx, true)).toBe("ready");
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "B"], ["", ""]]);
   });
 
   it("recovers undo after a SyncClient snapshot replaces the document instance", () => {

@@ -21,6 +21,12 @@ func TestTableRowsMatchesClientFingerprint(t *testing.T) {
 	if rows := tableRows(based); rows[0][0] != "底" || rows[1][0] != "改" {
 		t.Fatalf("base fallback: %v", rows)
 	}
+	based["tbl.c.r0.c0"] = ""
+	based["tableData"] = `[[""],["改"]]`
+	based["tbl.m"] = tableHash(based["tableData"])
+	if rows := tableRows(based); rows[0][0] != "" || rows[1][0] != "改" {
+		t.Fatalf("explicit empty must override inherited base: %v", rows)
+	}
 	if rows := tableRows(map[string]string{"tableData": `[["a"]]`}); rows[0][0] != "a" {
 		t.Fatalf("legacy: %v", rows)
 	}

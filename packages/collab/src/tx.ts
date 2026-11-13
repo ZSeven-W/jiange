@@ -156,9 +156,10 @@ export class Tx {
     this.push(this.doc.format(block, from, to, key, value));
   }
 
-  setProp(block: OpId, key: string, value: string) {
+  /** `fallback` is the effective prior value when this register is absent. */
+  setProp(block: OpId, key: string, value: string, fallback = "") {
     const info = this.doc.blockInfo(block);
-    const prev = key === "type" ? info.type : (info.props[key] ?? "");
+    const prev = key === "type" ? info.type : (info.props[key] ?? fallback);
     if (prev === value) return;
     this.items.push({ k: "prop", block, key, prev });
     this.push(this.doc.setProp(block, key, value));

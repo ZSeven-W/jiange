@@ -25,6 +25,17 @@ describe("Peritext expand", () => {
 });
 
 describe("UndoManager", () => {
+  it("records an explicit empty register against an inherited fallback", () => {
+    const doc = new Doc(1), block = doc.createBlock("paragraph").id, tx = new Tx(doc), undo = new UndoManager();
+    tx.setProp(block, "custom", "", "inherited");
+    expect(tx.ops).toHaveLength(1);
+    expect(doc.blockInfo(block).props.custom).toBe("");
+    undo.record(tx, null, null);
+    expect(undo.undo(doc)).not.toBeNull();
+    expect(doc.blockInfo(block).props.custom).toBe("inherited");
+    expect(undo.redo(doc)).not.toBeNull();
+    expect(doc.blockInfo(block).props.custom).toBe("");
+  });
   it("undoes only local changes and keeps remote edits", () => {
     const a = new Doc(1), b = new Doc(2);
     const um = new UndoManager();

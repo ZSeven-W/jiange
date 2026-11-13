@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, type Op } from "@jiange/collab";
-import { cellGrid, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
+import { Doc, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
+import { applyTableWrites, cellGrid, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
 import { applyTableEdit } from "./model";
 
 function replicas() {
@@ -18,13 +18,48 @@ const edit = (doc: Doc, table: ReturnType<typeof replicas>["table"], r: number, 
   return tx.ops;
 };
 const repair = (doc: Doc, table: ReturnType<typeof replicas>["table"]) => {
-  const writes = tableRepairWrites(doc.blockInfo(table).props, doc.client);
+  const props = doc.blockInfo(table).props;
+  const writes = tableRepairWrites(props, doc.client);
   const tx = new Tx(doc);
-  for (const [k, v] of Object.entries(writes ?? {})) tx.setProp(table, k, v);
+  if (writes) applyTableWrites(tx, table, props, writes);
   return tx.ops;
 };
 
 describe("cell-level table storage", () => {
+  it("clears inherited legacy text while retaining a concurrent edit in another cell", () => {
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["旧内容", "另一格"]]) });
+    sync(init.ops, b);
+    const clear = edit(a, table, 0, 0, "");
+    const other = edit(b, table, 0, 1, "协作者");
+    expect(clear.some((op) => op.t === "bset" && op.key === "tbl.c.r0.c0" && op.value === "")).toBe(true);
+    sync(clear, b); sync(other, a);
+    expect(tableRowsOf(a.blockInfo(table).props)).toEqual([["", "协作者"]]);
+    expect(tableRowsOf(b.blockInfo(table).props)).toEqual([["", "协作者"]]);
+  });
+  it("undoes and redoes a structural clear of an inherited cell", () => {
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["原始", "其他"]]) });
+    edit(doc, table, 0, 1, "已迁移");
+    const before = doc.blockInfo(table).props, tx = new Tx(doc), undo = new UndoManager();
+    writeTable(tx, table, before, [["", "已迁移"]], doc.client);
+    undo.record(tx, null, null, "prop");
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "已迁移"]]);
+    expect(undo.undo(doc)).not.toBeNull();
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["原始", "已迁移"]]);
+    expect(undo.redo(doc)).not.toBeNull();
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "已迁移"]]);
+  });
+  it("repairs an old client's explicit clear of inherited text", () => {
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["原始", "其他"]]) });
+    edit(doc, table, 0, 1, "已迁移");
+    const legacy = new Tx(doc);
+    legacy.setProp(table, "tableData", JSON.stringify([["", "已迁移"]]));
+    repair(doc, table);
+    expect(cellGrid(doc.blockInfo(table).props)).toEqual([["", "已迁移"]]);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "已迁移"]]);
+  });
   it("keeps both users' edits to different cells (the old whole-table LWW lost one)", () => {
     const { a, b, table } = replicas();
     // Both migrate concurrently from the same legacy table, then edit different cells.

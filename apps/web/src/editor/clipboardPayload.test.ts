@@ -1,9 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
-import { clipboardBlocks, columnClipboardBlocks } from "./clipboardPayload";
+import { CLIP_MIME, clipboardBlocks, columnClipboardBlocks, writeBlockClipboard } from "./clipboardPayload";
 import { deleteRange, mathSpans, pasteBlocks } from "./model";
+import { tableRowsOf, writeTable } from "./tableCells";
 
 describe("clipboard payload validation", () => {
+  it("does not report a block copy as successful if the clipboard event did not write", () => {
+    let listener: ((event: ClipboardEvent) => void) | undefined;
+    const doc = {
+      addEventListener: (_: string, callback: (event: ClipboardEvent) => void) => { listener = callback; },
+      removeEventListener: vi.fn(),
+      execCommand: vi.fn(() => true),
+    } as unknown as Document;
+    const block = [{ type: "table", props: { tableData: '[["值"]]' }, chars: [] }];
+    expect(writeBlockClipboard(doc, "", block)).toBe(false);
+    const data = new Map<string, string>();
+    vi.mocked(doc.execCommand).mockImplementation(() => {
+      listener?.({ clipboardData: { setData: (key: string, value: string) => data.set(key, value) }, preventDefault: vi.fn() } as unknown as ClipboardEvent);
+      return true;
+    });
+    expect(writeBlockClipboard(doc, "", block)).toBe(true);
+    expect(JSON.parse(data.get(CLIP_MIME)!)).toEqual(block);
+    vi.mocked(doc.execCommand).mockImplementation(() => {
+      listener?.({ clipboardData: null } as ClipboardEvent);
+      return true;
+    });
+    expect(writeBlockClipboard(doc, "", block)).toBe(false);
+  });
   it.each(["", "null", "{}", "[]", '[{"type":"paragraph","props":{}}]', '[{"type":"paragraph","props":{},"chars":[{}]}]', '[{"type":"paragraph","props":{},"chars":[{"ch":"ab","marks":{}}]}]'])("keeps selected text when payload is unusable: %s", (raw) => {
     const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
     tx.insert(block, 0, "原文保留");
@@ -30,6 +53,28 @@ describe("clipboard payload validation", () => {
     const empty = new Tx(doc).create("paragraph", caret.b, ROOT);
     pasteBlocks(new Tx(doc), { b: empty, o: 0 }, clipboardBlocks('[{"type":"divider","props":{},"chars":[]}]', "")!);
     expect(doc.blockInfo(empty).type).toBe("divider");
+  });
+
+  it.each([true, false])("preserves explicit empty table cells when pasted (empty paragraph: %s)", (empty) => {
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["原值", "保留"]]) });
+    const props = doc.blockInfo(table).props;
+    writeTable(new Tx(doc), table, props, [["", "保留"]], doc.client);
+    const copied = [{ type: "table", props: doc.blockInfo(table).props, chars: [] }];
+    const clip = clipboardBlocks(JSON.stringify(copied), "")!;
+    const paragraph = new Tx(doc).create("paragraph", table, ROOT);
+    if (!empty) new Tx(doc).insert(paragraph, 0, "正文");
+    pasteBlocks(new Tx(doc), { b: paragraph, o: empty ? 0 : 2 }, clip);
+    const pasted = doc.view().blocks.filter((block) => block.type === "table").at(-1)!;
+    expect(tableRowsOf(pasted.props)).toEqual([["", "保留"]]);
+    expect(pasted.props["tbl.v"]).toBeUndefined();
+  });
+
+  it("rejects a sparse clipboard table whose axes would expand beyond the limit", () => {
+    const rows = Array.from({ length: 501 }, (_, i) => `r${i}`);
+    const cols = Array.from({ length: 101 }, (_, i) => `c${i}`);
+    const props = { "tbl.v": "2", "tbl.rows": JSON.stringify(rows), "tbl.cols": JSON.stringify(cols), tableData: "[]" };
+    expect(clipboardBlocks(JSON.stringify([{ type: "table", props, chars: [] }]), "")).toBeNull();
   });
 
   it("falls back to literal plain text for invalid custom data", () => {

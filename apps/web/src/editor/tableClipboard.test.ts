@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTableTSV, parseTableTSV, planTablePaste } from "./tableClipboard";
+import { formatTableTSV, parseTableTSV, planTableCut, planTablePaste } from "./tableClipboard";
 
 describe("document table clipboard", () => {
   it("round-trips tabs, quotes, empty cells and multiline text", () => {
@@ -13,11 +13,28 @@ describe("document table clipboard", () => {
     expect(result).toEqual({ ok: true, changed: true, rows: [["原", "保留", ""], ["下", "甲", "乙"], ["", "丙", "丁"]] });
     expect(before).toEqual([["原", "保留"], ["下", "旧"]]);
   });
-  it("rejects a paste touching merged cells or invalid quoted TSV as one operation", () => {
+  it("rejects incompatible merged-cell or invalid quoted paste as one operation", () => {
     const before = [["保留", ""], ["下", "右"]];
     expect(planTablePaste(before, [[0, 0, 1, 2]], 0, 0, "甲\t乙")).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
     expect(planTablePaste(before, [], 0, 0, '"未闭合\t内容')).toMatchObject({ ok: false });
     expect(before).toEqual([["保留", ""], ["下", "右"]]);
+  });
+  it("copies and cuts visible cells while preserving hidden merged content", () => {
+    const before = [["合并内容", "隐藏数据"], ["甲", "乙"]];
+    const merges: [number, number, number, number][] = [[0, 0, 1, 2]];
+    const range = { r0: 0, r1: 1, c0: 0, c1: 1 };
+    expect(formatTableTSV(before, range, merges)).toBe("合并内容\t\n甲\t乙");
+    expect(planTableCut(before, merges, range)).toEqual({ ok: true, changed: true, rows: [["", "隐藏数据"], ["", ""]] });
+    expect(planTableCut(before, merges, { r0: 0, r1: 0, c0: 0, c1: 0 })).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
+    expect(before).toEqual([["合并内容", "隐藏数据"], ["甲", "乙"]]);
+  });
+  it("pastes compatible rectangles into merged anchors without overwriting hidden cells", () => {
+    const before = [["旧", "隐藏数据"], ["甲", "乙"]];
+    const merges: [number, number, number, number][] = [[0, 0, 1, 2]];
+    expect(planTablePaste(before, merges, 0, 0, "新\t\n丙\t丁")).toEqual({ ok: true, changed: true, rows: [["新", "隐藏数据"], ["丙", "丁"]] });
+    expect(planTablePaste(before, merges, 0, 0, '"第一行\n第二行"')).toEqual({ ok: true, changed: true, rows: [["第一行\n第二行", "隐藏数据"], ["甲", "乙"]] });
+    expect(planTablePaste(before, merges, 0, 0, "新\t冲突")).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
+    expect(planTablePaste(before, merges, 0, 1, "\t\n")).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
   });
   it("rejects oversized text and table growth before making changes", () => {
     expect(planTablePaste([[""]], [], 0, 0, "x".repeat(256 * 1024 + 1))).toMatchObject({ ok: false });
