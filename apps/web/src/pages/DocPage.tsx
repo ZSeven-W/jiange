@@ -11,6 +11,7 @@ import { Editor, type ExternalUndoRecorder, type FindBatchReplacer, type TableFi
 import { replaceMatches } from "@/editor/findReplace";
 import { FindScrollIntent } from "@/editor/findNavigation";
 import { preflightFindReplace } from "@/editor/findReplaceSafety";
+import { replacementSyncNotice, type ReplacementNotice } from "@/editor/findReplaceNotice";
 import { scrollToCommentAnchor } from "@/editor/commentAnchor";
 import { scheduleFindSnapshot, type FindSnapshot } from "@/editor/findSearchScheduler";
 import { FindReplacePanel, type FindReplaceMode } from "@/editor/FindReplacePanel";
@@ -224,8 +225,13 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
   const [findReplacement, setFindReplacement] = useState("");
   const [findIndex, setFindIndex] = useState(0);
   const [findMessage, setFindMessage] = useState("");
+  const [findPending, setFindPending] = useState<ReplacementNotice | null>(null);
   const [findNavigation, setFindNavigation] = useState(0);
   const [findResult, setFindResult] = useState<FindSnapshot | null>(null);
+  useEffect(() => {
+    if (!findPending || findPending.acknowledged || sync.client.droppedOnResync !== findPending.historyChanges || sync.status !== "synced" || !sync.caughtUp || sync.blocked || sync.client.unacked !== 0) return;
+    setFindPending((current) => current === findPending ? { ...current, acknowledged: true } : current);
+  }, [findPending, sync.status, sync.caughtUp, sync.blocked, sync.client, sync.client.unacked, sync.client.droppedOnResync]);
   const findScrollIntent = useRef(new FindScrollIntent());
   const findPanel = useRef<HTMLDivElement>(null);
   const newDoc = useMutation({ mutationFn: () => docsApi.create(""), onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); } });
@@ -584,6 +590,7 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
     setFindMode(mode);
     setFindOpen(true);
     setFindMessage("");
+    setFindPending(null);
     requestFindScroll();
     // Focus an already-open panel for repeated keyboard shortcuts; the panel
     // itself handles initial desktop focus and avoids summoning a phone keyboard.
@@ -605,6 +612,7 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
     setFindReplacement("");
     setFindIndex(0);
     setFindMessage("");
+    setFindPending(null);
   }, [id]);
   useEffect(() => {
     if (!findOpen) return;
@@ -767,6 +775,7 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
     </div>;
   }
   const replaceFound = (all: boolean) => {
+    setFindPending(null);
     const doc = sync.client.doc;
     if (!doc || findUpdating || !currentFindResult || currentFindResult.doc !== doc || !canEditRef.current || sync.client.blocked || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !recordExternalUndo.current) {
       setFindMessage("请等待文档同步完成并确认有编辑权限后重试。");
@@ -776,13 +785,14 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
     if (!selected.length) return;
     if (all && selected.some((match) => match.table)) {
       const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
-      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); setFindMessage(`已替换 ${result.count} 处。`); requestFindScroll(); }
+      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容，文档未修改。`); requestFindScroll(); }
       else setFindMessage(result.status === "stale" ? "内容已变化，请重新查找；文档未修改。" : result.status === "size" || result.status === "work" ? "替换内容或范围过大，请缩小范围；文档未修改。" : "当前无法安全替换，请确认编辑权限和同步状态。");
       return;
     }
     if (!all && activeMatch?.table) {
       const outcome = tableFindReplace.current?.(activeMatch, findReplacement) ?? "unavailable";
-      setFindMessage(outcome === "replaced" || outcome === "unchanged" ? "已替换 1 处。" : outcome === "stale" ? "表格已变化，请重新查找；未修改内容。" : outcome === "size" ? "替换内容或表格过大；未修改内容。" : "当前无法安全替换，请确认编辑权限和同步状态。");
+      if (outcome === "replaced") { setFindMessage(""); setFindPending({ count: 1, skipped: 0, historyChanges: sync.client.droppedOnResync }); }
+      else setFindMessage(outcome === "unchanged" ? "该处已是目标内容，文档未修改。" : outcome === "stale" ? "表格已变化，请重新查找；未修改内容。" : outcome === "size" ? "替换内容或表格过大；未修改内容。" : "当前无法安全替换，请确认编辑权限和同步状态。");
       if (outcome === "replaced" || outcome === "unchanged") requestFindScroll();
       return;
     }
@@ -798,7 +808,8 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
       sync.client.push(tx.ops);
     }
     setFindIndex(all ? 0 : Math.max(activeFindIndex, 0));
-    setFindMessage(result.skipped ? `已替换 ${result.replaced} 处，${result.skipped} 处内容已变化，请重新查找。` : `已替换 ${result.replaced} 处。`);
+    if (tx.ops.length) { setFindMessage(""); setFindPending({ count: result.replaced, skipped: result.skipped, historyChanges: sync.client.droppedOnResync }); }
+    else setFindMessage(result.skipped ? `${result.skipped} 处内容已变化并跳过；文档未修改。` : `${result.replaced} 处已是目标内容，文档未修改。`);
     if (result.replaced) requestFindScroll();
   };
 
@@ -1063,10 +1074,10 @@ export function DocPage({ id, me, sidebarDocked = false }: { id: number; me: Me;
             canReplace={findCanReplace}
             canReplaceAll={findCanReplace}
             scopeNotice={`搜索正文、分栏和表格；标题和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
-            statusMessage={findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
+            statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
-            onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); requestFindScroll(); }}
-            onReplacementChange={setFindReplacement}
+            onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
+            onReplacementChange={(value) => { setFindReplacement(value); setFindMessage(""); setFindPending(null); }}
             onNavigate={(direction) => { if (matches.length) { setFindIndex((current) => (Math.max(0, Math.min(current, matches.length - 1)) + direction + matches.length) % matches.length); requestFindScroll(); } }}
             onReplace={() => replaceFound(false)}
             onReplaceAll={() => replaceFound(true)}
