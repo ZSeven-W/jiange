@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Columns3, Combine, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
@@ -27,8 +27,29 @@ export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string
 }
 
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
+type FindRange = { start: number; end: number; active: boolean };
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [] }: {
+/** Offsets are code points, matching the document search model. */
+export function tableFindText(value: string, ranges: readonly FindRange[]): ReactNode[] {
+  const chars = [...value], nodes: ReactNode[] = [];
+  let previous = 0;
+  for (const [i, range] of [...ranges].sort((a, b) => a.start - b.start || a.end - b.end).entries()) {
+    if (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < previous || range.end <= range.start || range.end > chars.length) continue;
+    if (range.start > previous) nodes.push(chars.slice(previous, range.start).join(""));
+    nodes.push(<mark key={i} data-table-find-fragment={range.active ? "active" : "match"} className={cn("rounded-[2px] text-inherit", range.active ? "bg-[#ffb74d]" : "bg-[#ffe69b]")}>{chars.slice(range.start, range.end).join("")}</mark>);
+    previous = range.end;
+  }
+  if (previous < chars.length) nodes.push(chars.slice(previous).join(""));
+  return nodes;
+}
+
+function syncFindOverlay(input: HTMLTextAreaElement) {
+  const overlay = input.previousElementSibling;
+  if (!(overlay instanceof HTMLElement) || !overlay.hasAttribute("data-table-find-overlay")) return;
+  overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
+}
+
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -39,7 +60,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
   initialGrip?: GripSel | null;
-  findCells?: readonly { row: number; col: number; active: boolean }[];
+  findCells?: readonly { row: number; col: number; value: string; ranges: FindRange[] }[];
+  findNavigation?: number;
 }) {
   const rows = parseTableData(data);
   const nCols = rows[0]?.length ?? 0;
@@ -49,8 +71,24 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const [grip, setGrip] = useState<GripSel | null>(initialGrip);
   const [range, setRange] = useState<CellRange | null>(null);
   const [focus, setFocus] = useState<{ r: number; c: number } | null>(null);
+  const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const lastFindNavigation = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!findCells.length) return;
+    root.current?.querySelectorAll<HTMLTextAreaElement>('[data-find-match="true"] [data-table-cell]').forEach(syncFindOverlay);
+    const cell = root.current?.querySelector<HTMLElement>('[data-find-active="true"]');
+    const overlay = cell?.querySelector<HTMLElement>("[data-table-find-overlay]");
+    const input = cell?.querySelector<HTMLTextAreaElement>("[data-table-cell]");
+    const active = overlay?.querySelector<HTMLElement>('[data-table-find-fragment="active"]');
+    if (!overlay || !input || !active || lastFindNavigation.current === findNavigation) return;
+    lastFindNavigation.current = findNavigation;
+    if (document.activeElement === input) return;
+    const bounds = overlay.getBoundingClientRect(), match = active.getBoundingClientRect();
+    const dy = match.bottom > bounds.bottom ? match.bottom - bounds.bottom + 2 : match.top < bounds.top ? match.top - bounds.top - 2 : 0;
+    if (dy) { input.scrollTop += dy; syncFindOverlay(input); }
+  }, [findCells, editing, findNavigation]);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const openGrip = (e: React.MouseEvent<HTMLElement>, g: GripSel) => {
     setRange(null);
@@ -121,15 +159,23 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                 if (cov === "hidden") return null;
                 const span = cov?.span;
                 const sel = inRange(selected, ri, ci);
-                const found = findByCell.get(`${ri}:${ci}`);
+                const candidate = findByCell.get(`${ri}:${ci}`);
+                const found = candidate?.value === cell ? candidate : undefined;
+                const activeFind = found?.ranges.some((range) => range.active) ?? false;
+                const showMirror = !!found && !(editing?.r === ri && editing.c === ci);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20", found && (found.active ? "bg-[#ffb74d] dark:bg-[#805a22]" : "bg-[#ffe69b] dark:bg-[#66551f]"))} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={found?.active ? "true" : undefined}>
-                    {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap px-2 py-[8.5px]">{cell}</span> : (
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
+                    {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap break-words px-2 py-[8.5px]">{found ? tableFindText(cell, found.ranges) : cell}</span> : (
+                      <div className="relative grid">
+                      <div aria-hidden="true" className="invisible col-start-1 row-start-1 max-h-[237px] min-h-[39px] overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]">{cell}{"\u200b"}</div>
+                      {found && <div aria-hidden="true" data-table-find-overlay className={cn("pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]", !showMirror && "invisible")}>{tableFindText(cell, found.ranges)}{"\u200b"}</div>}
                       <textarea
                         value={cell}
                         rows={Math.min(10, Math.max(1, cell.split("\n").length))}
                         onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
-                        onFocus={() => setFocus({ r: ri, c: ci })}
+                        onFocus={() => { setFocus({ r: ri, c: ci }); setEditing({ r: ri, c: ci }); }}
+                        onBlur={(event) => { syncFindOverlay(event.currentTarget); setEditing(null); }}
+                        onScroll={(event) => syncFindOverlay(event.currentTarget)}
                         onKeyDown={(e) => {
                           if (e.key !== "Tab" || e.nativeEvent.isComposing) return;
                           const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
@@ -150,9 +196,10 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
-                        className="block min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
+                        className={cn("relative col-start-1 row-start-1 block h-full max-h-[237px] min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]", showMirror && "text-transparent")}
                         data-table-cell={`${ri}:${ci}`}
                       />
+                      </div>
                     )}
                     {editable && ri === 0 && !span?.[1] && <button type="button" aria-label={`选择第 ${ci + 1} 列`} title="选择整列" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "col" && grip.index === ci && "bg-primary opacity-100")} data-table-col-grip={ci} />}
                     {editable && ci === 0 && !span?.[0] && <button type="button" aria-label={`选择第 ${ri + 1} 行`} title="选择整行" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "row" && grip.index === ri && "bg-primary opacity-100")} data-table-row-grip={ri} />}

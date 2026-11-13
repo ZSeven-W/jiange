@@ -986,6 +986,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 onTableFindRegistrar={onTableFindRegistrar}
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
+                findNavigation={findNavigation}
                 me={presence}
                 readOnly={!canEditContent || history || presenting}
                 onCopyBlock={!contentCopyAllowed}

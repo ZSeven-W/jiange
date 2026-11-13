@@ -111,6 +111,7 @@ interface Props {
   /** Search results are an ephemeral view; they never alter the document. */
   findMatches?: readonly FindMatch[];
   activeFindMatch?: FindMatch | null;
+  findNavigation?: number;
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
   /** workspace members offered by the @ menu（@人提及） */
@@ -151,7 +152,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -302,17 +303,19 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     return ranges;
   }, [doc, sync.version, findMatches, activeFindMatch]);
   const tableFindCells = useMemo(() => {
-    const cells = new Map<string, { row: number; col: number; active: boolean }[]>();
+    const cells = new Map<string, { row: number; col: number; value: string; ranges: { start: number; end: number; active: boolean }[] }[]>();
     if (!doc) return cells;
     const states = new Map<string, ReturnType<typeof readTableFindState>>();
     for (const match of findMatches) {
       if (!match.table) continue;
       const key = idKey(match.block);
       if (!states.has(key)) states.set(key, readTableFindState(doc, match.block));
-      if (!resolveTableFindMatch(doc, match, states.get(key))) continue;
+      const resolved = resolveTableFindMatch(doc, match, states.get(key));
+      if (!resolved) continue;
       const list = cells.get(key) ?? [], existing = list.find((item) => item.row === match.table!.row && item.col === match.table!.col);
-      if (existing) existing.active ||= match === activeFindMatch;
-      else list.push({ row: match.table.row, col: match.table.col, active: match === activeFindMatch });
+      const range = { start: match.start, end: match.end, active: match === activeFindMatch };
+      if (existing) existing.ranges.push(range);
+      else list.push({ row: match.table.row, col: match.table.col, value: resolved.before, ranges: [range] });
       cells.set(key, list);
     }
     return cells;
@@ -1878,6 +1881,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                 spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
                 findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
                 tableFindCells={tableFindCells.get(k)}
+                findNavigation={findNavigation}
                 anchors={commentProjection.flags}
                 commentThreads={commentProjection.threadIds}
                 blockThreads={commentProjection.blockThreadIds}
@@ -2247,7 +2251,8 @@ interface BlockProps {
   blockThreads?: number[];
   onBlockComment?: () => void;
   findRanges?: { start: number; end: number; active: boolean }[];
-  tableFindCells?: { row: number; col: number; active: boolean }[];
+  tableFindCells?: { row: number; col: number; value: string; ranges: { start: number; end: number; active: boolean }[] }[];
+  findNavigation?: number;
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
@@ -2288,7 +2293,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2458,6 +2463,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
         <TableBlock
           data={tableDataOf(props)}
           findCells={tableFindCells}
+          findNavigation={findNavigation}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
           header={props.tableHeader !== "none"}
           onHeader={onSetProp ? (on) => onSetProp("tableHeader", on ? "row" : "none") : undefined}

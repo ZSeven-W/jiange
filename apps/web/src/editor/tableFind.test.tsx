@@ -6,7 +6,7 @@ import { applyTableFindReplace } from "./tableFindApply";
 import { applyTableHistory } from "./tableHistoryUndo";
 import { TableCellHistory } from "./tableCellHistory";
 import { tableRowsOf, writeTable } from "./tableCells";
-import { TableBlock } from "./TableBlock";
+import { TableBlock, tableFindText } from "./TableBlock";
 
 function setup() {
   const doc = new Doc(7), tx = new Tx(doc), text = tx.create("paragraph", null, ROOT);
@@ -68,9 +68,28 @@ describe("find in document tables", () => {
   });
 
   it("marks matched and active cells without making hidden cells visible", () => {
-    const html = renderToStaticMarkup(<TableBlock data={JSON.stringify([["目标", "隐藏"], ["其他", "目标"]])} merges={JSON.stringify([[0, 0, 1, 2]])} findCells={[{ row: 0, col: 0, active: true }, { row: 1, col: 1, active: false }]} readOnly onEdit={() => {}} onDelete={() => {}} />);
+    const html = renderToStaticMarkup(<TableBlock data={JSON.stringify([["目标", "隐藏"], ["其他", "目标"]])} merges={JSON.stringify([[0, 0, 1, 2]])} findCells={[{ row: 0, col: 0, value: "目标", ranges: [{ start: 0, end: 2, active: true }] }, { row: 1, col: 1, value: "目标", ranges: [{ start: 0, end: 2, active: false }] }]} readOnly onEdit={() => {}} onDelete={() => {}} />);
     expect(html).toContain('data-find-active="true"');
     expect((html.match(/data-find-match="true"/g) ?? [])).toHaveLength(2);
     expect(html).not.toContain("隐藏");
+  });
+
+  it("highlights exact Unicode ranges and ignores stale or overlapping ranges", () => {
+    const html = renderToStaticMarkup(<>{tableFindText("前😀目标与目标后", [{ start: 2, end: 4, active: true }, { start: 3, end: 5, active: false }, { start: 5, end: 7, active: false }, { start: -1, end: 1, active: false }])}</>);
+    expect(html).toContain('data-table-find-fragment="active"');
+    expect(html).toContain('data-table-find-fragment="match"');
+    expect(html.replace(/<[^>]+>/g, "")).toBe("前😀目标与目标后");
+    expect((html.match(/<mark/g) ?? [])).toHaveLength(2);
+    const stale = renderToStaticMarkup(<TableBlock data={JSON.stringify([["已修改"]])} findCells={[{ row: 0, col: 0, value: "旧目标", ranges: [{ start: 1, end: 3, active: true }] }]} readOnly onEdit={() => {}} onDelete={() => {}} />);
+    expect(stale).not.toContain('data-find-active="true"');
+    expect(stale).not.toContain("<mark");
+  });
+
+  it("keeps the editable textarea and an inaccessible visual-only highlight layer", () => {
+    const html = renderToStaticMarkup(<TableBlock data={JSON.stringify([["前目标后"]])} findCells={[{ row: 0, col: 0, value: "前目标后", ranges: [{ start: 1, end: 3, active: true }] }]} readOnly={false} onEdit={() => {}} onDelete={() => {}} />);
+    expect(html).toContain('aria-hidden="true" data-table-find-overlay');
+    expect(html).toContain('data-table-find-fragment="active"');
+    expect(html).toMatch(/<textarea[^>]*data-table-cell="0:0"[^>]*>前目标后<\/textarea>/);
+    expect(html).toContain("text-transparent");
   });
 });
