@@ -412,7 +412,11 @@ export interface DocxImportResult {
   /** Text of the first Title-styled paragraph, if any (not included in blocks). */
   title?: string;
   warnings: string[];
+  /** Embedded image parts, referenced by importImageId until uploaded. */
+  images?: Map<string, DocxImage>;
 }
+
+type InlineOutput = { spans: MdSpan[]; icon: string; image: boolean; images: { at: number; id: string; name: string }[] };
 
 interface StyleInfo {
   id: string;
@@ -530,6 +534,7 @@ class DocxReader {
     private styles: Map<string, StyleInfo>,
     private numbering: NumberingInfo,
     private rels: Map<string, { type: string; target: string; external: boolean }>,
+    private images: Map<string, DocxImage>,
   ) {}
 
   paragraphKind(pPr: XmlElement | undefined): { kind: ParaKind; numbered?: { numId: string; ilvl: number } } {
@@ -588,7 +593,7 @@ class DocxReader {
   }
 
   /** Collect spans of a paragraph-like container. */
-  inline(node: XmlElement, out: { spans: MdSpan[]; icon: string; image: boolean }, link?: string): void {
+  inline(node: XmlElement, out: InlineOutput, link?: string): void {
     for (const c of node.children) {
       if (typeof c === "string") continue;
       switch (c.name) {
@@ -609,7 +614,7 @@ class DocxReader {
     }
   }
 
-  private runInto(r: XmlElement, out: { spans: MdSpan[]; icon: string; image: boolean }, link?: string): void {
+  private runInto(r: XmlElement, out: InlineOutput, link?: string): void {
     const { marks, hidden, icon } = this.runMarks(child(r, "w:rPr"));
     const push = (text: string) => {
       if (!text || hidden) return;
@@ -618,7 +623,7 @@ class DocxReader {
       const href = link ?? this.fieldLink();
       const m = href ? { ...marks, link: href } : { ...marks };
       const prev = out.spans.at(-1);
-      if (prev && JSON.stringify(prev.marks) === JSON.stringify(m)) prev.text += text;
+      if (prev && out.images.at(-1)?.at !== out.spans.length && JSON.stringify(prev.marks) === JSON.stringify(m)) prev.text += text;
       else out.spans.push({ text, marks: m });
     };
     for (const c of r.children) {
@@ -650,7 +655,18 @@ class DocxReader {
           if (f && f.phase === "instr") f.instr += c.children.filter((x): x is string => typeof x === "string").join("");
           break;
         }
-        case "w:drawing": case "w:pict": case "w:object": case "mc:AlternateContent": out.image = true; break;
+        case "w:drawing": {
+          if (hidden || this.field.some((f) => f.phase === "instr")) break;
+          const find = (node: XmlElement, name: string): XmlElement | undefined => node.name === name ? node : children(node).map((c) => find(c, name)).find(Boolean);
+          const rid = find(c, "a:blip")?.attrs["r:embed"];
+          if (rid && this.images.has(rid) && !hasTextBox(c)) {
+            const name = find(c, "wp:docPr")?.attrs.descr || "图片";
+            if (find(c, "wp:anchor") || find(c, "a:srcRect") || find(c, "wp:extent") || find(c, "a:xfrm")?.attrs.rot) this.warnings.add("图片尺寸、裁剪、旋转或文字环绕设置可能无法保留");
+            out.images.push({ at: out.spans.length, id: rid, name: name.slice(0, 200) });
+          } else out.image = true;
+          break;
+        }
+        case "w:pict": case "w:object": case "mc:AlternateContent": out.image = true; break;
         case "w:footnoteReference": case "w:endnoteReference": this.warnings.add("脚注和尾注未导入"); break;
         case "w:commentReference": this.warnings.add("Word 批注未导入"); break;
         default: break;
@@ -659,12 +675,28 @@ class DocxReader {
   }
 
   paragraph(p: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }): void {
+    const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
+    this.inline(p, out);
+    if (out.image) this.warnings.add(hasTextBox(p) ? "文本框中的内容未导入" : "部分图片无法导入，已跳过");
+    if (out.images.length) {
+      if (out.spans.length) this.warnings.add("行内图片已拆分为独立图片块");
+      let at = 0;
+      for (const image of out.images) {
+        if (image.at > at) this.paragraphText(p, blocks, state, out.spans.slice(at, image.at), out.icon);
+        blocks.push({ type: "image", text: "", props: { importImageId: image.id, name: image.name }, spans: [] });
+        state.lastCode = false;
+        at = image.at;
+      }
+      if (at < out.spans.length) this.paragraphText(p, blocks, state, out.spans.slice(at), out.icon);
+      return;
+    }
+    this.paragraphText(p, blocks, state, out.spans, out.icon, out.image);
+  }
+
+  private paragraphText(p: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }, initialSpans: MdSpan[], icon: string, hasImage = false): void {
     const pPr = child(p, "w:pPr");
     let { kind, numbered } = this.paragraphKind(pPr);
-    const out = { spans: [] as MdSpan[], icon: "", image: false };
-    this.inline(p, out);
-    if (out.image) this.warnings.add(hasTextBox(p) ? "文本框中的内容未导入" : "文档中的图片暂不支持导入，已跳过");
-    let spans = out.spans;
+    let spans = initialSpans;
     const text = spans.map((s) => s.text).join("");
     const props: Record<string, string> = {};
     const jc = child(pPr, "w:jc")?.attrs["w:val"];
@@ -675,7 +707,7 @@ class DocxReader {
 
     if (kind === "divider") { blocks.push({ type: "divider", text: "", props: {}, spans: [] }); return; }
     if (!text.trim()) {
-      if (kind === "paragraph" && !numbered && child(child(pPr, "w:pBdr"), "w:bottom") && !out.image) blocks.push({ type: "divider", text: "", props: {}, spans: [] });
+      if (kind === "paragraph" && !numbered && child(child(pPr, "w:pBdr"), "w:bottom") && !hasImage) blocks.push({ type: "divider", text: "", props: {}, spans: [] });
       return;
     }
     if (kind === "title") {
@@ -707,7 +739,7 @@ class DocxReader {
       const fill = hexColor(child(pPr, "w:shd")?.attrs["w:fill"]);
       const index = CALLOUT_COLORS.findIndex(([bg]) => bg.slice(1).toUpperCase() === fill);
       if (index > 0) props.color = String(index);
-      const emoji = out.icon.trim();
+      const emoji = icon.trim();
       if (emoji) props.emoji = emoji;
       blocks.push(textBlock("callout", spans, props));
       return;
@@ -729,9 +761,9 @@ class DocxReader {
     const walk = (node: XmlElement) => {
       for (const c of children(node)) {
         if (c.name === "w:p") {
-          const out = { spans: [] as MdSpan[], icon: "", image: false };
+          const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
           this.inline(c, out);
-          if (out.image) this.warnings.add("文档中的图片暂不支持导入，已跳过");
+          if (out.image || out.images.length) this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
           // Bold header rows are presentation (our own export writes them).
           if (out.spans.some((s) => Object.keys(s.marks).some((k) => !(header && k === "bold")))) styled = true;
           lines.push(out.icon + out.spans.map((s) => s.text).join(""));
@@ -822,7 +854,7 @@ function textBlock(type: string, spans: MdSpan[], props: Record<string, string>)
 const NOT_DOCX = "文件不是有效的 Word（.docx）文档。";
 
 /** Parse .docx bytes into import seeds. Throws DocxImportError with a user-facing Chinese message. */
-export async function parseDocx(bytes: Uint8Array): Promise<DocxImportResult> {
+export async function parseDocx(bytes: Uint8Array, options: { images?: boolean } = {}): Promise<DocxImportResult> {
   if (bytes.length > DOCX_MAX_BYTES) throw new DocxImportError("Word 文件不能超过 10 MB。");
   if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
     throw new DocxImportError("暂不支持旧版 .doc 或已加密的 Word 文件，请在 Word 中另存为 .docx 后重试。");
@@ -855,21 +887,37 @@ export async function parseDocx(bytes: Uint8Array): Promise<DocxImportResult> {
     if (rel.type.endsWith("/styles")) stylesPath = relTarget(main, rel.target);
     else if (rel.type.endsWith("/numbering")) numberingPath = relTarget(main, rel.target);
   }
-  const reader = new DocxReader(parseStyles(await read(stylesPath)), parseNumbering(await read(numberingPath)), docRels);
+  const images = new Map<string, DocxImage>();
+  if (options.images) {
+    let total = 0;
+    for (const [id, rel] of docRels) {
+      if (rel.external || rel.type !== `${REL_BASE}/image` || images.size >= 100) continue;
+      const entry = byName.get(relTarget(main, rel.target));
+      if (!entry || entry.size > 10 * 1024 * 1024 || total + entry.size > 30 * 1024 * 1024) continue;
+      try {
+        const data = await readZipEntry(bytes, entry, 10 * 1024 * 1024);
+        const info = imageInfo(data);
+        if (!info || !info.width || !info.height || info.width > 16384 || info.height > 16384 || info.width * info.height > 100_000_000) continue;
+        total += data.length;
+        images.set(id, { ...info, data });
+      } catch { /* Report the skipped image at its position. */ }
+    }
+  }
+  const reader = new DocxReader(parseStyles(await read(stylesPath)), parseNumbering(await read(numberingPath)), docRels, images);
   const body = child(document, "w:body");
   const blocks: MdBlock[] = [];
   if (body) reader.body(body, blocks, { lastCode: false });
   if ([...byName.keys()].some((name) => /^word\/(header|footer)\d*\.xml$/.test(name))) reader.warnings.add("页眉和页脚未导入");
   if (!blocks.length) throw new DocxImportError("文件没有可导入的内容。");
-  return { blocks, title: reader.title, warnings: [...reader.warnings] };
+  return { blocks, title: reader.title, warnings: [...reader.warnings], ...(images.size ? { images } : {}) };
 }
 
 /** Read a picked File (size-checked before loading it into memory). */
-export async function readDocxFile(file: Blob): Promise<DocxImportResult> {
+export async function readDocxFile(file: Blob, options: { images?: boolean } = {}): Promise<DocxImportResult> {
   if (file.size > DOCX_MAX_BYTES) throw new DocxImportError("Word 文件不能超过 10 MB。");
   let buffer: ArrayBuffer;
   try { buffer = await file.arrayBuffer(); } catch { throw new DocxImportError("读取文件失败，请重试。"); }
-  return parseDocx(new Uint8Array(buffer));
+  return parseDocx(new Uint8Array(buffer), options);
 }
 
 export function docxImportErrorMessage(error: unknown): string {

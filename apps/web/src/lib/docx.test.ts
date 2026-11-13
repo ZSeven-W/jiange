@@ -173,6 +173,36 @@ describe("Word export → import round trip", () => {
     const imported = await parseDocx(bytes);
     expect(imported.warnings.join("")).toMatch(/图片/);
     expect(imported.blocks.find((x) => x.text.includes("a.pdf"))?.spans[0].marks.link).toBe("https://jiange.test/api/files/f3");
+    const withImages = await parseDocx(bytes, { images: true });
+    expect(withImages.blocks.some((block) => block.type === "image")).toBe(true);
+    expect(withImages.images?.size).toBe(1);
+  });
+
+  it("imports embedded images and preserves text and image order", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20]);
+    const xml = `<w:document xmlns:w="w" xmlns:r="r"><w:body><w:p><w:r><w:t>前文</w:t><w:drawing><wp:inline><wp:docPr descr="示意图"/><a:blip r:embed="pic"/></wp:inline></w:drawing><w:t>后文</w:t></w:r></w:p></w:body></w:document>`;
+    const zip = createZip([
+      { name: "word/document.xml", data: enc.encode(xml) },
+      { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) },
+      { name: "word/media/p.png", data: png },
+    ]);
+    const result = await parseDocx(zip, { images: true });
+    expect(result.blocks.map((block) => [block.type, block.text])).toEqual([["paragraph", "前文"], ["image", ""], ["paragraph", "后文"]]);
+    expect(result.blocks[1].props).toEqual({ importImageId: "pic", name: "示意图" });
+    expect(result.images?.get("pic")?.data).toEqual(png);
+    expect(result.warnings).toContain("行内图片已拆分为独立图片块");
+    const legacy = await parseDocx(zip);
+    expect(legacy.blocks.map((block) => block.text)).toEqual(["前文后文"]);
+    expect(legacy.warnings).toContain("部分图片无法导入，已跳过");
+  });
+
+  it("never fetches external images and reports them as skipped", async () => {
+    const xml = `<w:p><w:r><w:t>正文</w:t><w:drawing><a:blip r:embed="pic"/></w:drawing></w:r></w:p>`;
+    const zip = rawDocx(xml, [], `<Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.test/a.png" TargetMode="External"/>`);
+    const result = await parseDocx(zip, { images: true });
+    expect(result.images).toBeUndefined();
+    expect(result.blocks.map((block) => block.text)).toEqual(["正文"]);
+    expect(result.warnings).toContain("部分图片无法导入，已跳过");
   });
 
   it("does not report losses for fully supported content", () => {

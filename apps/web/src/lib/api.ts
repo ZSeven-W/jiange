@@ -449,6 +449,14 @@ export const docsApi = {
     if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
     return data as FileMeta;
   },
+  uploadImportImage: async (id: number, f: File, userId: number): Promise<FileMeta> => {
+    const body = new FormData();
+    body.append("file", f);
+    const response = await fetch(`/api/docs/${id}/import-images`, { method: "POST", body, headers: { "X-Jiange-Upload": "1", "X-Jiange-User-Id": String(userId) } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiError(response.status, data.error ?? "error", data.message ?? response.statusText);
+    return data as FileMeta;
+  },
   versions: (id: number) => request<{ versions: Version[] }>("GET", `/api/docs/${id}/versions`).then((r) => r.versions),
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
   versionPreview: (id: number, seq: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`),

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
 import { bodyBlocks } from "@/editor/model";
 import type { MdBlock } from "@/lib/markdown";
+import type { DocxImportResult } from "@/lib/docx";
 import { fetchDocxImages } from "./docxImages";
+import { uploadDocxImportImages } from "./docxImportImages";
 import { peekStarter, stageStarter, takeStarter } from "./pendingStarter";
 import { insertStarterBlocks } from "./starterTemplateOps";
 
@@ -70,5 +72,26 @@ describe("Word export image loading", () => {
     expect(calls).toEqual(["/api/files/ok", "/api/files/svg", "/api/files/denied"]);
     expect([...images.keys()]).toEqual(["ok"]);
     expect(images.get("ok")).toMatchObject({ contentType: "image/png", width: 2, height: 3 });
+  });
+});
+
+describe("Word import image staging", () => {
+  const result: DocxImportResult = {
+    blocks: [{ type: "paragraph", text: "前", props: {}, spans: [] }, { type: "image", text: "", props: { importImageId: "r1", name: "插图" }, spans: [] }, { type: "image", text: "", props: { importImageId: "r1", name: "再次引用" }, spans: [] }],
+    images: new Map([["r1", { data: new Uint8Array([1, 2, 3]), contentType: "image/png" as const, width: 1, height: 1 }]]),
+    warnings: [],
+  };
+  it("uploads a reused image once and replaces only its temporary references", async () => {
+    const upload = vi.fn(async () => ({ id: 42, name: "word-image.png", mime: "image/png", size: 3 }));
+    const blocks = await uploadDocxImportImages(result, upload, () => true);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(blocks[1].props).toEqual({ name: "插图", fileId: "42", mime: "image/png" });
+    expect(blocks[2].props).toEqual({ name: "再次引用", fileId: "42", mime: "image/png" });
+    expect(result.blocks[1].props.importImageId).toBe("r1");
+  });
+  it("does not return document operations if state changes during upload", async () => {
+    let ready = true;
+    const upload = vi.fn(async () => { ready = false; return { id: 42, name: "x", mime: "image/png", size: 3 }; });
+    await expect(uploadDocxImportImages(result, upload, () => ready)).rejects.toThrow();
   });
 });

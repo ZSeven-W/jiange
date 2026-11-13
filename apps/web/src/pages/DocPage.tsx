@@ -48,6 +48,7 @@ import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendBlocksOps, appendMarkdownOps } from "@/lib/mdImport";
 import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxImportResult } from "@/lib/docx";
 import { fetchDocxImages } from "./docxImages";
+import { uploadDocxImportImages } from "./docxImportImages";
 import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./DocAIPanel";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
@@ -117,6 +118,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const downloadAllowed = permissionsVerified && canDownloadDocument(meta.data);
   const exportContext = useRef({ id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true });
   const exportingMarkdown = useRef(false);
+  const importingWord = useRef(false);
   const [exportNotice, setExportNotice] = useState<{ id: number; user: number; text: string } | null>(null);
   useLayoutEffect(() => {
     exportContext.current = { id, user: me.user.id, client: sync.client, verified: permissionsVerified, meta: meta.data, mounted: true };
@@ -476,16 +478,29 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   };
   const importWord = async (file: File) => {
     const d = sync.client.doc;
-    if (!d) return;
+    if (!d || importingWord.current) return;
     if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
-    let result: DocxImportResult;
-    // Parse fully before touching the document: a broken file never applies partially.
-    try { result = await readDocxFile(file); } catch (error) { setTemplateError(docxImportErrorMessage(error)); return; }
-    if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
-    if (d !== sync.client.doc || !canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || !recordExternalUndo.current) { setTemplateError("请等待文档同步完成后再导入。"); return; }
-    const tx = appendBlocksOps(d, result.blocks);
-    if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
-    setTemplateError("");
+    importingWord.current = true;
+    try {
+      let result: DocxImportResult;
+      try { result = await readDocxFile(file, { images: true }); } catch (error) { setTemplateError(docxImportErrorMessage(error)); return; }
+      if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+      const ready = () => {
+        const context = exportContext.current;
+        return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && d === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && !!recordExternalUndo.current;
+      };
+      if (!ready()) { setTemplateError("请等待文档同步完成后再导入。"); return; }
+      let blocks;
+      try { blocks = await uploadDocxImportImages(result, (image) => docsApi.uploadImportImage(id, image, me.user.id), ready); }
+      catch {
+        if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setTemplateError("图片上传或文档状态异常，正文未导入；已上传的图片可能作为未引用附件保留，请检查后重试。");
+        return;
+      }
+      if (!ready() || !recordExternalUndo.current) { setTemplateError("文档状态已变化，正文未导入；已上传的图片可能作为未引用附件保留。"); return; }
+      const tx = appendBlocksOps(d, blocks);
+      if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
+      setTemplateError("");
+    } finally { importingWord.current = false; }
   };
   const importFile = (file: File) => { void (isDocxFile(file) ? importWord(file) : importMd(file)); };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
