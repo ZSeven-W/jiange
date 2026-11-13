@@ -6,3 +6,8 @@ export function versionRequestIdentity(previous: VersionRequestIdentity | null, 
 export function randomVersionRequestId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, "0")).join("");
 }
+
+/** Automatic system snapshots do not consume the user's named-version numbering. */
+export function nextNamedVersionNumber(entries: readonly { createdBy: number }[]): number {
+  return entries.filter((entry) => entry.createdBy > 0).length + 1;
+}

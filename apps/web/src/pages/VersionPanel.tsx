@@ -29,8 +29,16 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 /** Full-screen history view with a timeline and a read-only document preview. */
 export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; canRestore: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["versions", userId, id], queryFn: () => docsApi.versionEntries(id, userId) });
-  const listVisible = list.isSuccess && !list.isFetching;
+  const list = useQuery({
+    queryKey: ["versions", userId, id],
+    queryFn: () => docsApi.versionEntries(id, userId),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    retry: (count, error) => !(error instanceof ApiError && [401, 403, 404].includes(error.status)) && count < 2,
+  });
+  // Keep the last verified list visible while rechecking; hide it on failure.
+  const listVisible = list.isSuccess;
+  const listVerified = listVisible && !list.isFetching;
   const [previewing, setPreviewing] = useState<{ id: string; seq: number } | null>(null);
   const [diffMode, setDiffMode] = useState(false);
   const [mobilePreview, setMobilePreview] = useState(false);
@@ -60,7 +68,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
     queryFn: () => docsApi.versionPreview(id, previewing!.seq),
     enabled: previewing !== null && selectedIndex >= 0,
   });
-  const previewReady = canRestore && selectedIndex >= 0 && preview.isSuccess && !preview.isFetching;
+  const previewReady = canRestore && listVerified && selectedIndex >= 0 && preview.isSuccess && !preview.isFetching;
   const latest = useRef({ id, userId, canRestore, previewing, previewReady });
   latest.current = { id, userId, canRestore, previewing, previewReady };
   const restore = useMutation({
@@ -132,7 +140,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
       <aside className={`${mobilePreview ? "hidden" : "flex"} min-h-0 w-full shrink-0 flex-col md:flex md:w-[294px] md:border-l`} aria-label="历史版本列表">
         <div className="flex h-12 shrink-0 items-center border-b px-4 text-[15px] font-medium md:hidden"><span>历史记录</span>{canEdit && <button type="button" onClick={onCreateVersion} className="ml-auto flex items-center gap-1 text-[13px] text-[#1456F0]" data-create-version><Plus size={16}/>创建版本</button>}</div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {(list.isLoading || list.isFetching) && <p className="px-4 py-8 text-center text-[13px] text-subtle">正在加载版本…</p>}
+          {list.isLoading && <p className="px-4 py-8 text-center text-[13px] text-subtle">正在加载版本…</p>}
           {list.isError && <p role="alert" className="px-4 py-8 text-center text-[13px] text-destructive">无法加载版本，请确认文档权限并重试。 <button type="button" className="underline" onClick={() => void list.refetch()}>重试</button></p>}
           {listVisible && list.data.length === 0 && <p className="px-4 py-8 text-center text-[13px] text-subtle">还没有版本</p>}
           {(listVisible ? list.data : []).map((v, i, all) => <Fragment key={v.id}>

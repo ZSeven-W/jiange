@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { ApiError, docsApi } from "@/lib/api";
 import { formatEditTime } from "./docHeaderMeta";
-import { randomVersionRequestId, versionRequestIdentity, type VersionRequestIdentity } from "./versionRequestIdentity";
+import { nextNamedVersionNumber, randomVersionRequestId, versionRequestIdentity, type VersionRequestIdentity } from "./versionRequestIdentity";
 
 export function versionSaveError(error: unknown): string {
   if (error instanceof ApiError && error.status >= 400 && error.status < 500) return error.message || "无法保存版本，请检查权限和同步状态。";
@@ -25,7 +25,7 @@ export function NamedVersionDialog({ docId, userId, title, onSave, onClose }: { 
   const request = useRef<VersionRequestIdentity | null>(null);
   const pendingRef = useRef(false); pendingRef.current = pending;
   const closeRef = useRef(onClose); closeRef.current = onClose;
-  useEffect(() => { if (!touched && versions.isSuccess && !versions.isFetching) setLabel(`${title} 第 ${versions.data.length + 1} 版`); }, [title, touched, versions.data, versions.isSuccess, versions.isFetching]);
+  useEffect(() => { if (!touched && versions.isSuccess && !versions.isFetching) setLabel(`${title} 第 ${nextNamedVersionNumber(versions.data)} 版`); }, [title, touched, versions.data, versions.isSuccess, versions.isFetching]);
   useEffect(() => {
     alive.current = true;
     const previous = document.activeElement as HTMLElement | null;

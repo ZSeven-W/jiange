@@ -616,7 +616,7 @@ func (p *Postgres) SaveVersion(ctx context.Context, doc, seq int64, label string
 }
 
 func (p *Postgres) Versions(ctx context.Context, doc int64) ([]Version, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT s.seq, s.label, s.created_by, COALESCE(u.name, ''), s.created_at
+	rows, err := p.Pool.Query(ctx, `SELECT s.seq, s.label, COALESCE(s.created_by, 0), COALESCE(u.name, ''), s.created_at
 		FROM doc_snapshots s LEFT JOIN users u ON u.id = s.created_by
 		WHERE s.doc_id = $1 AND s.is_version ORDER BY s.seq DESC`, doc)
 	if err != nil {

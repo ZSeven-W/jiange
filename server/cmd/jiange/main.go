@@ -24,31 +24,26 @@ import (
 	"github.com/ZSeven-W/jiange/server/webui"
 )
 
-// autoVersions periodically snapshots recently edited docs as named versions.
+// autoVersions retries all unversioned heads, including changes made while the service was offline.
 func autoVersions(ctx context.Context, log *slog.Logger, pg *store.Postgres, every time.Duration) {
+	sweep := func() {
+		created, err := api.SweepAutomaticVersions(ctx, pg, log)
+		if err != nil && ctx.Err() == nil {
+			log.Error("automatic version sweep", "error", err)
+		}
+		if created > 0 {
+			log.Info("automatic versions created", "count", created)
+		}
+	}
+	sweep()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(every):
-			ids, err := pg.RecentDocIDs(ctx, time.Now().Add(-every))
-			if err != nil {
-				log.Error("auto versions", "err", err)
-				continue
-			}
-			for _, id := range ids {
-				func() {
-					d, head, err := api.StateAtHead(ctx, pg, id)
-					if err != nil || head == 0 {
-						return
-					}
-					if err := pg.SaveSnapshot(ctx, id, head, d.EncodeState()); err != nil {
-						return
-					}
-					_ = pg.SaveVersion(ctx, id, head, "自动保存", 0)
-					log.Info("auto version", "doc", id, "seq", head)
-				}()
-			}
+		case <-ticker.C:
+			sweep()
 		}
 	}
 }

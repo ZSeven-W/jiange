@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "@/lib/api";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 
 vi.mock("./ReadOnlyDoc", () => ({ ReadOnlyDoc: () => null }));
 import { RestoreErrorNotice, restoreErrorMessage } from "./VersionPanel";
@@ -12,6 +13,18 @@ describe("version restore errors", () => {
     expect(restoreErrorMessage(new TypeError("Failed to fetch"))).toContain("无法确认还原结果");
     expect(restoreErrorMessage(new ApiError(500, "internal", "internal error"))).toContain("无法确认还原结果");
     expect(restoreErrorMessage(new ApiError(408, "timeout", "timed out"))).toContain("无法确认还原结果");
+  });
+
+  it("does not treat cached list data as authorized after a denied refresh", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["history-test"], [{ id: "n:1" }]);
+    const observer = new QueryObserver(client, { queryKey: ["history-test"], queryFn: async () => { throw new ApiError(403, "forbidden", "denied"); }, retry: false });
+    const stop = observer.subscribe(() => {});
+    const result = await observer.refetch();
+    expect(result.data).toBeDefined();
+    expect(result.isError).toBe(true);
+    expect(result.isSuccess).toBe(false);
+    stop(); client.clear();
   });
 
   it("offers a retry only to users who can still edit, while retaining dismissal", () => {
