@@ -70,6 +70,16 @@ describe("read-only document snapshots", () => {
     expect(protectedHTML).toContain("下载已关闭");
   });
 
+  it("offers image preview only when a preview handler is supplied", () => {
+    const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "示例.png", caption: "示意图", imageWidth: "50" })] };
+    const normal = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    const preview = renderToStaticMarkup(<ReadOnlyDoc view={view} onPreviewImage={() => {}} />);
+    expect(normal).not.toContain("查看图片：示意图");
+    expect(preview).toContain('aria-label="查看图片：示意图"');
+    expect(preview).toContain('src="/api/files/12"');
+    expect(preview).toContain("width:50%");
+  });
+
   it("keeps images visible in protected versions without exposing attachment links", () => {
     const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "预览图" }), b("1:2", "file", "", { fileId: "34", name: "方案.pdf" })] };
     const protectedHTML = renderToStaticMarkup(<VersionView view={view} disableFileDownloads versionSeq={42} />);

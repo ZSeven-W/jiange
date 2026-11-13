@@ -54,14 +54,17 @@ function RichText({ spans }: { spans: Span[] }) {
   })}</>;
 }
 
-function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean }) {
+function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false, onPreview }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean; onPreview?: (src: string, name: string, mime?: string) => void }) {
   const [failed, setFailed] = useState(false);
   const src = fileURL(block.props.fileId, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
   if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
   const align = imageAlign(block.props.align);
   const width = Number(block.props.imageWidth) || undefined;
-  return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}><img src={src} alt={block.props.caption || block.props.name || "图片"} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={width ? { width: `${Math.min(100, width)}%` } : undefined} className="max-h-[640px] max-w-full rounded-[4px] object-contain" onError={() => setFailed(true)} />{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
+  const name = block.props.caption || block.props.name || "图片";
+  const widthStyle = width ? { width: `${Math.min(100, width)}%` } : undefined;
+  const image = <img src={src} alt={name} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={onPreview && width ? { width: "100%" } : widthStyle} className="max-h-[640px] max-w-full rounded-[4px] object-contain" onError={() => setFailed(true)} />;
+  return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={`查看图片：${name}`} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
 function ReadOnlyTable({ data, merges, header = true }: { data?: string; merges?: string; header?: boolean }) {
@@ -92,7 +95,7 @@ function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: stri
 
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
-export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number }) {
+export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void }) {
   const children = new Map<string, Block[]>();
   for (const block of view.blocks) {
     const group = children.get(block.parent) ?? [];
@@ -128,7 +131,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
-        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} />; break;
+        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
           content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;

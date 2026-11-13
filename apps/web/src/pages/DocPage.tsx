@@ -39,6 +39,7 @@ import { DocumentGlyph, displayDocumentIcon } from "@/components/DocumentGlyph";
 import { publishDocumentIcon } from "@/components/documentIconCache";
 import { ask, askText } from "@/components/ui/ask";
 import { VersionPanel } from "./VersionPanel";
+import { DocumentPresentation } from "./DocumentPresentation";
 import { NamedVersionDialog } from "./NamedVersionDialog";
 import { namedVersionPoint } from "./namedVersionSafety";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
@@ -62,7 +63,7 @@ import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
-import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -178,6 +179,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
+  const [presenting, setPresenting] = useState(false);
+  useEffect(() => { setPresenting(false); }, [id, me.user.id, metadataVerified]);
   const [versionTarget, setVersionTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setVersionTarget(null); }, [id, me.user.id, metadataVerified]);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
@@ -583,14 +586,14 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   }, [findOpen, requestFindScroll]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f" && !event.isComposing) {
+      if (!presenting && !history && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f" && !event.isComposing) {
         event.preventDefault();
         openFind("find");
       }
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
-  }, [openFind]);
+  }, [openFind, presenting, history]);
   useEffect(() => {
     setFindOpen(false);
     setFindQuery("");
@@ -781,6 +784,83 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     setFindMessage(result.skipped ? `已替换 ${result.replaced} 处，${result.skipped} 处内容已变化，请重新查找。` : `已替换 ${result.replaced} 处。`);
   };
 
+  const toggleComments = () => {
+    if (commentAccessDenied) { commentRecoveryGate.current.reset(); revalidateCommentAccess(); return; }
+    if (commentsOpen) freezeCommentDrafts();
+    setCommentsTarget(commentsOpen ? null : { doc: id, user: me.user.id, session: commentSession });
+  };
+  const openPresentation = () => {
+    if (commentsOpen) freezeCommentDrafts();
+    setFindOpen(false); setHistory(false); setSharing(false); setAiOpen(false); setTitleCheckTarget(null); setInfoTarget(null); setVersionTarget(null); setPreview(null); setPresenting(true);
+  };
+  const closePresentation = () => {
+    if (commentsOpen) freezeCommentDrafts();
+    setPresenting(false);
+  };
+  const commentsPanel = commentsAvailable && commentsOpen ? (
+        <CommentsPanel
+          key={`${id}:${me.user.id}:${commentSession}`}
+          id={id}
+          meId={me.user.id}
+          session={commentSession}
+          onAccessDenied={revalidateCommentAccess}
+          onPolicyDenied={() => {
+            revalidateCurrentCommentPolicy(commentIdentity.current, { doc: id, user: me.user.id, session: commentSession }, () => {
+              freezeCommentDrafts();
+              void meta.refetch();
+            });
+          }}
+          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentQuoteAllowed)) : []}
+          onDismissRecovery={() => {
+            const doc = id, user = me.user.id, session = commentSession;
+            if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
+            const active = commentStorage.current;
+            if (!active || active.doc !== doc || active.user !== user) {
+              setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+              return;
+            }
+            try { active.value.write(commentDraftJournal.current.list(doc, user), []); }
+            catch { setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" }); return; }
+            commentDraftJournal.current.dismiss(doc, user);
+            void active.value.dismiss().then((complete) => {
+              if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
+              const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), active.value.read());
+              setCommentRecovery(values.length ? { doc, user, values } : null);
+              setCommentStorageDamaged(active.value.damaged().length ? { doc, user, count: active.value.damaged().length } : null);
+              setCommentStorageNotice(complete ? null : { doc, user, text: "部分草稿属于其他正在编辑的标签页或无法安全清除，已保留。" });
+            }).catch(() => {
+              if (matchesCommentTarget(commentIdentity.current, doc, user, session)) setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+            });
+          }}
+          onSnapshot={(value) => {
+            if (!matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
+            commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(value, commentQuoteAllowedRef.current));
+            persistCommentDrafts();
+          }}
+          onComposerSuspended={freezeCommentDrafts}
+          canEdit={canComment && commentStorageReady}
+          canSubmit={canSubmitComment}
+          canCheckAttempt={permissionsVerified && commentsAvailable}
+          canManage={meta.data?.role === "manage"}
+          attemptStore={commentAttempts}
+          allowCopyQuote={contentCopyAllowed}
+          allowPrintQuote={downloadAllowed}
+          draft={draft}
+          onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}
+          activeThread={activeThread}
+          onActivate={(thread) => {
+            if (!presenting) pendingCommentScroll.current = thread;
+            setActiveThread(thread);
+          }}
+          onClose={() => {
+            freezeCommentDrafts();
+            setCommentsTarget(null);
+            setDraft(null);
+            setActiveThread(null);
+          }}
+        />
+  ) : null;
+
   return (
     <div className="flex min-w-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col">
@@ -788,11 +868,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           ancestors={ancestors.data ?? []}
           shareAnchor={shareAnchor}
           onShare={() => setSharing((v) => !v)}
-          onComments={() => {
-            if (commentAccessDenied) { commentRecoveryGate.current.reset(); revalidateCommentAccess(); return; }
-            if (commentsOpen) freezeCommentDrafts();
-            setCommentsTarget(commentsOpen ? null : { doc: id, user: me.user.id, session: commentSession });
-          }}
+          onComments={toggleComments}
           onFind={() => openFind("replace")}
           onAI={aiAvailable ? () => setAiOpen((v) => !v) : undefined}
           aiOpen={aiOpen}
@@ -801,7 +877,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onToggleReading={() => setReadingMode((value) => !value)}
           onCreate={() => newDoc.mutate()}
           creating={newDoc.isPending}
-          onHistory={() => setHistory((v) => !v)}
+          onHistory={() => { setPresenting(false); setHistory((v) => !v); }}
+          onPresentation={metadataVerified && sync.client.doc ? openPresentation : undefined}
           onCreateVersion={canEditContent ? () => setVersionTarget({ doc: id, user: me.user.id }) : undefined}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
           onDocumentInfo={() => setInfoTarget({ doc: id, user: me.user.id })}
@@ -881,7 +958,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               block={TITLE}
               me={presence}
               singleLine
-              readOnly={!canEditContent || history}
+              readOnly={!canEditContent || history || presenting}
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
@@ -894,7 +971,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
                 me={presence}
-                readOnly={!canEditContent || history}
+                readOnly={!canEditContent || history || presenting}
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
@@ -969,6 +1046,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           />
         </div>}
       </div>
+      {presenting && metadataVerified && meta.data && sync.client.doc && <DocumentPresentation key={`presentation:${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} icon={meta.data.icon} view={sync.client.doc.view()} synced={sync.status === "synced" && sync.caughtUp && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} commentsOpen={commentsAvailable && commentsOpen} onComments={commentsAvailable ? toggleComments : undefined} onRevalidate={() => { void meta.refetch(); }} onClose={closePresentation}>{commentsPanel}</DocumentPresentation>}
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
@@ -1006,69 +1084,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           ))}
         </div>
       )}
-      {commentsAvailable && commentsOpen && (
-        <CommentsPanel
-          key={`${id}:${me.user.id}:${commentSession}`}
-          id={id}
-          meId={me.user.id}
-          session={commentSession}
-          onAccessDenied={revalidateCommentAccess}
-          onPolicyDenied={() => {
-            revalidateCurrentCommentPolicy(commentIdentity.current, { doc: id, user: me.user.id, session: commentSession }, () => {
-              freezeCommentDrafts();
-              void meta.refetch();
-            });
-          }}
-          recovery={commentRecovery?.doc === id && commentRecovery.user === me.user.id ? commentRecovery.values.map((value) => redactCommentDraftQuote(value, commentQuoteAllowed)) : []}
-          onDismissRecovery={() => {
-            const doc = id, user = me.user.id, session = commentSession;
-            if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
-            const active = commentStorage.current;
-            if (!active || active.doc !== doc || active.user !== user) {
-              setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
-              return;
-            }
-            try { active.value.write(commentDraftJournal.current.list(doc, user), []); }
-            catch { setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" }); return; }
-            commentDraftJournal.current.dismiss(doc, user);
-            void active.value.dismiss().then((complete) => {
-              if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
-              const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), active.value.read());
-              setCommentRecovery(values.length ? { doc, user, values } : null);
-              setCommentStorageDamaged(active.value.damaged().length ? { doc, user, count: active.value.damaged().length } : null);
-              setCommentStorageNotice(complete ? null : { doc, user, text: "部分草稿属于其他正在编辑的标签页或无法安全清除，已保留。" });
-            }).catch(() => {
-              if (matchesCommentTarget(commentIdentity.current, doc, user, session)) setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
-            });
-          }}
-          onSnapshot={(value) => {
-            if (!matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
-            commentDraftJournal.current.save(id, me.user.id, redactCommentDraftQuote(value, commentQuoteAllowedRef.current));
-            persistCommentDrafts();
-          }}
-          onComposerSuspended={freezeCommentDrafts}
-          canEdit={canComment && commentStorageReady}
-          canSubmit={canSubmitComment}
-          canCheckAttempt={permissionsVerified && commentsAvailable}
-          canManage={meta.data?.role === "manage"}
-          attemptStore={commentAttempts}
-          allowCopyQuote={contentCopyAllowed}
-          allowPrintQuote={downloadAllowed}
-          draft={draft}
-          onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}
-          activeThread={activeThread}
-          onActivate={(thread) => {
-            pendingCommentScroll.current = thread;
-            setActiveThread(thread);
-          }}
-          onClose={() => {
-            freezeCommentDrafts();
-            setCommentsTarget(null);
-            setDraft(null);
-            setActiveThread(null);
-          }}
-        />
-      )}
+      {!presenting && commentsPanel}
     </div>
   );
 }
@@ -1100,6 +1116,7 @@ function TopBar({
   onCreate,
   creating,
   onHistory,
+  onPresentation,
   onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
@@ -1129,6 +1146,7 @@ function TopBar({
   width: DocWidth;
   onWidthChange: (value: DocWidth) => void;
   onHistory: () => void;
+  onPresentation?: () => void;
   onCreateVersion?: () => void;
   onTitleCheck: () => void;
   onDocumentInfo: () => void;
@@ -1188,7 +1206,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1262,6 +1280,7 @@ function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) 
 function DocMenu({
   meta,
   onHistory,
+  onPresentation,
   onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
@@ -1278,6 +1297,7 @@ function DocMenu({
 }: {
   meta?: DocMeta;
   onHistory?: () => void;
+  onPresentation?: () => void;
   onCreateVersion?: () => void;
   onTitleCheck?: () => void;
   onDocumentInfo?: () => void;
@@ -1378,6 +1398,7 @@ function DocMenu({
               </div>}
             </div>
           )}
+          {onPresentation && <div className={group}><button className={row} onClick={() => { close(); onPresentation(); }} data-document-present><Presentation size={15} className={icon} />演示模式</button></div>}
           <div className={group}>
             <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />查找和替换</button>
             <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>

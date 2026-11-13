@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * 附件在线预览遮罩：图片大图、PDF 内嵌、文本/代码内容预览；
@@ -19,11 +19,30 @@ export function AttachmentPreview({
   allowPrint?: boolean;
   onClose: () => void;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    close.current?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
   const isImage = mime?.startsWith("image/");
   const isPdf = mime === "application/pdf";
   const isText = !!mime && (mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
   return (
     <div
+      ref={root}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`预览：${name}`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+        if (event.key !== "Tab" || !root.current) return;
+        const items = [...root.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], iframe")].filter((item) => item.getClientRects().length > 0);
+        if (!items.length) return;
+        const index = items.indexOf(document.activeElement as HTMLElement);
+        if (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === items.length - 1) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); }
+      }}
       className="fixed inset-0 z-50 flex flex-col bg-black/80 p-6"
       onClick={onClose}
       onCopy={(event) => {
@@ -37,7 +56,7 @@ export function AttachmentPreview({
       <div className="mb-3 flex shrink-0 items-center gap-3 px-1" onClick={(e) => e.stopPropagation()}>
         <span className="truncate text-[14px] text-white/90">{name}</span>
         <span className="text-[12px] text-white/40">{mime}</span>
-        <button className="ml-auto rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label="关闭">
+        <button ref={close} type="button" onClick={onClose} className="ml-auto rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label="关闭">
           ✕
         </button>
       </div>

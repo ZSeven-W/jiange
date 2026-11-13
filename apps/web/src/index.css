@@ -128,6 +128,7 @@
   body:has([data-print-doc]) header,
   body:has([data-print-doc]) [data-comments-panel],
   body:has([data-print-doc]) [data-version-panel],
+  body:has([data-print-doc]) [data-document-presentation],
   body:has([data-print-doc]) [data-outline-panel],
   body:has([data-print-doc]) [data-attachment-preview],
   body:has([data-print-doc]) [data-ask],
