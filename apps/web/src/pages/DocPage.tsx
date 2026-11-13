@@ -533,7 +533,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
   const canEditContent = canEditRole && !readingMode && !sync.blocked;
   canEditRef.current = canEditContent;
-  const saveNamedVersion = async (label: string) => {
+  const saveNamedVersion = async (label: string, requestId: string) => {
     const client = sync.client;
     const notReady = (text: string) => Object.assign(new Error(text), { name: "VersionNotReady" });
     const point = namedVersionPoint(client, canEditRef.current, permissionsVerified);
@@ -542,7 +542,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
-      await docsApi.createNamedVersion(id, label, seq, epoch, me.user.id, controller.signal);
+      await docsApi.createVersionEntry(id, label, seq, epoch, requestId, me.user.id, controller.signal);
       await qc.invalidateQueries({ queryKey: ["versions", me.user.id, id] });
       const current = exportContext.current;
       if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: "已保存文档版本，可在历史记录中查看。" });

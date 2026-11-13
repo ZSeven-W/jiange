@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { ApiError, docsApi } from "@/lib/api";
 import { formatEditTime } from "./docHeaderMeta";
+import { randomVersionRequestId, versionRequestIdentity, type VersionRequestIdentity } from "./versionRequestIdentity";
 
 export function versionSaveError(error: unknown): string {
   if (error instanceof ApiError && error.status >= 400 && error.status < 500) return error.message || "无法保存版本，请检查权限和同步状态。";
@@ -11,8 +12,8 @@ export function versionSaveError(error: unknown): string {
 }
 
 /** The named version is created only by the guarded, account-bound endpoint. */
-export function NamedVersionDialog({ docId, userId, title, onSave, onClose }: { docId: number; userId: number; title: string; onSave: (label: string) => Promise<void>; onClose: () => void }) {
-  const versions = useQuery({ queryKey: ["versions", userId, docId], queryFn: () => docsApi.versions(docId) });
+export function NamedVersionDialog({ docId, userId, title, onSave, onClose }: { docId: number; userId: number; title: string; onSave: (label: string, requestId: string) => Promise<void>; onClose: () => void }) {
+  const versions = useQuery({ queryKey: ["versions", userId, docId], queryFn: () => docsApi.versionEntries(docId, userId) });
   const [label, setLabel] = useState(`${title} 第 1 版`);
   const [touched, setTouched] = useState(false);
   const [pending, setPending] = useState(false);
@@ -21,9 +22,10 @@ export function NamedVersionDialog({ docId, userId, title, onSave, onClose }: { 
   const root = useRef<HTMLElement>(null);
   const alive = useRef(true);
   const busy = useRef(false);
+  const request = useRef<VersionRequestIdentity | null>(null);
   const pendingRef = useRef(false); pendingRef.current = pending;
   const closeRef = useRef(onClose); closeRef.current = onClose;
-  useEffect(() => { if (!touched && versions.isSuccess) setLabel(`${title} 第 ${versions.data.length + 1} 版`); }, [title, touched, versions.data, versions.isSuccess]);
+  useEffect(() => { if (!touched && versions.isSuccess && !versions.isFetching) setLabel(`${title} 第 ${versions.data.length + 1} 版`); }, [title, touched, versions.data, versions.isSuccess, versions.isFetching]);
   useEffect(() => {
     alive.current = true;
     const previous = document.activeElement as HTMLElement | null;
@@ -42,8 +44,10 @@ export function NamedVersionDialog({ docId, userId, title, onSave, onClose }: { 
   const save = async () => {
     const name = label.trim();
     if (busy.current || !name) return;
+    try { request.current = versionRequestIdentity(request.current, name, randomVersionRequestId); }
+    catch { setError("无法创建安全的保存请求，请检查浏览器环境。"); return; }
     busy.current = true; setPending(true); setError("");
-    try { await onSave(name); if (alive.current) onClose(); }
+    try { await onSave(name, request.current.id); if (alive.current) onClose(); }
     catch (err) { if (alive.current) setError(versionSaveError(err)); }
     finally { busy.current = false; if (alive.current) setPending(false); }
   };

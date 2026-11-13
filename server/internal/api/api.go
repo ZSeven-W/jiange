@@ -88,6 +88,8 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/docs/{id}/title-consistency":                s.getTitleConsistency,
 		"POST /api/docs/{id}/versions":                        s.postVersion,
 		"POST /api/docs/{id}/named-version":                   s.createNamedVersion,
+		"GET /api/docs/{id}/version-entries":                  s.listVersionEntries,
+		"POST /api/docs/{id}/version-entries":                 s.createVersionEntry,
 		"GET /api/docs/{id}/versions/{seq}":                   s.getVersion,
 		"POST /api/docs/{id}/versions/{seq}/restore":          s.restoreVersion,
 		"GET /api/bases/{id}":                                 s.getBase,

@@ -27,19 +27,21 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 /** Right drawer: version list, read-only preview and restore (P6). */
 export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["versions", userId, id], queryFn: () => docsApi.versions(id) });
-  const [previewing, setPreviewing] = useState<number | null>(null);
+  const list = useQuery({ queryKey: ["versions", userId, id], queryFn: () => docsApi.versionEntries(id, userId) });
+  const listVisible = list.isSuccess && !list.isFetching;
+  const [previewing, setPreviewing] = useState<{ id: string; seq: number } | null>(null);
   const [diffMode, setDiffMode] = useState(false);
-  const latest = useRef({ id, canEdit, previewing });
-  latest.current = { id, canEdit, previewing };
   const mounted = useRef(true);
   const confirming = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const preview = useQuery({
-    queryKey: ["versions", userId, id, previewing],
-    queryFn: () => docsApi.versionPreview(id, previewing!),
+    queryKey: ["versions", userId, id, "preview", previewing?.seq],
+    queryFn: () => docsApi.versionPreview(id, previewing!.seq),
     enabled: previewing !== null,
   });
+  const previewReady = listVisible && preview.isSuccess && !preview.isFetching;
+  const latest = useRef({ id, canEdit, previewing, previewReady });
+  latest.current = { id, canEdit, previewing, previewReady };
   const restore = useMutation({
     mutationFn: (seq: number) => docsApi.restoreVersion(id, seq),
     onSuccess: () => {
@@ -49,13 +51,13 @@ export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFil
   });
   const startRestore = async () => {
     const target = latest.current;
-    if (!target.canEdit || target.previewing === null || restore.isPending || confirming.current) return;
+    if (!target.canEdit || !target.previewReady || target.previewing === null || restore.isPending || confirming.current) return;
     confirming.current = true;
     try {
       const confirmed = await ask("还原到该版本？", "当前内容会被新操作覆盖（历史保留）。", false);
-      if (confirmed && mounted.current && latest.current.id === target.id && latest.current.canEdit && latest.current.previewing === target.previewing) {
+      if (confirmed && mounted.current && latest.current.id === target.id && latest.current.canEdit && latest.current.previewReady && latest.current.previewing === target.previewing) {
         restore.reset();
-        restore.mutate(target.previewing);
+        restore.mutate(target.previewing.seq);
       }
     } finally { confirming.current = false; }
   };
@@ -77,25 +79,29 @@ export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFil
             + 创建当前版本
           </button>
         )}
-        {(list.data ?? []).length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">还没有版本</p>}
-        {(list.data ?? []).map((v) => (
-          <div
-            key={v.seq}
-            className={`mb-2 cursor-pointer rounded-lg border p-3 text-[13px] hover:bg-hover ${previewing === v.seq ? "border-primary" : ""}`}
-            onClick={() => { if (!restore.isPending) { restore.reset(); setPreviewing(v.seq); } }}
-            data-version-item={v.seq}
+        {(list.isLoading || list.isFetching) && <p className="px-2 py-8 text-center text-[13px] text-subtle">正在加载版本…</p>}
+        {list.isError && <p role="alert" className="px-2 py-8 text-center text-[13px] text-destructive">无法加载版本，请确认文档权限并重试。 <button type="button" className="underline" onClick={() => void list.refetch()}>重试</button></p>}
+        {listVisible && list.data.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">还没有版本</p>}
+        {(listVisible ? list.data : []).map((v) => (
+          <button
+            type="button"
+            key={v.id}
+            aria-pressed={previewing?.id === v.id}
+            className={`mb-2 block w-full rounded-lg border p-3 text-left text-[13px] hover:bg-hover ${previewing?.id === v.id ? "border-primary" : ""}`}
+            onClick={() => { if (!restore.isPending) { restore.reset(); setPreviewing({ id: v.id, seq: v.seq }); } }}
+            data-version-item={v.id}
           >
-            <div className="flex items-center gap-2 font-medium">
+            <span className="flex items-center gap-2 font-medium">
               <span className="truncate">{v.label}</span>
               <span className="ml-auto shrink-0 text-[11px] text-subtle">#{v.seq}</span>
-            </div>
-            <div className="mt-1 text-[12px] text-muted-foreground">
+            </span>
+            <span className="mt-1 block text-[12px] text-muted-foreground">
               {v.createdByName || "系统"} · {new Date(v.createdAt).toLocaleString("zh-CN", { hour12: false })}
-            </div>
-          </div>
+            </span>
+          </button>
         ))}
       </div>
-      {previewing !== null && (
+      {listVisible && previewing !== null && (
         <div className="flex h-[55%] shrink-0 flex-col border-t" data-version-preview>
           <div className="flex items-center gap-2 border-b px-4 py-2 text-[13px] font-medium">
             版本预览（只读）
@@ -113,7 +119,7 @@ export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFil
             {canEdit && (
               <button
                 className="ml-auto h-7 rounded-md bg-primary px-3 text-[12px] font-normal text-white hover:opacity-90"
-                disabled={restore.isPending}
+                disabled={restore.isPending || !previewReady}
                 onClick={() => void startRestore()}
                 data-restore-version
               >
@@ -123,11 +129,11 @@ export function VersionPanel({ id, userId, canEdit, allowCopy = true, disableFil
           </div>
           {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canEdit} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
           <div className="flex-1 overflow-y-auto px-5 py-4 text-[14px] leading-6" data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
-            {preview.data ? (
+            {preview.isError ? <p role="alert" className="text-destructive">版本预览加载失败，请检查文档权限。</p> : preview.data ? (
               diffMode && currentView ? (
                 <VersionDiffView oldView={preview.data.view} newView={currentView} />
               ) : (
-                <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing} />
+                <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing.seq} />
               )
             ) : (
               <p className="text-subtle">加载中…</p>

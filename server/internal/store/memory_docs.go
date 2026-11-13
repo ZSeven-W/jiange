@@ -31,6 +31,7 @@ type memDoc struct {
 	opaqueIDs       map[int64]bool
 	snaps           map[int64][]byte
 	versions        map[int64]memVersion
+	namedVersions   []memoryVersionEntry
 	opAt            []time.Time // arrival time per op (auto-version sweep)
 }
 
@@ -41,10 +42,11 @@ type memVersion struct {
 }
 
 type memDocs struct {
-	docs               []*memDoc
-	driveTrashSequence int64
-	clients            []memClient
-	subs               []func(int64, int64)
+	docs                 []*memDoc
+	driveTrashSequence   int64
+	versionEntrySequence int64
+	clients              []memClient
+	subs                 []func(int64, int64)
 }
 
 func (m *Memory) doc(id int64) *memDoc {
