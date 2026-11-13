@@ -103,10 +103,22 @@ describe("read-only document snapshots", () => {
     expect(html).not.toContain('data-comment-anchor="15"');
     expect(html).not.toContain('data-comment-anchor="16"');
     expect(html).toContain("😀目标");
+    const selectedImage = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={14} onActivateComment={() => {}} onPreviewImage={() => {}} />);
+    expect(selectedImage).toMatch(/<img[^>]+class="[^"]*outline-\[#F0B400\]/);
+    expect(selectedImage).not.toMatch(/data-readonly-block="image"[^>]+class="[^"]*outline/);
     new Tx(doc).delete(paragraph, 1, 3);
     const stale = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={11} onActivateComment={() => {}} />);
     expect(stale).not.toContain('data-comment-anchor="11"');
     expect(stale).not.toContain('data-comment-anchor="12"');
+  });
+
+  it("highlights the selected table rather than the full document width", () => {
+    const doc = new Doc(1), tx = new Tx(doc), table = tx.create("table", null, ROOT);
+    tx.setProp(table, "tableData", JSON.stringify([["事项", "状态"], ["评审", "完成"]]));
+    const comment: Comment = { id: 14, docId: 1, userId: 1, userName: "测试", block: idKey(table), startChar: "", endChar: "", quote: "[表格]", body: "评论", resolved: false, createdAt: "", updatedAt: "" };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={[comment]} activeThread={14} onActivateComment={() => {}} />);
+    expect(html).toMatch(/class="[^"]*outline-\[#F0B400\][^"]*" data-table-block/);
+    expect(html).not.toMatch(/data-readonly-block="table"[^>]+class="[^"]*outline/);
   });
 
   it("keeps images visible in protected versions without exposing attachment links", () => {

@@ -58,7 +58,7 @@ function RichText({ spans, flags, activeThread, onActivateComment }: { spans: Sp
   })}</>;
 }
 
-function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false, onPreview }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean; onPreview?: (src: string, name: string, mime?: string) => void }) {
+function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false, onPreview, activeComment = false }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean; onPreview?: (src: string, name: string, mime?: string) => void; activeComment?: boolean }) {
   const [failed, setFailed] = useState(false);
   const src = fileURL(block.props.fileId, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
@@ -67,14 +67,14 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
   const width = Number(block.props.imageWidth) || undefined;
   const name = block.props.caption || block.props.name || "图片";
   const widthStyle = width ? { width: `${Math.min(100, width)}%` } : undefined;
-  const image = <img src={src} alt={name} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={onPreview && width ? { width: "100%" } : widthStyle} className="max-h-[640px] max-w-full rounded-[4px] object-contain" onError={() => setFailed(true)} />;
+  const image = <img src={src} alt={name} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={onPreview && width ? { width: "100%" } : widthStyle} className={cn("max-h-[640px] max-w-full rounded-[4px] object-contain", activeComment && "outline outline-2 outline-offset-2 outline-[#F0B400]")} onError={() => setFailed(true)} />;
   return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={`查看图片：${name}`} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
-function ReadOnlyTable({ data, merges, header = true }: { data?: string; merges?: string; header?: boolean }) {
+function ReadOnlyTable({ data, merges, header = true, activeComment = false }: { data?: string; merges?: string; header?: boolean; activeComment?: boolean }) {
   const rows = parseTableData(data);
   const cover = coverMap(parseMerges(merges, rows.length, rows[0]?.length ?? 0));
-  return <div className="my-2 w-fit max-w-full overflow-x-auto" data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri}>{Array.isArray(row) && row.map((cell, ci) => {
+  return <div className={cn("my-2 w-fit max-w-full overflow-x-auto", activeComment && "rounded-[2px] outline outline-2 outline-offset-2 outline-[#F0B400]")} data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri}>{Array.isArray(row) && row.map((cell, ci) => {
     const cov = cover.get(`${ri}:${ci}`);
     if (cov === "hidden") return null;
     return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
@@ -118,6 +118,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
       else counters.length = 0;
       const text = block.spans.map((s) => s.text).join("");
       const anchors = projection(block);
+      const activeBlockComment = !!anchors?.blockThreadIds.includes(activeThread ?? -1);
       const rich = <RichText spans={block.spans} flags={anchors?.flags} activeThread={activeThread} onActivateComment={onActivateComment} />;
       const nested = children.has(block.id) ? <div className="pl-6">{renderChildren(block.id)}</div> : null;
       let content: ReactNode;
@@ -135,10 +136,10 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
-        case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
+        case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} activeComment={activeBlockComment} />; break;
         case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2">{richText(child)}{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
-        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} />; break;
+        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
           content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;
@@ -150,7 +151,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         }
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
-      return <div key={block.id} data-readonly-block={block.type} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} className={cn(anchors?.blockThreadIds.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", anchors?.blockThreadIds.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
+      return <div key={block.id} data-readonly-block={block.type} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} className={cn(activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
     });
   }
   return <div data-readonly-doc>{renderChildren("0:0")}</div>;

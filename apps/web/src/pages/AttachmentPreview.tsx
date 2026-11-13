@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { Maximize2, Minus, Plus } from "lucide-react";
+import { IMAGE_ZOOM_LEVELS, previewImageSize, stepImageZoom } from "./imagePreviewZoom";
 
 /**
  * 附件在线预览遮罩：图片大图、PDF 内嵌、文本/代码内容预览；
@@ -21,14 +23,31 @@ export function AttachmentPreview({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [imageError, setImageError] = useState(false);
+  const isImage = !!mime?.startsWith("image/");
+  useEffect(() => { setNatural(null); setZoom(1); setImageError(false); }, [src]);
+  useEffect(() => {
+    const node = viewport.current;
+    if (!isImage || !node) return;
+    const measure = () => setViewportSize({ width: node.clientWidth, height: node.clientHeight });
+    measure();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure); observer.observe(node); return () => observer.disconnect();
+    }
+    window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure);
+  }, [isImage]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     close.current?.focus();
     return () => { if (previous?.isConnected) previous.focus(); };
   }, []);
-  const isImage = mime?.startsWith("image/");
   const isPdf = mime === "application/pdf";
   const isText = !!mime && (mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
+  const size = previewImageSize(natural, viewportSize, zoom);
   return (
     <div
       ref={root}
@@ -37,13 +56,18 @@ export function AttachmentPreview({
       aria-label={`预览：${name}`}
       onKeyDown={(event) => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+        if (isImage && !imageError && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
+          if (event.key === "+" || event.key === "=") { event.preventDefault(); setZoom((value) => stepImageZoom(value, 1)); return; }
+          if (event.key === "-") { event.preventDefault(); setZoom((value) => stepImageZoom(value, -1)); return; }
+          if (event.key === "0") { event.preventDefault(); setZoom(1); return; }
+        }
         if (event.key !== "Tab" || !root.current) return;
         const items = [...root.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], iframe")].filter((item) => item.getClientRects().length > 0);
         if (!items.length) return;
         const index = items.indexOf(document.activeElement as HTMLElement);
         if (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === items.length - 1) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); }
       }}
-      className="fixed inset-0 z-50 flex flex-col bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex flex-col bg-[#1f2024] p-4 sm:p-6"
       onClick={onClose}
       onCopy={(event) => {
         if (!allowCopy) event.preventDefault();
@@ -60,17 +84,20 @@ export function AttachmentPreview({
           ✕
         </button>
       </div>
-      <div className="grid min-h-0 flex-1 place-items-center overflow-auto" onClick={(e) => e.stopPropagation()}>
+      <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "grid min-h-0 flex-1 place-items-center overflow-auto"} onClick={(e) => e.stopPropagation()}>
         {isImage ? (
-          <img
+          imageError ? <p role="status" className="m-auto text-[13px] text-white/70">图片加载失败</p> : <img
             src={src}
             alt={name}
+            onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+            onError={() => setImageError(true)}
             draggable={allowPrint}
             data-document-print-restricted={!allowPrint ? "true" : undefined}
             onContextMenu={(event) => {
               if (!allowPrint) event.preventDefault();
             }}
-            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+            style={size ? { width: size.width, height: size.height } : undefined}
+            className={size ? "m-auto max-h-none max-w-none shrink-0 rounded-lg object-contain shadow-2xl" : "m-auto max-h-full max-w-full rounded-lg object-contain shadow-2xl"}
           />
         ) : isPdf ? (
           <iframe src={src} title={name} className="h-full w-full max-w-5xl rounded-lg bg-white shadow-2xl" data-pdf-frame />
@@ -88,6 +115,13 @@ export function AttachmentPreview({
           </div>
         )}
       </div>
+      {isImage && <div className="mt-3 flex shrink-0 justify-center" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-1 rounded-lg bg-white/10 p-1 text-white shadow-lg" role="group" aria-label="图片缩放">
+        <button type="button" aria-label="缩小图片" title="缩小" aria-disabled={imageError || zoom <= IMAGE_ZOOM_LEVELS[0]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, -1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Minus size={17}/></button>
+        <span className="min-w-14 text-center text-[13px] tabular-nums" aria-label={`缩放比例，相对于适应窗口 ${Math.round(zoom * 100)}%`}>{Math.round(zoom * 100)}%</span>
+        <button type="button" aria-label="放大图片" title="放大" aria-disabled={imageError || zoom >= IMAGE_ZOOM_LEVELS[IMAGE_ZOOM_LEVELS.length - 1]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, 1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Plus size={17}/></button>
+        <span className="mx-1 h-5 w-px bg-white/20"/>
+        <button type="button" aria-label="适应窗口" title="适应窗口" aria-disabled={imageError || zoom === 1} onClick={() => { if (!imageError) setZoom(1); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Maximize2 size={16}/></button>
+      </div></div>}
     </div>
   );
 }
