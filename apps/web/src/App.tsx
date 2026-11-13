@@ -177,13 +177,13 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (
-        <Home me={me} favorites />
+        <Home me={me} uploads={uploads} favorites />
       ) : route.page === "playground" ? (
         <div className="flex-1 overflow-auto p-6">
           <Playground />
         </div>
       ) : (
-        <Home me={me} recent={route.page === "recent"} />
+        <Home me={me} uploads={uploads} recent={route.page === "recent"} />
       )}
       <DriveUploadStatus manager={uploads} />
     </div>

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DocMeta, Me, RecentDoc } from "@/lib/api";
 import { Home } from "./Home";
+import { DriveUploadManager } from "./drive-upload";
 
 const me: Me = { user: { id: 1, name: "测试", email: "test@example.test", createdAt: "2026-01-01" }, workspaces: [] };
 const doc = (id: number, title: string, updatedAt: string): DocMeta => ({ id, title, updatedAt, workspaceId: 1, parentId: null, icon: "", creatorId: 1, creatorName: "测试", createdAt: "2026-01-01", role: "manage" });
@@ -14,7 +15,7 @@ function render(recent: RecentDoc[], error?: Error) {
   qc.setQueryData(["docs"], [first, second]);
   qc.setQueryData(["recent", me.user.id], recent);
   if (error) qc.getQueryCache().build(qc, { queryKey: ["recent", me.user.id], queryFn: async () => recent }).setState({ status: "error", error });
-  return renderToStaticMarkup(<QueryClientProvider client={qc}><Home me={me} /></QueryClientProvider>);
+  return renderToStaticMarkup(<QueryClientProvider client={qc}><Home me={me} uploads={new DriveUploadManager(me.user.id, () => {})} /></QueryClientProvider>);
 }
 
 describe("home recent visits", () => {

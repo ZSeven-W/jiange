@@ -7,20 +7,24 @@ import { docTitle, hrefOf } from "@/components/Sidebar";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { BaseColorIcon, DocColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/FeishuIcons";
-import { NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
+import { NewDocGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
+import { HomeUpload } from "@/components/HomeUpload";
+import type { DriveUploadManager } from "./drive-upload";
+import { DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
+import { stagePendingWord } from "./pendingWord";
 import { parseMarkdown } from "@/lib/markdown";
 import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
 import { stageStarter } from "./pendingStarter";
 import { BOARD_TITLE, stageBoard } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
-import { askText } from "@/components/ui/ask";
+import { ask, askText } from "@/components/ui/ask";
 import { ChevronDown, FileText, Folder, FolderOpen, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
 const LIST_GRID = "grid grid-cols-[minmax(0,1fr)_100px] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
 
-export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favorites?: boolean }) {
+export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: DriveUploadManager; recent?: boolean; favorites?: boolean }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   useEffect(() => { document.title = `${favorites ? t("收藏") : recent ? t("最近访问") : t("主页")} - Jiange`; }, [favorites, recent, locale]);
@@ -29,8 +33,11 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   const [newMenu, setNewMenu] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [importError, setImportError] = useState("");
+  const [importing, setImporting] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
   const contentLock = useRef(false);
+  const importGeneration = useRef(0);
+  useEffect(() => { importGeneration.current++; return () => { importGeneration.current++; }; }, [me.user.id]);
   useEffect(() => {
     if (!newMenu) return;
     const close = (event: MouseEvent) => { if (!newMenuRef.current?.contains(event.target as Node)) setNewMenu(false); };
@@ -79,14 +86,38 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   const importFile = async (file: File) => {
     if (contentLock.current) return;
     contentLock.current = true;
-    setImportError("");
-    if (file.size > 5 * 1024 * 1024) { setImportError(t("Markdown 文件不能超过 5 MB。")); contentLock.current = false; return; }
+    const generation = importGeneration.current;
+    const stillHere = () => generation === importGeneration.current;
+    setImportError(""); setImporting(true);
     try {
+      if (isDocxFile(file)) {
+        const result = await readDocxFile(file, { images: true });
+        if (result.warnings.length && !await ask(t("Word 导入可能丢失内容"), `${result.warnings.join("；")}。${t("仍要导入其余内容吗？")}`, false)) return;
+        if (!stillHere()) return;
+        const title = file.name.replace(/\.docx$/i, "").trim() || result.title || t("导入文档");
+        const doc = await driveApi.createWordImportNode(title, null, true, me.user.id);
+        await stagePendingWord(me.user.id, doc.id, file);
+        if (!stillHere()) return;
+        void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] });
+        go(hrefOf({ id: doc.id, kind: "doc" }));
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) throw new Error(t("Markdown 文件不能超过 5 MB。"));
       const markdown = await file.text();
-      if (!parseMarkdown(markdown).length) { setImportError(t("文件没有可导入的内容。")); contentLock.current = false; return; }
-      if (hasUnsupportedImportBlocks(markdown)) { setImportError(t("暂不支持导入图片，请先移除图片内容。")); contentLock.current = false; return; }
-      createWithContent.mutate({ title: file.name.replace(/\.(md|markdown)$/i, "") || t("导入文档"), markdown }, { onSettled: () => { contentLock.current = false; } });
-    } catch { setImportError(t("读取文件失败，请重试。")); contentLock.current = false; }
+      if (!parseMarkdown(markdown).length) throw new Error(t("文件没有可导入的内容。"));
+      if (hasUnsupportedImportBlocks(markdown)) throw new Error(t("暂不支持导入图片，请先移除图片内容。"));
+      if (!stillHere()) return;
+      const title = file.name.replace(/\.(md|markdown)$/i, "") || t("导入文档");
+      // The guarded import endpoint also accepts Markdown and binds creation
+      // to the account that selected the file, even if another tab signs in.
+      const doc = await driveApi.createWordImportNode(title, null, true, me.user.id);
+      stageStarter(me.user.id, doc.id, markdown);
+      if (!stillHere()) return;
+      void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] });
+      go(hrefOf({ id: doc.id, kind: "doc" }));
+    } catch (error) {
+      if (stillHere()) setImportError(error instanceof DocxImportError || (error instanceof Error && !isDocxFile(file)) ? error.message : t("导入未完成，请检查目录后重试。"));
+    } finally { contentLock.current = false; if (stillHere()) setImporting(false); }
   };
   const chooseTemplate = (template: StarterTemplate) => {
     if (contentLock.current) return;
@@ -125,16 +156,13 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
                 <span className="min-w-0 flex-1 text-[14px] font-medium">{t("新建")}</span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
               </button>{menu}
             </div>
-            <label className="flex h-16 w-full cursor-pointer items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-within:outline-2 focus-within:outline-primary">
-              <span className="grid size-8 shrink-0 place-items-center"><UploadGlyph /></span><span className="min-w-0 flex-1 text-[14px] font-medium">{t("上传")}</span><ChevronDown size={15} className="text-subtle" />
-              <input type="file" aria-label={t("上传 Markdown 文件")} accept=".md,.markdown,text/markdown" disabled={createWithContent.isPending} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importFile(file); }} />
-            </label>
+            <HomeUpload uploads={uploads} importing={importing || createWithContent.isPending} onImport={(file) => { void importFile(file); }} />
             <ActionCard icon={<TemplateGlyph />} title={t("模板库")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
           </div>}
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
           {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
           {importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}
-          {createWithContent.isPending && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
+          {(createWithContent.isPending || importing) && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
             <nav aria-label={t("文档分类")} className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
               {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{t(label)}</button>)}
