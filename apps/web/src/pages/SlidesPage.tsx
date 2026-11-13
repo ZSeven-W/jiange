@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
+import { ApiError, docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [shapeMenu, setShapeMenu] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [copyingDeck, setCopyingDeck] = useState(false);
+  const [createdCopyId, setCreatedCopyId] = useState<number | null>(null);
+  const [pageActions, setPageActions] = useState(0);
+  const pageActionCount = useRef(0);
+  const copyRequest = useRef<AbortController | null>(null);
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [showSlideList, setShowSlideList] = useState(true);
   const [fitZoom, setFitZoom] = useState(100);
@@ -38,7 +42,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const activePageRef = useRef<number | null>(null);
   const canEditRef = useRef(false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
-  const canEdit = !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  const canEdit = !copyingDeck && !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId], queryFn: () => slidesApi.pages(deckId), enabled: !!meta.data && !meta.isError });
   const queue = useMemo(() => new SlidesDraftQueue(
     (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes, content.shapes),
@@ -47,6 +51,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   ), [deckId, qc]);
   useEffect(() => () => queue.dispose(), [queue]);
   useEffect(() => () => { imageUpload.current?.abort(); imageUpload.current = null; }, []);
+  useEffect(() => () => { copyRequest.current?.abort(); copyRequest.current = null; }, []);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (queue.hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", warn);
@@ -55,16 +60,22 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["slides", deckId] });
   // 整份复制只携带已保存内容；未保存草稿先行保存完成后才可点击。
   const duplicateDeck = async () => {
-    if (!meta.data || copyingDeck || queue.hasUnsaved()) return;
+    if (!meta.data || copyRequest.current || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActionCount.current > 0) return;
+    const controller = new AbortController();
+    copyRequest.current = controller;
     setCopyingDeck(true);
     setOperationError("");
+    setCreatedCopyId(null);
     try {
-      const nd = await docsApi.duplicate(deckId);
-      location.hash = `#/slides/${nd.id}`;
+      const nd = await slidesApi.duplicateDeck(deckId, userId, controller.signal);
+      if (!nd || !Number.isSafeInteger(nd.id) || nd.id <= 0 || nd.kind !== "slides") throw new Error("invalid copy response");
+      if (copyRequest.current !== controller) return;
+      if (queue.hasUnsaved()) { setCreatedCopyId(nd.id); setOperationError("副本已创建；请先处理当前未保存内容。"); }
+      else location.hash = `#/slides/${nd.id}`;
     } catch (error) {
-      setOperationError(copyErrorMessage(error));
+      if (!controller.signal.aborted) setOperationError(error instanceof ApiError && error.status < 500 ? copyErrorMessage(error) : "创建结果未确认，请先检查云盘中的副本。");
     } finally {
-      setCopyingDeck(false);
+      if (copyRequest.current === controller) { copyRequest.current = null; setCopyingDeck(false); }
     }
   };
   const create = useMutation({ mutationFn: () => slidesApi.create(deckId, ""), onSuccess: (page) => { setCurrent(page.id); void invalidate(); } });
@@ -178,12 +189,15 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     </div>
   );
 
-  const doMove = (page: Page, pos: number) => { setOperationError(""); void slidesApi.move(page.id, pos).then(invalidate).catch(() => setOperationError("页面顺序未能确认，请刷新后重试。")); };
+  const beginPageAction = () => { pageActionCount.current++; setPageActions(pageActionCount.current); };
+  const endPageAction = () => { pageActionCount.current--; setPageActions(pageActionCount.current); };
+  const doMove = (page: Page, pos: number) => { setOperationError(""); beginPageAction(); void slidesApi.move(page.id, pos).then(invalidate).catch(() => setOperationError("页面顺序未能确认，请刷新后重试。")).finally(endPageAction); };
   const doCopy = (page: Page) => {
     const source = queue.get(page);
     if (source.state !== "saved") return;
     setOperationError("");
-    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision, source.content.notes, source.content.shapes)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); });
+    beginPageAction();
+    void slidesApi.create(deckId, source.content.title).then((copy) => slidesApi.update(copy.id, source.content.title, source.content.body, source.content.background, copy.revision, source.content.notes, source.content.shapes)).then((copy) => { setCurrent(copy.id); return invalidate(); }).catch(() => { setOperationError("复制结果未能确认，请刷新后检查页面列表。"); void invalidate(); }).finally(endPageAction);
   };
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
@@ -192,7 +206,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white"><Presentation size={15}/></span>
         <div className="min-w-0"><div className="truncate text-[14px] font-semibold text-[#1f2329]">{meta.data.title || "未命名幻灯片"}</div><div className="text-[11px] text-[#8f959e]">{draft?.state === "saving" ? "正在保存…" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <button type="button" aria-label="创建整份幻灯片副本" title={queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={copyingDeck || queue.hasUnsaved()} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
+          <button type="button" aria-label="创建整份幻灯片副本" title={queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <button type="button" disabled={!active} onClick={() => setPlaying(true)} className="flex h-8 items-center gap-1 rounded-md border border-[#3370ff] bg-white px-3 text-[13px] text-[#3370ff] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>演示</button>
         </div>
@@ -233,7 +247,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           </div>
           {shapeMenu && <div className="flex shrink-0 items-center gap-1 border-b bg-white px-4 py-2 text-[13px]" role="group" aria-label="选择图形">{([["rectangle", "矩形"], ["ellipse", "圆形"], ["triangle", "三角形"]] as const).map(([kind, label]) => <button key={kind} type="button" onClick={() => addShape(kind)} className="rounded-md px-3 py-2 hover:bg-[#f2f3f5]">{label}</button>)}<button type="button" onClick={() => setShapeMenu(false)} className="ml-auto rounded-md px-3 py-2 hover:bg-[#f2f3f5]">关闭</button></div>}
           {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
-          {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}</p>}
+          {(operationError || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || "操作未完成，请刷新后检查。"}{createdCopyId && <a className="ml-2 underline" href={`#/slides/${createdCopyId}`}>打开已创建的副本</a>}</p>}
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto">
             <div className="flex min-h-full min-w-full p-4">

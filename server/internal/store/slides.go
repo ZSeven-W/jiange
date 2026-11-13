@@ -48,6 +48,28 @@ type SlidesDeckCopy struct {
 	ParentID                      *int64
 	Title                         string
 	Guard                         *RestoreGuard
+	// Non-nil binds the copy to the image ids whose blobs were verified by the caller.
+	VerifiedImageIDs []int64
+}
+
+func sameSlideImageIDs(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[int64]bool, len(a))
+	for _, id := range a {
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	for _, id := range b {
+		if !seen[id] {
+			return false
+		}
+		delete(seen, id)
+	}
+	return len(seen) == 0
 }
 
 // slideImageIDs is also checked in the write transaction, so a client cannot
@@ -86,23 +108,31 @@ func remapSlideShapes(shapes json.RawMessage, mapping map[int64]int64) (json.Raw
 	if len(mapping) == 0 {
 		return shapes, nil
 	}
-	var items []map[string]any
+	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(shapes, &items); err != nil {
 		return nil, ErrConflict
 	}
 	for _, item := range items {
-		if kind, _ := item["kind"].(string); kind != "image" {
-			continue
-		}
-		raw, ok := item["fileId"].(float64)
-		if !ok || raw <= 0 {
+		var kind string
+		if err := json.Unmarshal(item["kind"], &kind); err != nil {
 			return nil, ErrConflict
 		}
-		mapped, ok := mapping[int64(raw)]
+		if kind != "image" {
+			continue
+		}
+		var raw int64
+		if err := json.Unmarshal(item["fileId"], &raw); err != nil || raw <= 0 {
+			return nil, ErrConflict
+		}
+		mapped, ok := mapping[raw]
 		if !ok {
 			return nil, ErrNotFound
 		}
-		item["fileId"] = mapped
+		encoded, err := json.Marshal(mapped)
+		if err != nil {
+			return nil, err
+		}
+		item["fileId"] = encoded
 	}
 	out, err := json.Marshal(items)
 	if err != nil {

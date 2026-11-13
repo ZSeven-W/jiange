@@ -68,6 +68,21 @@ func checkSlidesCopyStore(t *testing.T, st Store) {
 	if err = st.SetShare(ctx, deck.ID, wsGuest.OwnerID, RoleView); err != nil {
 		t.Fatal(err)
 	}
+	// A workspace member with only read access to a private folder cannot
+	// publish copies into it, even if that member owns the workspace.
+	if err = st.AddWorkspaceMember(ctx, wsGuest.ID, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	folder, err := st.CreateDriveFolder(ctx, g, wsGuest.ID, nil, "Private folder", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.SetShare(ctx, folder.ID, wsGuest.OwnerID, RoleView); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: deck.ID, UserID: wsGuest.OwnerID, WorkspaceID: wsGuest.ID, ParentID: &folder.ID, Title: "x", Guard: &guest}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("copy into read-only folder: %v", err)
+	}
 	// 有阅读权，但目标空间不是访客的成员空间。
 	if _, _, err = st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: deck.ID, UserID: wsGuest.OwnerID, WorkspaceID: wsOwner.ID, Title: "x", Guard: &guest}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("guest copy into foreign workspace: %v", err)
@@ -83,7 +98,10 @@ func checkSlidesCopyStore(t *testing.T, st Store) {
 		t.Fatal(err)
 	}
 
-	meta, copied, err := st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: deck.ID, UserID: owner.ID, WorkspaceID: wsOwner.ID, Title: "季度汇报 副本", Guard: &g})
+	if _, _, err = st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: deck.ID, UserID: owner.ID, WorkspaceID: wsOwner.ID, Title: "not verified", Guard: &g, VerifiedImageIDs: []int64{}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unverified source image accepted: %v", err)
+	}
+	meta, copied, err := st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: deck.ID, UserID: owner.ID, WorkspaceID: wsOwner.ID, Title: "季度汇报 副本", Guard: &g, VerifiedImageIDs: []int64{image.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +153,54 @@ func checkSlidesCopyStore(t *testing.T, st Store) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestSlidesCopyPreservesExactJSONNumbers(t *testing.T) {
+	input := json.RawMessage(`[{"kind":"image","fileId":9007199254740993,"custom":9007199254740995},{"kind":"text","text":"x","extra":{"precise":9007199254740997}}]`)
+	out, err := remapSlideShapes(input, map[int64]int64{9007199254740993: 11})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []map[string]json.RawMessage
+	if err = json.Unmarshal(out, &items); err != nil {
+		t.Fatal(err)
+	}
+	if string(items[0]["fileId"]) != "11" || string(items[0]["custom"]) != "9007199254740995" || string(items[1]["extra"]) != `{"precise":9007199254740997}` {
+		t.Fatalf("copy lost number precision: %s", out)
+	}
+}
+
+func TestMemorySlidesCopyFailureDoesNotPublishPartialDeck(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemory()
+	u, ws, err := st.CreateUser(ctx, "bad-slide-copy@test.dev", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := RestoreGuard{UserID: u.ID, SessionHash: []byte("bad-copy-session")}
+	if err = st.CreateSession(ctx, g.SessionHash, u.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDriveNode(ctx, g, ws.ID, nil, "slides", "source", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := st.CreateSlidesFile(ctx, g, d.ID, FileMeta{Name: "x.png", Mime: "image/png", ObjectKey: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.mu.Lock()
+	st.slides[0].Shapes = json.RawMessage(fmt.Sprintf(`[{"kind":"image","fileId":%d},{"unexpected":true}]`, f.ID))
+	beforeDocs, beforeFiles, beforePages := len(st.d.docs), len(st.sh.files), len(st.slides)
+	st.mu.Unlock()
+	if _, _, err = st.CopySlidesDeck(ctx, SlidesDeckCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: ws.ID, Title: "copy", Guard: &g, VerifiedImageIDs: []int64{f.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("invalid source: %v", err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.d.docs) != beforeDocs || len(st.sh.files) != beforeFiles || len(st.slides) != beforePages {
+		t.Fatal("failed copy published partial state")
+	}
+}
 
 func TestMemorySlidesCopyStore(t *testing.T) { checkSlidesCopyStore(t, NewMemory()) }
 

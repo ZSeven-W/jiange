@@ -189,6 +189,9 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 	var meta DocMeta
 	var pages []SlidesPage
 	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if err := drivePGLockWorkspace(ctx, tx, c.WorkspaceID); err != nil {
+			return err
+		}
 		sourceRole, protected, kind, err := lockCopySource(ctx, tx, c.SourceID, c.UserID)
 		if err != nil {
 			return err
@@ -228,21 +231,18 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 			return err
 		}
 		var sourcePersonal bool
-		if err := tx.QueryRow(ctx, `SELECT personal FROM nodes WHERE id=$1`, c.SourceID).Scan(&sourcePersonal); err != nil {
+		var sourceWorkspace int64
+		if err := tx.QueryRow(ctx, `SELECT personal, workspace_id FROM nodes WHERE id=$1`, c.SourceID).Scan(&sourcePersonal, &sourceWorkspace); err != nil {
 			return err
 		}
 		personal := sourcePersonal
+		if c.WorkspaceID != sourceWorkspace {
+			personal = true
+		}
 		if c.ParentID != nil {
-			var workspace int64
-			var parentKind string
-			if err := tx.QueryRow(ctx, `SELECT workspace_id, kind, personal FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind, &personal); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return ErrNotFound
-				}
+			personal, err = drivePGDestination(ctx, tx, RestoreGuard{UserID: c.UserID}, c.WorkspaceID, c.ParentID, RoleEdit)
+			if err != nil {
 				return err
-			}
-			if workspace != c.WorkspaceID || parentKind == "file" {
-				return ErrNotFound
 			}
 		}
 		meta, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id, drive_revision, personal)
@@ -281,6 +281,9 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 					imageIDs = append(imageIDs, id)
 				}
 			}
+		}
+		if c.VerifiedImageIDs != nil && !sameSlideImageIDs(c.VerifiedImageIDs, imageIDs) {
+			return ErrConflict
 		}
 		// Copies share immutable object keys. Lock all source attachment rows
 		// in a stable order before publishing any references, mirroring

@@ -219,6 +219,9 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 // duplicateSlidesDeck copies a whole presentation. Pages and image references
 // are remapped inside the store transaction; the source deck stays untouched.
 func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, title string) {
+	if !driveExpectedUser(w, r, userID) {
+		return
+	}
 	if title == "" {
 		// Mirror the document copy: derive the title from the source. Keep the
 		// result within the drive title limit after the suffix.
@@ -274,7 +277,7 @@ func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d s
 	if !ok {
 		return
 	}
-	nd, _, err := s.Store.CopySlidesDeck(r.Context(), store.SlidesDeckCopy{SourceID: d.ID, UserID: userID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, Guard: &guard})
+	nd, _, err := s.Store.CopySlidesDeck(r.Context(), store.SlidesDeckCopy{SourceID: d.ID, UserID: userID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, Guard: &guard, VerifiedImageIDs: append([]int64{}, fileIDs...)})
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
