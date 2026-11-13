@@ -28,7 +28,7 @@ export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string
 
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [] }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -39,11 +39,13 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
   initialGrip?: GripSel | null;
+  findCells?: readonly { row: number; col: number; active: boolean }[];
 }) {
   const rows = parseTableData(data);
   const nCols = rows[0]?.length ?? 0;
   const merges = useMemo(() => parseMerges(rawMerges, rows.length, nCols), [rawMerges, rows.length, nCols]);
   const cover = useMemo(() => coverMap(merges), [merges]);
+  const findByCell = useMemo(() => new Map(findCells.map((item) => [`${item.row}:${item.col}`, item])), [findCells]);
   const [grip, setGrip] = useState<GripSel | null>(initialGrip);
   const [range, setRange] = useState<CellRange | null>(null);
   const [focus, setFocus] = useState<{ r: number; c: number } | null>(null);
@@ -119,8 +121,9 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                 if (cov === "hidden") return null;
                 const span = cov?.span;
                 const sel = inRange(selected, ri, ci);
+                const found = findByCell.get(`${ri}:${ci}`);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20", found && (found.active ? "bg-[#ffb74d] dark:bg-[#805a22]" : "bg-[#ffe69b] dark:bg-[#66551f]"))} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={found?.active ? "true" : undefined}>
                     {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap px-2 py-[8.5px]">{cell}</span> : (
                       <textarea
                         value={cell}

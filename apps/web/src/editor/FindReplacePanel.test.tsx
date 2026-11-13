@@ -37,6 +37,12 @@ describe("FindReplacePanel", () => {
     expect(html).not.toMatch(/<button[^>]* disabled=""[^>]*>下一处<\/button>/);
   });
 
+  it("can allow a single replacement while disabling replacement of a mixed result set", () => {
+    const html = renderToStaticMarkup(<FindReplacePanel {...base} mode="replace" canReplace canReplaceAll={false} />);
+    expect(html).toMatch(/<button[^>]* disabled=""[^>]*>全部替换<\/button>/);
+    expect(html).not.toMatch(/<button[^>]* disabled=""[^>]*>替换<\/button>/);
+  });
+
   it("disables navigation when there are no matches", () => {
     const html = renderToStaticMarkup(<FindReplacePanel {...base} matchCount={0} activeIndex={-1} />);
     expect(html).toContain("0 / 0");

@@ -21,6 +21,8 @@ export interface FindMatch {
   /** Visible character IDs and exact source captured at search time. */
   ids: OpId[];
   text: string;
+  /** Table text is stored as whole-cell registers rather than character IDs. */
+  table?: { row: number; col: number; snapshot: string; cellVersion: string | null };
 }
 
 export interface FindOptions {

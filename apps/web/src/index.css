@@ -113,6 +113,8 @@
 
 /* Printing obeys the document download policy. Keep unrelated controls and
    users' own comment drafts available; this is a UI restriction only. */
+[data-find-active="true"] { scroll-margin-top: 12px; }
+
 @media print {
   [data-document-print-restricted="true"] { display: none !important; }
   body:has([data-document-print-restricted="true"]) aside:not([data-comments-panel]) { display: none !important; }

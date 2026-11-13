@@ -72,6 +72,8 @@ import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboardAs
 import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
+import { readTableFindState, resolveTableFindMatch } from "./tableFind";
+import { applyTableFindReplace, type TableFindResult } from "./tableFindApply";
 import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
@@ -98,12 +100,14 @@ export interface ExternalUndoOptions {
   preserveFocus?: boolean;
 }
 export type ExternalUndoRecorder = (tx: Tx, options?: ExternalUndoOptions) => void;
+export type TableFindReplacer = (match: FindMatch, replacement: string) => TableFindResult;
 
 interface Props {
   sync: SyncDoc;
   readOnly?: boolean;
   /** Register a transaction from another document control with this editor's undo stack. */
   onUndoRegistrar?: (record: ExternalUndoRecorder | null) => void;
+  onTableFindRegistrar?: (replace: TableFindReplacer | null) => void;
   /** Search results are an ephemeral view; they never alter the document. */
   findMatches?: readonly FindMatch[];
   activeFindMatch?: FindMatch | null;
@@ -147,7 +151,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, findMatches = [], activeFindMatch = null, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -158,6 +162,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
+  const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
+  const replaceTableFind = useCallback<TableFindReplacer>((match, replacement) => tableFindActionRef.current(match, replacement), []);
   const readOnlyRef = useRef(!!readOnly);
   const copyBlockedRef = useRef(!!onCopyBlock);
   copyBlockedRef.current = !!onCopyBlock;
@@ -208,6 +214,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     onUndoRegistrar?.(recordExternal);
     return () => onUndoRegistrar?.(null);
   }, [onUndoRegistrar, recordExternal]);
+  useLayoutEffect(() => {
+    onTableFindRegistrar?.(replaceTableFind);
+    return () => onTableFindRegistrar?.(null);
+  }, [onTableFindRegistrar, replaceTableFind]);
   const [, force] = useState(0);
   const [remount, setRemount] = useState<Record<string, number>>({});
   const [slash, setSlash] = useState<{
@@ -290,6 +300,22 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
       ranges.set(key, list);
     }
     return ranges;
+  }, [doc, sync.version, findMatches, activeFindMatch]);
+  const tableFindCells = useMemo(() => {
+    const cells = new Map<string, { row: number; col: number; active: boolean }[]>();
+    if (!doc) return cells;
+    const states = new Map<string, ReturnType<typeof readTableFindState>>();
+    for (const match of findMatches) {
+      if (!match.table) continue;
+      const key = idKey(match.block);
+      if (!states.has(key)) states.set(key, readTableFindState(doc, match.block));
+      if (!resolveTableFindMatch(doc, match, states.get(key))) continue;
+      const list = cells.get(key) ?? [], existing = list.find((item) => item.row === match.table!.row && item.col === match.table!.col);
+      if (existing) existing.active ||= match === activeFindMatch;
+      else list.push({ row: match.table.row, col: match.table.col, active: match === activeFindMatch });
+      cells.set(key, list);
+    }
+    return cells;
   }, [doc, sync.version, findMatches, activeFindMatch]);
   const findRangesRef = useRef(findRanges);
   findRangesRef.current = findRanges;
@@ -1610,6 +1636,13 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   };
 
   // ---- rendering
+  tableFindActionRef.current = (match, replacement) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !match.table) return "unavailable";
+    const result = applyTableFindReplace(d, sync.client, um, tableHistory, match, replacement);
+    if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
+    return result.status;
+  };
   const numbers = new Map<string, number>();
   {
     const counters: number[] = [];
@@ -1844,6 +1877,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                 number={numbers.get(k)}
                 spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
                 findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
+                tableFindCells={tableFindCells.get(k)}
                 anchors={commentProjection.flags}
                 commentThreads={commentProjection.threadIds}
                 blockThreads={commentProjection.blockThreadIds}
@@ -2213,6 +2247,7 @@ interface BlockProps {
   blockThreads?: number[];
   onBlockComment?: () => void;
   findRanges?: { start: number; end: number; active: boolean }[];
+  tableFindCells?: { row: number; col: number; active: boolean }[];
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
@@ -2253,7 +2288,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2422,6 +2457,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       {type === "math" || type === "diagram" || type === "columns" || type === "flowchart" ? null : type === "table" ? (
         <TableBlock
           data={tableDataOf(props)}
+          findCells={tableFindCells}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
           header={props.tableHeader !== "none"}
           onHeader={onSetProp ? (on) => onSetProp("tableHeader", on ? "row" : "none") : undefined}

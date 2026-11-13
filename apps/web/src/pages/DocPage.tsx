@@ -7,7 +7,7 @@ import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
-import { Editor, type ExternalUndoRecorder } from "@/editor/Editor";
+import { Editor, type ExternalUndoRecorder, type TableFindReplacer } from "@/editor/Editor";
 import { replaceMatches } from "@/editor/findReplace";
 import { FindScrollIntent } from "@/editor/findNavigation";
 import { preflightFindReplace } from "@/editor/findReplaceSafety";
@@ -165,6 +165,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const shareAnchor = useRef<HTMLButtonElement>(null);
   const recordExternalUndo = useRef<ExternalUndoRecorder | null>(null);
   const onUndoRegistrar = useCallback((record: ExternalUndoRecorder | null) => { recordExternalUndo.current = record; }, []);
+  const tableFindReplace = useRef<TableFindReplacer | null>(null);
+  const onTableFindRegistrar = useCallback((replace: TableFindReplacer | null) => { tableFindReplace.current = replace; }, []);
   const canEditRef = useRef(false);
   const submittedStarter = useRef(false);
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
@@ -608,7 +610,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     if (ticket === null) return;
     if (activeFindIndex < 0) { findScrollIntent.current.complete(ticket); return; }
     const frame = requestAnimationFrame(() => {
-      if (findScrollIntent.current.complete(ticket)) body.current?.querySelector<HTMLElement>('[data-find-active="true"]')?.scrollIntoView({ block: "center", inline: "nearest" });
+      if (findScrollIntent.current.complete(ticket)) body.current?.querySelector<HTMLElement>('[data-find-active="true"]')?.scrollIntoView({ block: window.matchMedia("(max-width: 479px)").matches ? "start" : "center", inline: "nearest" });
     });
     return () => cancelAnimationFrame(frame);
   }, [findOpen, activeFindIndex, findNavigation, findUpdating]);
@@ -770,6 +772,13 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     const selected = all ? matches : activeMatch ? [activeMatch] : [];
     if (!selected.length) return;
+    if (all && selected.some((match) => match.table)) { setFindMessage("全部替换暂不支持包含表格的结果，请逐项替换。"); return; }
+    if (!all && activeMatch?.table) {
+      const outcome = tableFindReplace.current?.(activeMatch, findReplacement) ?? "unavailable";
+      setFindMessage(outcome === "replaced" || outcome === "unchanged" ? "已替换 1 处。" : outcome === "stale" ? "表格已变化，请重新查找；未修改内容。" : outcome === "size" ? "替换内容或表格过大；未修改内容。" : "当前无法安全替换，请确认编辑权限和同步状态。");
+      if (outcome === "replaced" || outcome === "unchanged") requestFindScroll();
+      return;
+    }
     const preflight = preflightFindReplace(doc, selected, findReplacement);
     if (!preflight.ok) {
       setFindMessage(preflight.reason === "preflight" ? "无法安全检查替换内容，请重试；文档未修改。" : "替换内容或匹配范围过大，请缩小查找范围或缩短替换内容后重试；文档未修改。");
@@ -783,6 +792,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     setFindIndex(all ? 0 : Math.max(activeFindIndex, 0));
     setFindMessage(result.skipped ? `已替换 ${result.replaced} 处，${result.skipped} 处内容已变化，请重新查找。` : `已替换 ${result.replaced} 处。`);
+    if (result.replaced) requestFindScroll();
   };
 
   const toggleComments = () => {
@@ -973,6 +983,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
               <Editor
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
+                onTableFindRegistrar={onTableFindRegistrar}
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
                 me={presence}
@@ -1030,6 +1041,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           </article>}</DocumentCover>
           </div>
           </div>
+          {findOpen && <div aria-hidden="true" className="h-[60dvh] min-[480px]:hidden" />}
         </div>
         {findOpen && <div ref={findPanel}>
           <FindReplacePanel
@@ -1039,7 +1051,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             matchCount={matches.length}
             activeIndex={activeFindIndex}
             canReplace={findCanReplace}
-            scopeNotice={`仅搜索正文和分栏文本；标题、表格和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            canReplaceAll={findCanReplace && !matches.some((match) => !!match.table)}
+            scopeNotice={`搜索正文、分栏和表格；标题和公式不在范围内。${matches.some((match) => !!match.table) ? "表格结果支持逐项替换，暂不支持全部替换。" : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); requestFindScroll(); }}

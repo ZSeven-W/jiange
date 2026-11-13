@@ -12,6 +12,7 @@ export interface FindReplacePanelProps {
   /** Zero-based current match, or -1 if there is no active match. */
   activeIndex: number;
   canReplace: boolean;
+  canReplaceAll?: boolean;
   scopeNotice?: string;
   /** Result, conflict, or limit feedback from the caller. */
   statusMessage?: string;
@@ -27,7 +28,7 @@ export interface FindReplacePanelProps {
 
 /** Controlled document find/replace panel. The caller owns matching and edits. */
 export function FindReplacePanel({
-  mode, query, replacement, matchCount, activeIndex, canReplace, scopeNotice, statusMessage, className,
+  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, statusMessage, className,
   onModeChange, onQueryChange, onReplacementChange, onNavigate, onReplace, onReplaceAll, onClose,
 }: FindReplacePanelProps) {
   const id = useId();
@@ -65,7 +66,7 @@ export function FindReplacePanel({
     <section
       role="search"
       aria-label="文档内查找和替换"
-      className={cn("absolute right-4 top-[72px] z-40 max-h-[calc(100dvh-88px)] w-[405px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[4px] border bg-surface px-6 pb-6 shadow-[0_4px_16px_rgba(31,35,41,0.16)]", className)}
+      className={cn("absolute bottom-4 right-4 top-auto z-40 max-h-[calc(100dvh-88px)] w-[405px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[4px] border bg-surface px-6 pb-6 shadow-[0_4px_16px_rgba(31,35,41,0.16)] min-[480px]:bottom-auto min-[480px]:top-[72px]", className)}
       data-find-replace-panel
     >
       <div className="flex h-12 items-stretch border-b" role="tablist" aria-label="查找和替换">
@@ -107,9 +108,9 @@ export function FindReplacePanel({
         </div>}
         {scopeNotice && <p id={`${id}-scope`} className="mt-3 text-[12px] leading-5 text-subtle">{scopeNotice}</p>}
         {statusMessage && <p role="status" aria-live="polite" className="mt-2 text-[12px] leading-5 text-muted-foreground">{statusMessage}</p>}
-        <div className={cn("mt-6 grid gap-3", replaceMode ? "grid-cols-2 min-[380px]:grid-cols-4" : "grid-cols-[80px_80px] justify-end")}>
+        <div className={cn("mt-6 grid gap-3", replaceMode ? "grid-cols-2 min-[480px]:grid-cols-4" : "grid-cols-[80px_80px] justify-end")}>
           {replaceMode && <>
-            <button type="button" className={cn(action, "border-[#1456f0] bg-[#1456f0] text-white hover:bg-[#0f4dd6] disabled:border-[#b6bbc1] disabled:bg-[#b6bbc1] disabled:text-white disabled:hover:bg-[#b6bbc1]")} disabled={!hasMatch || !canReplace} onClick={onReplaceAll}>全部替换</button>
+            <button type="button" className={cn(action, "border-[#1456f0] bg-[#1456f0] text-white hover:bg-[#0f4dd6] disabled:border-[#b6bbc1] disabled:bg-[#b6bbc1] disabled:text-white disabled:hover:bg-[#b6bbc1]")} disabled={!hasMatch || !canReplaceAll} onClick={onReplaceAll}>全部替换</button>
             <button type="button" className={action} disabled={!hasMatch || !canReplace} onClick={onReplace}>替换</button>
           </>}
           <button type="button" className={action} disabled={!hasMatch} onClick={() => onNavigate(-1)}>上一处</button>
