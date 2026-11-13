@@ -25,7 +25,8 @@ import { BOARD_SEED, hasBoard, takeBoard } from "./boardStarter";
 import { requestFlowOpen } from "@/editor/flowchart/openRequests";
 import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/Sidebar";
 import { go } from "@/lib/route";
-import { docWidthClass, readDocWide, writeDocWide } from "@/lib/docWidth";
+import { docWidthClass, readDocWidth, writeDocWidth, type DocWidth } from "@/lib/docWidth";
+import { DocWidthOptions } from "./DocWidthOptions";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { Button } from "@/components/ui/button";
@@ -172,8 +173,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [history, setHistory] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
-  const [wide, setWide] = useState(() => readDocWide(me.user.id, id));
-  useEffect(() => { setWide(readDocWide(me.user.id, id)); }, [me.user.id, id]);
+  const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
+  useEffect(() => { setWidth(readDocWidth(me.user.id, id)); }, [me.user.id, id]);
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
   const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
@@ -780,8 +781,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
           onImport={canEditContent ? importFile : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
-          wide={wide}
-          onToggleWide={() => setWide((w) => { writeDocWide(me.user.id, id, !w); return !w; })}
+          width={width}
+          onWidthChange={(value) => { writeDocWidth(me.user.id, id, value); setWidth(value); }}
           readOnly={!canEditRole}
           allowContentCopy={contentCopyAllowed}
           allowDocumentPrint={downloadAllowed}
@@ -842,7 +843,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={wide ? "true" : undefined} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(wide), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -1072,8 +1073,8 @@ function TopBar({
   onExport,
   onImport,
   onOutline,
-  wide,
-  onToggleWide,
+  width,
+  onWidthChange,
   readOnly,
   allowContentCopy,
   allowDocumentPrint,
@@ -1092,8 +1093,8 @@ function TopBar({
   onCreate: () => void;
   creating: boolean;
   onOutline: () => void;
-  wide: boolean;
-  onToggleWide: () => void;
+  width: DocWidth;
+  onWidthChange: (value: DocWidth) => void;
   onHistory: () => void;
   onTitleCheck: () => void;
   onExport?: (format: "md" | "docx") => void;
@@ -1153,7 +1154,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} wide={wide} onToggleWide={onToggleWide} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
+        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} wordCount={wordCount} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={() => document.querySelector<HTMLInputElement>("[data-search]")?.focus()} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1231,8 +1232,8 @@ function DocMenu({
   onExport,
   onImport,
   onOutline,
-  wide,
-  onToggleWide,
+  width,
+  onWidthChange,
   onComments,
   onFind,
   onPrint,
@@ -1246,8 +1247,8 @@ function DocMenu({
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
-  wide?: boolean;
-  onToggleWide?: () => void;
+  width?: DocWidth;
+  onWidthChange?: (value: DocWidth) => void;
   onPrint: () => void;
   onAI?: () => void;
   onSaveTemplate?: () => void;
@@ -1256,6 +1257,16 @@ function DocMenu({
   wordCount: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [sub, setSub] = useState<"download" | "width" | null>(null);
+  const menuRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => { if (!menuRoot.current?.contains(event.target as Node)) { setOpen(false); setSub(null); } };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); setSub(null); } };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [open]);
   const [copyPending, setCopyPending] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [copyNotice, setCopyNotice] = useState("");
@@ -1266,7 +1277,7 @@ function DocMenu({
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => { setCopyError(""); setCopyNotice(""); }, [meta?.id]);
   const qc = useQueryClient();
-  const close = () => setOpen(false);
+  const close = () => { setOpen(false); setSub(null); };
   const trash = async () => {
     if (!meta) return;
     // 版本化云盘删除：folder 子树会被 fence 拒绝旧式语句
@@ -1288,7 +1299,6 @@ function DocMenu({
   const row = "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover";
   const icon = "shrink-0 text-[#646A73] dark:text-muted-foreground";
   const group = "border-t border-[#DEE0E3] py-1 first:border-t-0 dark:border-border";
-  const [sub, setSub] = useState<"download" | null>(null);
   const duplicate = async () => {
     if (!canCopyDocument(meta) || copying.current) return;
     const sourceId = meta!.id;
@@ -1312,26 +1322,24 @@ function DocMenu({
     }
   };
   return (
-    <div className="relative">
-      <button className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" onClick={() => setOpen((o) => !o)} data-more-menu>
+    <div className="relative" ref={menuRoot}>
+      <button className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" aria-label="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => { setOpen((o) => !o); setSub(null); }} data-more-menu>
         <MoreIcon className="size-4" />
       </button>
       {copyPending && <span role="status" className="absolute right-0 top-9 z-40 whitespace-nowrap rounded-md border bg-surface px-3 py-2 text-[13px] text-muted-foreground shadow-lg">正在创建副本…</span>}
       {copyNotice && <div role="status" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] shadow-lg"><span className="min-w-0 flex-1">{copyNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setCopyNotice("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {copyError && <div role="alert" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] text-destructive shadow-lg"><span className="min-w-0 flex-1">{copyError}</span><button type="button" aria-label="关闭错误提示" onClick={() => setCopyError("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-[188px] rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" onMouseLeave={() => setOpen(false)} data-doc-more-menu>
+        <div className="absolute right-0 top-9 z-30 w-[min(240px,calc(100vw-24px))] max-h-[calc(100dvh-4rem)] sm:w-[176px] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:max-h-none sm:overflow-visible" data-doc-more-menu>
           {/* 飞书「…」菜单分组（2026-11-11 实测）：页宽 / 查找 / 收藏与位置 / 模板、副本、下载 / 打印 / 文档信息与历史 / 删除 */}
-          {onToggleWide && (
-            <div className={cn(group, "hidden lg:block")}>
-              <div className="flex h-8 items-center gap-2 px-3" data-doc-width>
-                <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页宽设置</span>
-                <span className="flex rounded-md bg-hover p-0.5 text-[12px]">
-                  {([[false, "标准"], [true, "全宽"]] as const).map(([w, label]) => (
-                    <button key={label} type="button" aria-pressed={!!wide === w} onClick={() => { if (!!wide !== w) onToggleWide(); }} className={cn("rounded px-1.5 py-0.5", !!wide === w ? "bg-surface font-medium text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")} data-doc-width-option={w ? "wide" : "standard"}>{label}</button>
-                  ))}
-                </span>
-              </div>
+          {onWidthChange && width && (
+            <div className={cn(group, "relative")} data-doc-width-menu onMouseEnter={() => { if (window.matchMedia("(hover: hover)").matches) setSub("width"); }} onMouseLeave={() => setSub((value) => value === "width" ? null : value)}>
+              <button className={cn(row, sub === "width" && "bg-hover")} type="button" aria-haspopup="true" aria-expanded={sub === "width"} onClick={() => setSub("width")}>
+                <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页宽设置</span><ChevronRight size={14} className="text-subtle" />
+              </button>
+              {sub === "width" && <div className="px-2 pb-2 sm:absolute sm:right-full sm:top-0 sm:z-40 sm:p-0">
+                <DocWidthOptions width={width} onChange={(value) => { onWidthChange(value); setSub(null); close(); }} />
+              </div>}
             </div>
           )}
           <div className={group}>
@@ -1348,8 +1356,8 @@ function DocMenu({
             {onSaveTemplate && <button className={row} onClick={() => { close(); onSaveTemplate(); }} data-save-template><LayoutTemplate size={15} className={icon} />保存为模板</button>}
             {canCopyDocument(meta) && <button className={cn(row, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate><Copy size={15} className={icon} />创建副本</button>}
             {<div className="relative" onMouseEnter={() => setSub("download")} onMouseLeave={() => setSub(null)}>
-              <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub((v) => (v === "download" ? null : "download"))} data-download-menu><Download size={15} className={icon} /><span className="flex-1">下载为</span><ChevronRight size={14} className="text-subtle" /></button>
-              <div role="menu" className={cn("absolute right-full top-0 z-40 mr-1 w-44 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", sub !== "download" && "hidden")}>
+              <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub("download")} data-download-menu><Download size={15} className={icon} /><span className="flex-1">下载为</span><ChevronRight size={14} className="text-subtle" /></button>
+              <div role="menu" className={cn("mx-2 mb-2 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:absolute sm:right-full sm:top-0 sm:z-40 sm:mx-0 sm:mb-0 sm:w-44", sub !== "download" && "hidden")}>
                 {onExport && <button className={row} onClick={() => { close(); onExport("md"); }}><FileText size={15} className={icon} />导出 Markdown</button>}
                 {onExport && <button className={row} onClick={() => { close(); onExport("docx"); }} data-export-docx><FileType size={15} className={icon} />导出 Word（.docx）</button>}
                 {<button className={row} onClick={() => { close(); onPrint(); }} data-export-pdf><FileDown size={15} className={icon} />导出 PDF（打印）</button>}
