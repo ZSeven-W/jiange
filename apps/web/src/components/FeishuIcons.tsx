@@ -1,6 +1,10 @@
 import type { SVGProps } from "react";
 
 /** Icons used by the document controls, drawn on the same 24px grid as the reference. */
+export function SidebarFoldIcon({ collapsed, ...props }: SVGProps<SVGSVGElement> & { collapsed: boolean }) {
+  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}><path d={collapsed ? "M22 4a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h18a1 1 0 0 0 1-1Zm-1.111 7c.614 0 1.111.448 1.111 1s-.497 1-1.111 1H13.11c-.613 0-1.11-.448-1.11-1s.498-1 1.111-1h7.778ZM22 20c0-.552-.497-1-1.111-1H13.11c-.614 0-1.111.448-1.111 1s.498 1 1.111 1h7.778c.614 0 1.111-.448 1.111-1ZM8.59 16.864a1.117 1.117 0 0 0 0-1.729l-4.95-3.916c-.676-.535-1.64-.027-1.64.864v7.834c0 .89.964 1.4 1.639.865l4.951-3.918Z" : "M22 4a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h18a1 1 0 0 0 1-1Zm-11.111 7c.614 0 1.111.448 1.111 1s-.498 1-1.111 1H3.11C2.497 13 2 12.552 2 12s.497-1 1.111-1h7.778ZM12 20c0-.552-.498-1-1.111-1H3.11C2.497 19 2 19.448 2 20s.497 1 1.111 1h7.778c.614 0 1.111-.448 1.111-1Zm3.41-3.136a1.117 1.117 0 0 1 0-1.729l4.951-3.917c.675-.534 1.639-.026 1.639.865v7.834c0 .89-.964 1.4-1.639.865l-4.951-3.918Z"} fill="currentColor" /></svg>;
+}
+
 export function BuildingIcon(props: SVGProps<SVGSVGElement>) {
   return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}><path d="M7 7.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1Zm4.5-.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1ZM7 11.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-1Zm4.5-.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1Z" fill="currentColor"/><path d="M5 23a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5ZM15 3H5v18h3v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h3V3Zm2 18h2V7h-2v14Z" fill="currentColor"/></svg>;
 }

@@ -21,6 +21,8 @@ import { DriveUploadManager } from "@/pages/drive-upload";
 import { DriveUploadStatus } from "@/components/DriveUploadStatus";
 import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/AISettings";
+import { SidebarFoldIcon } from "@/components/FeishuIcons";
+import { isDocumentSidebarShortcut } from "@/lib/sidebarShortcut";
 
 export default function App() {
   const route = useRoute();
@@ -86,6 +88,18 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   const sidebarContainer = useRef<HTMLDivElement>(null);
   useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
   const docLayout = route.page === "doc";
+  useEffect(() => {
+    if (!docLayout) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (!isDocumentSidebarShortcut(event) || !window.matchMedia("(min-width: 768px)").matches || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      const focusWasInside = !!sidebarContainer.current?.contains(document.activeElement);
+      setDocSidebarDocked((value) => !value);
+      if (docSidebarDocked && focusWasInside) requestAnimationFrame(() => openSidebarButton.current?.focus());
+    };
+    document.addEventListener("keydown", keydown);
+    return () => document.removeEventListener("keydown", keydown);
+  }, [docLayout, docSidebarDocked]);
   const openSidebar = () => {
     const dock = docLayout && window.matchMedia("(min-width: 768px)").matches;
     if (dock) setDocSidebarDocked(true);
@@ -108,7 +122,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
     <div className="flex h-full">
       <AskHost />
       <AISettingsHost />
-      <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation"><Menu size={20} /></button>
+      <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
       <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
         <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} />
