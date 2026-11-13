@@ -67,7 +67,7 @@ import { captureCompositionSelection, resolveCompositionSelection, type Composit
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
-import { CLIP_MIME, clipboardBlocks, columnClipboardBlocks, writeBlockClipboard } from "./clipboardPayload";
+import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboardPayload";
 import type { SlashInsertion, SlashQuery } from "./slashInsert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./commentAnchor";
 import { searchableLocations, type FindMatch } from "./findReplace";
@@ -157,6 +157,9 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const readOnlyRef = useRef(!!readOnly);
+  const copyBlockedRef = useRef(!!onCopyBlock);
+  copyBlockedRef.current = !!onCopyBlock;
+  const blockClipboardBusy = useRef(false);
   const [aiPanel, setAiPanel] = useState<{ key: string; x: number; y: number; initial?: AIAction; range?: { start: number; end: number } } | null>(null);
   const aiRangeText = useRef("");
   const [flowAutoOpen, setFlowAutoOpen] = useState<string | null>(null);
@@ -578,16 +581,45 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
         case "cut": {
           const info = d.blockInfo(b);
           if (!multi && CLIPPABLE_BLOCKS.has(info.type)) {
-            // 图片/附件/表格等整块复制：经一次性 copy 事件写入块剪贴板数据。
-            const clip: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [] }];
-            const plain = info.props.caption || info.props.name || info.props.url || "";
-            if (!writeBlockClipboard(document, plain, clip)) { setToast("无法确认剪贴板写入，原内容已保留。"); return; }
-            if (action.kind === "cut" && !readOnlyRef.current) {
-              sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
-              run((tx) => { tx.deleteBlock(b); return undefined; });
-              um.seal();
-              setToast("已剪切");
-            } else setToast("已复制");
+            if (copyBlockedRef.current || blockClipboardBusy.current) return;
+            if (action.kind === "cut" && (!sync.client.caughtUp || sync.client.status !== "synced")) { setToast("请等待文档同步完成后剪切，原内容已保留。"); return; }
+            const source: ClipBlock[] = [{ type: info.type, props: { ...info.props }, chars: [] }];
+            const serialized = JSON.stringify(source);
+            if (serialized.length > 2 * 1024 * 1024) { setToast("块内容过大，原内容已保留。"); return; }
+            const clip = clipboardBlocks(serialized, "");
+            if (!clip) { setToast("块内容过大或无法复制，原内容已保留。"); return; }
+            if (hasHiddenTableContent(clip[0])) { setToast("合并单元格包含隐藏内容，请先拆分后复制或剪切。"); return; }
+            let before: Uint8Array | undefined;
+            try { if (action.kind === "cut") before = d.encodeState(); }
+            catch { setToast("无法安全准备剪切，原内容已保留。"); return; }
+            const client = sync.client;
+            const clipboard = navigator.clipboard;
+            const Item = typeof ClipboardItem === "undefined" ? undefined : ClipboardItem;
+            blockClipboardBusy.current = true;
+            void (async () => {
+              try {
+                const raw = await writeBlockClipboard(clipboard, Item, blockClipboardPlain(clip[0]), clip);
+                if (!mounted.current || currentClient.current !== client) return;
+                if (!raw) { setToast("无法确认剪贴板写入，原内容已保留。"); return; }
+                if (action.kind === "copy") { setToast("已复制"); return; }
+                const outcome = await cutConfirmedBlock(clipboard, raw, () => {
+                  if (!mounted.current || currentClient.current !== client || copyBlockedRef.current || readOnlyRef.current || client.doc !== d || !client.caughtUp || client.status !== "synced" || !d.hasBlock(b) || !before) return false;
+                  if (!validEditorSelection(d, { a: { b, o: 0 }, f: { b, o: 0 } })) return false;
+                  try {
+                    const after = d.encodeState();
+                    return before.length === after.length && !before.some((value, index) => value !== after[index]);
+                  } catch { return false; }
+                }, () => {
+                  sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
+                  run((tx) => { tx.deleteBlock(b); return undefined; });
+                  um.seal();
+                });
+                if (!mounted.current || currentClient.current !== client) return;
+                if (outcome === "unconfirmed") setToast("无法确认剪贴板格式，原内容已保留。请检查剪贴板后重试。");
+                else if (outcome === "changed") setToast("文档状态已变化，原内容已保留；剪贴板中有复制内容。");
+                else setToast("已剪切");
+              } catch { if (mounted.current && currentClient.current === client) setToast("剪贴板操作未完成，原内容已保留。"); }
+            })().finally(() => { blockClipboardBusy.current = false; });
             return;
           }
           if (collapsed(target)) { setToast("此块没有可复制的文字。"); return; }
@@ -1474,7 +1506,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     readSel();
     const files = [...e.clipboardData.files];
     const plain = e.clipboardData.getData("text/plain");
-    const raw = e.clipboardData.getData(CLIP_MIME);
+    const raw = e.clipboardData.getData(CLIP_MIME) || blockPayloadFromHTML(e.clipboardData.getData("text/html")) || "";
     if (slashRef.current?.fromButton) {
       if (files.length) { setColumnNotice("请先选择图片或附件命令，再选择文件。"); return; }
       if (plain) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), index: 0 } : m);

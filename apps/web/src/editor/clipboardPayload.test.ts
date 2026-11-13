@@ -1,31 +1,63 @@
 import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
-import { CLIP_MIME, clipboardBlocks, columnClipboardBlocks, writeBlockClipboard } from "./clipboardPayload";
+import { blockClipboardHTML, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, confirmBlockClipboard, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboardPayload";
 import { deleteRange, mathSpans, pasteBlocks } from "./model";
 import { tableRowsOf, writeTable } from "./tableCells";
 
 describe("clipboard payload validation", () => {
-  it("does not report a block copy as successful if the clipboard event did not write", () => {
-    let listener: ((event: ClipboardEvent) => void) | undefined;
-    const doc = {
-      addEventListener: (_: string, callback: (event: ClipboardEvent) => void) => { listener = callback; },
-      removeEventListener: vi.fn(),
-      execCommand: vi.fn(() => true),
-    } as unknown as Document;
-    const block = [{ type: "table", props: { tableData: '[["值"]]' }, chars: [] }];
-    expect(writeBlockClipboard(doc, "", block)).toBe(false);
-    const data = new Map<string, string>();
-    vi.mocked(doc.execCommand).mockImplementation(() => {
-      listener?.({ clipboardData: { setData: (key: string, value: string) => data.set(key, value) }, preventDefault: vi.fn() } as unknown as ClipboardEvent);
-      return true;
-    });
-    expect(writeBlockClipboard(doc, "", block)).toBe(true);
-    expect(JSON.parse(data.get(CLIP_MIME)!)).toEqual(block);
-    vi.mocked(doc.execCommand).mockImplementation(() => {
-      listener?.({ clipboardData: null } as ClipboardEvent);
-      return true;
-    });
-    expect(writeBlockClipboard(doc, "", block)).toBe(false);
+  it("writes human-readable text and bounded structured HTML, and handles denial", async () => {
+    class Item { constructor(readonly entries: Record<string, Blob>) {} }
+    const write = vi.fn(async (_items: unknown[]) => {});
+    const block = [{ type: "table", props: { tableData: '[["值","另"]]' }, chars: [] }];
+    const raw = await writeBlockClipboard({ write } as unknown as Clipboard, Item as unknown as typeof ClipboardItem, blockClipboardPlain(block[0]), block);
+    expect(raw).toBe(JSON.stringify(block));
+    const item = write.mock.calls[0][0][0] as Item;
+    expect(await item.entries["text/plain"].text()).toBe("值\t另");
+    expect(await item.entries["text/html"].text()).toContain("data-jiange-blocks=");
+    expect(await item.entries["text/html"].text()).toContain("<table><tr><td>值</td><td>另</td></tr></table>");
+    expect(await writeBlockClipboard(undefined, Item as unknown as typeof ClipboardItem, "x", block)).toBeNull();
+    write.mockRejectedValueOnce(new Error("denied"));
+    expect(await writeBlockClipboard({ write } as unknown as Clipboard, Item as unknown as typeof ClipboardItem, "x", block)).toBeNull();
+    expect(await writeBlockClipboard({ write: () => new Promise(() => {}) } as unknown as Clipboard, Item as unknown as typeof ClipboardItem, "x", block, 1)).toBeNull();
+    expect(blockClipboardHTML("x".repeat(2 * 1024 * 1024 + 1), "x")).toBeNull();
+  });
+
+  it("avoids exposing hidden merged data and escapes visible HTML", () => {
+    const hidden = { type: "table", props: { tableData: JSON.stringify([["<b>可见</b>", "隐藏内容"]]), tableMerges: "[[0,0,1,2]]" }, chars: [] };
+    expect(hasHiddenTableContent(hidden)).toBe(true);
+    const visible = { ...hidden, props: { ...hidden.props, tableData: JSON.stringify([["<b>可见</b>", ""]]) } };
+    expect(hasHiddenTableContent(visible)).toBe(false);
+    const html = blockClipboardHTML(JSON.stringify([visible]), blockClipboardPlain(visible), [visible])!;
+    expect(html).toContain('colspan="2"');
+    expect(html).toContain("&lt;b&gt;可见&lt;/b&gt;");
+    expect(html).not.toContain("<b>可见</b>");
+  });
+
+  it("requires exact readback of the structured HTML before confirming a cut", async () => {
+    const raw = '[{"type":"divider","props":{},"chars":[]}]';
+    const html = blockClipboardHTML(raw, "---")!;
+    expect(blockPayloadFromHTML(html)).toBe(raw);
+    const read = vi.fn(async () => [{ types: ["text/html"], getType: async () => new Blob([html], { type: "text/html" }) }]);
+    expect(await confirmBlockClipboard({ read } as unknown as Clipboard, raw, 30)).toBe(true);
+    expect(await confirmBlockClipboard({ read } as unknown as Clipboard, "different", 30)).toBe(false);
+    expect(await confirmBlockClipboard({ read: () => new Promise(() => {}) } as unknown as Clipboard, raw, 1)).toBe(false);
+    expect(blockPayloadFromHTML('<div data-jiange-blocks="%%%"></div>')).toBeNull();
+    expect(blockPayloadFromHTML(html + html)).toBeNull();
+    expect(blockPayloadFromHTML(blockClipboardHTML('[{"type":"paragraph","props":{},"chars":[]}]', "x")!)).toBeNull();
+    expect(blockPayloadFromHTML(`<html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`)).toBe(raw);
+    expect(blockPayloadFromHTML(html.replace("<div data-jiange-blocks", "<DIV DATA-JIANGE-BLOCKS"))).toBe(raw);
+    expect(blockPayloadFromHTML(`<script>${html}</script>`)).toBeNull();
+    const remove = vi.fn();
+    expect(await cutConfirmedBlock({ read } as unknown as Clipboard, "different", () => true, remove, 30)).toBe("unconfirmed");
+    expect(await cutConfirmedBlock({ read } as unknown as Clipboard, raw, () => false, remove, 30)).toBe("changed");
+    expect(remove).not.toHaveBeenCalled();
+    expect(await cutConfirmedBlock({ read } as unknown as Clipboard, raw, () => true, remove, 30)).toBe("cut");
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+  it.each(["table", "image", "file", "divider", "bookmark", "video", "flowchart"])("recognizes a structured %s block without parsing unrelated HTML", (type) => {
+    const raw = JSON.stringify([{ type, props: {}, chars: [] }]);
+    const html = blockClipboardHTML(raw, "内容")!;
+    expect(blockPayloadFromHTML(`${html}<img src="https://example.invalid/tracker">`)).toBe(raw);
   });
   it.each(["", "null", "{}", "[]", '[{"type":"paragraph","props":{}}]', '[{"type":"paragraph","props":{},"chars":[{}]}]', '[{"type":"paragraph","props":{},"chars":[{"ch":"ab","marks":{}}]}]'])("keeps selected text when payload is unusable: %s", (raw) => {
     const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
