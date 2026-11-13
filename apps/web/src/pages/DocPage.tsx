@@ -7,7 +7,7 @@ import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/useSyncDoc";
 import { CollabText } from "@/components/CollabText";
-import { Editor, type ExternalUndoRecorder, type TableFindReplacer } from "@/editor/Editor";
+import { Editor, type ExternalUndoRecorder, type FindBatchReplacer, type TableFindReplacer } from "@/editor/Editor";
 import { replaceMatches } from "@/editor/findReplace";
 import { FindScrollIntent } from "@/editor/findNavigation";
 import { preflightFindReplace } from "@/editor/findReplaceSafety";
@@ -167,6 +167,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const onUndoRegistrar = useCallback((record: ExternalUndoRecorder | null) => { recordExternalUndo.current = record; }, []);
   const tableFindReplace = useRef<TableFindReplacer | null>(null);
   const onTableFindRegistrar = useCallback((replace: TableFindReplacer | null) => { tableFindReplace.current = replace; }, []);
+  const findBatchReplace = useRef<FindBatchReplacer | null>(null);
+  const onFindBatchRegistrar = useCallback((replace: FindBatchReplacer | null) => { findBatchReplace.current = replace; }, []);
   const canEditRef = useRef(false);
   const submittedStarter = useRef(false);
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
@@ -772,7 +774,12 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
     }
     const selected = all ? matches : activeMatch ? [activeMatch] : [];
     if (!selected.length) return;
-    if (all && selected.some((match) => match.table)) { setFindMessage("全部替换暂不支持包含表格的结果，请逐项替换。"); return; }
+    if (all && selected.some((match) => match.table)) {
+      const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
+      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); setFindMessage(`已替换 ${result.count} 处。`); requestFindScroll(); }
+      else setFindMessage(result.status === "stale" ? "内容已变化，请重新查找；文档未修改。" : result.status === "size" || result.status === "work" ? "替换内容或范围过大，请缩小范围；文档未修改。" : "当前无法安全替换，请确认编辑权限和同步状态。");
+      return;
+    }
     if (!all && activeMatch?.table) {
       const outcome = tableFindReplace.current?.(activeMatch, findReplacement) ?? "unavailable";
       setFindMessage(outcome === "replaced" || outcome === "unchanged" ? "已替换 1 处。" : outcome === "stale" ? "表格已变化，请重新查找；未修改内容。" : outcome === "size" ? "替换内容或表格过大；未修改内容。" : "当前无法安全替换，请确认编辑权限和同步状态。");
@@ -984,6 +991,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
                 sync={sync}
                 onUndoRegistrar={onUndoRegistrar}
                 onTableFindRegistrar={onTableFindRegistrar}
+                onFindBatchRegistrar={onFindBatchRegistrar}
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
                 findNavigation={findNavigation}
@@ -1052,8 +1060,8 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
             matchCount={matches.length}
             activeIndex={activeFindIndex}
             canReplace={findCanReplace}
-            canReplaceAll={findCanReplace && !matches.some((match) => !!match.table)}
-            scopeNotice={`搜索正文、分栏和表格；标题和公式不在范围内。${matches.some((match) => !!match.table) ? "表格结果支持逐项替换，暂不支持全部替换。" : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            canReplaceAll={findCanReplace}
+            scopeNotice={`搜索正文、分栏和表格；标题和公式不在范围内。${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); requestFindScroll(); }}

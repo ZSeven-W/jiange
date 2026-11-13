@@ -25,6 +25,17 @@ describe("Peritext expand", () => {
 });
 
 describe("UndoManager", () => {
+  it("previews an undo on a replica without consuming or remapping the live history", () => {
+    const doc = new Doc(1), block = doc.createBlock("paragraph").id, tx = new Tx(doc), undo = new UndoManager();
+    tx.insert(block, 0, "测试"); undo.record(tx, null, null);
+    const copy = Doc.fromState(doc.client, doc.encodeState());
+    expect(undo.preview(copy, false)?.ops.length).toBeGreaterThan(0);
+    expect(copy.text(block)).toBe("");
+    expect(doc.text(block)).toBe("测试");
+    expect(undo.canUndo).toBe(true);
+    undo.undo(doc); expect(doc.text(block)).toBe("");
+    undo.redo(doc); expect(doc.text(block)).toBe("测试");
+  });
   it("records an explicit empty register against an inherited fallback", () => {
     const doc = new Doc(1), block = doc.createBlock("paragraph").id, tx = new Tx(doc), undo = new UndoManager();
     tx.setProp(block, "custom", "", "inherited");

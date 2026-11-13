@@ -74,6 +74,7 @@ import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommen
 import { searchableLocations, type FindMatch } from "./findReplace";
 import { readTableFindState, resolveTableFindMatch } from "./tableFind";
 import { applyTableFindReplace, type TableFindResult } from "./tableFindApply";
+import { applyFindBatch, FindBatchHistory, type BatchStatus } from "./findBatch";
 import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
@@ -101,6 +102,7 @@ export interface ExternalUndoOptions {
 }
 export type ExternalUndoRecorder = (tx: Tx, options?: ExternalUndoOptions) => void;
 export type TableFindReplacer = (match: FindMatch, replacement: string) => TableFindResult;
+export type FindBatchReplacer = (matches: readonly FindMatch[], replacement: string) => { status: BatchStatus; count: number };
 
 interface Props {
   sync: SyncDoc;
@@ -108,6 +110,7 @@ interface Props {
   /** Register a transaction from another document control with this editor's undo stack. */
   onUndoRegistrar?: (record: ExternalUndoRecorder | null) => void;
   onTableFindRegistrar?: (replace: TableFindReplacer | null) => void;
+  onFindBatchRegistrar?: (replace: FindBatchReplacer | null) => void;
   /** Search results are an ephemeral view; they never alter the document. */
   findMatches?: readonly FindMatch[];
   activeFindMatch?: FindMatch | null;
@@ -152,7 +155,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -161,10 +164,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
+  const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
+  const findBatchActionRef = useRef<FindBatchReplacer>(() => ({ status: "unavailable", count: 0 }));
+  const findBatchHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const replaceTableFind = useCallback<TableFindReplacer>((match, replacement) => tableFindActionRef.current(match, replacement), []);
+  const replaceFindBatch = useCallback<FindBatchReplacer>((matches, replacement) => findBatchActionRef.current(matches, replacement), []);
   const readOnlyRef = useRef(!!readOnly);
   const copyBlockedRef = useRef(!!onCopyBlock);
   copyBlockedRef.current = !!onCopyBlock;
@@ -192,7 +199,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
-  const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number } | null>(null);
+  const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" } | null>(null);
   const recordExternal = useCallback<ExternalUndoRecorder>((tx, options) => {
     if (readOnlyRef.current || tx.doc !== sync.client.doc || !tx.ops.length) return;
     // Template/import operations can race with other replicas editing the new
@@ -219,6 +226,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     onTableFindRegistrar?.(replaceTableFind);
     return () => onTableFindRegistrar?.(null);
   }, [onTableFindRegistrar, replaceTableFind]);
+  useLayoutEffect(() => {
+    onFindBatchRegistrar?.(replaceFindBatch);
+    return () => onFindBatchRegistrar?.(null);
+  }, [onFindBatchRegistrar, replaceFindBatch]);
   const [, force] = useState(0);
   const [remount, setRemount] = useState<Record<string, number>>({});
   const [slash, setSlash] = useState<{
@@ -777,7 +788,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -1642,9 +1653,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   tableFindActionRef.current = (match, replacement) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !match.table) return "unavailable";
+    const aliases = findBatchHistory.capture(d, [match.block]);
     const result = applyTableFindReplace(d, sync.client, um, tableHistory, match, replacement);
+    if (result.status === "replaced") findBatchHistory.recordTableChange(`table:${idKey(match.block)}:${match.table.row}:${match.table.col}`, aliases, false);
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return result.status;
+  };
+  findBatchActionRef.current = (matches, replacement) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0) return { status: "unavailable", count: 0 };
+    const result = applyFindBatch(d, um, findBatchHistory, matches, replacement);
+    if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
+    return { status: result.status, count: result.count };
   };
   const numbers = new Map<string, number>();
   {
@@ -1677,15 +1697,30 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   tableHistoryActionRef.current = (key, redo) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
+    const location = /^table:(\d+):(\d+):/.exec(key);
+    const aliases = location ? findBatchHistory.capture(d, [{ client: Number(location[1]), clock: Number(location[2]) }]) : [];
     const result = applyTableHistory(d, sync.client, um, tableHistory, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
       return;
     }
     setTableHistoryConflict(null);
+    findBatchHistory.finishTableChange(d, key, redo, aliases);
     sync.client.push(result.ops);
     force((x) => x + 1);
     publish();
+  };
+  findBatchHistoryActionRef.current = (key, redo) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current) return;
+    const result = findBatchHistory.step(d, um, key, redo);
+    if (result.status !== "ready") {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, reason: result.status === "size" ? "size" : undefined });
+      return;
+    }
+    setTableHistoryConflict(null);
+    for (const rebase of result.rebases) tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+    sync.client.push(result.ops); force((x) => x + 1); publish();
   };
   tableCellUndoRef.current = (target, redo) => {
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) || !target.hasAttribute("data-table-cell")) return false;
@@ -1694,7 +1729,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     if (!cell || !block?.dataset.block) return true;
     const key = `table:${block.dataset.block}:${cell[1]}:${cell[2]}`;
     const tableKey = `table:${block.dataset.block}:-1:-1`;
-    if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
+    if (um.peekMarker(redo)?.startsWith("find-batch:")) findBatchHistoryActionRef.current(um.peekMarker(redo)!, redo);
+    else if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
     else if (um.peekMarker(redo) === tableKey) tableHistoryActionRef.current(tableKey, redo);
     else if (redo ? um.canRedo : um.canUndo) setColumnNotice("最近的操作不在当前单元格，请先从文档中撤销或重做该操作。");
     return true;
@@ -1794,9 +1830,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>表格已变化，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
-          if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo);
+          if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
+            if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
+            else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
+          }
           else setColumnNotice("撤销记录已变化，未跳过任何记录，请重新操作。");
           setTableHistoryConflict(null);
         }}>跳过此条{tableHistoryConflict.redo ? "重做" : "撤销"}记录</button>
@@ -1856,12 +1895,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
               const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : planTableCut(beforeRows, merges, operation.range);
               if (!result.ok) return result.message;
               if (!result.changed) return null;
+              const aliases = findBatchHistory.capture(doc, [b]);
               const tx = new Tx(doc);
               writeTable(tx, b, current.props, result.rows, doc.client);
               if (!tx.ops.length) return null;
               const next = doc.propVersion(b, "tableData");
               const key = `table:${idKey(b)}:-1:-1`;
               tableHistory.record(sync.client, key, JSON.stringify(beforeRows), tableDataOf(doc.blockInfo(b).props), tableSnapshot.data, next ? idKey(next) : null, tableHistoryGuard(doc, b), operation.kind, Date.now(), false);
+              findBatchHistory.recordTableChange(key, aliases, false);
               um.seal();
               um.recordMarker(key, false);
               sync.client.push(tx.ops);
@@ -1946,6 +1987,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                   if (r >= 0 && old === v) return;
                   const previousVersion = doc.propVersion(b, "tableData");
                   const historyGuard = tableHistoryGuard(doc, b);
+                  const aliases = findBatchHistory.capture(doc, [b]);
                   const rows = applyTableEdit(before, r, c, v);
                   // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
                   writeTable(tx, b, info.props, rows, doc.client);
@@ -1955,6 +1997,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                     const beforeValue = r < 0 ? tableDataOf(info.props) : old;
                     const afterValue = r < 0 ? tableDataOf(doc.blockInfo(b).props) : v;
                     const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, historyGuard, kind, Date.now(), um.peekMarker(false) === key);
+                    findBatchHistory.recordTableChange(key, aliases, merged);
                     um.recordMarker(key, merged);
                   }
                   sync.client.push(tx.ops);

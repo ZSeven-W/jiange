@@ -49,6 +49,26 @@ export class UndoManager<S = unknown> {
     return (redo ? this.redos : this.undos).at(-1)?.marker ?? null;
   }
 
+  /** Check whether a guarded external action is still in either local stack. */
+  hasMarker(marker: string): boolean {
+    return this.undos.some((entry) => entry.marker === marker) || this.redos.some((entry) => entry.marker === marker);
+  }
+
+  /** Share identifier remaps with another part of the same editor history. */
+  shareRemappings<T>(other: UndoManager<T>): void { this.remap = other.remap; }
+
+  /** Preview an inverse on a caller-provided cloned document without consuming this history. */
+  preview(doc: Doc, redo: boolean): { ops: Op[]; selection: S | null } | null {
+    const copy = new UndoManager<S>();
+    copy.undos = this.undos.map((entry) => ({ ...entry, items: [...entry.items] }));
+    copy.redos = this.redos.map((entry) => ({ ...entry, items: [...entry.items] }));
+    copy.remap = new Map(this.remap);
+    copy.revisionValue = this.revisionValue;
+    copy.mergeWindowMs = this.mergeWindowMs;
+    copy.limit = this.limit;
+    return redo ? copy.redo(doc) : copy.undo(doc);
+  }
+
   /** Move a marker only after its owner has safely applied the inverse. */
   moveMarker(redo: boolean, marker: string): boolean {
     const from = redo ? this.redos : this.undos;
