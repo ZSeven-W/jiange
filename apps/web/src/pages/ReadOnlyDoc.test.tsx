@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 import { VersionView } from "./VersionPanel";
 import type { DocView } from "@/lib/api";
+import type { Comment } from "@/lib/api";
+import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
 
 // Mermaid is asynchronous and requires a browser; exercise its integration here.
 vi.mock("@/editor/DiagramView", () => ({ DiagramView: () => <span data-diagram-preview>流程图预览</span> }));
@@ -78,6 +80,33 @@ describe("read-only document snapshots", () => {
     expect(preview).toContain('aria-label="查看图片：示意图"');
     expect(preview).toContain('src="/api/files/12"');
     expect(preview).toContain("width:50%");
+  });
+
+  it("projects live comment anchors in text, columns and whole blocks without using stale quotes", () => {
+    const doc = new Doc(1), tx = new Tx(doc);
+    const paragraph = tx.create("paragraph", null, ROOT);
+    tx.insert(paragraph, 0, "前😀目标后");
+    const columns = tx.create("columns", paragraph, ROOT);
+    const column = tx.create("paragraph", null, columns);
+    tx.insert(column, 0, "分栏内容");
+    const image = tx.create("image", columns, ROOT);
+    tx.setProp(image, "fileId", "12");
+    const ids = doc.visibleIds(paragraph), columnIds = doc.visibleIds(column);
+    const base: Comment = { id: 11, docId: 1, userId: 1, userName: "测试", block: idKey(paragraph), startChar: idKey(ids[1]), endChar: idKey(ids[3]), quote: "😀目标", body: "评论", resolved: false, createdAt: "", updatedAt: "" };
+    const comments: Comment[] = [base, { ...base, id: 12 }, { ...base, id: 13, block: idKey(column), startChar: idKey(columnIds[0]), endChar: idKey(columnIds[1]) }, { ...base, id: 14, block: idKey(image), startChar: "", endChar: "" }, { ...base, id: 15, endChar: "99:99" }, { ...base, id: 16, resolved: true }];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={11} onActivateComment={() => {}} />);
+    expect(html).toContain('data-comment-anchor="11"');
+    expect(html).toContain('data-comment-anchor="13"');
+    expect(html).toContain('data-comment-block="14"');
+    expect(html).toContain('bg-[#FBDC8D]');
+    expect(html).not.toContain('data-comment-anchor="12"');
+    expect(html).not.toContain('data-comment-anchor="15"');
+    expect(html).not.toContain('data-comment-anchor="16"');
+    expect(html).toContain("😀目标");
+    new Tx(doc).delete(paragraph, 1, 3);
+    const stale = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={11} onActivateComment={() => {}} />);
+    expect(stale).not.toContain('data-comment-anchor="11"');
+    expect(stale).not.toContain('data-comment-anchor="12"');
   });
 
   it("keeps images visible in protected versions without exposing attachment links", () => {

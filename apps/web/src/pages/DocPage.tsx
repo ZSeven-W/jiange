@@ -201,13 +201,14 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
   const [preview, setPreview] = useState<{ src: string; alt: string; mime?: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
+  const presentationBody = useRef<HTMLDivElement>(null);
   const pendingCommentScroll = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (activeThread !== null && pendingCommentScroll.current === activeThread) {
       pendingCommentScroll.current = null;
-      scrollToCommentAnchor(body.current, activeThread);
+      scrollToCommentAnchor(presenting ? presentationBody.current : body.current, activeThread);
     }
-  }, [activeThread]);
+  }, [activeThread, presenting]);
   const [templatesHidden, setTemplatesHidden] = useState(false);
   const [templateError, setTemplateError] = useState("");
   const [readingMode, setReadingMode] = useState(false);
@@ -849,7 +850,11 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           onDraftSent={(sent) => setDraft((current) => current === sent ? null : current)}
           activeThread={activeThread}
           onActivate={(thread) => {
-            if (!presenting) pendingCommentScroll.current = thread;
+            pendingCommentScroll.current = thread;
+            if (presenting && thread !== null && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 639px)").matches) {
+              freezeCommentDrafts();
+              setCommentsTarget(null);
+            }
             setActiveThread(thread);
           }}
           onClose={() => {
@@ -1046,7 +1051,7 @@ export function DocPage({ id, me }: { id: number; me: Me }) {
           />
         </div>}
       </div>
-      {presenting && metadataVerified && meta.data && sync.client.doc && <DocumentPresentation key={`presentation:${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} icon={meta.data.icon} view={sync.client.doc.view()} synced={sync.status === "synced" && sync.caughtUp && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} commentsOpen={commentsAvailable && commentsOpen} onComments={commentsAvailable ? toggleComments : undefined} onRevalidate={() => { void meta.refetch(); }} onClose={closePresentation}>{commentsPanel}</DocumentPresentation>}
+      {presenting && metadataVerified && meta.data && sync.client.doc && <DocumentPresentation key={`presentation:${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} icon={meta.data.icon} view={sync.client.doc.view()} synced={sync.status === "synced" && sync.caughtUp && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} commentsOpen={commentsAvailable && commentsOpen} onComments={commentsAvailable ? toggleComments : undefined} onRevalidate={() => { void meta.refetch(); }} onClose={closePresentation} commentDoc={sync.client.doc} comments={commentsAvailable ? comments.data ?? [] : []} activeThread={activeThread} contentRef={presentationBody} onActivateComment={commentsAvailable ? (thread) => { pendingCommentScroll.current = null; setActiveThread(thread); setCommentsTarget({ doc: id, user: me.user.id, session: commentSession }); } : undefined}>{commentsPanel}</DocumentPresentation>}
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}

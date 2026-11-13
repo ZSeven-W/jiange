@@ -7,7 +7,9 @@ import { imageAlign } from "@/editor/ImageBlock";
 import { FileCard } from "@/editor/FileCard";
 import { coverMap, parseMerges } from "@/editor/tableOps";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import type { DocView } from "@/lib/api";
+import type { Comment, DocView } from "@/lib/api";
+import { parseKey, type Doc } from "@jiange/collab";
+import { projectCommentAnchors } from "@/editor/commentAnchor";
 import { DiagramView } from "@/editor/DiagramView";
 import { MathView } from "@/editor/MathView";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
@@ -24,33 +26,35 @@ function fileURL(id?: string, publicToken?: string, versionSeq?: number): string
   return `/api/files/${id}${suffix}`;
 }
 
-function RichText({ spans }: { spans: Span[] }) {
+function RichText({ spans, flags, activeThread, onActivateComment }: { spans: Span[]; flags?: (number | null)[]; activeThread?: number | null; onActivateComment?: (id: number) => void }) {
   // A formula can be split into multiple view spans by unrelated formatting.
   // Rebuild the same atomic boundaries as the editor before rendering it.
   const chars = spans.flatMap((span, source) => [...span.text].map((ch) => ({ ch, marks: span.marks, source })));
   const atoms = new Map(mathSpansFromChars(chars).map((atom) => [atom.start, atom]));
-  const runs: Span[] = [];
+  const runs: (Span & { anchor: number | null })[] = [];
   for (let i = 0; i < chars.length;) {
     const atom = atoms.get(i);
     if (atom) {
-      runs.push({ text: chars.slice(i, atom.end).map((char) => char.ch).join(""), marks: chars[i].marks });
+      const covered = (flags ?? []).slice(i, atom.end).filter((id): id is number => id != null);
+      runs.push({ text: chars.slice(i, atom.end).map((char) => char.ch).join(""), marks: chars[i].marks, anchor: activeThread != null && covered.includes(activeThread) ? activeThread : covered[0] ?? null });
       i = atom.end;
     } else {
       let end = i + 1;
-      while (end < chars.length && !atoms.has(end) && chars[end].source === chars[i].source) end++;
-      runs.push({ text: chars.slice(i, end).map((char) => char.ch).join(""), marks: chars[i].marks });
+      while (end < chars.length && !atoms.has(end) && chars[end].source === chars[i].source && (flags?.[end] ?? null) === (flags?.[i] ?? null)) end++;
+      runs.push({ text: chars.slice(i, end).map((char) => char.ch).join(""), marks: chars[i].marks, anchor: flags?.[i] ?? null });
       i = end;
     }
   }
   return <>{runs.map((span, i) => {
     const { text, marks } = span;
-    if (marks.math) return <span key={i} className="mx-0.5 not-italic"><MathView src={marks.math} /></span>;
+    const wrap = (content: ReactNode) => span.anchor == null ? <span key={i}>{content}</span> : <span key={i} role="button" tabIndex={0} data-comment-anchor={span.anchor} className={cn("cursor-pointer border-b-2 border-[#F5B1E5] focus-visible:outline-2 focus-visible:outline-primary", activeThread === span.anchor ? "bg-[#FBDC8D]" : "bg-[#FFF3D6]")} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("a")) onActivateComment?.(span.anchor!); }} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onActivateComment?.(span.anchor!); } }}>{content}</span>;
+    if (marks.math) return wrap(<span className="mx-0.5 not-italic"><MathView src={marks.math} /></span>);
     const style: CSSProperties = { color: marks.color || undefined, background: marks.bg || undefined };
     if (marks.underline || marks.strike) style.textDecoration = [marks.underline && "underline", marks.strike && "line-through"].filter(Boolean).join(" ");
     const classes = cn(marks.bold && "font-semibold", marks.italic && "italic", marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]", marks.mention && "rounded bg-accent px-0.5 font-medium text-primary");
     const href = safeURL(marks.link);
-    if (href) return <a key={i} href={href} target={href.startsWith("#/") ? undefined : "_blank"} rel={href.startsWith("#/") ? undefined : "noopener noreferrer"} className={cn(classes, "text-primary hover:underline")} style={style}>{text}</a>;
-    return <span key={i} className={classes} style={style}>{text}</span>;
+    if (href) return wrap(<a href={href} target={href.startsWith("#/") ? undefined : "_blank"} rel={href.startsWith("#/") ? undefined : "noopener noreferrer"} className={cn(classes, "text-primary hover:underline")} style={style}>{text}</a>);
+    return wrap(<span className={classes} style={style}>{text}</span>);
   })}</>;
 }
 
@@ -95,13 +99,15 @@ function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: stri
 
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
-export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void }) {
+export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void }) {
   const children = new Map<string, Block[]>();
   for (const block of view.blocks) {
     const group = children.get(block.parent) ?? [];
     group.push(block);
     children.set(block.parent, group);
   }
+  const projection = (block: Block) => commentDoc && onActivateComment ? projectCommentAnchors(commentDoc, parseKey(block.id), comments, activeThread) : undefined;
+  const richText = (block: Block) => <RichText spans={block.spans} flags={projection(block)?.flags} activeThread={activeThread} onActivateComment={onActivateComment} />;
   function renderChildren(parent: string): ReactNode {
     const blocks = (children.get(parent) ?? []).filter((b) => b.type !== "title");
     const counters: number[] = [];
@@ -111,7 +117,8 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
       if (block.type === "ordered") { counters.length = indent + 1; number = counters[indent] = (counters[indent] ?? 0) + 1; }
       else counters.length = 0;
       const text = block.spans.map((s) => s.text).join("");
-      const rich = <RichText spans={block.spans} />;
+      const anchors = projection(block);
+      const rich = <RichText spans={block.spans} flags={anchors?.flags} activeThread={activeThread} onActivateComment={onActivateComment} />;
       const nested = children.has(block.id) ? <div className="pl-6">{renderChildren(block.id)}</div> : null;
       let content: ReactNode;
       switch (block.type) {
@@ -129,7 +136,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} />; break;
-        case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2"><RichText spans={child.spans} />{renderChildren(child.id)}</div>)}</div></div>; break;
+        case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2">{richText(child)}{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} />; break;
         case "file": {
@@ -143,7 +150,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         }
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
-      return <div key={block.id} data-readonly-block={block.type} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{block.type !== "columns" && nested}</div>;
+      return <div key={block.id} data-readonly-block={block.type} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} className={cn(anchors?.blockThreadIds.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", anchors?.blockThreadIds.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
     });
   }
   return <div data-readonly-doc>{renderChildren("0:0")}</div>;

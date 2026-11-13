@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ChevronLeft, Maximize2, MessageSquare, Minimize2 } from "lucide-react";
-import type { DocView } from "@/lib/api";
+import type { Comment, DocView } from "@/lib/api";
+import type { Doc } from "@jiange/collab";
 import { DocumentCover } from "@/components/DocumentCover";
 import { displayDocumentIcon } from "@/components/DocumentGlyph";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 import { AttachmentPreview } from "./AttachmentPreview";
 
 /** A live, read-only projection; no document content is copied to another service. */
-export function DocumentPresentation({ id, userId, title, icon, view, synced, allowCopy, allowPrint, commentsOpen, onComments, onRevalidate, onClose, children }: {
+export function DocumentPresentation({ id, userId, title, icon, view, synced, allowCopy, allowPrint, commentsOpen, onComments, onRevalidate, onClose, children, commentDoc, comments, activeThread, onActivateComment, contentRef }: {
   id: number; userId: number; title: string; icon?: string; view: DocView; synced: boolean;
   allowCopy: boolean; allowPrint: boolean; commentsOpen: boolean;
   onComments?: () => void; onRevalidate: () => void; onClose: () => void; children?: ReactNode;
+  commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; contentRef?: RefObject<HTMLDivElement | null>;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
@@ -74,7 +76,7 @@ export function DocumentPresentation({ id, userId, title, icon, view, synced, al
       <DocumentCover id={id} userId={userId} visible enabled={false} hasIcon={!!glyph} allowCopy={allowCopy} allowPrint={allowPrint} onRevalidate={onRevalidate}>{({ hasCover }) => <article className={`mx-auto w-full max-w-[960px] px-7 pb-32 sm:px-16 ${hasCover ? "pt-8" : "pt-12 sm:pt-14"}`}>
         {glyph && <div aria-label="文档图标" className="mb-2 text-[32px] leading-none">{glyph}</div>}
         <h1 className="mb-8 break-words text-[32px] font-medium leading-[1.3]">{title.trim() || "未命名文档"}</h1>
-        <ReadOnlyDoc view={view} disableFileDownloads={!allowPrint} onPreviewImage={(src, name, mime) => setPreview({ src, name, mime })}/>
+        <div ref={contentRef}><ReadOnlyDoc view={view} disableFileDownloads={!allowPrint} onPreviewImage={(src, name, mime) => setPreview({ src, name, mime })} commentDoc={commentDoc} comments={comments} activeThread={activeThread} onActivateComment={onActivateComment}/></div>
       </article>}</DocumentCover>
     </main>
     {children}
