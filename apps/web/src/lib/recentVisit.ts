@@ -9,6 +9,7 @@ export function createVisitRecorder(record: () => Promise<void>, onRecorded: () 
   let active = false;
   let inFlight = false;
   let done = false;
+  let denied = false;
   let notified = false;
   let attempts = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -20,7 +21,7 @@ export function createVisitRecorder(record: () => Promise<void>, onRecorded: () 
     }
   };
   const attempt = async () => {
-    if (!active || inFlight || done) return;
+    if (!active || inFlight || done || denied) return;
     inFlight = true;
     try {
       await record();
@@ -29,6 +30,7 @@ export function createVisitRecorder(record: () => Promise<void>, onRecorded: () 
     } catch (error) {
       if (!active) return;
       if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
+        denied = true;
         onDenied();
       } else {
         const delay = Math.min(1000 * 2 ** Math.min(attempts++, 5), 30_000);

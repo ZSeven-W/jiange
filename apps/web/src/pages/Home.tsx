@@ -14,7 +14,7 @@ import { stageStarter } from "./pendingStarter";
 import { BOARD_TITLE, stageBoard } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { askText } from "@/components/ui/ask";
-import { ChevronDown, Folder, FolderOpen, Plus, Star } from "lucide-react";
+import { ChevronDown, FileText, Folder, FolderOpen, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
@@ -156,7 +156,7 @@ export function Home({ me, recent, favorites }: { me: Me; recent?: boolean; favo
   );
 }
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
-  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
+  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
 function BoardBadge() {
   return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;
@@ -165,7 +165,8 @@ function BoardBadge() {
 function FileBadge({ kind, icon }: { kind: "doc" | "base" | "slides" | "folder" | "file"; icon?: string }) {
   if (kind === "folder") return <Folder size={20} fill="#ffcc4d" stroke="#f5a623" />;
   if (kind === "slides") return <SlidesColorIcon className="size-5 shrink-0" />;
-  return kind === "doc" || kind === "file" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <BaseColorIcon className="size-5 shrink-0" />;
+  if (kind === "file") return <span className="grid size-5 shrink-0 place-items-center rounded bg-[#e8efff] text-[#3370ff]"><FileText size={15}/></span>;
+  return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <BaseColorIcon className="size-5 shrink-0" />;
 }
 function ActionCard({ icon, title, disabled, onClick }: { icon: React.ReactNode; title: string; disabled?: boolean; onClick: () => void }) {
   return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1 text-[14px] font-medium">{title}</span></button>;

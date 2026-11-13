@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, type FillRule, type FilterRule, type RowHeight, type ViewConfig } from "@/lib/api";
+import { createVisitRecorder } from "@/lib/recentVisit";
 import { ROW_HEIGHT_LABEL } from "./base/fill";
 import { Dashboard } from "./base/Dashboard";
 import { PALETTE, REGISTRY } from "./base/registry";
@@ -69,6 +70,16 @@ export function BasePage({ id }: { id: number }) {
   const authorizationEpoch = useRef(new BaseAuthorizationEpoch());
   const queryEpoch = authorizationEpoch.current.read(id, q.data, q.isFetching);
   const accessReady = q.isFetchedAfterMount && q.isSuccess;
+  const visitRecorder = useMemo(() => createVisitRecorder(
+    () => docsApi.recordVisit(id),
+    () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
+    () => { void qc.invalidateQueries({ queryKey: ["base", id] }); },
+  ), [id, qc]);
+  useEffect(() => {
+    if (!accessReady || q.isFetching) return;
+    visitRecorder.start();
+    return () => visitRecorder.stop();
+  }, [accessReady, q.isFetching, visitRecorder]);
   useBaseSync(id, { ready: accessReady, restricted: !!q.data?.writeRestricted });
   const [viewId, setViewId] = useState<number | null>(null);
   // 撤销/重做：本人在本页的单元格编辑与新增记录（条件写入，不覆盖他人更新）。

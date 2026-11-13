@@ -1,16 +1,28 @@
-import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Download, FileText } from "lucide-react";
 import { docsApi, driveApi } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
 import { canDownloadDocument } from "./documentCopy";
+import { createVisitRecorder } from "@/lib/recentVisit";
 
 /** Opens a standalone drive file through the same authenticated blob endpoint as attachments. */
 export function DriveFilePage({ id }: { id: number }) {
+  const qc = useQueryClient();
   const [sharing, setSharing] = useState(false);
   const shareRef = useRef<HTMLButtonElement>(null);
   const meta = useQuery({ queryKey: ["drive-file-node", id], queryFn: () => docsApi.get(id), refetchInterval: 15000, retry: false });
   const file = useQuery({ queryKey: ["drive-file", id], queryFn: () => driveApi.file(id), enabled: !!meta.data && meta.data.kind === "file" && !meta.isError, refetchInterval: 15000, retry: false });
+  const visitRecorder = useMemo(() => createVisitRecorder(
+    () => docsApi.recordVisit(id),
+    () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
+    () => { void qc.invalidateQueries({ queryKey: ["drive-file-node", id] }); void qc.invalidateQueries({ queryKey: ["drive-file", id] }); },
+  ), [id, qc]);
+  useEffect(() => {
+    if (!meta.isFetchedAfterMount || !file.isFetchedAfterMount || !meta.isSuccess || !file.isSuccess || meta.isFetching || file.isFetching || meta.data.kind !== "file") return;
+    visitRecorder.start();
+    return () => visitRecorder.stop();
+  }, [meta.isFetchedAfterMount, file.isFetchedAfterMount, meta.isSuccess, file.isSuccess, meta.isFetching, file.isFetching, meta.data?.kind, visitRecorder]);
   const allowed = canDownloadDocument(meta.data) && !meta.isError;
   const plainText = !!file.data && file.data.mime.toLowerCase().startsWith("text/plain") && file.data.size <= 1024 * 1024;
   const text = useQuery({ queryKey: ["drive-file-text", id, file.data?.id], enabled: plainText && allowed && !file.isError, retry: false, gcTime: 0, refetchInterval: 15000, queryFn: async () => {

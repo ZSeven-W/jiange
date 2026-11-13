@@ -66,5 +66,9 @@ describe("recent visit recording", () => {
     expect(record).toHaveBeenCalledTimes(1);
     expect(denied).toHaveBeenCalledTimes(1);
     recorder.stop();
+    recorder.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(denied).toHaveBeenCalledTimes(1);
   });
 });

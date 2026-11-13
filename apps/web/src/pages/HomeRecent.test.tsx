@@ -41,4 +41,12 @@ describe("home recent visits", () => {
     expect(html).toContain('value="slides"');
     expect(html).toContain('fill="#ED6D0C"');
   });
+
+  it("offers file filtering for a recently visited cloud file", () => {
+    const file = { ...first, title: "验收资料.txt", kind: "file" as const, viewedAt: "2026-11-07T10:00:00Z" };
+    const html = render([file]);
+    expect(html).toContain("验收资料.txt");
+    expect(html).toContain('value="file"');
+    expect(html).toContain('bg-[#e8efff]');
+  });
 });
