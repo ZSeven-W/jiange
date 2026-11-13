@@ -23,11 +23,16 @@ type TitleIdentityReplay struct {
 	clients    map[uint64]*titleIdentityNode
 	seed       maphash.Seed
 	count      uint64
+	insertions []*titleIdentityNode
+	needs      []titleCausalNeed
 }
 
 type titleIdentityNode struct {
 	start, end uint64
 	priority   uint64
+	kind       string
+	block      OpID
+	origin     OpID
 	left       *titleIdentityNode
 	right      *titleIdentityNode
 }
@@ -122,7 +127,19 @@ func (r *TitleIdentityReplay) ApplyRecord(row TitleProjectionRecord) error {
 	if err := p.applyValidated(row.Seq, parsed); err != nil {
 		return err
 	}
-	item := &titleIdentityNode{start: op.ID.Clock, end: end, priority: titleIdentityPriority(r.seed, op.ID.Client, op.ID.Clock)}
+	item := &titleIdentityNode{start: op.ID.Clock, end: end, priority: titleIdentityPriority(r.seed, op.ID.Client, op.ID.Clock), kind: op.T}
+	if op.T == TTextInsert {
+		item.block, item.origin = op.Block, op.Parent
+		r.insertions = append(r.insertions, item)
+	}
+	switch op.T {
+	case TBlockMove, TBlockSet, TBlockDelete, TTable:
+		r.needs = append(r.needs, titleCausalNeed{kind: titleNeedsBlock, block: op.Block})
+	case TTextDelete:
+		r.needs = append(r.needs, titleCausalNeed{kind: titleNeedsDelete, block: op.Block, first: op.Target, length: op.Len})
+	case TMark:
+		r.needs = append(r.needs, titleCausalNeed{kind: titleNeedsMark, block: op.Block, first: op.Start.Char, second: op.End.Char})
+	}
 	r.clients[op.ID.Client] = titleIdentityInsert(r.clients[op.ID.Client], item)
 	r.count++
 	return nil

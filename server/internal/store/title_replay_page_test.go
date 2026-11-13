@@ -56,6 +56,20 @@ func TestTitleReplayBuilderFailsClosedOnBadPageOrFinalAuthorization(t *testing.T
 	if candidate, err := store.BuildTitleReplayCandidate(context.Background(), duplicate, guard, 42, 3, 2, 1, 1024); !errors.Is(err, collab.ErrTitleReplayIdentity) || candidate.Visible {
 		t.Fatalf("duplicate identity: %+v %v", candidate, err)
 	}
+	finalChecks := 0
+	deniedAfterCausality := fakeTitleReplayReader(func(_ context.Context, _ store.RestoreGuard, _, _, _, after int64, _, _ int) ([]collab.TitleProjectionRecord, error) {
+		if after == 0 {
+			return []collab.TitleProjectionRecord{record}, nil
+		}
+		finalChecks++
+		if finalChecks == 1 {
+			return nil, nil
+		}
+		return nil, store.ErrForbidden
+	})
+	if candidate, err := store.BuildCausallyCheckedTitleReplayCandidate(context.Background(), deniedAfterCausality, guard, 42, 3, 1, 1, 1024); !errors.Is(err, store.ErrForbidden) || candidate.Visible {
+		t.Fatalf("post-validation auth: %+v %v", candidate, err)
+	}
 }
 
 func checkTitleReplayPages(t *testing.T, st titleReplayStore) {
@@ -150,6 +164,27 @@ func checkTitleReplayPages(t *testing.T, st titleReplayStore) {
 	built, err := store.BuildTitleReplayCandidate(ctx, st, guard, doc.ID, epoch, target, 1, 1024)
 	if err != nil || built.Head != uint64(target) || built.Text != "标题😀" || !built.Visible {
 		t.Fatalf("built candidate: %+v %v", built, err)
+	}
+	checked, err := store.BuildCausallyCheckedTitleReplayCandidate(ctx, st, guard, doc.ID, epoch, target, 1, 1024)
+	if err != nil || checked.Head != uint64(target) || checked.Text != "标题😀" || !checked.Visible {
+		t.Fatalf("causal candidate: %+v %v", checked, err)
+	}
+	// A body-only unresolved operation must prevent the stricter candidate,
+	// even though title projection and identity checks alone can still pass.
+	orphan := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: 92, Clock: 1}, Block: collab.OpID{Client: 93, Clock: 1}, Parent: collab.Root, Side: 1, Text: "孤儿"}
+	orphanRaw, err := collab.EncodeOps([]collab.Op{orphan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.AppendOps(ctx, doc.ID, []store.RawOp{{ClientID: 92, Clock: 1, Bytes: orphanRaw}}); err != nil {
+		t.Fatal(err)
+	}
+	_, currentHead, err := st.HeadVersion(ctx, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate, err := store.BuildCausallyCheckedTitleReplayCandidate(ctx, st, guard, doc.ID, epoch, currentHead, 1, 1024); !errors.Is(err, collab.ErrTitleReplayCausality) || candidate.Visible {
+		t.Fatalf("body orphan: %+v %v", candidate, err)
 	}
 
 	// A session expiring while the page is built must not receive its bytes.

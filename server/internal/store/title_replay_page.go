@@ -31,35 +31,65 @@ type TitleReplayPageReader interface {
 // read rechecks the account and epoch. A concurrent append can make the
 // candidate stale; full causality and publication still need separate checks.
 func BuildTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (collab.TitleProjectionCandidate, error) {
-	if reader == nil || !validTitleReplayPage(doc, epoch, head, 0, maxRows, maxBytes) {
+	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes)
+	if err != nil {
+		return collab.TitleProjectionCandidate{}, err
+	}
+	return replay.CandidateAt(uint64(head))
+}
+
+// BuildCausallyCheckedTitleReplayCandidate additionally checks dependencies in
+// the uncut full log. It is still a read-only historical candidate, not proof
+// of immutable pages, live snapshot compatibility, or permission to publish.
+func BuildCausallyCheckedTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (collab.TitleProjectionCandidate, error) {
+	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes)
+	if err != nil {
+		return collab.TitleProjectionCandidate{}, err
+	}
+	candidate, err := replay.CausallyCheckedCandidate(ctx, uint64(head))
+	if err != nil {
+		return collab.TitleProjectionCandidate{}, err
+	}
+	page, err := reader.ReadTitleReplayPage(ctx, guard, doc, epoch, head, head, maxRows, maxBytes)
+	if err != nil {
+		return collab.TitleProjectionCandidate{}, err
+	}
+	if len(page) != 0 {
 		return collab.TitleProjectionCandidate{}, ErrConflict
+	}
+	return candidate, nil
+}
+
+func replayTitlePrefix(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (*collab.TitleIdentityReplay, error) {
+	if reader == nil || !validTitleReplayPage(doc, epoch, head, 0, maxRows, maxBytes) {
+		return nil, ErrConflict
 	}
 	replay, err := collab.NewTitleIdentityReplay(uint64(doc), uint64(epoch))
 	if err != nil {
-		return collab.TitleProjectionCandidate{}, err
+		return nil, err
 	}
 	var cursor int64
 	for cursor < head {
 		if err := ctx.Err(); err != nil {
-			return collab.TitleProjectionCandidate{}, err
+			return nil, err
 		}
 		page, err := reader.ReadTitleReplayPage(ctx, guard, doc, epoch, head, cursor, maxRows, maxBytes)
 		if err != nil {
-			return collab.TitleProjectionCandidate{}, err
+			return nil, err
 		}
 		if len(page) == 0 || len(page) > maxRows {
-			return collab.TitleProjectionCandidate{}, ErrConflict
+			return nil, ErrConflict
 		}
 		used := 0
 		for _, record := range page {
 			if err := ctx.Err(); err != nil {
-				return collab.TitleProjectionCandidate{}, err
+				return nil, err
 			}
 			if record.Seq != uint64(cursor+1) || record.Seq > uint64(head) || len(record.Bytes) > maxBytes-used {
-				return collab.TitleProjectionCandidate{}, ErrConflict
+				return nil, ErrConflict
 			}
 			if err := replay.ApplyRecord(record); err != nil {
-				return collab.TitleProjectionCandidate{}, err
+				return nil, err
 			}
 			used += len(record.Bytes)
 			cursor++
@@ -67,12 +97,12 @@ func BuildTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader
 	}
 	page, err := reader.ReadTitleReplayPage(ctx, guard, doc, epoch, head, cursor, maxRows, maxBytes)
 	if err != nil {
-		return collab.TitleProjectionCandidate{}, err
+		return nil, err
 	}
 	if len(page) != 0 {
-		return collab.TitleProjectionCandidate{}, ErrConflict
+		return nil, ErrConflict
 	}
-	return replay.CandidateAt(uint64(head))
+	return replay, nil
 }
 
 func validTitleReplayPage(doc, epoch, head, after int64, maxRows, maxBytes int) bool {
