@@ -21,6 +21,34 @@ type VersionGuardedAppender interface {
 // AppendOpsAtVersionGuarded checks both log generation and sequence while
 // holding the same lock as ordinary writes, access changes, and epoch bumps.
 func (m *Memory) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, ops []RawOp) ([]int64, error) {
+	return m.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, nil)
+}
+
+type conditionalRequest struct {
+	request string
+	digest  [32]byte
+	probe   bool
+}
+
+func (m *Memory) CommitConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return m.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest})
+}
+
+// LookupConditionalOps returns ErrNotFound when no receipt exists yet. A
+// concurrent submission may still commit after that observation.
+func (m *Memory) LookupConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return m.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest, probe: true})
+}
+
+func (m *Memory) appendVersionGuarded(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, ops []RawOp, request *conditionalRequest) ([]int64, error) {
 	m.mu.Lock()
 	d := m.doc(doc)
 	if d == nil {
@@ -40,7 +68,34 @@ func (m *Memory) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreGua
 	if epoch < 1 {
 		epoch = 1
 	}
-	if expectedEpoch < 1 || epoch != expectedEpoch || expectedHead < 0 || int64(len(d.ops)) != expectedHead {
+	if expectedEpoch < 1 || epoch != expectedEpoch || expectedHead < 0 {
+		m.mu.Unlock()
+		return nil, ErrConflict
+	}
+	if request != nil {
+		key := conditionalOpsKey{doc: doc, user: guard.UserID, request: request.request}
+		if old, ok := d.conditionalOps[key]; ok {
+			if old.epoch != expectedEpoch || old.head != expectedHead || old.digest != request.digest || old.count != int64(len(ops)) || int64(len(d.ops)) < old.first+old.count-1 {
+				m.mu.Unlock()
+				return nil, ErrConflict
+			}
+			if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
+			m.mu.Unlock()
+			return conditionalSequences(old), nil
+		}
+		if request.probe {
+			if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
+			m.mu.Unlock()
+			return nil, ErrNotFound
+		}
+	}
+	if int64(len(d.ops)) != expectedHead {
 		m.mu.Unlock()
 		return nil, ErrConflict
 	}
@@ -75,6 +130,12 @@ func (m *Memory) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreGua
 	d.meta.UpdatedAt = now
 	m.setDocumentModifierLocked(d, guard.UserID)
 	head, subscribers := int64(len(d.ops)), slices.Clone(m.d.subs)
+	if request != nil {
+		if d.conditionalOps == nil {
+			d.conditionalOps = make(map[conditionalOpsKey]conditionalOpsReceipt)
+		}
+		d.conditionalOps[conditionalOpsKey{doc: doc, user: guard.UserID, request: request.request}] = conditionalOpsReceipt{epoch: expectedEpoch, head: expectedHead, first: seqs[0], count: int64(len(seqs)), digest: request.digest}
+	}
 	m.mu.Unlock()
 	for _, fn := range subscribers {
 		fn(doc, head)
@@ -83,6 +144,26 @@ func (m *Memory) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreGua
 }
 
 func (p *Postgres) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, ops []RawOp) (seqs []int64, err error) {
+	return p.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, nil)
+}
+
+func (p *Postgres) CommitConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return p.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest})
+}
+
+func (p *Postgres) LookupConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return p.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest, probe: true})
+}
+
+func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, ops []RawOp, request *conditionalRequest) (seqs []int64, err error) {
 	seqs = make([]int64, len(ops))
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var epoch, head int64
@@ -124,7 +205,35 @@ func (p *Postgres) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreG
 		} else if err != nil {
 			return err
 		}
-		if expectedEpoch < 1 || epoch != expectedEpoch || expectedHead < 0 || head != expectedHead {
+		if expectedEpoch < 1 || epoch != expectedEpoch || expectedHead < 0 {
+			return ErrConflict
+		}
+		if request != nil {
+			var old conditionalOpsReceipt
+			var digest []byte
+			err = tx.QueryRow(ctx, `SELECT history_epoch,base_seq,first_seq,op_count,digest FROM doc_conditional_ops_receipts WHERE doc_id=$1 AND user_id=$2 AND request_id=$3`, doc, guard.UserID, request.request).Scan(&old.epoch, &old.head, &old.first, &old.count, &digest)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if err == nil {
+				if len(digest) != len(old.digest) {
+					return ErrConflict
+				}
+				copy(old.digest[:], digest)
+				if old.epoch != expectedEpoch || old.head != expectedHead || old.digest != request.digest || old.count != int64(len(ops)) || head < old.first+old.count-1 {
+					return ErrConflict
+				}
+				seqs = conditionalSequences(old)
+				return drivePGEnd(ctx, guard, expires)
+			}
+			if request.probe {
+				if err := drivePGEnd(ctx, guard, expires); err != nil {
+					return err
+				}
+				return ErrNotFound
+			}
+		}
+		if head != expectedHead {
 			return ErrConflict
 		}
 		for i, op := range ops {
@@ -157,6 +266,12 @@ func (p *Postgres) AppendOpsAtVersionGuarded(ctx context.Context, guard RestoreG
 			}
 			if err = recordDocumentModifier(ctx, tx, doc, guard.UserID); err != nil {
 				return err
+			}
+			if request != nil {
+				_, err = tx.Exec(ctx, `INSERT INTO doc_conditional_ops_receipts(doc_id,user_id,request_id,history_epoch,base_seq,first_seq,op_count,digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, doc, guard.UserID, request.request, expectedEpoch, expectedHead, seqs[0], len(seqs), request.digest[:])
+				if err != nil {
+					return err
+				}
 			}
 			if _, err = tx.Exec(ctx, `SELECT pg_notify($1,$2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10)); err != nil {
 				return err

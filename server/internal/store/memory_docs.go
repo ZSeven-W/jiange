@@ -32,6 +32,7 @@ type memDoc struct {
 	snaps           map[int64][]byte
 	versions        map[int64]memVersion
 	namedVersions   []memoryVersionEntry
+	conditionalOps  map[conditionalOpsKey]conditionalOpsReceipt
 	opAt            []time.Time // arrival time per op (auto-version sweep)
 }
 

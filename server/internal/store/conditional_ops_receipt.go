@@ -1,0 +1,62 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+)
+
+const maxConditionalOps = 100000
+const maxConditionalBytes = 8 << 20
+const maxConditionalInteger = 1<<53 - 1
+
+// ConditionalOpsCommitter stores an idempotency receipt atomically with an
+// epoch-and-head-guarded batch. Callers must validate authorship and semantic
+// dependencies before attempting a new commit.
+type ConditionalOpsCommitter interface {
+	CommitConditionalOps(context.Context, RestoreGuard, int64, int64, int64, string, []RawOp) ([]int64, error)
+	LookupConditionalOps(context.Context, RestoreGuard, int64, int64, int64, string, []RawOp) ([]int64, error)
+}
+
+type conditionalOpsKey struct {
+	doc, user int64
+	request   string
+}
+type conditionalOpsReceipt struct {
+	epoch, head, first, count int64
+	digest                    [32]byte
+}
+
+func conditionalDigest(epoch, head int64, request string, ops []RawOp) ([32]byte, error) {
+	if !versionRequestPattern.MatchString(request) || epoch < 1 || epoch > maxConditionalInteger || head < 0 || head > maxConditionalInteger || len(ops) == 0 || len(ops) > maxConditionalOps || int64(len(ops)) > maxConditionalInteger-head {
+		return [32]byte{}, ErrConflict
+	}
+	h := sha256.New()
+	var word [8]byte
+	put := func(value uint64) { binary.BigEndian.PutUint64(word[:], value); _, _ = h.Write(word[:]) }
+	put(uint64(epoch))
+	put(uint64(head))
+	put(uint64(len(ops)))
+	total := 0
+	for _, op := range ops {
+		if op.ClientID <= 0 || op.ClientID > maxConditionalInteger || op.Clock <= 0 || op.Clock > maxConditionalInteger || len(op.Bytes) == 0 || len(op.Bytes) > maxConditionalBytes-total {
+			return [32]byte{}, ErrConflict
+		}
+		total += len(op.Bytes)
+		put(uint64(op.ClientID))
+		put(uint64(op.Clock))
+		put(uint64(len(op.Bytes)))
+		_, _ = h.Write(op.Bytes)
+	}
+	var result [32]byte
+	copy(result[:], h.Sum(nil))
+	return result, nil
+}
+
+func conditionalSequences(receipt conditionalOpsReceipt) []int64 {
+	seqs := make([]int64, int(receipt.count))
+	for i := range seqs {
+		seqs[i] = receipt.first + int64(i)
+	}
+	return seqs
+}

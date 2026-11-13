@@ -38,6 +38,22 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   return data as T;
 }
 
+/** Encode without spreading a potentially multi-megabyte batch into one call. */
+export function conditionalBatchBase64(batch: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < batch.length; offset += 0x4000) binary += String.fromCharCode(...batch.subarray(offset, offset + 0x4000));
+  return btoa(binary);
+}
+
+/** A retry must reuse the exact request ID, base version and operation bytes. */
+export async function commitConditionalOps(input: { docId: number; userId: number; historyEpoch: number; expectedSeq: number; requestId: string; batch: Uint8Array; opCount: number; signal: AbortSignal }): Promise<number[]> {
+  const { docId, userId, historyEpoch, expectedSeq, requestId, batch, opCount, signal } = input;
+  if (![docId, userId, historyEpoch, expectedSeq, opCount].every(Number.isSafeInteger) || docId <= 0 || userId <= 0 || historyEpoch <= 0 || expectedSeq < 0 || opCount <= 0 || opCount > 100000 || expectedSeq + opCount > Number.MAX_SAFE_INTEGER || !/^[0-9a-f]{32}$/.test(requestId) || batch.length === 0 || batch.length > (8 << 20)) throw new ApiError(400, "invalid_request", "条件提交参数无效");
+  const data = await request<{ sequences?: unknown }>("POST", `/api/docs/${docId}/conditional-ops`, { historyEpoch, expectedSeq, requestId, batch: conditionalBatchBase64(batch) }, signal, { "X-Jiange-User-Id": String(userId) });
+  if (!Array.isArray(data?.sequences) || data.sequences.length !== opCount || data.sequences.some((seq, i) => !Number.isSafeInteger(seq) || seq !== expectedSeq + i + 1)) throw new ApiError(502, "invalid_receipt", "无法确认提交结果，请使用相同请求核对");
+  return data.sequences as number[];
+}
+
 export const api = {
   me: () => request<Me>("GET", "/api/me"),
   login: (email: string, password: string) => request<Me>("POST", "/api/auth/login", { email, password }),
