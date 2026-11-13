@@ -10,6 +10,7 @@ describe("Feishu table block", () => {
     const html = renderToStaticMarkup(<TableBlock data={data} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
     expect(html.match(/data-table-col-grip=/g)).toHaveLength(3);
     expect(html.match(/data-table-row-grip=/g)).toHaveLength(2);
+    expect(html.match(/<textarea/g)).toHaveLength(6);
   });
   it("opens a row menu and highlights the selected row", () => {
     const html = renderToStaticMarkup(<TableBlock data={data} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} initialGrip={{ kind: "row", index: 1 }} />);

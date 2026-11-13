@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { Doc, ROOT, SyncClient, Tx, UndoManager, encodeServerMsg, idKey } from "@jiange/collab";
 import { applyTableEdit, parseTableData } from "./model";
 import { TableCellHistory } from "./tableCellHistory";
-import { applyTableHistory } from "./tableHistoryUndo";
+import { applyTableHistory, tableHistoryGuard } from "./tableHistoryUndo";
+import { tableDataOf, tableRowsOf, writeTable } from "./tableCells";
+import { planTablePaste } from "./tableClipboard";
 
 function setup() {
   const doc = new Doc(1), tx = new Tx(doc);
@@ -20,7 +22,7 @@ function edit(ctx: Context, row: number, col: number, value: string) {
   const { doc, session, table, undo, history } = ctx;
   const info = doc.blockInfo(table), rows = parseTableData(info.props.tableData);
   const before = row < 0 ? (info.props.tableData ?? "") : rows[row][col];
-  const previous = version(ctx, "tableData"), type = version(ctx, "type");
+  const previous = version(ctx, "tableData"), type = tableHistoryGuard(doc, table);
   const tx = new Tx(doc);
   tx.setProp(table, "tableData", JSON.stringify(applyTableEdit(rows, row, col, value)));
   const after = row < 0 ? doc.blockInfo(table).props.tableData : value;
@@ -93,6 +95,33 @@ describe("table and document undo ordering", () => {
     ctx.doc.apply(peer.setProp(ctx.table, "tableData", changed));
     expect(step(ctx)).toBe("conflict");
     expect(ctx.doc.blockInfo(ctx.table).props.tableData).toBe(changed);
+  });
+
+  it("rejects undo if another client changes only the merge layout", () => {
+    const ctx = setup();
+    edit(ctx, 0, 0, "本地");
+    const peer = Doc.fromState(2, ctx.doc.encodeState());
+    ctx.doc.apply(peer.setProp(ctx.table, "tableMerges", "[[0,0,1,2]]"));
+    expect(step(ctx)).toBe("conflict");
+    expect(rows(ctx)[0]).toEqual(["本地", "B"]);
+  });
+
+  it("undoes and redoes a multi-cell paste on a legacy table with formatted JSON", () => {
+    const ctx = setup(), { doc, table, session, undo, history } = ctx;
+    doc.setProp(table, "tableData", '[ [ "A", "B" ], [ "C", "D" ] ]');
+    const info = doc.blockInfo(table), before = tableRowsOf(info.props);
+    const paste = planTablePaste(before, [], 1, 1, "甲\t乙\n丙\t丁");
+    if (!paste.ok) throw new Error(paste.message);
+    const previous = version(ctx, "tableData"), guard = tableHistoryGuard(doc, table);
+    const tx = new Tx(doc);
+    writeTable(tx, table, info.props, paste.rows, doc.client);
+    const key = `table:${idKey(table)}:-1:-1`;
+    history.record(session, key, JSON.stringify(before), tableDataOf(doc.blockInfo(table).props), previous, version(ctx, "tableData"), guard, "paste");
+    undo.recordMarker(key);
+    expect(step(ctx)).toBe("ready");
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["A", "B"], ["C", "D"]]);
+    expect(step(ctx, true)).toBe("ready");
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["A", "B", ""], ["C", "甲", "乙"], ["", "丙", "丁"]]);
   });
 
   it("recovers undo after a SyncClient snapshot replaces the document instance", () => {

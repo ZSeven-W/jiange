@@ -3,6 +3,7 @@ import { Columns3, Combine, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./tableOps";
+import { formatTableTSV } from "./tableClipboard";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
@@ -27,13 +28,15 @@ export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string
 
 const inRange = (g: CellRange | null, r: number, c: number) => !!g && r >= g.r0 && r <= g.r1 && c >= g.c0 && c <= g.c1;
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onDelete, readOnly, initialGrip = null }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onDelete, readOnly, canCopy = true, initialGrip = null }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
+  onPasteCells?: (r: number, c: number, text: string) => string | null;
   onDelete: () => void; readOnly: boolean;
+  canCopy?: boolean;
   initialGrip?: GripSel | null;
 }) {
   const rows = parseTableData(data);
@@ -43,6 +46,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const [grip, setGrip] = useState<GripSel | null>(initialGrip);
   const [range, setRange] = useState<CellRange | null>(null);
   const [focus, setFocus] = useState<{ r: number; c: number } | null>(null);
+  const [clipboardNotice, setClipboardNotice] = useState("");
   const root = useRef<HTMLDivElement>(null);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const openGrip = (e: React.MouseEvent<HTMLElement>, g: GripSel) => {
@@ -75,8 +79,16 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
   return (
-    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "pb-4 pr-4")} data-table-block>
-      {!readOnly && <span className="absolute -top-[34px] right-4 z-20 hidden items-center gap-0.5 rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] group-hover/t:flex" data-table-toolbar>
+    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "pb-4 pr-4")} data-table-block
+      onCopy={(event) => {
+        if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
+        if (!multi || !selected) return;
+        event.preventDefault(); event.stopPropagation(); event.clipboardData.setData("text/plain", formatTableTSV(rows, selected));
+      }}
+      onCut={(event) => {
+        if (!canCopy || multi) { event.preventDefault(); event.stopPropagation(); if (canCopy) setClipboardNotice("暂不支持剪切多个单元格，请使用复制。"); }
+      }}>
+      {!readOnly && <div className="mb-1 h-[34px] max-w-full overflow-x-auto"><span className="invisible flex w-max items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] group-hover/t:visible group-focus-within/t:visible" data-table-toolbar>
         {editable && multi && <button type="button" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] text-primary hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={merge} data-table-merge><Combine size={14} strokeWidth={1.7} />合并单元格</button>}
         {editable && !multi && focusMerge && <button type="button" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onMouseDown={(e) => e.preventDefault()} onClick={split} data-table-split><SquareSplitHorizontal size={14} strokeWidth={1.7} />拆分单元格</button>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
@@ -85,7 +97,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
         {onHeader && <button type="button" title="标题行" aria-pressed={header} className={cn("flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header>标题行</button>}
         <span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button>
-      </span>}
+      </span></div>}
       <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")}>
       <table className="border-collapse text-[14px] leading-[22px]">
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
@@ -100,16 +112,32 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                 return (
                   <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined}>
                     {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap px-2 py-[8.5px]">{cell}</span> : (
-                      <input
+                      <textarea
                         value={cell}
+                        rows={Math.min(10, Math.max(1, cell.split("\n").length))}
                         onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
                         onFocus={() => setFocus({ r: ri, c: ci })}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Tab" || e.nativeEvent.isComposing) return;
+                          const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
+                          const next = cells[cells.indexOf(e.currentTarget) + (e.shiftKey ? -1 : 1)];
+                          if (next) { e.preventDefault(); next.focus(); next.select(); }
+                        }}
+                        onPaste={(e) => {
+                          const text = e.clipboardData.getData("text/plain");
+                          if (!onPasteCells || !/[\t\r\n]/.test(text)) return;
+                          e.preventDefault(); e.stopPropagation();
+                          const start = multi && selected ? { r: selected.r0, c: selected.c0 } : { r: ri, c: ci };
+                          const error = onPasteCells(start.r, start.c, text);
+                          setClipboardNotice(error ?? "");
+                          if (!error) { setRange(null); setGrip(null); }
+                        }}
                         onMouseDown={(e) => {
                           setGrip(null);
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
-                        className="w-full bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
+                        className="block min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]"
                         data-table-cell={`${ri}:${ci}`}
                       />
                     )}
@@ -132,6 +160,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
           {gripMenu(grip, rows.length, nCols, rows, merges).map((it) => <Fragment key={it.label}>{(it.danger || it.op.kind === "moveRow" && it.label === "上移一行" || it.op.kind === "moveCol" && it.label === "左移一列") && <div className="my-1 border-t" />}<button type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button></Fragment>)}
         </div>
       )}
+      {clipboardNotice && <div role="status" className="mt-2 flex items-start gap-2 text-[12px] text-[#b54a23]"><span>{clipboardNotice}</span><button type="button" aria-label="关闭粘贴提示" onClick={() => setClipboardNotice("")}><X size={14} /></button></div>}
       {!readOnly && <>
         <button type="button" title="添加一行" aria-label="添加一行" className="absolute bottom-0 left-4 right-10 hidden h-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertRow", at: rows.length }) : onEdit(-1, nCols, ""))} data-table-add-row><Plus size={11} strokeWidth={2.2} /></button>
         <button type="button" title="添加一列" aria-label="添加一列" className="absolute bottom-4 right-0 top-4 hidden w-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertCol", at: nCols }) : onEdit(-2, nCols, ""))} data-table-add-col><Plus size={11} strokeWidth={2.2} /></button>

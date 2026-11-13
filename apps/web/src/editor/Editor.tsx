@@ -50,7 +50,8 @@ import { FileCard, fmtSize } from "./FileCard";
 import { linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
-import type { Merge, Widths } from "./tableOps";
+import { parseMerges, type Merge, type Widths } from "./tableOps";
+import { planTablePaste } from "./tableClipboard";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
@@ -73,7 +74,7 @@ import { searchableLocations, type FindMatch } from "./findReplace";
 import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
-import { applyTableHistory } from "./tableHistoryUndo";
+import { applyTableHistory, tableHistoryGuard } from "./tableHistoryUndo";
 import { tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./tableCells";
 
 const CLIP_MIME = "application/x-jiange-blocks";
@@ -1570,12 +1571,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
     publish();
   };
   tableCellUndoRef.current = (target, redo) => {
-    if (!(target instanceof HTMLInputElement) || !target.hasAttribute("data-table-cell")) return false;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) || !target.hasAttribute("data-table-cell")) return false;
     const cell = /^(\d+):(\d+)$/.exec(target.dataset.tableCell ?? "");
     const block = target.closest<HTMLElement>("[data-block]");
     if (!cell || !block?.dataset.block) return true;
     const key = `table:${block.dataset.block}:${cell[1]}:${cell[2]}`;
+    const tableKey = `table:${block.dataset.block}:-1:-1`;
     if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
+    else if (um.peekMarker(redo) === tableKey) tableHistoryActionRef.current(tableKey, redo);
     else if (redo ? um.canRedo : um.canUndo) setColumnNotice("最近的操作不在当前单元格，请先从文档中撤销或重做该操作。");
     return true;
   };
@@ -1725,6 +1728,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
           blocks.map((b) => {
             const k = idKey(b);
             const info = doc.blockInfo(b);
+            const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
+            const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), type: version("type") } : null;
             const commentProjection = projectCommentAnchors(doc, b, comments, activeThread);
             return (
               <Block
@@ -1798,7 +1803,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                   if (r >= 0 && typeof old !== "string") return;
                   if (r >= 0 && old === v) return;
                   const previousVersion = doc.propVersion(b, "tableData");
-                  const typeVersion = doc.propVersion(b, "type");
+                  const historyGuard = tableHistoryGuard(doc, b);
                   const rows = applyTableEdit(before, r, c, v);
                   // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
                   writeTable(tx, b, info.props, rows, doc.client);
@@ -1807,12 +1812,34 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, findMatches = [], 
                     const key = r < 0 ? `table:${idKey(b)}:-1:-1` : `table:${idKey(b)}:${r}:${c}`;
                     const beforeValue = r < 0 ? tableDataOf(info.props) : old;
                     const afterValue = r < 0 ? tableDataOf(doc.blockInfo(b).props) : v;
-                    const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, typeVersion ? idKey(typeVersion) : null, kind, Date.now(), um.peekMarker(false) === key);
+                    const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, historyGuard, kind, Date.now(), um.peekMarker(false) === key);
                     um.recordMarker(key, merged);
                   }
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();
+                }}
+                onTablePaste={readOnly ? undefined : (r, c, text) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，未粘贴。";
+                  const current = doc.blockInfo(b);
+                  if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择后粘贴。";
+                  const beforeRows = tableRowsOf(current.props);
+                  const result = planTablePaste(beforeRows, parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0), r, c, text);
+                  if (!result.ok) return result.message;
+                  if (!result.changed) return null;
+                  const tx = new Tx(doc);
+                  writeTable(tx, b, current.props, result.rows, doc.client);
+                  if (!tx.ops.length) return null;
+                  const next = doc.propVersion(b, "tableData");
+                  const key = `table:${idKey(b)}:-1:-1`;
+                  tableHistory.record(sync.client, key, JSON.stringify(beforeRows), tableDataOf(doc.blockInfo(b).props), tableSnapshot.data, next ? idKey(next) : null, tableHistoryGuard(doc, b), "paste", Date.now(), false);
+                  um.seal();
+                  um.recordMarker(key, false);
+                  sync.client.push(tx.ops);
+                  um.seal();
+                  force((x) => x + 1);
+                  publish();
+                  return null;
                 }}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={readOnly ? undefined : () => toggleTodo(b)}
@@ -2104,6 +2131,7 @@ interface BlockProps {
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
+  onTablePaste?: (r: number, c: number, text: string) => string | null;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   /** The insertion affordance is visible on an otherwise blank document. */
@@ -2138,7 +2166,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2313,9 +2341,11 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
+          onPasteCells={onTablePaste}
           onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}
+          canCopy={canCopy}
         />
       ) : type === "divider" ? (
         <hr contentEditable={false} className="h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />
