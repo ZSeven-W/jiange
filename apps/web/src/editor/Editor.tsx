@@ -74,7 +74,7 @@ import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommen
 import { searchableLocations, type FindMatch } from "./findReplace";
 import { readTableFindState, resolveTableFindMatch } from "./tableFind";
 import { applyTableFindReplace, type TableFindResult } from "./tableFindApply";
-import { applyFindBatch, FindBatchHistory, type BatchStatus } from "./findBatch";
+import { applyFindBatch, canStepFindBatch, FindBatchHistory, type BatchStatus } from "./findBatch";
 import { validEditorSelection } from "./selectionSafety";
 import { editorClipboardRoute, isNativeControl } from "./nativeControl";
 import { TableCellHistory } from "./tableCellHistory";
@@ -199,7 +199,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
+  const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
   const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" } | null>(null);
+  useEffect(() => {
+    if (batchSyncNotice && canStepFindBatch(sync.client)) setBatchSyncNotice(null);
+  }, [batchSyncNotice, sync.client, sync.status, sync.caughtUp, sync.blocked, sync.client.unacked]);
   const recordExternal = useCallback<ExternalUndoRecorder>((tx, options) => {
     if (readOnlyRef.current || tx.doc !== sync.client.doc || !tx.ops.length) return;
     // Template/import operations can race with other replicas editing the new
@@ -1713,6 +1717,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   findBatchHistoryActionRef.current = (key, redo) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
+    if (!canStepFindBatch(sync.client)) { setBatchSyncNotice(redo ? "redo" : "undo"); return; }
+    setBatchSyncNotice(null);
     const result = findBatchHistory.step(d, um, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, reason: result.status === "size" ? "size" : undefined });
@@ -1829,6 +1835,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       />}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
+      {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>{tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, encodeClientMsg, encodeOps, idKey } from "@jiange/collab";
 import { findDocumentMatches } from "./tableFind";
-import { applyFindBatch, FindBatchHistory } from "./findBatch";
+import { applyFindBatch, canStepFindBatch, FindBatchHistory } from "./findBatch";
 import { tableRowsOf, writeTable } from "./tableCells";
 import { applyTableFindReplace } from "./tableFindApply";
 import { applyTableHistory } from "./tableHistoryUndo";
@@ -17,6 +17,15 @@ function setup() {
 const grid = (doc: Doc, table: { client: number; clock: number }) => tableRowsOf(doc.blockInfo(table).props);
 
 describe("mixed find and replace all", () => {
+  it("allows grouped undo only on a connected, caught-up replica without pending writes", () => {
+    const ready = { caughtUp: true, status: "synced", unacked: 0, blocked: null };
+    expect(canStepFindBatch(ready)).toBe(true);
+    expect(canStepFindBatch({ ...ready, caughtUp: false })).toBe(false);
+    expect(canStepFindBatch({ ...ready, status: "offline" })).toBe(false);
+    expect(canStepFindBatch({ ...ready, status: "syncing" })).toBe(false);
+    expect(canStepFindBatch({ ...ready, unacked: 1 })).toBe(false);
+    expect(canStepFindBatch({ ...ready, blocked: "read_only" })).toBe(false);
+  });
   it("replaces text and multiple matches in multiple cells as one undoable action", () => {
     const { doc, text, table, next, undo, history } = setup();
     const matches = findDocumentMatches(doc, "目标"), result = applyFindBatch(doc, undo, history, matches, "完成");

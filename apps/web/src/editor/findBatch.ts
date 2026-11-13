@@ -18,6 +18,11 @@ type BatchResult = { status: BatchStatus; ops: Op[]; count: number };
 type StepResult = { status: "ready"; ops: Op[]; rebases: { block: OpId; logical: string | null; actual: string | null; guard: string }[] } | { status: "empty" | "conflict" | "size" };
 let serial = 0;
 
+/** Table inverses must not be generated against an offline or unconfirmed replica. */
+export function canStepFindBatch(state: { caughtUp: boolean; status: string; unacked: number; blocked: string | null }): boolean {
+  return state.caughtUp && state.status === "synced" && state.unacked === 0 && !state.blocked;
+}
+
 function plans(doc: Doc, matches: readonly FindMatch[], replacement: string): { text: FindMatch[]; tables: TablePlan[] } | null {
   const text: FindMatch[] = [], tables = new Map<string, TablePlan>(), cells = new Map<string, FindMatch[]>();
   for (const match of matches) {
