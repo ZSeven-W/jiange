@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ShareInfo } from "@/lib/api";
-import { ShareQRCode, verifiedShareUrl } from "./shareLink";
+import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "./shareLink";
 
 const share: ShareInfo = { role: "manage", members: [], link: { role: "view", token: "test-token" } };
 
@@ -15,6 +15,17 @@ describe("share QR", () => {
   it("uses the correct route and escapes tokens", () => {
     expect(verifiedShareUrl(share, "https://example.test", true)).toBe("https://example.test/#/s/test-token");
     expect(verifiedShareUrl({ ...share, link: { role: "anon", token: "a/b" } }, "https://example.test", true)).toBe("https://example.test/#/p/a%2Fb");
+  });
+  it("uses a permission-checked direct address when link sharing is closed", () => {
+    const closed: ShareInfo = { ...share, link: { role: "none", token: "old-disabled-token" } };
+    expect(verifiedDirectShareUrl(closed, { id: 42, kind: "doc" }, "https://example.test", "/workspace/", true)).toBe("https://example.test/workspace/#/doc/42");
+    expect(verifiedDirectShareUrl(closed, { id: 42, kind: "base" }, "https://example.test", "/", true)).toBe("https://example.test/#/base/42");
+    expect(verifiedDirectShareUrl(closed, { id: 42, kind: "slides" }, "https://example.test", "/", true)).toBe("https://example.test/#/slides/42");
+    expect(verifiedDirectShareUrl(closed, { id: 42, kind: "file" }, "https://example.test", "/", true)).toBe("https://example.test/#/file/42");
+    expect(verifiedDirectShareUrl(closed, { id: 42 }, "https://example.test", "/", false)).toBe("");
+    expect(verifiedDirectShareUrl(share, { id: 42 }, "https://example.test", "/", true)).toBe("");
+    expect(verifiedDirectShareUrl(closed, { id: 0 }, "https://example.test", "/", true)).toBe("");
+    expect(verifiedDirectShareUrl(closed, { id: 42 }, "https://example.test", "//other.test/", true)).toBe("");
   });
   it("renders an accessible local SVG and rejects empty or oversized values", () => {
     const html = renderToStaticMarkup(<ShareQRCode url="https://example.test/#/s/token" />);

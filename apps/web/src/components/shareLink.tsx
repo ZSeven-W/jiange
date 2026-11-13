@@ -1,11 +1,25 @@
 import { t } from "@/lib/i18n";
 import { QRCodeSVG } from "qrcode.react";
-import type { ShareInfo } from "@/lib/api";
+import type { DocMeta, ShareInfo } from "@/lib/api";
+import { nodeHref } from "@/lib/route";
 
 /** Only expose a link after the current permission read has succeeded. */
 export function verifiedShareUrl(info: ShareInfo | undefined, origin: string, verified: boolean): string {
   if (!verified || !info || info.link.role === "none" || !info.link.token) return "";
   return `${origin}/#/${info.link.role === "anon" ? "p" : "s"}/${encodeURIComponent(info.link.token)}`;
+}
+
+/** A direct address identifies the document but does not grant access. Never
+ * reuse an old sharing token when link sharing is disabled. */
+export function verifiedDirectShareUrl(info: ShareInfo | undefined, meta: Pick<DocMeta, "id" | "kind">, origin: string, pathname: string, verified: boolean): string {
+  if (!verified || !info || !["view", "edit", "manage"].includes(info.role) || info.link?.role !== "none" || !Number.isSafeInteger(meta.id) || meta.id <= 0 || ![undefined, "doc", "base", "slides", "file"].includes(meta.kind) || typeof pathname !== "string" || !pathname.startsWith("/") || pathname.startsWith("//")) return "";
+  try {
+    const base = new URL(origin);
+    const url = new URL(pathname, base);
+    if (!/^https?:$/.test(base.protocol) || url.origin !== base.origin) return "";
+    url.hash = nodeHref(meta);
+    return url.toString();
+  } catch { return ""; }
 }
 
 /** Generated in the browser; the URL is never sent to a QR service. */

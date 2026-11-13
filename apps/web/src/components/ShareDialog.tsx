@@ -6,7 +6,7 @@ import { Avatar } from "@/components/brand";
 import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/FeishuIcons";
 import { Check, QrCode, X } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
-import { ShareQRCode, verifiedShareUrl } from "@/components/shareLink";
+import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "@/components/shareLink";
 import { invitationConflict, inviteCandidates } from "@/components/shareInvite";
 import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "@/components/sharePermissions";
 
@@ -124,9 +124,10 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
     setSuggestOpen(false);
   }, "invite");
   const linkRole = info.data?.link.role ?? "none";
-  const url = verifiedShareUrl(info.data, location.origin, !info.isFetching && !info.isError && !busy);
-  const linkTitle = linkRole === "none" ? t("仅指定协作者") : linkRole === "anon" ? t("互联网上任何人") : t("已登录用户");
-  const linkDescription = linkRole === "none" ? t("仅邀请的协作者可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
+  const verified = !info.isFetching && !info.isError && !busy;
+  const url = verifiedShareUrl(info.data, location.origin, verified) || verifiedDirectShareUrl(info.data, meta, location.origin, location.pathname, verified);
+  const linkTitle = linkRole === "none" ? t("仅限已有权限的人") : linkRole === "anon" ? t("互联网上任何人") : t("已登录用户");
+  const linkDescription = linkRole === "none" ? t("已有文档访问权限的人可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
   const permissions = contentPermissions(settings.data);
   const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage" && !!permissions;
   const settingsMessage = settingsError || (info.isError || settings.isError ? t("无法验证权限设置，请返回后重试。") : settings.data && settings.data.role !== "manage" ? t("你已没有管理权限。") : !manage && !info.isFetching ? t("你已没有管理权限。") : settings.data && !permissions ? t("当前服务不支持分项权限设置，请刷新后重试。") : "");
@@ -208,7 +209,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
           </div>
           <footer className="flex min-h-[66px] items-center gap-2 bg-sidebar px-4 py-3">
-            <button type="button" disabled={!url || linkRole === "none"} title={!url || linkRole === "none" ? t("开启链接分享后可复制链接") : t("复制链接")} className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={async () => { try { if (!navigator.clipboard) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(url); setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopyError(true); } }}>{copied ? <Check size={14}/> : <LinkIcon className="size-[14px]"/>}{copied ? t("已复制") : t("复制链接")}</button>
+            <button type="button" disabled={!url} title={!url ? t("无法验证分享链接") : linkRole === "none" ? t("已有文档访问权限的人可访问") : t("复制链接")} className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={async () => { try { if (!navigator.clipboard) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(url); setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopyError(true); } }}>{copied ? <Check size={14}/> : <LinkIcon className="size-[14px]"/>}{copied ? t("已复制") : t("复制链接")}</button>
             <button type="button" aria-label={t("分享二维码")} aria-expanded={showQr && !!url} disabled={!url} title={!url ? t("开启链接分享后可查看二维码") : t("分享二维码")} onClick={() => setShowQr((value) => !value)} className="grid size-8 shrink-0 place-items-center rounded-full border text-muted-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"><QrCode size={15}/></button>
             {copyError && url && <input readOnly aria-label={t("分享链接")} value={url} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded border bg-surface px-2 py-1 text-[12px]" />}
           </footer>

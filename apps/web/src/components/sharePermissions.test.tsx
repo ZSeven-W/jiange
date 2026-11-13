@@ -115,6 +115,16 @@ describe("share permission settings", () => {
     expect(render("edit")).not.toContain("权限设置");
   });
 
+  it("allows a direct link without suggesting that only invitees have access", () => {
+    vi.stubGlobal("location", { origin: "https://example.test", pathname: "/" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["shares", doc.id], { role: "manage", members: [], link: { role: "none" } });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} onClose={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("仅限已有权限的人");
+    expect(html).toContain("已有文档访问权限的人可访问");
+    expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>.*?复制链接<\/button>/);
+  });
+
   it("hides cached share details after an access error", () => {
     vi.stubGlobal("location", { origin: "https://example.test" });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
