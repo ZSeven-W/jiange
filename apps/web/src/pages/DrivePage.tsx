@@ -10,7 +10,8 @@ import { DOCX_MIME, DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx
 import { stageStarter } from "./pendingStarter";
 import { stagePendingWord } from "./pendingWord";
 import { stageBoard } from "./boardStarter";
-import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
+import { type StarterTemplate } from "./starterTemplateData";
+import { TemplateLibrary } from "./TemplateLibrary";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { DirectoryPickerGate, type DriveUploadManager } from "./drive-upload";
 import type { DriveDirectoryHandle } from "./drive-upload-plan";
@@ -227,7 +228,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       {error && <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p>}
     </div>
     {moving && <MoveDialog entries={moving.entries} onDone={(result) => { const batch = moving.batch; setMoving(null); if (result && batch) finishBatch("移动", result); }}/>}
-    {libraryOpen && <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-4" onMouseDown={() => { if (!templatePending) setLibraryOpen(false); }}><div role="dialog" aria-modal="true" aria-label="模板库" className="max-h-[calc(100dvh-2rem)] w-full max-w-[880px] overflow-y-auto rounded-lg border bg-white p-5 shadow-xl" onMouseDown={(event) => event.stopPropagation()}><h2 className="mb-5 text-[16px] font-semibold">模板库</h2><StarterTemplates compact disabled={templatePending} onChoose={(template) => void chooseTemplate(template)} onHide={() => setLibraryOpen(false)}/>{error && <p role="alert" className="mt-3 text-[13px] text-destructive">{error}</p>}</div></div>}
+    {libraryOpen && <TemplateLibrary disabled={templatePending} onChoose={(template) => void chooseTemplate(template)} onClose={() => setLibraryOpen(false)}/>}
   </main>;
 }
 

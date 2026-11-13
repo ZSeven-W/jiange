@@ -13,7 +13,8 @@ import type { DriveUploadManager } from "./drive-upload";
 import { DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stagePendingWord } from "./pendingWord";
 import { parseMarkdown } from "@/lib/markdown";
-import { StarterTemplates, type StarterTemplate } from "./StarterTemplates";
+import { type StarterTemplate } from "./starterTemplateData";
+import { TemplateLibrary } from "./TemplateLibrary";
 import { stageStarter } from "./pendingStarter";
 import { BOARD_TITLE, stageBoard } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
@@ -179,7 +180,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           </div>}
         </div>
       </div>
-      {libraryOpen && <div className="fixed inset-0 z-40 grid place-items-center bg-black/20 p-4" onMouseDown={() => setLibraryOpen(false)}><div role="dialog" aria-modal="true" aria-label={t("模板库")} className="max-h-[calc(100dvh-2rem)] w-full max-w-[880px] overflow-y-auto rounded-lg border bg-surface p-5 shadow-xl sm:p-6" onMouseDown={(event) => event.stopPropagation()}><h2 className="mb-5 text-[16px] font-semibold">{t("模板库")}</h2><StarterTemplates compact disabled={createWithContent.isPending} onChoose={chooseTemplate} onHide={() => setLibraryOpen(false)} />{importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}</div></div>}
+      {libraryOpen && <TemplateLibrary disabled={createWithContent.isPending} onChoose={chooseTemplate} onClose={() => setLibraryOpen(false)} />}
     </main>
   );
 }
