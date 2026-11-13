@@ -93,20 +93,37 @@ func NewTitleProjection(documentID, epoch uint64) (*TitleProjection, error) {
 // not deduplicate a replay at another sequence: the caller must verify the
 // durable operation-identity ledger for every row, including ignored rows.
 func (p *TitleProjection) ApplyRecord(row TitleProjectionRecord) error {
+	parsed, err := p.validateRecord(row)
+	if err != nil {
+		return err
+	}
+	return p.applyValidated(row.Seq, parsed)
+}
+
+type titleParsedRecord struct {
+	op          Op
+	span        uint64
+	titleInsert uint64
+}
+
+// validateRecord does not mutate the projection, allowing the identity replay
+// to check overlap before either state is advanced.
+func (p *TitleProjection) validateRecord(row TitleProjectionRecord) (titleParsedRecord, error) {
+	var parsed titleParsedRecord
 	if p == nil || p.doc == nil {
-		return ErrTitleProjectionState
+		return parsed, ErrTitleProjectionState
 	}
 	if p.bad != nil {
-		return p.bad
+		return parsed, p.bad
 	}
 	if row.DocumentID != p.docID || row.Epoch != p.epoch {
-		return ErrTitleProjectionScope
+		return parsed, ErrTitleProjectionScope
 	}
 	if p.head >= titleProjectionMaxInteger || row.Seq != p.head+1 {
-		return ErrTitleProjectionOrder
+		return parsed, ErrTitleProjectionOrder
 	}
 	if len(row.Bytes) == 0 || len(row.Bytes) > titleProjectionMaxRecord {
-		return ErrTitleProjectionRecord
+		return parsed, ErrTitleProjectionRecord
 	}
 	// DecodeOps preallocates for the declared operation count. Check the count
 	// before calling it so an invalid single-row batch cannot force a huge allocation.
@@ -115,67 +132,73 @@ func (p *TitleProjection) ApplyRecord(row TitleProjectionRecord) error {
 	version, e2 := header.u8()
 	count, e3 := header.uvar()
 	if e1 != nil || e2 != nil || e3 != nil || magic != Magic || version != Version || count != 1 {
-		return ErrTitleProjectionRecord
+		return parsed, ErrTitleProjectionRecord
 	}
 	ops, err := DecodeOps(row.Bytes)
 	if err != nil || len(ops) != 1 {
-		return ErrTitleProjectionRecord
+		return parsed, ErrTitleProjectionRecord
 	}
 	op := ops[0]
 	if op.ID.Client != row.ClientID || op.ID.Clock != row.Clock || op.ID.Clock == 0 {
-		return ErrTitleProjectionRecord
+		return parsed, ErrTitleProjectionRecord
 	}
 	canonical, err := EncodeOps(ops)
 	if err != nil || !bytes.Equal(canonical, row.Bytes) {
-		return ErrTitleProjectionRecord
+		return parsed, ErrTitleProjectionRecord
 	}
 	switch op.T {
 	case TBlockCreate:
 		if len(op.Pos) > titleProjectionMaxPositionBytes || len(op.Type) > titleProjectionMaxTypeBytes {
-			return ErrTitleProjectionLimit
+			return parsed, ErrTitleProjectionLimit
 		}
 	case TBlockMove:
 		if op.Block != Root && len(op.Pos) > titleProjectionMaxPositionBytes {
-			return ErrTitleProjectionLimit
+			return parsed, ErrTitleProjectionLimit
 		}
 	case TBlockSet:
 		if op.Block == projectedTitleID && op.Key == "type" && len(*op.Value) > titleProjectionMaxTypeBytes {
-			return ErrTitleProjectionLimit
+			return parsed, ErrTitleProjectionLimit
 		}
 	}
-	var titleInsert uint64
+	parsed.op, parsed.span = op, 1
 	if op.T == TTextInsert {
 		span := uint64(utf8.RuneCountInString(op.Text))
 		if span == 0 || span-1 > titleProjectionMaxInteger-op.ID.Clock {
-			return ErrTitleProjectionRecord
+			return titleParsedRecord{}, ErrTitleProjectionRecord
 		}
+		parsed.span = span
 		if op.Block == projectedTitleID {
 			if p.reservedTitleChars > titleProjectionMaxChars || span > titleProjectionMaxChars-p.reservedTitleChars {
-				return ErrTitleProjectionLimit
+				return titleParsedRecord{}, ErrTitleProjectionLimit
 			}
-			titleInsert = span
+			parsed.titleInsert = span
 		}
 	}
 	if op.T == TTextDelete && (op.Len == 0 || op.Len-1 > titleProjectionMaxInteger-op.Target.Clock) {
-		return ErrTitleProjectionRecord
+		return titleParsedRecord{}, ErrTitleProjectionRecord
 	}
 	if op.T == TTextDelete && op.Block == projectedTitleID && op.Len > titleProjectionMaxDelete {
-		return ErrTitleProjectionLimit
+		return titleParsedRecord{}, ErrTitleProjectionLimit
 	}
 	if op.T == TBlockCreate && p.doc.blocks[op.ID] == nil && len(p.doc.blocks)-1 >= titleProjectionMaxBlocks {
-		return ErrTitleProjectionLimit
+		return titleParsedRecord{}, ErrTitleProjectionLimit
 	}
+	return parsed, nil
+}
+
+func (p *TitleProjection) applyValidated(seq uint64, parsed titleParsedRecord) error {
+	op := parsed.op
 	if relevantTitleOperation(op) {
 		if !p.doc.Apply(op) {
 			return ErrTitleProjectionRecord
 		}
-		p.reservedTitleChars += titleInsert
+		p.reservedTitleChars += parsed.titleInsert
 		if p.doc.Pending() > titleProjectionMaxPending {
 			p.bad = ErrTitleProjectionLimit
 			return p.bad
 		}
 	}
-	p.head = row.Seq
+	p.head = seq
 	return nil
 }
 
