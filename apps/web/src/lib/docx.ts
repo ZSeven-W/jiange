@@ -31,6 +31,10 @@ const TODO_UNCHECKED = "☐";
 const TODO_CHECKED = "☑";
 const MONO_FONT = "Consolas";
 const LIST_INDENT = 420; // twips per indent level
+// The exported page is A4, with 1440-twip left/right margins. One twip is
+// 635 EMUs and one CSS pixel at 96 dpi is 9525 EMUs.
+const DOCX_BODY_WIDTH_EMU = (11906 - 1440 * 2) * 635;
+const EMUS_PER_PX = 9525;
 
 /** Only these link schemes are written to or read from Word documents. */
 export function safeDocxLink(url: string | undefined): string | undefined {
@@ -117,6 +121,8 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
       if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && !key.startsWith("tbl.") && value)) losses.add("表格的额外内容或设置无法完整保留");
     } else if (block.type === "image") {
       if (!block.props.fileId || !options.images?.has(block.props.fileId)) losses.add("部分图片无法读取或格式不受支持（仅支持 PNG/JPEG/GIF），只导出图片名称");
+      const width = block.props.imageWidth;
+      if (width && (!Number.isFinite(Number(width)) || Number(width) < 10 || Number(width) > 100)) losses.add("部分图片宽度异常，导出时会使用受限的宽度或原始大小");
     } else if (block.type === "file") losses.add("附件只导出为链接，不包含文件本身");
     else if (block.type === "bookmark" || block.type === "video") losses.add("网页卡片或视频只导出为链接");
     else if (block.type === "math" || block.type === "diagram") losses.add("公式和图表以源码文本导出，Word 中不会渲染");
@@ -190,16 +196,16 @@ class DocxWriter {
     return `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ""}${textContentXml(text)}</w:r>`;
   }
 
-  image(image: DocxImage, name: string, widthPx: number | undefined): string {
+  image(image: DocxImage, name: string, widthPercent: number | undefined): string {
     const ext = image.contentType === "image/png" ? "png" : image.contentType === "image/gif" ? "gif" : "jpeg";
     const file = `image${this.media.length + 1}.${ext}`;
     this.media.push({ name: file, data: image.data, ext });
     const rid = this.rel(`${REL_BASE}/image`, `media/${file}`);
     const natural = Math.max(1, image.width);
-    let width = Math.min(624, widthPx && widthPx > 0 ? widthPx : natural);
-    const height = Math.max(1, Math.round((width * Math.max(1, image.height)) / natural));
-    width = Math.max(1, Math.round(width));
-    const cx = width * 9525, cy = height * 9525;
+    const cx = Math.max(1, Math.round(widthPercent === undefined
+      ? Math.min(DOCX_BODY_WIDTH_EMU, natural * EMUS_PER_PX)
+      : DOCX_BODY_WIDTH_EMU * widthPercent / 100));
+    const cy = Math.max(1, Math.round(cx * Math.max(1, image.height) / natural));
     const id = this.docPrId++;
     return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${id}" name="图片 ${id}" descr="${escapeXml(name)}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="${NS_PIC}"><pic:pic><pic:nvPicPr><pic:cNvPr id="${id}" name="${file}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
   }
@@ -298,10 +304,14 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
       case "image": {
         const image = block.props.fileId ? w.options.images?.get(block.props.fileId) : undefined;
         const name = block.props.name || "图片";
-        const width = Number(block.props.imageWidth) || undefined;
-        if (image) out.push(paragraph(alignXml(block.props), w.image(image, name, width)));
-        else out.push(paragraph(alignXml(block.props), w.run(`[图片：${name}]`, {})));
-        if (block.props.caption) out.push(paragraph(`<w:pStyle w:val="Caption"/>${alignXml(block.props)}`, w.run(block.props.caption, {})));
+        const rawWidth = Number(block.props.imageWidth);
+        const width = Number.isFinite(rawWidth) && rawWidth > 0 ? Math.max(10, Math.min(100, rawWidth)) : undefined;
+        // Images default to centered in Jiange; normal Word paragraphs default left.
+        const imageAlignment = block.props.align === "left" || block.props.align === "right" ? block.props.align : "center";
+        const alignment = alignXml({ align: imageAlignment });
+        if (image) out.push(paragraph(alignment, w.image(image, name, width)));
+        else out.push(paragraph(alignment, w.run(`[图片：${name}]`, {})));
+        if (block.props.caption) out.push(paragraph(`<w:pStyle w:val="Caption"/>${alignment}`, w.run(block.props.caption, {})));
         break;
       }
       case "file": {
@@ -416,7 +426,23 @@ export interface DocxImportResult {
   images?: Map<string, DocxImage>;
 }
 
-type InlineOutput = { spans: MdSpan[]; icon: string; image: boolean; images: { at: number; id: string; name: string }[] };
+type InlineOutput = { spans: MdSpan[]; icon: string; image: boolean; images: { at: number; id: string; name: string; width?: number }[] };
+
+/** The body width for a single, ordinary Word section, in EMUs. */
+function wordBodyWidth(body: XmlElement | undefined): { width?: number; complex: boolean } {
+  if (!body) return { complex: true };
+  const countSections = (node: XmlElement): number => (node.name === "w:sectPr" ? 1 : 0) + children(node).reduce((sum, c) => sum + countSections(c), 0);
+  const section = child(body, "w:sectPr");
+  const size = child(section, "w:pgSz"), margin = child(section, "w:pgMar");
+  const page = size?.attrs["w:w"], left = margin?.attrs["w:left"], right = margin?.attrs["w:right"];
+  const gutter = margin?.attrs["w:gutter"] ?? "0";
+  const cols = child(section, "w:cols");
+  const complex = countSections(body) !== 1 || Number(cols?.attrs["w:num"] ?? "1") !== 1 || children(cols, "w:col").length > 1;
+  if (![page, left, right, gutter].every((v) => typeof v === "string" && /^\d+$/.test(v))) return { complex };
+  const twips = Number(page) - Number(left) - Number(right) - Number(gutter);
+  if (!Number.isSafeInteger(twips) || twips < 1 || twips > 100_000) return { complex };
+  return { width: twips * 635, complex };
+}
 
 interface StyleInfo {
   id: string;
@@ -535,6 +561,7 @@ class DocxReader {
     private numbering: NumberingInfo,
     private rels: Map<string, { type: string; target: string; external: boolean }>,
     private images: Map<string, DocxImage>,
+    private layout: { width?: number; complex: boolean },
   ) {}
 
   paragraphKind(pPr: XmlElement | undefined): { kind: ParaKind; numbered?: { numId: string; ilvl: number } } {
@@ -658,11 +685,24 @@ class DocxReader {
         case "w:drawing": {
           if (hidden || this.field.some((f) => f.phase === "instr")) break;
           const find = (node: XmlElement, name: string): XmlElement | undefined => node.name === name ? node : children(node).map((c) => find(c, name)).find(Boolean);
+          const countBlips = (node: XmlElement): number => (node.name === "a:blip" ? 1 : 0) + children(node).reduce((sum, c) => sum + countBlips(c), 0);
           const rid = find(c, "a:blip")?.attrs["r:embed"];
           if (rid && this.images.has(rid) && !hasTextBox(c)) {
+            if (countBlips(c) > 1) this.warnings.add("组合图形只导入了第一张图片");
             const name = find(c, "wp:docPr")?.attrs.descr || "图片";
-            if (find(c, "wp:anchor") || find(c, "a:srcRect") || find(c, "wp:extent") || find(c, "a:xfrm")?.attrs.rot) this.warnings.add("图片尺寸、裁剪、旋转或文字环绕设置可能无法保留");
-            out.images.push({ at: out.spans.length, id: rid, name: name.slice(0, 200) });
+            const extent = find(c, "wp:extent");
+            const cx = Number(extent?.attrs.cx), cy = Number(extent?.attrs.cy);
+            let width: number | undefined;
+            if (this.layout.width && Number.isSafeInteger(cx) && cx > 0) {
+              const percent = cx / this.layout.width * 100;
+              width = Math.max(10, Math.min(100, Math.round(percent)));
+              if (percent < 10 || percent > 100 || this.layout.complex) this.warnings.add("部分图片宽度超出可表示范围或所在分节较复杂，已近似处理");
+            } else this.warnings.add("部分图片的页面宽度或尺寸无法确定，已使用原始大小");
+            const image = this.images.get(rid)!;
+            const distorted = Number.isSafeInteger(cy) && cy > 0 && Math.abs((cx / cy) / (image.width / image.height) - 1) > 0.01;
+            const transform = find(c, "a:xfrm")?.attrs;
+            if (find(c, "wp:anchor") || find(c, "a:srcRect") || Number(transform?.rot ?? 0) !== 0 || transform?.flipH === "1" || transform?.flipV === "1" || distorted) this.warnings.add("图片裁剪、旋转、变形或文字环绕设置无法完整保留");
+            out.images.push({ at: out.spans.length, id: rid, name: name.slice(0, 200), width });
           } else out.image = true;
           break;
         }
@@ -680,10 +720,15 @@ class DocxReader {
     if (out.image) this.warnings.add(hasTextBox(p) ? "文本框中的内容未导入" : "部分图片无法导入，已跳过");
     if (out.images.length) {
       if (out.spans.length) this.warnings.add("行内图片已拆分为独立图片块");
+      const pPr = child(p, "w:pPr");
+      const chain = styleChain(this.styles, child(pPr, "w:pStyle")?.attrs["w:val"]);
+      const jc = child(pPr, "w:jc")?.attrs["w:val"] ?? chain.map((style) => child(style.pPr, "w:jc")?.attrs["w:val"]).find(Boolean);
+      const align = jc === "center" ? "center" : jc === "right" || jc === "end" ? "right" : "left";
+      if (child(pPr, "w:ind")) this.warnings.add("图片所在段落的缩进未保留");
       let at = 0;
       for (const image of out.images) {
         if (image.at > at) this.paragraphText(p, blocks, state, out.spans.slice(at, image.at), out.icon);
-        blocks.push({ type: "image", text: "", props: { importImageId: image.id, name: image.name }, spans: [] });
+        blocks.push({ type: "image", text: "", props: { importImageId: image.id, name: image.name, align, ...(image.width === undefined ? {} : { imageWidth: String(image.width) }) }, spans: [] });
         state.lastCode = false;
         at = image.at;
       }
@@ -822,7 +867,25 @@ class DocxReader {
 
   body(node: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }): void {
     for (const c of children(node)) {
-      if (c.name === "w:p") this.paragraph(c, blocks, state);
+      if (c.name === "w:p") {
+        const last = blocks.at(-1);
+        const styleId = child(child(c, "w:pPr"), "w:pStyle")?.attrs["w:val"];
+        const isCaption = /^caption$/i.test(styleId ?? "") || styleChain(this.styles, styleId).some((style) => style.name === "caption");
+        if (last?.type === "image" && isCaption) {
+          const previousField = this.field.map((field) => ({ ...field }));
+          const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
+          this.inline(c, out);
+          const text = out.icon + out.spans.map((span) => span.text).join("");
+          if (!out.image && !out.images.length && text) {
+            last.props.caption = text;
+            if (out.spans.some((span) => Object.keys(span.marks).length > 0)) this.warnings.add("图片说明中的文字样式未保留");
+            state.lastCode = false;
+            continue;
+          }
+          this.field = previousField;
+        }
+        this.paragraph(c, blocks, state);
+      }
       else if (c.name === "w:tbl") { state.lastCode = false; this.table(c, blocks); }
       else if (c.name === "w:sdt") this.body(child(c, "w:sdtContent") ?? c, blocks, state);
       else if (c.name === "w:customXml" || c.name === "w:ins" || c.name === "w:moveTo") this.body(c, blocks, state);
@@ -903,8 +966,8 @@ export async function parseDocx(bytes: Uint8Array, options: { images?: boolean }
       } catch { /* Report the skipped image at its position. */ }
     }
   }
-  const reader = new DocxReader(parseStyles(await read(stylesPath)), parseNumbering(await read(numberingPath)), docRels, images);
   const body = child(document, "w:body");
+  const reader = new DocxReader(parseStyles(await read(stylesPath)), parseNumbering(await read(numberingPath)), docRels, images, wordBodyWidth(body));
   const blocks: MdBlock[] = [];
   if (body) reader.body(body, blocks, { lastCode: false });
   if ([...byName.keys()].some((name) => /^word\/(header|footer)\d*\.xml$/.test(name))) reader.warnings.add("页眉和页脚未导入");

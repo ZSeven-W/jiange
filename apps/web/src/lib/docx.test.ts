@@ -188,7 +188,7 @@ describe("Word export → import round trip", () => {
     ]);
     const result = await parseDocx(zip, { images: true });
     expect(result.blocks.map((block) => [block.type, block.text])).toEqual([["paragraph", "前文"], ["image", ""], ["paragraph", "后文"]]);
-    expect(result.blocks[1].props).toEqual({ importImageId: "pic", name: "示意图" });
+    expect(result.blocks[1].props).toEqual({ importImageId: "pic", name: "示意图", align: "left" });
     expect(result.images?.get("pic")?.data).toEqual(png);
     expect(result.warnings).toContain("行内图片已拆分为独立图片块");
     const legacy = await parseDocx(zip);
@@ -203,6 +203,33 @@ describe("Word export → import round trip", () => {
     expect(result.images).toBeUndefined();
     expect(result.blocks.map((block) => block.text)).toEqual(["正文"]);
     expect(result.warnings).toContain("部分图片无法导入，已跳过");
+  });
+
+  it("round-trips image width percentages, paragraph alignment and captions", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 4, 0xb0, 0, 0, 2, 0x58]);
+    const images = new Map([["f", { ...imageInfo(png)!, data: png }]]);
+    const blocks = [b("image", "", { fileId: "f", imageWidth: "50", align: "left", caption: "图片说明" }), b("image", "", { fileId: "f", imageWidth: "75", align: "right" }), b("image", "", { fileId: "f", imageWidth: "100" })];
+    const bytes = buildDocx({ blocks }, { images });
+    const entry = listZip(bytes).find((e) => e.name === "word/document.xml")!;
+    const xml = dec.decode(await readZipEntry(bytes, entry, 1 << 20));
+    const widths = [...xml.matchAll(/<wp:extent cx="(\d+)"/g)].map((m) => Number(m[1]));
+    const contentWidth = (11906 - 2 * 1440) * 635;
+    expect(widths).toEqual([Math.round(contentWidth * 0.5), Math.round(contentWidth * 0.75), contentWidth]);
+    const result = await parseDocx(bytes, { images: true });
+    expect(result.blocks.map((block) => [block.type, block.props.imageWidth, block.props.align, block.props.caption])).toEqual([
+      ["image", "50", "left", "图片说明"], ["image", "75", "right", undefined], ["image", "100", "center", undefined],
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("reports cropping and complex section widths instead of claiming fidelity", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20]);
+    const xml = `<w:document><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1500000" cy="750000"/><a:srcRect l="10000"/><a:blip r:embed="pic"/></wp:inline></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w="10000"/><w:pgMar w:left="1000" w:right="1000"/><w:cols w:num="2"/></w:sectPr></w:body></w:document>`;
+    const zip = createZip([{ name: "word/document.xml", data: enc.encode(xml) }, { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) }, { name: "word/media/p.png", data: png }]);
+    const result = await parseDocx(zip, { images: true });
+    expect(result.blocks[0].props.imageWidth).toBe("30");
+    expect(result.warnings.join("；")).toMatch(/分节较复杂/);
+    expect(result.warnings.join("；")).toMatch(/裁剪/);
   });
 
   it("does not report losses for fully supported content", () => {
