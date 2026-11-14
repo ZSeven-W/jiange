@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OutlinePanel, outlineOf } from "./OutlinePanel";
+import { compactOutlinePlacement, OutlinePanel, OutlineTrigger, outlineOf } from "./OutlinePanel";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 
 describe("outline & h4-h6", () => {
@@ -101,5 +101,22 @@ describe("collapsible outline", () => {
     expect(html).not.toContain('tabindex="-1"');
     expect(html).toContain('aria-label="展开目录"');
     expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("exposes the document outline toggle and its expanded state", () => {
+    const props = { hostRef: { current: null }, buttonRef: { current: null }, panelId: "document-outline", onToggle: () => {} };
+    const closed = renderToStaticMarkup(createElement(OutlineTrigger, { ...props, expanded: false }));
+    const open = renderToStaticMarkup(createElement(OutlineTrigger, { ...props, expanded: true }));
+    expect(closed).toContain('aria-label="展开目录"');
+    expect(closed).toContain('aria-expanded="false"');
+    expect(open).toContain('aria-label="关闭目录"');
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('aria-controls="document-outline"');
+  });
+
+  it("anchors the toggle to the document and clamps it within the viewport", () => {
+    expect(compactOutlinePlacement(268, 64, 420, 983)).toEqual({ left: 268, top: 420 });
+    expect(compactOutlinePlacement(0, 64, -120, 983)).toEqual({ left: 0, top: 72 });
+    expect(compactOutlinePlacement(268, 64, 950, 983)).toEqual({ left: 268, top: 803 });
   });
 });

@@ -59,6 +59,49 @@ function PinIcon({ pinned }: { pinned: boolean }) {
   return <svg viewBox="0 0 16 16" className="size-3.5" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.4" aria-hidden><path d="M6 2.5h4l-.6 4 2.1 2.3H4.5L6.6 6.5 6 2.5zM8 8.8v4.7" strokeLinejoin="round" strokeLinecap="round" /></svg>;
 }
 
+export function compactOutlinePlacement(hostLeft: number, hostTop: number, anchorTop: number, viewportHeight: number) {
+  return { left: Math.round(hostLeft), top: Math.round(Math.max(hostTop + 8, Math.min(anchorTop, viewportHeight - 180))) };
+}
+
+/** Keep the compact outline aligned to the document viewport and title. */
+function useOutlinePlacement(hostRef?: RefObject<HTMLDivElement | null>) {
+  const [placement, setPlacement] = useState({ left: 0, top: 64 });
+  useLayoutEffect(() => {
+    const host = hostRef?.current;
+    if (!host) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const hostBox = host.getBoundingClientRect();
+      const anchor = host.querySelector<HTMLElement>("[data-outline-anchor]");
+      const anchorTop = anchor?.getBoundingClientRect().top ?? hostBox.top;
+      const next = compactOutlinePlacement(hostBox.left, hostBox.top, anchorTop, window.innerHeight);
+      setPlacement((prev) => prev.left === next.left && prev.top === next.top ? prev : next);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(host);
+    const anchor = host.querySelector<HTMLElement>("[data-outline-anchor]");
+    if (anchor) observer?.observe(anchor);
+    const content = anchor?.closest<HTMLElement>("[data-document-focus-scope]")?.parentElement;
+    if (content) observer?.observe(content);
+    host.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => { if (frame) cancelAnimationFrame(frame); observer?.disconnect(); host.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); };
+  }, [hostRef]);
+  return placement;
+}
+
+/** Direct entry beside the document, matching the compact Feishu outline. */
+export function OutlineTrigger({ hostRef, buttonRef, panelId, expanded, yieldToSidePanel = false, onToggle }: { hostRef: RefObject<HTMLDivElement | null>; buttonRef: RefObject<HTMLButtonElement | null>; panelId: string; expanded: boolean; yieldToSidePanel?: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  const placement = useOutlinePlacement(hostRef);
+  return <button ref={buttonRef} type="button" aria-label={t(expanded ? "关闭目录" : "展开目录")} title={t(expanded ? "关闭目录" : "展开目录")} aria-expanded={expanded} aria-controls={expanded ? panelId : undefined} onClick={onToggle} style={{ left: placement.left + 10, top: placement.top }} className={cn("fixed z-[35] hidden size-8 place-items-center rounded-md text-[#646a73] hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary md:grid", expanded && "xl:hidden", yieldToSidePanel && "md:max-[1679px]:hidden")} data-outline-trigger>
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path fillRule="evenodd" clipRule="evenodd" d="M1.5 3.375c0-.207.168-.375.375-.375h14.25c.207 0 .375.168.375.375v.75a.375.375 0 0 1-.375.375H1.875a.375.375 0 0 1-.375-.375v-.75zm0 5.25c0-.207.168-.375.375-.375h14.25c.207 0 .375.168.375.375v.75a.375.375 0 0 1-.375.375H1.875a.375.375 0 0 1-.375-.375v-.75zm.375 4.875a.375.375 0 0 0-.375.375v.75c0 .207.168.375.375.375h9.75a.375.375 0 0 0 .375-.375v-.75a.375.375 0 0 0-.375-.375h-9.75z" fill="currentColor"/></svg>
+  </button>;
+}
+
 /**
  * 飞书式目录：宽屏（≥1280px）时位于正文左侧并随页面吸顶，不遮挡顶栏。
  * 「固定」时常驻展开；取消固定后收成一列短横线（按层级长短、当前位置高亮），
@@ -77,6 +120,7 @@ export function OutlinePanel({
   title,
   onTop,
   hostRef,
+  id,
 }: {
   items: OutlineItem[];
   activeId: string | null;
@@ -94,6 +138,7 @@ export function OutlinePanel({
   onTop?: () => void;
   /** Scroll viewport that positions the compact desktop popover. */
   hostRef?: RefObject<HTMLDivElement | null>;
+  id?: string;
 }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -102,31 +147,7 @@ export function OutlinePanel({
   const asideRef = useRef<HTMLElement>(null);
   const miniTrigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
-  const [placement, setPlacement] = useState({ left: 0, top: 64 });
-  useLayoutEffect(() => {
-    const host = hostRef?.current;
-    if (!host) return;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const hostBox = host.getBoundingClientRect();
-      const anchor = host.querySelector<HTMLElement>("[data-outline-anchor]");
-      const anchorTop = anchor?.getBoundingClientRect().top ?? hostBox.top;
-      const next = { left: Math.round(hostBox.left), top: Math.round(Math.max(hostBox.top + 8, Math.min(anchorTop, window.innerHeight - 180))) };
-      setPlacement((prev) => prev.left === next.left && prev.top === next.top ? prev : next);
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    observer?.observe(host);
-    const anchor = host.querySelector<HTMLElement>("[data-outline-anchor]");
-    if (anchor) observer?.observe(anchor);
-    const content = anchor?.closest<HTMLElement>("[data-document-focus-scope]")?.parentElement;
-    if (content) observer?.observe(content);
-    host.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    return () => { if (frame) cancelAnimationFrame(frame); observer?.disconnect(); host.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); };
-  }, [hostRef]);
+  const placement = useOutlinePlacement(hostRef);
   useEffect(() => {
     if (!miniOpen) return;
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); setMiniOpen(false); setMiniHover(false); miniTrigger.current?.focus(); } };
@@ -146,6 +167,7 @@ export function OutlinePanel({
   };
   return (
     <aside
+      id={id}
       ref={asideRef}
       className={cn(
         "group/outline fixed bottom-0 right-0 top-14 z-30 flex w-72 max-w-[calc(100vw-16px)] flex-col border-l bg-surface shadow-xl md:bottom-auto md:right-auto md:left-[var(--outline-left)] md:top-[var(--outline-top)] md:max-h-[calc(100dvh_-_var(--outline-top)_-_8px)] md:w-[208px] md:rounded-lg md:border md:shadow-lg xl:sticky xl:left-auto xl:top-0 xl:z-10 xl:h-[calc(100vh-56px)] xl:max-h-none xl:shrink-0 xl:self-start xl:rounded-none xl:border-0 xl:bg-transparent xl:shadow-none",

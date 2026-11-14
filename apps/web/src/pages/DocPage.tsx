@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idKey, Tx, type OpId, type SyncStatus } from "@jiange/collab";
 import { bodyBlocks } from "@/editor/model";
@@ -50,7 +50,7 @@ import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftS
 import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
 import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./commentAttemptApi";
 import { CommentAttemptRecovery } from "./CommentAttemptRecovery";
-import { OutlinePanel, activeOutlineId, loadOutlinePinned, outlineOf, saveOutlinePinned, type OutlineItem } from "./OutlinePanel";
+import { OutlinePanel, OutlineTrigger, activeOutlineId, loadOutlinePinned, outlineOf, saveOutlinePinned, type OutlineItem } from "./OutlinePanel";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { commentsApi, extrasApi } from "@/lib/api";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
@@ -219,6 +219,18 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
   const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
   const scrollArea = useRef<HTMLDivElement>(null);
+  const outlineTrigger = useRef<HTMLButtonElement>(null);
+  const outlinePanelId = useId();
+  const focusOutlineEntry = () => {
+    const previous = document.activeElement;
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== previous && active !== document.body && active !== document.documentElement) return;
+      const trigger = outlineTrigger.current;
+      if (trigger?.getClientRects().length) trigger.focus({ preventScroll: true });
+      else document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true });
+    });
+  };
   const [preview, setPreview] = useState<{ src: string; alt: string; mime?: string } | null>(null);
   const [draft, setDraft] = useState<CommentAnchor | null>(null);
   const [activeThread, setActiveThread] = useState<number | null>(null);
@@ -983,8 +995,10 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
+          {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || history} onToggle={() => setOutlineOpen((value) => !value)} />}
           {outlineVisible && (
             <OutlinePanel
+              id={outlinePanelId}
               items={outline}
               activeId={outlineActive}
               hostRef={scrollArea}
@@ -993,16 +1007,16 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
               onPinnedChange={(next) => { setOutlinePinned(next); saveOutlinePinned(next); }}
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
-              onClose={() => { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); }}
+              onClose={() => { setOutlineOpen(false); focusOutlineEntry(); }}
               title={docTitle({ title })}
-              onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); if (!outlineWide) { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); } }}
+              onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); } }}
               onJump={(bid) => {
                 const area = scrollArea.current;
                 const el = area?.querySelector<HTMLElement>(`[data-block="${bid}"]`);
                 if (area && el) {
                   setOutlineActive(bid);
                   area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
-                  if (!outlineWide) { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); }
+                  if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); }
                 }
               }}
             />
