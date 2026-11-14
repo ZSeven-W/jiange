@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { flowBounds, flowIntentWrites, flowWrites, moveFlowSelection, normalizeStroke, readFlow, type FlowGraph } from "./model";
 import { appliedFlowHistory } from "./history";
 import { describeUnappliedFlows } from "./recovery";
+import { inkHitByEraser, scaleInk } from "./inkGeometry";
 
 describe("canvas ink", () => {
   const blank: FlowGraph = { nodes: [], edges: [], theme: "feishu" };
@@ -44,5 +45,33 @@ describe("canvas ink", () => {
     expect(Object.keys(undo.writes).sort()).toEqual(["fc.n.n1", "fc.s.s1"]);
     const fractional = { ...graph, nodes: [{ ...node, x: 19999.4 }], strokes: [] };
     expect(moveFlowSelection(fractional, new Set(["n1"]), 1, 0).nodes[0].x).toBe(19999.4);
+  });
+  it("detects swept eraser intersections without deleting nearby unrelated ink", () => {
+    const line = { ...stroke, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }] };
+    expect(inkHitByEraser(line, { x: 50, y: -30 }, { x: 50, y: 30 }, 2)).toBe(true);
+    expect(inkHitByEraser(line, { x: 50, y: 20 }, { x: 80, y: 20 }, 2)).toBe(false);
+    expect(inkHitByEraser({ ...line, points: [{ x: 2, y: 2 }] }, { x: 0, y: 0 }, { x: 5, y: 5 }, 1)).toBe(true);
+    expect(inkHitByEraser(line, { x: 110, y: 0 }, { x: 120, y: 0 }, 2)).toBe(false);
+  });
+  it("scales a stroke uniformly and clamps it at canvas boundaries", () => {
+    const near = { ...stroke, points: [{ x: 19900, y: 20 }, { x: 19950, y: 70 }] };
+    expect(scaleInk(near, 4).points).toEqual([{ x: 19900, y: 20 }, { x: 20000, y: 120 }]);
+    expect(scaleInk(near, 0.01).points).toEqual([{ x: 19900, y: 20 }, { x: 19905, y: 25 }]);
+    expect(scaleInk({ ...stroke, points: [{ x: 3, y: 4 }] }, 2).points).toEqual([{ x: 3, y: 4 }]);
+    expect(scaleInk({ ...stroke, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] }, 0.1).points).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }]);
+  });
+  it("keeps a remotely changed stroke when erasing and records only applied removals", () => {
+    const second = { ...stroke, id: "s2" };
+    const base = { ...blank, strokes: [stroke, second] };
+    const remote = { ...blank, strokes: [{ ...stroke, color: "#3370FF" }, second] };
+    const props = flowWrites({}, remote);
+    const erase = flowIntentWrites(props, base, { ...blank, strokes: [] });
+    expect(erase.conflicts).toEqual(["fc.s.s1"]);
+    expect(erase.writes["fc.s.s2"]).toBe("");
+    const after = readFlow({ ...props, ...erase.writes });
+    const step = appliedFlowHistory(base, after, Object.keys(erase.writes))!;
+    const undo = flowIntentWrites(flowWrites({}, after), step.after, step.before);
+    const restored = readFlow({ ...flowWrites({}, after), ...undo.writes });
+    expect(restored.strokes?.map((s) => [s.id, s.color])).toEqual([["s1", "#3370FF"], ["s2", "#1F2329"]]);
   });
 });
