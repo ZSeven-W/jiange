@@ -39,8 +39,8 @@ CREATE TABLE sheet_cells (
   sheet_id BIGINT NOT NULL REFERENCES sheet_worksheets(id) ON DELETE CASCADE,
   row_id BIGINT NOT NULL,
   column_id BIGINT NOT NULL,
-  raw TEXT NOT NULL,
-  revision BIGINT NOT NULL CHECK (revision > 0),
+  raw TEXT NOT NULL CHECK (octet_length(raw) <= 32768),
+  revision BIGINT NOT NULL CHECK (revision > 0 AND revision <= 9007199254740991),
   PRIMARY KEY (sheet_id, row_id, column_id),
   FOREIGN KEY (sheet_id, row_id) REFERENCES sheet_rows(sheet_id, id),
   FOREIGN KEY (sheet_id, column_id) REFERENCES sheet_columns(sheet_id, id)
@@ -48,16 +48,16 @@ CREATE TABLE sheet_cells (
 CREATE TABLE sheet_write_receipts (
   workbook_id BIGINT NOT NULL REFERENCES sheet_workbooks(id) ON DELETE CASCADE,
   user_id BIGINT NOT NULL REFERENCES users(id),
-  mutation_id TEXT NOT NULL,
-  digest BYTEA NOT NULL,
+  mutation_id TEXT NOT NULL CHECK (mutation_id ~ '^[a-f0-9]{32}$'),
+  digest BYTEA NOT NULL CHECK (octet_length(digest) = 32),
   result JSONB NOT NULL,
   PRIMARY KEY (workbook_id, user_id, mutation_id)
 );
 CREATE TABLE sheet_create_receipts (
   workspace_id BIGINT NOT NULL REFERENCES workspaces(id),
   user_id BIGINT NOT NULL REFERENCES users(id),
-  mutation_id TEXT NOT NULL,
-  digest BYTEA NOT NULL,
+  mutation_id TEXT NOT NULL CHECK (mutation_id ~ '^[a-f0-9]{32}$'),
+  digest BYTEA NOT NULL CHECK (octet_length(digest) = 32),
   workbook_id BIGINT NOT NULL REFERENCES sheet_workbooks(id),
   PRIMARY KEY (workspace_id, user_id, mutation_id)
 );
