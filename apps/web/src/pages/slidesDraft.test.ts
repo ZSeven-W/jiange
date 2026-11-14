@@ -7,6 +7,32 @@ const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", back
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {
+  it("adopts a confirmed background batch and permits undo for each changed page", async () => {
+    const second = { ...page, id: 2, pos: 2, title: "第二页" };
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    const after = [page, second].map((item) => ({ ...item, background: "#112233", revision: 2 }));
+    expect(q.acceptBackgroundBatch([page, second], after)).toBe(true);
+    expect(q.get(after[0]).content.background).toBe("#112233");
+    expect(q.get(after[1]).content.title).toBe("第二页");
+    q.undo(after[1]); await tick();
+    expect(q.get(after[1]).content.background).toBe("");
+    expect(q.get(after[0]).content.background).toBe("#112233");
+  });
+  it("rejects the whole background batch if any page gained a local edit", () => {
+    const second = { ...page, id: 2, pos: 2 };
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});
+    q.edit(second, { title: "较新的输入" });
+    const after = [page, second].map((item) => ({ ...item, background: "#112233", revision: 2 }));
+    expect(q.acceptBackgroundBatch([page, second], after)).toBe(false);
+    expect(q.get(page).content.background).toBe("");
+    expect(q.get(second).content.title).toBe("较新的输入");
+  });
+  it("preserves a newer order when the content revision is unchanged", async () => {
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { title: "标题" }); await tick();
+    const saved = q.get(page).page;
+    expect(q.get({ ...saved, pos: 8 }).page.pos).toBe(8);
+  });
   it("serialises rapid input and keeps the latest characters", async () => {
     let finish!: (value: SlidesPage) => void;
     const write = vi.fn().mockImplementationOnce((_base: SlidesPage, content: SlideContent) => new Promise<SlidesPage>((resolve) => { finish = () => resolve({ ...page, ...content, revision: 2 }); }))

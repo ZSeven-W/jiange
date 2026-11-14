@@ -25,7 +25,12 @@ export class SlidesDraftQueue {
 
   get(page: SlidesPage): SlideDraft {
     const current = this.drafts.get(page.id);
-    if (current && (current.state !== "saved" || current.page.revision >= page.revision)) return current;
+    if (current && (current.state !== "saved" || current.page.revision >= page.revision)) {
+      // Ordering can change without a content revision. Do not put an older
+      // position back into the query cache after a background-only update.
+      if (current.state === "saved" && current.page.revision === page.revision && current.page.pos !== page.pos) current.page = { ...current.page, pos: page.pos, updatedAt: page.updatedAt };
+      return current;
+    }
     if (current) { this.drafts.delete(page.id); this.history.delete(page.id); }
     return { page, content: { title: page.title, body: page.body, background: page.background, notes: page.notes, shapes: page.shapes }, state: "saved" };
   }
@@ -57,6 +62,29 @@ export class SlidesDraftQueue {
     current.page = saved;
     this.onChange();
     return true;
+  }
+
+  /** Adopt a confirmed background batch without losing newer local edits. */
+  acceptBackgroundBatch(before: readonly SlidesPage[], after: readonly SlidesPage[]): boolean {
+    if (before.length !== after.length || !before.length) return false;
+    const pairs = before.map((page, index) => {
+      const existing = this.drafts.get(page.id);
+      const superseded = !!existing && existing.state === "saved" && existing.page.revision < page.revision;
+      const current = !existing || superseded ? { page, content: { title: page.title, body: page.body, background: page.background, notes: page.notes, shapes: page.shapes }, state: "saved" as const } : existing;
+      return { page, saved: after[index], current, superseded };
+    });
+    for (const { page, saved, current } of pairs) {
+      if (!saved || saved.id !== page.id || saved.slidesId !== page.slidesId || saved.pos !== page.pos || saved.hidden !== page.hidden || saved.revision !== page.revision + (saved.background === page.background ? 0 : 1) || current.state !== "saved" || current.page.revision !== page.revision || current.page.hidden !== page.hidden || !sameSlideContent(current.content, page) || !sameSlideContent({ ...page, background: saved.background }, saved)) return false;
+    }
+    for (const { page, saved, current, superseded } of pairs) {
+      if (page.background === saved.background) continue;
+      if (superseded) this.history.delete(page.id);
+      const history = this.history.get(page.id) ?? { undo: [], redo: [], group: null, at: 0 };
+      history.undo.push(current.content); if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
+      history.redo = []; history.group = null; this.history.set(page.id, history);
+      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, notes: saved.notes, shapes: saved.shapes }, state: "saved" });
+    }
+    this.onChange(); return true;
   }
 
   canUndo(page: SlidesPage) { this.get(page); return !!this.history.get(page.id)?.undo.length; }

@@ -465,6 +465,7 @@ export const slidesApi = {
   insertPage: (deckId: number, userId: number, afterPageId: number, expectedRevision: number) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/insert`, { afterPageId, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   duplicatePage: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/${pageId}/duplicate`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   setPageHidden: (deckId: number, pageId: number, userId: number, expectedRevision: number, hidden: boolean) => request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pageId}/visibility`, { hidden, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  applyBackground: (deckId: number, userId: number, background: string, expected: { id: number; revision: number }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-all`, { background, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
     request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
   remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
