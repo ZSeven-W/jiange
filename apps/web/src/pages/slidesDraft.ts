@@ -49,6 +49,16 @@ export class SlidesDraftQueue {
 
   endGroup(id: number) { const history = this.history.get(id); if (history) history.group = null; }
 
+  /** Accept a visibility-only revision without discarding page edit history. */
+  acceptVisibility(base: SlidesPage, saved: SlidesPage): boolean {
+    const current = this.drafts.get(base.id);
+    if (!current) return true;
+    if (current.state !== "saved" || current.page.revision !== base.revision || current.page.hidden !== base.hidden || !sameSlideContent(current.content, saved)) return false;
+    current.page = saved;
+    this.onChange();
+    return true;
+  }
+
   canUndo(page: SlidesPage) { this.get(page); return !!this.history.get(page.id)?.undo.length; }
   canRedo(page: SlidesPage) { this.get(page); return !!this.history.get(page.id)?.redo.length; }
 
@@ -83,7 +93,7 @@ export class SlidesDraftQueue {
     this.onChange();
     try {
       const saved = await this.write(base, sent);
-      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background || saved.notes !== sent.notes || !sameShapes(saved.shapes, sent.shapes)) {
+      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.hidden !== base.hidden || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background || saved.notes !== sent.notes || !sameShapes(saved.shapes, sent.shapes)) {
         throw new Error("unexpected slide response");
       }
       const latest = this.drafts.get(id);

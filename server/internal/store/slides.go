@@ -19,6 +19,7 @@ type SlidesPage struct {
 	Background string          `json:"background"`
 	Notes      string          `json:"notes"`
 	Shapes     json.RawMessage `json:"shapes"`
+	Hidden     bool            `json:"hidden"`
 	Revision   int64           `json:"revision"`
 	UpdatedAt  time.Time       `json:"updatedAt"`
 }
@@ -34,6 +35,7 @@ type SlidesStore interface {
 	DuplicateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error)
 	ListSlidesPages(ctx context.Context, userID, slidesID int64) ([]SlidesPage, error)
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
+	SetSlidesPageHidden(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64, hidden bool) (SlidesPage, error)
 	DeleteSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64) error
 	// MoveSlidesPage repositions a page (pos ordering; the client sends the
 	// midpoint between neighbours).

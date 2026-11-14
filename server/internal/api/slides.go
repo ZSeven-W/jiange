@@ -42,6 +42,15 @@ func (s *Server) postSlidesPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
+	if r.Header.Get("X-Jiange-Slides-Version") == "2" {
+		if r.Header.Get("X-Jiange-User-Id") == "" {
+			httpx.Error(w, http.StatusBadRequest, "missing_account", "查看账号未确认")
+			return
+		}
+		if !driveExpectedUser(w, r, u.ID) {
+			return
+		}
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_id", "slides id required")
@@ -51,7 +60,16 @@ func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "list pages") {
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"pages": pages})
+	if r.Header.Get("X-Jiange-Slides-Version") != "2" {
+		for _, page := range pages {
+			if page.Hidden {
+				httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持隐藏页面的幻灯片编辑器")
+				return
+			}
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, http.StatusOK, map[string]any{"pages": pages, "presentationProtocol": 2})
 }
 
 func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {

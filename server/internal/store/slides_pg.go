@@ -42,8 +42,8 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 		}
 		e := tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id, pos, title)
 			SELECT $1, COALESCE(max(pos), 0) + 1, $2 FROM slides_pages WHERE slides_id=$1
-			RETURNING id, slides_id, pos, title, body, background, notes, shapes, revision, updated_at`, slidesID, title).
-			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Revision, &page.UpdatedAt)
+			RETURNING id, slides_id, pos, title, body, background, notes, shapes, hidden, revision, updated_at`, slidesID, title).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Revision, &page.UpdatedAt)
 		return e
 	})
 	if err != nil {
@@ -64,8 +64,8 @@ func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var src SlidesPage
 		if pageID > 0 {
-			e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
-				Scan(&src.ID, &src.SlidesID, &src.Pos, &src.Title, &src.Body, &src.Background, &src.Notes, &src.Shapes, &src.Revision, &src.UpdatedAt)
+			e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,hidden,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
+				Scan(&src.ID, &src.SlidesID, &src.Pos, &src.Title, &src.Body, &src.Background, &src.Notes, &src.Shapes, &src.Hidden, &src.Revision, &src.UpdatedAt)
 			if errors.Is(e, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -131,9 +131,10 @@ func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 		}
 		if !copySource {
 			src.Title, src.Body, src.Background, src.Notes, src.Shapes = "", "", "", "", json.RawMessage(`[]`)
+			src.Hidden = false
 		}
-		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at`, slidesID, pos, src.Title, src.Body, src.Background, src.Notes, src.Shapes).
-			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Revision, &page.UpdatedAt)
+		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes,hidden) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING id,slides_id,pos,title,body,background,notes,shapes,hidden,revision,updated_at`, slidesID, pos, src.Title, src.Body, src.Background, src.Notes, src.Shapes, src.Hidden).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Revision, &page.UpdatedAt)
 		if e != nil {
 			return e
 		}
@@ -171,7 +172,7 @@ func (p *Postgres) CreateSlidesFile(ctx context.Context, g RestoreGuard, slidesI
 }
 
 func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) (out []SlidesPage, err error) {
-	rows, err := p.Pool.Query(ctx, `SELECT sp.id, sp.slides_id, sp.pos, sp.title, sp.body, sp.background, sp.notes, sp.shapes, sp.revision, sp.updated_at
+	rows, err := p.Pool.Query(ctx, `SELECT sp.id, sp.slides_id, sp.pos, sp.title, sp.body, sp.background, sp.notes, sp.shapes, sp.hidden, sp.revision, sp.updated_at
 		FROM slides_pages sp JOIN nodes n ON n.id = sp.slides_id`+roleJoins+`
 		WHERE sp.slides_id=$2 AND n.kind='slides' AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY sp.pos, sp.id`, userID, slidesID)
 	if err != nil {
@@ -181,7 +182,7 @@ func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) 
 	out = []SlidesPage{}
 	for rows.Next() {
 		var pg SlidesPage
-		if err = rows.Scan(&pg.ID, &pg.SlidesID, &pg.Pos, &pg.Title, &pg.Body, &pg.Background, &pg.Notes, &pg.Shapes, &pg.Revision, &pg.UpdatedAt); err != nil {
+		if err = rows.Scan(&pg.ID, &pg.SlidesID, &pg.Pos, &pg.Title, &pg.Body, &pg.Background, &pg.Notes, &pg.Shapes, &pg.Hidden, &pg.Revision, &pg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, pg)
@@ -221,12 +222,54 @@ func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID 
 			}
 		}
 		e := tx.QueryRow(ctx, `UPDATE slides_pages SET title=$2, body=$3, background=$4, notes=COALESCE($5, notes), shapes=COALESCE($6::jsonb, shapes), revision=revision+1, updated_at=now() WHERE id=$1 AND revision=$7
-			RETURNING id, slides_id, pos, title, body, background, notes, shapes, revision, updated_at`, pageID, title, body, background, notes, shapes, expectedRevision).
-			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Revision, &page.UpdatedAt)
+			RETURNING id, slides_id, pos, title, body, background, notes, shapes, hidden, revision, updated_at`, pageID, title, body, background, notes, shapes, expectedRevision).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Revision, &page.UpdatedAt)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrConflict
 		}
 		return e
+	})
+	if err != nil {
+		return SlidesPage{}, err
+	}
+	return page, nil
+}
+
+func (p *Postgres) SetSlidesPageHidden(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, hidden bool) (page SlidesPage, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,hidden,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Revision, &page.UpdatedAt)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		expiry, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		role, _, kind, e := lockCopySource(ctx, tx, slidesID, g.UserID)
+		if e != nil {
+			return e
+		}
+		if kind != "slides" {
+			return ErrNotFound
+		}
+		if RoleRank(role) < RoleRank(RoleEdit) {
+			return ErrForbidden
+		}
+		if expectedRevision < 1 || page.Revision != expectedRevision {
+			return ErrConflict
+		}
+		if page.Hidden != hidden {
+			e = tx.QueryRow(ctx, `UPDATE slides_pages SET hidden=$2,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING id,slides_id,pos,title,body,background,notes,shapes,hidden,revision,updated_at`, pageID, hidden).
+				Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Revision, &page.UpdatedAt)
+			if e != nil {
+				return e
+			}
+		}
+		return drivePGEnd(ctx, g, expiry)
 	})
 	if err != nil {
 		return SlidesPage{}, err
@@ -343,14 +386,14 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT id, pos, title, body, background, notes, shapes FROM slides_pages WHERE slides_id=$1 ORDER BY pos, id FOR SHARE`, c.SourceID)
+		rows, err := tx.Query(ctx, `SELECT id, pos, title, body, background, notes, shapes, hidden FROM slides_pages WHERE slides_id=$1 ORDER BY pos, id FOR SHARE`, c.SourceID)
 		if err != nil {
 			return err
 		}
 		var source []SlidesPage
 		for rows.Next() {
 			var page SlidesPage
-			if err = rows.Scan(&page.ID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes); err != nil {
+			if err = rows.Scan(&page.ID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden); err != nil {
 				rows.Close()
 				return err
 			}
@@ -410,10 +453,10 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 				return e
 			}
 			var copied SlidesPage
-			if e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id, pos, title, body, background, notes, shapes)
-				VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, slides_id, pos, title, body, background, notes, shapes, revision, updated_at`,
-				meta.ID, page.Pos, page.Title, page.Body, page.Background, page.Notes, shapes).
-				Scan(&copied.ID, &copied.SlidesID, &copied.Pos, &copied.Title, &copied.Body, &copied.Background, &copied.Notes, &copied.Shapes, &copied.Revision, &copied.UpdatedAt); e != nil {
+			if e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id, pos, title, body, background, notes, shapes, hidden)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, slides_id, pos, title, body, background, notes, shapes, hidden, revision, updated_at`,
+				meta.ID, page.Pos, page.Title, page.Body, page.Background, page.Notes, shapes, page.Hidden).
+				Scan(&copied.ID, &copied.SlidesID, &copied.Pos, &copied.Title, &copied.Body, &copied.Background, &copied.Notes, &copied.Shapes, &copied.Hidden, &copied.Revision, &copied.UpdatedAt); e != nil {
 				return e
 			}
 			pages = append(pages, copied)

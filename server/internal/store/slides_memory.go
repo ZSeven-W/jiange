@@ -195,6 +195,29 @@ func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 	return result, nil
 }
 
+func (m *Memory) SetSlidesPageHidden(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, hidden bool) (SlidesPage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.slidesAccessLocked(ctx, g, slidesID, false); err != nil {
+		return SlidesPage{}, err
+	}
+	i, page := m.findSlidesPageLocked(pageID)
+	if page == nil || page.SlidesID != slidesID {
+		return SlidesPage{}, ErrNotFound
+	}
+	if expectedRevision < 1 || page.Revision != expectedRevision {
+		return SlidesPage{}, ErrConflict
+	}
+	if page.Hidden != hidden {
+		m.slides[i].Hidden = hidden
+		m.slides[i].Revision++
+		m.slides[i].UpdatedAt = time.Now()
+	}
+	result := m.slides[i]
+	result.Shapes = slices.Clone(result.Shapes)
+	return result, nil
+}
+
 func (m *Memory) DeleteSlidesPage(ctx context.Context, g RestoreGuard, pageID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -345,7 +368,7 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 		if err != nil {
 			return DocMeta{}, nil, err
 		}
-		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Notes: page.Notes, Shapes: shapes, Revision: 1, UpdatedAt: now}
+		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Notes: page.Notes, Shapes: shapes, Hidden: page.Hidden, Revision: 1, UpdatedAt: now}
 		copied = append(copied, next)
 	}
 	if err := ctx.Err(); err != nil {

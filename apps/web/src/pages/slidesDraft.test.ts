@@ -3,7 +3,7 @@ import { ApiError, type SlidesPage } from "@/lib/api";
 import { SlidesDraftQueue, type SlideContent } from "./slidesDraft";
 import { patchSlideShape } from "./slides-shape-state";
 
-const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", shapes: [], revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
+const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", background: "", notes: "", shapes: [], hidden: false, revision: 1, updatedAt: "2026-01-01T00:00:00Z" };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {
@@ -43,6 +43,28 @@ describe("slide drafts", () => {
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
     q.edit(page, { title: "local" }); await tick();
     expect(q.get({ ...page, title: "remote", revision: 3 }).content.title).toBe("remote");
+  });
+
+  it("preserves edit undo history across a confirmed visibility-only revision", async () => {
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { title: "已编辑" }); await tick();
+    const base = q.get(page).page;
+    const changed = { ...base, hidden: true, revision: base.revision + 1 };
+    expect(q.acceptVisibility(base, changed)).toBe(true);
+    expect(q.get(changed).page.hidden).toBe(true);
+    expect(q.canUndo(changed)).toBe(true);
+    q.undo(changed); await tick();
+    expect(q.get(changed).content.title).toBe("");
+    expect(q.get(changed).page.hidden).toBe(true);
+  });
+
+  it("refuses to replace a dirty or mismatched draft with a visibility response", async () => {
+    let finish!: () => void;
+    const q = new SlidesDraftQueue((base, content) => new Promise((resolve) => { finish = () => resolve({ ...base, ...content, revision: base.revision + 1 }); }), () => {}, () => {});
+    q.edit(page, { title: "未保存" });
+    expect(q.acceptVisibility(page, { ...page, hidden: true, revision: 2 })).toBe(false);
+    expect(q.get(page).content.title).toBe("未保存");
+    finish(); await tick();
   });
 
   it("accepts reordered JSON object keys from PostgreSQL while saving shapes", async () => {
