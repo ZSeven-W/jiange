@@ -298,6 +298,10 @@ func (e aiProviderError) Error() string { return e.message }
 
 // callAI sends one chat completion with the caller's own settings.
 func (s *Server) callAI(ctx context.Context, userID int64, messages []aiMessage) (string, error) {
+	return s.callAIWithImage(ctx, userID, messages, nil)
+}
+
+func (s *Server) callAIWithImage(ctx context.Context, userID int64, messages []aiMessage, image *aiInputImage) (string, error) {
 	cur, err := s.Store.AISettings(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return "", errAINotConfigured
@@ -318,7 +322,9 @@ func (s *Server) callAI(ctx context.Context, userID int64, messages []aiMessage)
 		return "", aiProviderError{http.StatusBadRequest, "invalid_base_url", "接口地址无效，请在 AI 设置中修改"}
 	}
 	var req *http.Request
-	if provider == "anthropic" {
+	if image != nil {
+		req, err = aiVisionRequest(ctx, base, key, cur.Model, provider, messages, *image)
+	} else if provider == "anthropic" {
 		req, err = anthropicRequest(ctx, base, key, cur.Model, messages)
 	} else {
 		body, _ := json.Marshal(map[string]any{"model": cur.Model, "messages": messages, "max_tokens": 2048, "temperature": 0.3})

@@ -130,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/import":                         s.importCSV,
 		"POST /api/bases/{id}/import-records":                 s.importBaseRecords,
 		"POST /api/bases/{id}/ai-import-preview":              s.baseAIImportPreview,
+		"POST /api/bases/{id}/ai-image-import-preview":        s.baseAIImageImportPreview,
 		"GET /api/bases/{id}/export":                          s.exportCSV,
 		"GET /api/docs/{id}/comments":                         s.listComments,
 		"POST /api/docs/{id}/comments":                        s.addComment,

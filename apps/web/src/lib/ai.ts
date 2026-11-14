@@ -27,6 +27,14 @@ export const aiApi = {
     if (typeof data.text !== "string") throw new Error("Invalid AI response");
     return data.text as string;
   },
+  completeImageForAccount: async (docId: number, userId: number, messages: AIMessage[], image: File, signal?: AbortSignal) => {
+    const form = new FormData(); form.append("messages", JSON.stringify(messages)); form.append("image", image, image.name || "image");
+    const res = await fetch(`/api/bases/${docId}/ai-image-import-preview`, { method: "POST", credentials: "same-origin", signal, headers: { "X-Jiange-User-Id": String(userId), "X-Jiange-Upload": "1" }, body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
+    if (typeof data.text !== "string") throw new Error("Invalid AI response");
+    return data.text as string;
+  },
 };
 
 /** 与服务端上限一致（字符数）。 */
