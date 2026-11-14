@@ -4,20 +4,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, type DocMeta, type Me } from "@/lib/api";
 import { docMetaKey } from "./docMetaState";
 
-const state = vi.hoisted(() => ({ unacked: 0, storageError: false, otherPending: false, blocked: null as string | null }));
-vi.mock("@/lib/useSyncDoc", () => ({ useSyncDoc: () => ({
+const state = vi.hoisted(() => ({ unacked: 0, storageError: false, otherPending: false, blocked: null as string | null, syncEnabled: false }));
+vi.mock("@/lib/useSyncDoc", () => ({ useSyncDoc: (_id: number, _user: number, enabled: boolean) => { state.syncEnabled = enabled; return ({
   client: { doc: null, unacked: state.unacked, status: "offline", blocked: state.blocked, setAwareness: () => {}, pendingOps: () => [] },
   version: 0, peers: [], status: "offline", caughtUp: false, ready: false,
   blocked: state.blocked, storageError: state.storageError, legacyPending: false, otherPending: state.otherPending,
   onBeforeRemote: () => () => {},
-}) }));
+}); } }));
 vi.mock("@/editor/Editor", () => ({ Editor: ({ readOnly }: { readOnly: boolean }) => <div data-testid="body">{readOnly ? "只读正文" : "可编辑正文"}</div> }));
 vi.mock("@/components/CollabText", () => ({ CollabText: () => <div>标题组件</div> }));
 
 import { DocPage } from "./DocPage";
 
 const me: Me = { user: { id: 1, email: "one@example.test", name: "测试", createdAt: "2026-01-01" }, workspaces: [] };
-const metadata: DocMeta = { id: 7, workspaceId: 1, parentId: null, title: "保密标题", creatorId: 1, creatorName: "测试", icon: "", createdAt: "2026-01-01", updatedAt: "2026-01-01", role: "edit" };
+const metadata: DocMeta = { id: 7, workspaceId: 1, parentId: null, title: "保密标题", creatorId: 1, creatorName: "测试", icon: "", createdAt: "2026-01-01", updatedAt: "2026-01-01", role: "edit", kind: "doc" };
 
 function renderWith(error: unknown, withCache = true, account = me, doc = metadata) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
@@ -29,6 +29,23 @@ function renderWith(error: unknown, withCache = true, account = me, doc = metada
 }
 
 describe("document access errors", () => {
+  it("does not open a different or unknown kind in the document editor", () => {
+    state.unacked = 1;
+    const base = renderWith(null, true, me, { ...metadata, kind: "base" });
+    expect(base).toContain("无法在此打开该文件");
+    expect(base).toContain('href="#/base/7"');
+    expect(base).toContain("下载本地备份");
+    expect(base).not.toContain("可编辑正文");
+    expect(state.syncEnabled).toBe(false);
+    const unknown = renderWith(null, true, me, { ...metadata, kind: "sheet" as DocMeta["kind"] });
+    expect(unknown).toContain("当前版本暂不支持此文件类型");
+    expect(unknown).not.toContain('href="#/doc/7"');
+    expect(state.syncEnabled).toBe(false);
+    const missing = renderWith(null, true, me, { ...metadata, kind: undefined });
+    expect(missing).not.toContain("可编辑正文");
+    expect(state.syncEnabled).toBe(false);
+    state.unacked = 0;
+  });
   it("keeps the document read-only for a viewer allowed to comment", () => {
     const html = renderWith(null, true, me, { ...metadata, role: "view", commentMinRole: "view", permissionsRevision: 1 });
     expect(html).toContain("只读正文");

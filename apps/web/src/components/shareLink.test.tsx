@@ -23,6 +23,7 @@ describe("share QR", () => {
     expect(verifiedDirectShareUrl(closed, { id: 42, kind: "slides" }, "https://example.test", "/", true)).toBe("https://example.test/#/slides/42");
     expect(verifiedDirectShareUrl(closed, { id: 42, kind: "file" }, "https://example.test", "/", true)).toBe("https://example.test/#/file/42");
     expect(verifiedDirectShareUrl(closed, { id: 42 }, "https://example.test", "/", false)).toBe("");
+    expect(verifiedDirectShareUrl(closed, { id: 42 }, "https://example.test", "/", true)).toBe("");
     expect(verifiedDirectShareUrl(share, { id: 42 }, "https://example.test", "/", true)).toBe("");
     expect(verifiedDirectShareUrl(closed, { id: 0 }, "https://example.test", "/", true)).toBe("");
     expect(verifiedDirectShareUrl(closed, { id: 42 }, "https://example.test", "//other.test/", true)).toBe("");

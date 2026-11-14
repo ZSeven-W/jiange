@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, type DocMeta } from "@/lib/api";
-import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
+import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./docMetaState";
 
 const cached = { id: 7, role: "edit" } as DocMeta;
 
 describe("document metadata access", () => {
+  it("connects sync only for a known document with usable metadata", () => {
+    const doc = { ...cached, kind: "doc" } as DocMeta;
+    expect(mayConnectDocument(doc, "ready")).toBe(true);
+    expect(mayConnectDocument(doc, "offline")).toBe(true);
+    for (const state of ["loading", "retry", "denied"] as const) expect(mayConnectDocument(doc, state)).toBe(false);
+    for (const kind of ["base", "slides", "sheet", undefined]) expect(mayConnectDocument({ ...cached, kind } as DocMeta, "ready")).toBe(false);
+    expect(mayConnectDocument(undefined, "loading")).toBe(false);
+  });
   it("keeps same-account cached data only for temporary failures", () => {
     for (const error of [new TypeError("network failed"), new ApiError(500, "error", "server failed"), new ApiError(429, "rate_limit", "retry")]) {
       expect(docMetaState(cached, true, error)).toBe("offline");

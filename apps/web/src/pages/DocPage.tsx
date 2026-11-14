@@ -63,7 +63,8 @@ import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./DocAIPanel";
 import { readAccountDraftBackups } from "@/lib/pendingOpsStorage";
 import { createVisitRecorder } from "@/lib/recentVisit";
-import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
+import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./docMetaState";
+import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
 import { DocumentMoveDialog } from "./DocumentMoveDialog";
@@ -90,7 +91,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
-  const sync = useSyncDoc(id, me.user.id);
+  const metadataState = docMetaState(meta.data, meta.isError, meta.error);
+  const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState));
   const [visiblePolicyVerified, setVisiblePolicyVerified] = useState(() => typeof document !== "undefined" && document.visibilityState !== "hidden");
   const policyUpdatedAt = useRef(meta.dataUpdatedAt);
   const requiredPolicyUpdateAfter = useRef(0);
@@ -110,8 +112,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     document.addEventListener("visibilitychange", visibility);
     return () => { active = false; generation++; document.removeEventListener("visibilitychange", visibility); };
   }, [id, me.user.id, meta.refetch]);
-  const metadataState = docMetaState(meta.data, meta.isError, meta.error);
-  const metadataVerified = metadataState === "ready";
+  const metadataVerified = metadataState === "ready" && meta.data?.kind === "doc";
   // Identity guard for late icon updates. A metadata poll in flight is not
   // an authorization failure: icon writes perform their own fresh role check.
   const iconIdentity = useRef({ id, user: me.user.id, mounted: true, denied: false });
@@ -815,6 +816,13 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       </div>
     </div>;
   }
+  if (meta.data && meta.data.kind !== "doc") return <ResourceTypeNotice id={id} kind={meta.data.kind} verified={metadataState === "ready"}>
+    {sync.client.unacked > 0 && <p className="mt-3 text-[13px] text-muted-foreground">未同步的文档修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
+    {sync.otherPending && <p className="mt-3 text-[13px] text-muted-foreground">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
+    {sync.storageError && <p className="mt-3 text-[13px] text-muted-foreground">浏览器存储不可用或本地草稿损坏，请检查后恢复。</p>}
+    {sync.legacyPending && <p className="mt-3 text-[13px] text-muted-foreground">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+    {retrySyncError && <p className="mt-3 text-[13px] text-muted-foreground">{retrySyncError}</p>}
+  </ResourceTypeNotice>;
   const replaceFound = (all: boolean) => {
     setFindPending(null);
     const doc = sync.client.doc;

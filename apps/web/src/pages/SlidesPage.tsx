@@ -13,6 +13,7 @@ import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
 import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
 import { playableSlides, presentationStart } from "./slidesVisibility";
+import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
@@ -62,8 +63,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     visitRecorder.start();
     return () => visitRecorder.stop();
   }, [meta.isSuccess, meta.isError, meta.isFetching, meta.data?.kind, visitRecorder]);
-  const canEdit = !copyingDeck && !checkingPlayback && pageActions === 0 && !meta.isError && !meta.isFetching && (meta.data?.role === "edit" || meta.data?.role === "manage");
-  const pages = useQuery({ queryKey: ["slides", deckId, userId], queryFn: () => slidesApi.pages(deckId, userId), enabled: !!meta.data && !meta.isError, refetchInterval: 5000, refetchIntervalInBackground: false });
+  const canEdit = !copyingDeck && !checkingPlayback && pageActions === 0 && !meta.isError && !meta.isFetching && meta.data?.kind === "slides" && (meta.data.role === "edit" || meta.data.role === "manage");
+  const pages = useQuery({ queryKey: ["slides", deckId, userId], queryFn: () => slidesApi.pages(deckId, userId), enabled: meta.data?.kind === "slides" && !meta.isError, refetchInterval: 5000, refetchIntervalInBackground: false });
   const queue = useMemo(() => new SlidesDraftQueue(
     (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes, content.shapes),
     (saved) => qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
@@ -224,6 +225,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
 
   if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
   if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
+  if (meta.data.kind !== "slides") return <ResourceTypeNotice id={deckId} kind={meta.data.kind} verified={!meta.isFetching} blockNavigation={queue.hasUnsaved()}>{queue.hasUnsaved() && <p role="alert" className="mt-3 text-[13px] text-red-600">当前演示文稿有未保存内容，请勿刷新或关闭；恢复文件类型和权限后重试。</p>}</ResourceTypeNotice>;
 
   if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={() => setPlaying(false)} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
   if (playing && playbackPage && playbackDraft) return (

@@ -11,6 +11,16 @@ describe("standalone drive files", () => {
     expect(parseHash("#/file/42")).toEqual({ page: "file", id: 42 });
     expect(parseHash("#/file/42/extra")).toEqual({ page: "home" });
   });
+  it("never routes unknown or missing node kinds into the document editor", () => {
+    expect(nodeHref({ id: 4, kind: "doc" })).toBe("#/doc/4");
+    expect(nodeHref({ id: 4, kind: "base" })).toBe("#/base/4");
+    expect(nodeHref({ id: 4, kind: "sheet" })).toBe("#/unsupported/4");
+    expect(nodeHref({ id: 4 })).toBe("#/unsupported/4");
+    expect(nodeHref({ id: Number.MAX_SAFE_INTEGER + 1, kind: "doc" })).toBe("#/");
+    expect(parseHash("#/unsupported/4")).toEqual({ page: "unsupported", id: 4 });
+    expect(parseHash("#/unsupported/9007199254740992")).toEqual({ page: "home" });
+    expect(parseHash("#/unsupported/4/extra")).toEqual({ page: "home" });
+  });
   it("uploads multipart data to the chosen folder and preserves server errors", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: 7, kind: "file" }), { status: 201, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "no_storage", message: "云盘文件存储未配置" }), { status: 503, headers: { "content-type": "application/json" } }));

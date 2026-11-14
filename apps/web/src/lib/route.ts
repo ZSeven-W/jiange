@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "unsupported"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
 
 export function parseHash(h: string): Route {
+  const unsupported = /^#\/unsupported\/(\d+)\/?$/.exec(h);
+  if (unsupported) { const id = Number(unsupported[1]); return Number.isSafeInteger(id) && id > 0 ? { page: "unsupported", id } : { page: "home" }; }
   const m = /^#\/doc\/(\d+)/.exec(h);
   if (m) return { page: "doc", id: Number(m[1]) };
   const bm = /^#\/base\/(\d+)/.exec(h);
@@ -46,11 +48,17 @@ export const go = (hash: string) => {
   location.hash = hash;
 };
 
+export function isKnownNodeKind(kind: unknown): kind is "doc" | "base" | "slides" | "file" | "folder" {
+  return kind === "doc" || kind === "base" || kind === "slides" || kind === "file" || kind === "folder";
+}
+
 /** Route known node kinds to their dedicated editor or viewer. */
 export function nodeHref(d: { id: number; kind?: string }): string {
+  if (!Number.isSafeInteger(d.id) || d.id <= 0) return "#/";
+  if (d.kind === "doc") return `#/doc/${d.id}`;
   if (d.kind === "base") return `#/base/${d.id}`;
   if (d.kind === "slides") return `#/slides/${d.id}`;
   if (d.kind === "file") return `#/file/${d.id}`;
   if (d.kind === "folder") return `#/drive/${d.id}`;
-  return `#/doc/${d.id}`;
+  return `#/unsupported/${d.id}`;
 }

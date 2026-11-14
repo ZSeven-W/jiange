@@ -12,7 +12,7 @@ export function verifiedShareUrl(info: ShareInfo | undefined, origin: string, ve
 /** A direct address identifies the document but does not grant access. Never
  * reuse an old sharing token when link sharing is disabled. */
 export function verifiedDirectShareUrl(info: ShareInfo | undefined, meta: Pick<DocMeta, "id" | "kind">, origin: string, pathname: string, verified: boolean): string {
-  if (!verified || !info || !["view", "edit", "manage"].includes(info.role) || info.link?.role !== "none" || !Number.isSafeInteger(meta.id) || meta.id <= 0 || ![undefined, "doc", "base", "slides", "file"].includes(meta.kind) || typeof pathname !== "string" || !pathname.startsWith("/") || pathname.startsWith("//")) return "";
+  if (!verified || !info || !["view", "edit", "manage"].includes(info.role) || info.link?.role !== "none" || !Number.isSafeInteger(meta.id) || meta.id <= 0 || !["doc", "base", "slides", "file"].includes(meta.kind ?? "") || typeof pathname !== "string" || !pathname.startsWith("/") || pathname.startsWith("//")) return "";
   try {
     const base = new URL(origin);
     const url = new URL(pathname, base);

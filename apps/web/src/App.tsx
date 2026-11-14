@@ -7,6 +7,7 @@ import { useRoute } from "@/lib/route";
 import { LoginPage } from "@/pages/Login";
 import { Home } from "@/pages/Home";
 import { DocPage } from "@/pages/DocPage";
+import { ResourceTypeNotice } from "@/pages/ResourceTypeNotice";
 import { Playground } from "@/pages/Playground";
 import { Sidebar } from "@/components/Sidebar";
 import { Trash } from "@/pages/Trash";
@@ -164,6 +165,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       </div>
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
+      ) : route.page === "unsupported" ? (
+        <ResourceTypeNotice id={route.id} />
       ) : route.page === "base" ? (
         <BasePage key={`${route.id}:${me.user.id}`} id={route.id} userId={me.user.id} />
       ) : route.page === "join" ? (

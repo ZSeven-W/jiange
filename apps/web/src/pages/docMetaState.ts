@@ -19,6 +19,12 @@ export function docMetaState(data: DocMeta | undefined, isError: boolean, error:
   return data ? "ready" : "loading";
 }
 
+/** Retain offline document drafts but never start a document socket for an
+ * unverified or non-document resource. Definitive access denial disconnects. */
+export function mayConnectDocument(data: DocMeta | undefined, state: DocMetaState): boolean {
+  return data?.kind === "doc" && (state === "ready" || state === "offline");
+}
+
 export function shouldRetryDocMeta(failureCount: number, error: unknown): boolean {
   return !isDocAccessDenied(error) && failureCount < 2;
 }

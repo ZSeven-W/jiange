@@ -34,7 +34,7 @@ function syncURL() {
 }
 
 /** Opens a live replica of a document over the Jiange sync protocol, reconnecting with backoff. */
-export function useSyncDoc(docId: number, userId: number): SyncDoc {
+export function useSyncDoc(docId: number, userId: number, enabled = true): SyncDoc {
   const qc = useQueryClient();
   const [version, setVersion] = useState(0);
   const changeRevision = useRef(0);
@@ -111,7 +111,7 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
   }, [client, docId, userId]);
 
   useEffect(() => {
-    if (storageClient !== client) return;
+    if (!enabled || storageClient !== client) return;
     let ws: WebSocket | null = null;
     let stopped = false;
     let delay = 1000;
@@ -169,7 +169,7 @@ export function useSyncDoc(docId: number, userId: number): SyncDoc {
       s?.close();
       client.close();
     };
-  }, [client, docId, qc, storageClient]);
+  }, [client, docId, qc, storageClient, enabled]);
 
   const onBeforeRemote = useMemo(
     () => (fn: () => void) => {
