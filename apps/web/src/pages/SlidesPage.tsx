@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -8,6 +9,7 @@ import { createVisitRecorder } from "@/lib/recentVisit";
 import { sameSlideContent, SlidesDraftQueue } from "./slidesDraft";
 import { copyErrorMessage } from "./documentCopy";
 import { SlideShapes } from "./slides-shapes";
+import { PresenterView, SlideSurface } from "./slides-presenter";
 import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
@@ -26,6 +28,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const qc = useQueryClient();
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [audienceWindow, setAudienceWindow] = useState<Window | null>(null);
+  const audienceRef = useRef<Window | null>(null);
+  const audienceMountRef = useRef<HTMLElement | null>(null);
+  const stopPresentation = () => { const popup = audienceRef.current; audienceRef.current = null; audienceMountRef.current = null; popup?.close(); setAudienceWindow(null); setPlaying(false); };
   const [checkingPlayback, setCheckingPlayback] = useState(false);
   const [playMenu, setPlayMenu] = useState(false);
   const playMenuRef = useRef<HTMLDivElement>(null);
@@ -90,6 +96,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     () => setBackgroundHistory((history) => history.redo.length ? { ...history, redo: [] } : history),
   ), [deckId, userId, qc]);
   useEffect(() => () => queue.dispose(), [queue]);
+  useEffect(() => () => { audienceRef.current?.close(); audienceRef.current = null; }, []);
+  useEffect(() => {
+    if (!audienceWindow) return;
+    const lost = () => { if (audienceRef.current !== audienceWindow) return; audienceRef.current = null; audienceMountRef.current = null; setAudienceWindow(null); setPlaying(false); setOperationError("观众窗口已关闭或离开，演示已结束。"); };
+    const timer = window.setInterval(() => { if (audienceWindow.closed) lost(); }, 500);
+    audienceWindow.addEventListener("pagehide", lost);
+    return () => { window.clearInterval(timer); audienceWindow.removeEventListener("pagehide", lost); };
+  }, [audienceWindow]);
   useEffect(() => () => { imageUpload.current?.abort(); imageUpload.current = null; }, []);
   useEffect(() => () => { copyRequest.current?.abort(); copyRequest.current = null; }, []);
   useEffect(() => {
@@ -108,6 +122,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [playMenu]);
   useEffect(() => { if (playing) playbackRef.current?.focus(); }, [playing]);
+  useEffect(() => {
+    if (playing && (meta.isError || pages.isError || (meta.data && meta.data.kind !== "slides"))) {
+      stopPresentation();
+      setOperationError("无法确认演示文稿的访问状态，演示已结束。");
+    }
+  }, [playing, meta.isError, pages.isError, meta.data?.kind]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (queue.hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", warn);
@@ -240,7 +260,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   useEffect(() => {
     if (!playing) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); setPlaying(false); return; }
+      if (event.key === "Escape") { event.preventDefault(); stopPresentation(); return; }
       if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || !playbackPage) return;
       // Let focused buttons retain their native Enter/Space activation.
       if ((event.key === " " || event.key === "Enter") && event.target instanceof HTMLElement && event.target.closest("button")) return;
@@ -248,22 +268,24 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (next) { event.preventDefault(); setCurrent(next.id); }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [playing, playbackPage, list]);
+    audienceWindow?.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); audienceWindow?.removeEventListener("keydown", onKey); };
+  }, [playing, playbackPage, list, audienceWindow]);
 
   if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
   if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
   if (meta.data.kind !== "slides") return <ResourceTypeNotice id={deckId} kind={meta.data.kind} verified={!meta.isFetching} blockNavigation={queue.hasUnsaved()}>{queue.hasUnsaved() && <p role="alert" className="mt-3 text-[13px] text-red-600">当前演示文稿有未保存内容，请勿刷新或关闭；恢复文件类型和权限后重试。</p>}</ResourceTypeNotice>;
 
-  if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={() => setPlaying(false)} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
+  if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={stopPresentation} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
   if (playing && playbackPage && playbackDraft) return (
-    <div ref={playbackRef} tabIndex={-1} aria-label="幻灯片放映" className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-[#1f2329] p-4 outline-none sm:p-10" data-slides-playing>
-      <div className="relative aspect-video w-full max-w-[1280px] shrink-0 overflow-hidden bg-white px-[6%] py-[5%]" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))", backgroundColor: playbackDraft.content.background || "#fff", containerType: "inline-size" }}>
-        <h1 className="font-semibold leading-tight text-[#1f2329]" style={{ fontSize: "3.75cqw", padding: "0.4167cqw 0.8333cqw" }}>{playbackDraft.content.title}</h1>
-        <div className="mt-[4%] whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]" style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{playbackDraft.content.body}</div>
-        <SlideShapes shapes={playbackDraft.content.shapes} editable={false} selected={null}/>
-      </div>
-      <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={() => setPlaying(false)}>退出放映</button></div>
+    <div ref={playbackRef} tabIndex={-1} aria-label={audienceWindow ? "演示者视图" : "幻灯片放映"} className="fixed inset-0 z-[80] outline-none" data-slides-playing>
+      {audienceWindow ? <>
+        <PresenterView pages={playable} currentId={playbackPage.id} content={playbackDraft.content} contentFor={(page) => queue.get(page).content} onSelect={setCurrent} onExit={stopPresentation}/>
+        {createPortal(<div aria-label="观众视图" className="flex h-dvh items-center justify-center bg-black"><div className="w-full" style={{ width: "min(100vw, calc(100dvh * 16 / 9))" }}><SlideSurface content={playbackDraft.content}/></div></div>, audienceMountRef.current!)}
+      </> : <div className="flex h-full flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10">
+        <div className="w-full max-w-[1280px] shrink-0" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))" }}><SlideSurface content={playbackDraft.content}/></div>
+        <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={stopPresentation}>退出放映</button></div>
+      </div>}
     </div>
   );
 
@@ -329,16 +351,38 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     return true;
   };
   backgroundHistoryAction.current = tryBackgroundHistory;
-  const startPresentation = async (fromBeginning = false) => {
+  const startPresentation = async (fromBeginning = false, presenter = false) => {
     if (playbackCheck.current || visibilityUnknown || backgroundBatchUnknown || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
+    let popup: Window | null = null;
+    if (presenter) {
+      try { popup = window.open("", "_blank", "popup,width=1024,height=720"); } catch { popup = null; }
+      if (!popup) { setOperationError("无法打开观众窗口，请允许此网站弹出窗口后重试。"); return; }
+      try {
+        popup.document.title = "观众视图 - Jiange";
+        popup.document.documentElement.lang = document.documentElement.lang;
+        for (const style of document.head.querySelectorAll('style, link[rel="stylesheet"]')) popup.document.head.append(style.cloneNode(true));
+        popup.document.body.className = "m-0";
+        popup.document.body.textContent = "正在准备观众视图…";
+        audienceMountRef.current = popup.document.body;
+        popup.opener = null;
+        audienceRef.current = popup;
+      } catch { popup.close(); setOperationError("无法准备观众窗口，请重试。"); return; }
+    }
     playbackCheck.current = true; setCheckingPlayback(true); setOperationError("");
+    let started = false;
     try {
       const result = await pages.refetch();
       if (result.isError || !result.data) { setOperationError("无法确认最新页面状态，请联网后重试放映。"); return; }
       const start = presentationStart(result.data, fromBeginning ? null : activePageRef.current);
       if (!start) { setOperationError("没有可放映的幻灯片。"); return; }
-      setCurrent(start.id); setPlaying(true);
-    } finally { playbackCheck.current = false; setCheckingPlayback(false); }
+      if (popup) {
+        try {
+          if (popup.closed || popup.document !== audienceMountRef.current?.ownerDocument) { setOperationError("观众窗口已关闭或离开，请重新开始演示。"); return; }
+          audienceMountRef.current.replaceChildren();
+        } catch { setOperationError("无法访问观众窗口，请重新开始演示。"); return; }
+      }
+      setCurrent(start.id); setAudienceWindow(popup); setPlaying(true); started = true;
+    } finally { if (!started && popup) { if (audienceRef.current === popup) { audienceRef.current = null; audienceMountRef.current = null; } popup.close(); } playbackCheck.current = false; setCheckingPlayback(false); }
   };
   const doMove = (page: Page, pos: number) => { setOperationError(""); beginPageAction(); void slidesApi.move(page.id, pos).then(invalidate).catch(() => setOperationError("页面顺序未能确认，请刷新后重试。")).finally(endPageAction); };
   const togglePageHidden = (page: Page) => {
@@ -418,7 +462,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">
             <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-3 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>
             <button type="button" aria-label="演示选项" aria-haspopup="menu" aria-expanded={playMenu} disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} onClick={() => setPlayMenu((open) => !open)} className="grid w-7 place-items-center rounded-r-md border-l border-[#3370ff] bg-white hover:bg-[#f5f6f7] disabled:opacity-40"><ChevronDown size={14}/></button>
-            {playMenu && <div role="menu" aria-label="演示选项" className="absolute right-0 top-10 z-[70] w-40 rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-lg"><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Play size={14}/>从当前开始</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>从头开始</button></div>}
+            {playMenu && <div role="menu" aria-label="演示选项" className="absolute right-0 top-10 z-[70] w-40 rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-lg"><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Play size={14}/>从当前开始</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(false, true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>演示者视图</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>从头开始</button></div>}
           </div>
         </div>
       </header>
