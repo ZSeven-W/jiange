@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type FillRule, type RowHeight, type User } from "@/lib/api";
 import { rowFill, rowHeightPx } from "./fill";
 import { ask } from "@/components/ui/ask";
@@ -16,6 +16,7 @@ import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
 import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
+import { formatSelectionNumber, selectionStatistics } from "./selectionStatistics";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -193,6 +194,9 @@ export function Grid({
   // Never use a stale numeric offset after sort, filtering, insertion, deletion,
   // field reordering or a changed authorization projection.
   const selection = validGridSelection(sel, records, fields) ? sel : null;
+  const selectedStats = useMemo(() => selection && selectionCellCount(selection) > 1 && detailAccessReady && selectionAccessReady
+    ? selectionStatistics(selection, records, fields, (record, field) => displayValue(record, field, members)) : null,
+  [selection, records, fields, members, detailAccessReady, selectionAccessReady]);
   const readSelection = () => validGridSelection(sel, records, fields) ? sel : null;
   const setSelection = (rect: SelectionRect | null) => setSel(rect ? captureGridSelection(rect, records, fields) : null);
   useEffect(() => { setSel((current) => current && !validGridSelection(current, records, fields) ? null : current); }, [records, fields]);
@@ -722,7 +726,7 @@ export function Grid({
   };
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
     {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
     {checked.size > 0 && (
       <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px]" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
@@ -953,6 +957,13 @@ export function Grid({
         </tfoot>
       </table>
     </div>
+    {selectedStats && <div data-selection-statistics role="status" className="pointer-events-none absolute bottom-12 right-3 z-20 flex items-center rounded-md border border-[#dee0e3] bg-surface px-3 py-2 text-[12px] text-[#646a73] shadow-[0_2px_8px_rgba(31,35,41,0.12)] sm:right-6">
+      <span>{t("平均值")}: <span className="tabular-nums">{formatSelectionNumber(selectedStats.average)}</span></span>
+      <span className="mx-3 h-4 w-px bg-[#e5e6eb]" />
+      <span>{t("计数")}: <span className="tabular-nums">{selectedStats.count}</span></span>
+      <span className="mx-3 h-4 w-px bg-[#e5e6eb]" />
+      <span>{t("求和")}: <span className="tabular-nums">{formatSelectionNumber(selectedStats.sum)}</span></span>
+    </div>}
     </div>
   );
 }
