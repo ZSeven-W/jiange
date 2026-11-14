@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { outlineOf } from "./OutlinePanel";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { OutlinePanel, outlineOf } from "./OutlinePanel";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 
 describe("outline & h4-h6", () => {
@@ -91,5 +93,13 @@ describe("collapsible outline", () => {
   it("hides every descendant of a folded heading until a sibling level returns", () => {
     expect(visibleOutline(items, new Set(["a"])).map((r) => r.item.id)).toEqual(["a", "b", "b1"]);
     expect(visibleOutline(items, new Set(["a1", "b"])).map((r) => r.item.id)).toEqual(["a", "a1", "b"]);
+  });
+
+  it("makes section folds and the unpinned outline reachable by keyboard", () => {
+    const html = renderToStaticMarkup(createElement(OutlinePanel, { items, activeId: "a", pinned: false, onJump: () => {}, onClose: () => {} }));
+    expect(html).toContain('aria-label="折叠 A"');
+    expect(html).not.toContain('tabindex="-1"');
+    expect(html).toContain('aria-label="展开目录"');
+    expect(html).toContain('aria-expanded="false"');
   });
 });

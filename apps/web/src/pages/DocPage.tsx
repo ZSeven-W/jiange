@@ -207,12 +207,14 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
   useEffect(() => { setWidth(readDocWidth(me.user.id, id)); }, [me.user.id, id]);
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
+  const [outlineWide, setOutlineWide] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(min-width: 1280px)");
-    const change = (event: MediaQueryListEvent) => { if (!event.matches) setOutlineOpen(false); };
-    media.addEventListener("change", change);
-    return () => media.removeEventListener("change", change);
+    setOutlineWide(media.matches);
+    const changed = (event: MediaQueryListEvent) => { setOutlineWide(event.matches); if (!event.matches) setOutlineOpen(false); };
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
   }, []);
   const [outlineActive, setOutlineActive] = useState<string | null>(null);
   const [outlinePinned, setOutlinePinned] = useState(loadOutlinePinned);
@@ -412,7 +414,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     return outlineOf(view.blocks.map((b) => ({ id: b.id, type: b.type, spans: b.spans })));
   }, [sync.client.doc, sync.version, outlineOpen]);
   // 没有标题时不占用正文左侧空间（与飞书一致）；手动打开的抽屉仍显示空态提示。
-  const outlineVisible = outlineOpen && (outline.length > 0 || (typeof window !== "undefined" && typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 1280px)").matches));
+  const outlineVisible = outlineOpen && (outline.length > 0 || !outlineWide);
   const outlineFrame = useRef(0);
   const onBodyScroll = useCallback(() => {
     if (!outlineVisible || outlineFrame.current) return;
@@ -985,25 +987,29 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
             <OutlinePanel
               items={outline}
               activeId={outlineActive}
+              hostRef={scrollArea}
               yieldToSidePanel={(commentsAvailable && commentsOpen) || history}
               pinned={outlinePinned}
               onPinnedChange={(next) => { setOutlinePinned(next); saveOutlinePinned(next); }}
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
-              onClose={() => setOutlineOpen(false)}
+              onClose={() => { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); }}
               title={docTitle({ title })}
-              onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); }}
+              onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); if (!outlineWide) { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); } }}
               onJump={(bid) => {
-                setOutlineActive(bid);
                 const area = scrollArea.current;
-                const el = document.querySelector<HTMLElement>(`[data-block="${bid}"]`);
-                if (area && el) area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
+                const el = area?.querySelector<HTMLElement>(`[data-block="${bid}"]`);
+                if (area && el) {
+                  setOutlineActive(bid);
+                  area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
+                  if (!outlineWide) { setOutlineOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true })); }
+                }
               }}
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
           <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
-            <div className="group/doc-cover relative" data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
+            <div className="group/doc-cover relative" data-outline-anchor data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
                 const current = iconIdentity.current;
