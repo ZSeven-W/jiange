@@ -13,10 +13,10 @@ import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
 import { ChevronRight, Expand, Lock, Pencil, Trash2, X } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
-import { captureGridSelection, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
+import { captureGridSelection, checkedTargetsCurrent, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
 import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
-import { formatSelectionNumber, selectionStatistics } from "./selectionStatistics";
+import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } from "./selectionStatistics";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -98,6 +98,8 @@ export function Grid({
   const [insertAt, setInsertAt] = useState<{ fid: number; position: number } | null>(null);
   /** 勾选的记录（表头复选框 / 行复选框）。 */
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  const checkedRef = useRef(checked);
+  checkedRef.current = checked;
   const [editField, setEditField] = useState<Field | null>(null);
   const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
   const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
@@ -138,8 +140,8 @@ export function Grid({
   }, [records]);
   const [vp, setVp] = useState({ top: 0, left: 0, h: 900, w: 1200 });
   const gridRef = useRef<HTMLDivElement>(null);
-  const current = useRef({ baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, fields, allFields });
-  current.current = { baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, fields, allFields };
+  const current = useRef({ baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, visibleRecords: records, fields, allFields });
+  current.current = { baseId, canEdit, mounted: true, detailAccessReady, selectionAccessReady, authorizedRecords: authorizedRecords ?? records, visibleRecords: records, fields, allFields };
   useEffect(() => { current.current.mounted = true; return () => { current.current.mounted = false; }; }, []);
   useEffect(() => () => {
     const draft = editRef.current;
@@ -194,9 +196,13 @@ export function Grid({
   // Never use a stale numeric offset after sort, filtering, insertion, deletion,
   // field reordering or a changed authorization projection.
   const selection = validGridSelection(sel, records, fields) ? sel : null;
-  const selectedStats = useMemo(() => selection && selectionCellCount(selection) > 1 && detailAccessReady && selectionAccessReady
-    ? selectionStatistics(selection, records, fields, (record, field) => displayValue(record, field, members)) : null,
-  [selection, records, fields, members, detailAccessReady, selectionAccessReady]);
+  const checkedCount = records.reduce((count, record) => count + (checked.has(record.id) ? 1 : 0), 0);
+  const selectedStats = useMemo(() => {
+    if (!detailAccessReady || !selectionAccessReady) return null;
+    const value = (record: BaseRecord, field: Field) => displayValue(record, field, members);
+    if (checkedCount) return selectedRecordStatistics(checked, records, fields, value);
+    return selection && selectionCellCount(selection) > 1 ? selectionStatistics(selection, records, fields, value) : null;
+  }, [selection, records, fields, members, checked, checkedCount, detailAccessReady, selectionAccessReady]);
   const readSelection = () => validGridSelection(sel, records, fields) ? sel : null;
   const setSelection = (rect: SelectionRect | null) => setSel(rect ? captureGridSelection(rect, records, fields) : null);
   useEffect(() => { setSel((current) => current && !validGridSelection(current, records, fields) ? null : current); }, [records, fields]);
@@ -369,17 +375,30 @@ export function Grid({
 
   const deleteRecord = async (rec: BaseRecord) => {
     const op = ledger.begin(t("删除记录 #{id}", { id: rec.id }), "", `record:delete:${rec.id}`);
-    if (op === null) return;
-    try { await baseApi.deleteRecord(baseId, rec.id); ledger.complete(op); }
-    catch { ledger.fail(op, t("无法确认是否删除。请刷新并核对记录。")); }
+    if (op === null) return false;
+    try { await baseApi.deleteRecord(baseId, rec.id); ledger.complete(op); return true; }
+    catch { ledger.fail(op, t("无法确认是否删除。请刷新并核对记录。")); return false; }
     finally { refreshWrites(onMutate); }
   };
 
   const deleteChecked = async () => {
+    setDragError(null);
     const targets = records.filter((r) => checked.has(r.id));
     if (!targets.length || !(await ask(t("删除选中的 {n} 条记录？", { n: targets.length }), t("删除后无法直接撤销。")))) return;
-    for (const rec of targets) await deleteRecord(rec);
-    setChecked(new Set());
+    for (let index = 0; index < targets.length; index++) {
+      const pending = targets.slice(index).map((record) => record.id);
+      // A successful deletion refreshes the snapshot. Wait for that refresh
+      // rather than treating our own invalidation as a permission change.
+      const ready = await waitForBatchTargets(() => current.current, baseId, pending, []);
+      const snapshot = current.current;
+      if (!ready || snapshot.baseId !== baseId || !snapshot.mounted || !snapshot.canEdit || !checkedTargetsCurrent(pending, checkedRef.current, snapshot.visibleRecords, snapshot.detailAccessReady && snapshot.selectionAccessReady)) {
+        setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。"));
+        return;
+      }
+      const rec = targets[index];
+      if (!(await deleteRecord(rec))) return;
+      setChecked((prev) => { const next = new Set(prev); next.delete(rec.id); return next; });
+    }
   };
 
   /** Position between f and its neighbour in the full field order (left or right). */
@@ -626,17 +645,17 @@ export function Grid({
   const isFrozen = (j: number) => j < nFrozen;
   const lastFrozen = (j: number) => j === nFrozen - 1;
   const allChecked = records.length > 0 && records.every((r) => checked.has(r.id));
-  const toggleChecked = (id: number) => setChecked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const toggleChecked = (id: number) => { setSel(null); setChecked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
 
   const renderRow = (rec: BaseRecord, i: number) => {
             const fill = rowFill(rec, allFields ?? fields, fills, members);
             const isChecked = checked.has(rec.id);
             return (
             <tr key={rec.id} className={cn("group", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill}>
-              <td className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1.5 text-[12px] text-subtle [@media(hover:none)]:px-1", tall && "align-top")} style={fill ? { background: fill } : undefined}>
+              <td className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1.5 text-[12px] text-subtle [@media(hover:none)]:px-1", tall && "align-top", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined}>
                 <div className="flex h-[31px] items-center justify-center gap-1">
-                <span className={cn("group-hover:hidden [@media(hover:none)]:inline", isChecked && "hidden")}>{i + 1}</span>
-                <input type="checkbox" checked={isChecked} onChange={() => toggleChecked(rec.id)} aria-label={t("选择记录 {n}", { n: i + 1 })} className={cn("size-3.5 cursor-pointer accent-primary group-hover:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
+                <span className={cn("group-hover:hidden [@media(hover:none)]:hidden", isChecked && "hidden")}>{i + 1}</span>
+                <input type="checkbox" checked={isChecked} disabled={!detailAccessReady || !selectionAccessReady} onChange={() => toggleChecked(rec.id)} aria-label={t("选择记录 {n}", { n: i + 1 })} className={cn("size-3.5 cursor-pointer accent-primary group-hover:inline-block [@media(hover:none)]:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
                 <span className={cn("hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex")}>
                   <button type="button" className="grid size-6 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:size-8" aria-label={t("展开记录 {n}", { n: i + 1 })} title={t("展开记录")} onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
                     <Expand size={14} strokeWidth={1.7} />
@@ -658,7 +677,7 @@ export function Grid({
                   <Fragment key={f.id}>
                   {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
                   <td
-                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !selected && !editing ? { background: fill } : {}), ...(selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
+                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !isChecked && !selected && !editing ? { background: fill } : {}), ...(selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
                     className={cn(
                       "relative border px-2.5",
                       tall && "align-top",
@@ -667,12 +686,14 @@ export function Grid({
                       lastFrozen(j) && "border-r-[#BBBFC4]",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
+                      !editing && isChecked && "bg-sel-row",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
                     )}
                     onMouseDown={(e) => {
                       if (editing || e.button !== 0 || (e.target instanceof Element && e.target.closest("button, a, input, select, textarea, [contenteditable=true]"))) return;
                       e.preventDefault();
                       setEdit(null);
+                      if (checked.size) setChecked(new Set());
                       const active = readSelection();
                       const rect = e.shiftKey && active ? { ar: active.ar, af: active.af, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j };
                       const next = captureGridSelection(rect, records, fields);
@@ -720,7 +741,7 @@ export function Grid({
               })}
               {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
               {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
-              {canEdit && <td className="border" style={fill ? { background: fill } : undefined} />}
+              {canEdit && <td className={cn("border", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined} />}
             </tr>
               );
   };
@@ -728,10 +749,10 @@ export function Grid({
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
     {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
-    {checked.size > 0 && (
+    {checkedCount > 0 && (
       <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px]" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
-        <span>{t("已选择")} <b className="font-medium text-primary">{checked.size}</b> {t("条记录")}</span>
-        {canEdit && <button type="button" className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />{t("删除")}</button>}
+        <span>{t("已选择")} <b className="font-medium text-primary">{checkedCount}</b> {t("条记录")}</span>
+        {canEdit && <button type="button" disabled={!detailAccessReady || !selectionAccessReady} className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white disabled:opacity-50" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />{t("删除")}</button>}
         <button type="button" className="ml-auto grid size-7 place-items-center rounded-md text-subtle hover:bg-white" aria-label={t("取消选择")} onClick={() => setChecked(new Set())}><X size={15} /></button>
       </div>
     )}
@@ -777,7 +798,7 @@ export function Grid({
           <tr className="h-9 bg-surface text-left text-[13px] text-foreground">
             <th className="sticky left-0 top-0 z-40 w-14 border border-x-0 bg-surface px-1.5 font-normal">
               <div className="flex items-center justify-center">
-                <input type="checkbox" checked={allChecked} ref={(el) => { if (el) el.indeterminate = !allChecked && checked.size > 0; }} onChange={() => setChecked(allChecked ? new Set() : new Set(records.map((r) => r.id)))} aria-label={t("全选记录")} className="size-3.5 cursor-pointer accent-primary" data-check-all />
+                <input type="checkbox" checked={allChecked} disabled={!detailAccessReady || !selectionAccessReady} ref={(el) => { if (el) el.indeterminate = !allChecked && checkedCount > 0; }} onChange={() => { setSel(null); setChecked(allChecked ? new Set() : new Set(records.map((r) => r.id))); }} aria-label={t("全选记录")} className="size-3.5 cursor-pointer accent-primary" data-check-all />
               </div>
             </th>
             {winFields.map((f, wi) => {
@@ -929,7 +950,7 @@ export function Grid({
                 {wi === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
                 <td className={cn("border-x-0 border-b-0 border-t px-2.5", isFrozen(colOf(wi)) && "sticky z-10 bg-surface")} style={{ width: width(f), ...(isFrozen(colOf(wi)) ? { left: stickyLeft(colOf(wi)) } : {}) }}>
                   <div className={cn("flex items-center gap-1", f.isPrimary && "justify-end")}>
-                    {f.isPrimary && !fn && <span data-record-count>{selection && selectionCellCount(selection) > 1 && selectionAccessReady ? t("已选择 {n} 个单元格", { n: selectionCellCount(selection) }) : t("{n} 条记录", { n: records.length })}</span>}
+                    {f.isPrimary && !fn && <span data-record-count>{checkedCount ? t("已选择 {n} 条记录", { n: checkedCount }) : selection && selectionCellCount(selection) > 1 && selectionAccessReady ? t("已选择 {n} 个单元格", { n: selectionCellCount(selection) }) : t("{n} 条记录", { n: records.length })}</span>}
                     <select
                       value={fn}
                       onChange={(e) => saveStat(f.id, e.target.value)}

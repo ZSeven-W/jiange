@@ -56,6 +56,13 @@ export function batchTargetsAuthorized(recordIds: readonly number[], fieldIds: r
   return recordIds.every((id) => visibleRecords.has(id)) && fieldIds.every((id) => visibleFields.has(id));
 }
 
+/** A confirmed record action must still refer to the visible checked records. */
+export function checkedTargetsCurrent(ids: readonly number[], checked: ReadonlySet<number>, visible: readonly BaseRecord[], ready: boolean): boolean {
+  if (!ready || !ids.length) return false;
+  const visibleIds = new Set(visible.map((record) => record.id));
+  return ids.every((id) => checked.has(id) && visibleIds.has(id));
+}
+
 export interface BatchAccess {
   baseId: number;
   mounted: boolean;

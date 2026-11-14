@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BaseRecord, Field } from "@/lib/api";
-import { batchTargetsAuthorized, captureGridSelection, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type BatchAccess } from "./gridSelection";
+import { batchTargetsAuthorized, captureGridSelection, checkedTargetsCurrent, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type BatchAccess } from "./gridSelection";
 
 const records: BaseRecord[] = [1, 2, 3].map((id) => ({ id, baseId: 1, position: id, cells: { 1: `行${id}` } }));
 const fields: Field[] = [1, 2, 3].map((id) => ({ id, name: `字段${id}`, type: "text", position: id }));
 
 describe("grid selection identity", () => {
+  it("does not use a checked target after filtering, deselection or access revalidation", () => {
+    const checked = new Set([1, 2]);
+    expect(checkedTargetsCurrent([1, 2], checked, records, true)).toBe(true);
+    expect(checkedTargetsCurrent([1, 2], checked, records.slice(1), true)).toBe(false);
+    expect(checkedTargetsCurrent([1, 2], new Set([1]), records, true)).toBe(false);
+    expect(checkedTargetsCurrent([1, 2], checked, records, false)).toBe(false);
+  });
   it("extends a drag in either direction but rejects changed rows or fields", () => {
     const start = captureGridSelection({ ar: 2, af: 2, rr: 2, rf: 2 }, records, fields)!;
     const extended = extendGridSelection(start, 0, 1, records, fields)!;

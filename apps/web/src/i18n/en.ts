@@ -710,6 +710,8 @@ export const en: Record<string, string> = {
   "输入评论，@ 提及成员，Enter 发送": "Write a comment, @ mention members, Enter to send",
   "返回主页": "Back to home",
   "已选择 {n} 个单元格": "{n} cells selected",
+  "已选择 {n} 条记录": "{n} records selected",
+  "选择的记录或访问权限已变化，剩余记录未删除，请重新核对。": "The selection or access changed. Remaining records were not deleted; please check again.",
   "平均值": "Average",
   "无法在此打开该文件": "This file cannot be opened here",
   "此链接指向其他类型的文件，请使用对应入口打开。": "This link points to another file type. Open it in its appropriate editor.",

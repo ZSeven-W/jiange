@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BaseRecord, Field } from "@/lib/api";
 import { captureGridSelection } from "./gridSelection";
-import { formatSelectionNumber, selectionStatistics } from "./selectionStatistics";
+import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } from "./selectionStatistics";
 
 const fields: Field[] = [
   { id: 1, name: "文本", type: "text", position: 1 },
@@ -34,5 +34,11 @@ describe("selection statistics", () => {
     const stats = selectionStatistics(selected, records, fields, () => Number.MAX_VALUE)!;
     expect(formatSelectionNumber(stats.sum)).toBe("—");
     expect(formatSelectionNumber(stats.average)).toBe("—");
+  });
+  it("summarizes only currently visible checked rows and fields", () => {
+    const checked = new Set([1, 2, 99]);
+    const result = selectedRecordStatistics(checked, records.slice(1), fields.slice(0, 2), value)!;
+    expect(result).toEqual({ count: 1, sum: 0.2, average: 0.2 });
+    expect(selectedRecordStatistics(new Set([99]), records, fields, value)).toBeNull();
   });
 });
