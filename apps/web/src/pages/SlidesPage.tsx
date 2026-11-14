@@ -12,11 +12,11 @@ import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
 import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
-import { playableSlides, presentationStart } from "./slidesVisibility";
+import { playableSlides, presentationStart, presentationKeyTarget } from "./slidesVisibility";
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
 type BackgroundHistory = { undo: BackgroundAction[]; redo: BackgroundAction[] };
@@ -27,6 +27,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [checkingPlayback, setCheckingPlayback] = useState(false);
+  const [playMenu, setPlayMenu] = useState(false);
+  const playMenuRef = useRef<HTMLDivElement>(null);
+  const playbackRef = useRef<HTMLDivElement>(null);
   const playbackCheck = useRef(false);
   const [sharing, setSharing] = useState(false);
   const [shapeMenu, setShapeMenu] = useState(false);
@@ -97,6 +100,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [pageMenu]);
+  useEffect(() => {
+    if (!playMenu) return;
+    const outside = (event: PointerEvent) => { if (!playMenuRef.current?.contains(event.target as Node)) setPlayMenu(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setPlayMenu(false); playMenuRef.current?.querySelector<HTMLButtonElement>("[aria-haspopup]")?.focus(); } };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [playMenu]);
+  useEffect(() => { if (playing) playbackRef.current?.focus(); }, [playing]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (queue.hasUnsaved()) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", warn);
@@ -229,16 +240,16 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   useEffect(() => {
     if (!playing) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPlaying(false);
-      if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-      event.preventDefault();
-      const index = playbackPage ? playable.findIndex((page) => page.id === playbackPage.id) : -1;
-      if ((event.key === "ArrowRight" || event.key === "ArrowDown") && index >= 0 && index < playable.length - 1) setCurrent(playable[index + 1].id);
-      if ((event.key === "ArrowLeft" || event.key === "ArrowUp") && index > 0) setCurrent(playable[index - 1].id);
+      if (event.key === "Escape") { event.preventDefault(); setPlaying(false); return; }
+      if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || !playbackPage) return;
+      // Let focused buttons retain their native Enter/Space activation.
+      if ((event.key === " " || event.key === "Enter") && event.target instanceof HTMLElement && event.target.closest("button")) return;
+      const next = presentationKeyTarget(list, playbackPage.id, event.key);
+      if (next) { event.preventDefault(); setCurrent(next.id); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [playing, playbackPage, playable]);
+  }, [playing, playbackPage, list]);
 
   if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
   if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
@@ -246,10 +257,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
 
   if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={() => setPlaying(false)} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
   if (playing && playbackPage && playbackDraft) return (
-    <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10" data-slides-playing>
+    <div ref={playbackRef} tabIndex={-1} aria-label="幻灯片放映" className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-[#1f2329] p-4 outline-none sm:p-10" data-slides-playing>
       <div className="relative aspect-video w-full max-w-[1280px] shrink-0 overflow-hidden bg-white px-[6%] py-[5%]" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))", backgroundColor: playbackDraft.content.background || "#fff", containerType: "inline-size" }}>
-        <h1 className="px-2 py-1 text-[clamp(18px,3vw,44px)] font-semibold leading-tight text-[#1f2329]">{playbackDraft.content.title}</h1>
-        <div className="mt-[4%] whitespace-pre-wrap px-2 py-1 text-[clamp(13px,1.8vw,26px)] leading-relaxed text-[#1f2329]">{playbackDraft.content.body}</div>
+        <h1 className="font-semibold leading-tight text-[#1f2329]" style={{ fontSize: "3.75cqw", padding: "0.4167cqw 0.8333cqw" }}>{playbackDraft.content.title}</h1>
+        <div className="mt-[4%] whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]" style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{playbackDraft.content.body}</div>
         <SlideShapes shapes={playbackDraft.content.shapes} editable={false} selected={null}/>
       </div>
       <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={() => setPlaying(false)}>退出放映</button></div>
@@ -318,13 +329,13 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     return true;
   };
   backgroundHistoryAction.current = tryBackgroundHistory;
-  const startPresentation = async () => {
+  const startPresentation = async (fromBeginning = false) => {
     if (playbackCheck.current || visibilityUnknown || backgroundBatchUnknown || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
     playbackCheck.current = true; setCheckingPlayback(true); setOperationError("");
     try {
       const result = await pages.refetch();
       if (result.isError || !result.data) { setOperationError("无法确认最新页面状态，请联网后重试放映。"); return; }
-      const start = presentationStart(result.data, activePageRef.current);
+      const start = presentationStart(result.data, fromBeginning ? null : activePageRef.current);
       if (!start) { setOperationError("没有可放映的幻灯片。"); return; }
       setCurrent(start.id); setPlaying(true);
     } finally { playbackCheck.current = false; setCheckingPlayback(false); }
@@ -404,7 +415,11 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <button type="button" aria-label="创建整份幻灯片副本" title={backgroundBatchUnknown ? "请先重新打开并核对背景" : queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={backgroundBatchUnknown || copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
-          <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title={visibilityUnknown || backgroundBatchUnknown ? "请重新打开并核对页面状态" : !playable.length ? "没有可放映的幻灯片" : "演示"} onClick={() => void startPresentation()} className="flex h-8 items-center gap-1 rounded-md border border-[#3370ff] bg-white px-3 text-[13px] text-[#3370ff] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>
+          <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">
+            <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-3 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>
+            <button type="button" aria-label="演示选项" aria-haspopup="menu" aria-expanded={playMenu} disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} onClick={() => setPlayMenu((open) => !open)} className="grid w-7 place-items-center rounded-r-md border-l border-[#3370ff] bg-white hover:bg-[#f5f6f7] disabled:opacity-40"><ChevronDown size={14}/></button>
+            {playMenu && <div role="menu" aria-label="演示选项" className="absolute right-0 top-10 z-[70] w-40 rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-lg"><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Play size={14}/>从当前开始</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>从头开始</button></div>}
+          </div>
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

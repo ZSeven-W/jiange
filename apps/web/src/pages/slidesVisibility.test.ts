@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlidesPage } from "@/lib/api";
-import { playableSlides, presentationStart } from "./slidesVisibility";
+import { playableSlides, presentationStart, presentationKeyTarget } from "./slidesVisibility";
 
 const page = (id: number, hidden: boolean): SlidesPage => ({ id, slidesId: 1, pos: id, title: "", body: "", background: "", notes: "", shapes: [], hidden, revision: 1, updatedAt: "" });
 
@@ -16,5 +16,19 @@ describe("presentation visibility", () => {
     expect(presentationStart([page(1, false), page(2, true)], 2)?.id).toBe(1);
     expect(presentationStart([page(1, true)], 1)).toBeNull();
     expect(presentationStart([], null)).toBeNull();
+  });
+});
+
+describe("presentation keyboard navigation", () => {
+  const pages = [page(1, false), page(2, true), page(3, false), page(4, false)];
+  it("skips hidden pages and respects the ends of the deck", () => {
+    expect(presentationKeyTarget(pages, 1, " ")?.id).toBe(3);
+    expect(presentationKeyTarget(pages, 3, "PageUp")?.id).toBe(1);
+    expect(presentationKeyTarget(pages, 3, "Home")?.id).toBe(1);
+    expect(presentationKeyTarget(pages, 1, "End")?.id).toBe(4);
+    expect(presentationKeyTarget(pages, 4, "PageDown")?.id).toBe(4);
+    expect(presentationKeyTarget(pages, 1, "ArrowLeft")?.id).toBe(1);
+    expect(presentationKeyTarget(pages, 2, "Enter")).toBeNull();
+    expect(presentationKeyTarget(pages, 1, "a")).toBeNull();
   });
 });
