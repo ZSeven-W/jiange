@@ -238,6 +238,24 @@ func (m *Memory) DeleteSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 	return nil
 }
 
+// DeleteSlidesPageVersion prevents a stale confirmation from deleting a newer edit.
+func (m *Memory) DeleteSlidesPageVersion(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.slidesAccessLocked(ctx, g, slidesID, false); err != nil {
+		return err
+	}
+	index, page := m.findSlidesPageLocked(pageID)
+	if page == nil || page.SlidesID != slidesID {
+		return ErrNotFound
+	}
+	if expectedRevision < 1 || page.Revision != expectedRevision {
+		return ErrConflict
+	}
+	m.slides = append(m.slides[:index], m.slides[index+1:]...)
+	return nil
+}
+
 func (m *Memory) MoveSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, pos float64) error {
 	if pos < 0 || !isFinitePos(pos) {
 		return ErrConflict

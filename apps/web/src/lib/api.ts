@@ -471,7 +471,7 @@ export const slidesApi = {
   changeBackgrounds: (deckId: number, userId: number, changes: { id: number; revision: number; background: string }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-changes`, { changes }, undefined, { "X-Jiange-User-Id": String(userId) }),
   update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
     request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
-  remove: (pid: number) => request<void>("DELETE", `/api/slides/pages/${pid}`),
+  removeVersion: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<{ deletedId: number; slidesId: number; revision: number }>("POST", `/api/slides/${deckId}/pages/${pageId}/delete`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
     const data = new FormData(); data.append("file", file);

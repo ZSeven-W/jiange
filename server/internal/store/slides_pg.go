@@ -295,6 +295,42 @@ func (p *Postgres) DeleteSlidesPage(ctx context.Context, g RestoreGuard, pageID 
 	})
 }
 
+// DeleteSlidesPageVersion checks the page version under the same transaction
+// that revalidates access and removes it.
+func (p *Postgres) DeleteSlidesPageVersion(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) error {
+	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var revision int64
+		err := tx.QueryRow(ctx, `SELECT revision FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).Scan(&revision)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		expiry, err := drivePGSession(ctx, tx, g)
+		if err != nil {
+			return err
+		}
+		role, _, kind, err := lockCopySource(ctx, tx, slidesID, g.UserID)
+		if err != nil {
+			return err
+		}
+		if kind != "slides" {
+			return ErrNotFound
+		}
+		if RoleRank(role) < RoleRank(RoleEdit) {
+			return ErrForbidden
+		}
+		if expectedRevision < 1 || revision != expectedRevision {
+			return ErrConflict
+		}
+		if _, err = tx.Exec(ctx, `DELETE FROM slides_pages WHERE id=$1 AND slides_id=$2`, pageID, slidesID); err != nil {
+			return err
+		}
+		return drivePGEnd(ctx, g, expiry)
+	})
+}
+
 func (p *Postgres) MoveSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, pos float64) error {
 	if !(pos >= 0 && pos < 1e308) {
 		return ErrConflict

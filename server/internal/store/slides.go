@@ -37,6 +37,8 @@ type SlidesStore interface {
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
 	SetSlidesPageHidden(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64, hidden bool) (SlidesPage, error)
 	DeleteSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64) error
+	// Delete only the specified version from the expected deck.
+	DeleteSlidesPageVersion(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) error
 	// MoveSlidesPage repositions a page (pos ordering; the client sends the
 	// midpoint between neighbours).
 	MoveSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, pos float64) error
