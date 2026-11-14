@@ -709,6 +709,7 @@ export const en: Record<string, string> = {
   "输入格式无效，未保存；请复制后修改。": "Invalid format; not saved. Copy it and fix.",
   "输入评论，@ 提及成员，Enter 发送": "Write a comment, @ mention members, Enter to send",
   "返回主页": "Back to home",
+  "已选择 {n} 个单元格": "{n} cells selected",
   "无法在此打开该文件": "This file cannot be opened here",
   "此链接指向其他类型的文件，请使用对应入口打开。": "This link points to another file type. Open it in its appropriate editor.",
   "当前版本暂不支持此文件类型，或无法确认文件类型。": "This version does not support the file type, or its type could not be verified.",

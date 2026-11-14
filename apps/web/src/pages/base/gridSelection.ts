@@ -26,6 +26,29 @@ export function validGridSelection(selection: GridSelection | null, records: rea
     [selection.af, selection.rf].every((index) => Number.isInteger(index) && index >= 0 && index < fields.length);
 }
 
+/** Extend the original anchor only if the dataset is still the one at drag start. */
+export function extendGridSelection(start: GridSelection, row: number, field: number, records: readonly BaseRecord[], fields: readonly Field[]): GridSelection | null {
+  if (!validGridSelection(start, records, fields)) return null;
+  return captureGridSelection({ ar: start.ar, af: start.af, rr: row, rf: field }, records, fields);
+}
+
+export function selectionCellCount(selection: GridSelection): number {
+  return (Math.abs(selection.rr - selection.ar) + 1) * (Math.abs(selection.rf - selection.af) + 1);
+}
+
+/** Paint the rectangle's perimeter without changing table column dimensions. */
+export function selectionOutline(selection: GridSelection, row: number, field: number): string | undefined {
+  const top = Math.min(selection.ar, selection.rr), bottom = Math.max(selection.ar, selection.rr);
+  const left = Math.min(selection.af, selection.rf), right = Math.max(selection.af, selection.rf);
+  if (row < top || row > bottom || field < left || field > right) return undefined;
+  const shadows: string[] = [];
+  if (row === top) shadows.push("inset 0 2px #3370ff");
+  if (row === bottom) shadows.push("inset 0 -2px #3370ff");
+  if (field === left) shadows.push("inset 2px 0 #3370ff");
+  if (field === right) shadows.push("inset -2px 0 #3370ff");
+  return shadows.length ? shadows.join(", ") : undefined;
+}
+
 /** An in-flight batch already captured its IDs; ordering can change safely. */
 export function batchTargetsAuthorized(recordIds: readonly number[], fieldIds: readonly number[], records: readonly BaseRecord[], fields: readonly Field[]): boolean {
   const visibleRecords = new Set(records.map((record) => record.id));

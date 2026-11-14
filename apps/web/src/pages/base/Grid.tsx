@@ -13,7 +13,7 @@ import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
 import { ChevronRight, Expand, Lock, Pencil, Trash2, X } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
-import { captureGridSelection, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
+import { captureGridSelection, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
 import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
 
@@ -102,6 +102,14 @@ export function Grid({
   const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
   const [dragError, setDragError] = useState<string | null>(null);
   const [sel, setSel] = useState<GridSelection | null>(null);
+  const dragSelection = useRef<GridSelection | null>(null);
+  useEffect(() => {
+    const end = () => { dragSelection.current = null; };
+    window.addEventListener("mouseup", end);
+    window.addEventListener("blur", end);
+    return () => { window.removeEventListener("mouseup", end); window.removeEventListener("blur", end); };
+  }, []);
+  useEffect(() => { if (!detailAccessReady || !selectionAccessReady || groupBy) dragSelection.current = null; }, [detailAccessReady, selectionAccessReady, groupBy]);
   const [detailId, setDetailId] = useState<number | null>(null);
   const detail = authorizedDetailRecord(detailId, authorizedRecords ?? records, detailAccessReady);
   const detailIndex = detailId === null ? -1 : records.findIndex((r) => r.id === detailId);
@@ -646,7 +654,7 @@ export function Grid({
                   <Fragment key={f.id}>
                   {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
                   <td
-                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !selected && !editing ? { background: fill } : {}) }}
+                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !selected && !editing ? { background: fill } : {}), ...(selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
                     className={cn(
                       "relative border px-2.5",
                       tall && "align-top",
@@ -657,12 +665,24 @@ export function Grid({
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
                     )}
-                    onClick={(e) => {
-                      if (editing) return;
+                    onMouseDown={(e) => {
+                      if (editing || e.button !== 0 || (e.target instanceof Element && e.target.closest("button, a, input, select, textarea, [contenteditable=true]"))) return;
+                      e.preventDefault();
                       setEdit(null);
                       const active = readSelection();
-                      setSelection(e.shiftKey && active ? { ar: active.ar, af: active.af, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j });
+                      const rect = e.shiftKey && active ? { ar: active.ar, af: active.af, rr: i, rf: j } : { ar: i, af: j, rr: i, rf: j };
+                      const next = captureGridSelection(rect, records, fields);
+                      setSel(next);
+                      // Grouped rows can appear more than once or in a different
+                      // order; numeric rectangles cannot safely represent them.
+                      dragSelection.current = !groupField && detailAccessReady && selectionAccessReady ? next : null;
                       gridRef.current?.focus();
+                    }}
+                    onMouseEnter={(e) => {
+                      const start = dragSelection.current;
+                      if (!start || !(e.buttons & 1) || !detailAccessReady || !selectionAccessReady || groupField) { dragSelection.current = null; return; }
+                      const next = extendGridSelection(start, i, j, records, fields);
+                      if (next) setSel(next); else dragSelection.current = null;
                     }}
                     onDoubleClick={() => startEdit(i, j)}
                     data-cell={`${rec.id}:${f.id}`}
@@ -905,7 +925,7 @@ export function Grid({
                 {wi === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
                 <td className={cn("border-x-0 border-b-0 border-t px-2.5", isFrozen(colOf(wi)) && "sticky z-10 bg-surface")} style={{ width: width(f), ...(isFrozen(colOf(wi)) ? { left: stickyLeft(colOf(wi)) } : {}) }}>
                   <div className={cn("flex items-center gap-1", f.isPrimary && "justify-end")}>
-                    {f.isPrimary && !fn && <span data-record-count>{t("{n} 条记录", { n: records.length })}</span>}
+                    {f.isPrimary && !fn && <span data-record-count>{selection && selectionCellCount(selection) > 1 && selectionAccessReady ? t("已选择 {n} 个单元格", { n: selectionCellCount(selection) }) : t("{n} 条记录", { n: records.length })}</span>}
                     <select
                       value={fn}
                       onChange={(e) => saveStat(f.id, e.target.value)}

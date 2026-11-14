@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BaseRecord, Field } from "@/lib/api";
-import { batchTargetsAuthorized, captureGridSelection, validGridSelection, waitForBatchTargets, type BatchAccess } from "./gridSelection";
+import { batchTargetsAuthorized, captureGridSelection, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type BatchAccess } from "./gridSelection";
 
 const records: BaseRecord[] = [1, 2, 3].map((id) => ({ id, baseId: 1, position: id, cells: { 1: `行${id}` } }));
 const fields: Field[] = [1, 2, 3].map((id) => ({ id, name: `字段${id}`, type: "text", position: id }));
 
 describe("grid selection identity", () => {
+  it("extends a drag in either direction but rejects changed rows or fields", () => {
+    const start = captureGridSelection({ ar: 2, af: 2, rr: 2, rf: 2 }, records, fields)!;
+    const extended = extendGridSelection(start, 0, 1, records, fields)!;
+    expect([extended.ar, extended.af, extended.rr, extended.rf]).toEqual([2, 2, 0, 1]);
+    expect(selectionCellCount(extended)).toBe(6);
+    expect(selectionOutline(extended, 0, 1)).toBe("inset 0 2px #3370ff, inset 2px 0 #3370ff");
+    expect(selectionOutline(extended, 1, 2)).toBe("inset -2px 0 #3370ff");
+    expect(selectionOutline(extended, 0, 0)).toBeUndefined();
+    expect(extendGridSelection(start, 0, 1, [records[1], records[0], records[2]], fields)).toBeNull();
+    expect(extendGridSelection(start, 0, 1, records, fields.slice(1))).toBeNull();
+    expect(extendGridSelection(start, -1, 1, records, fields)).toBeNull();
+  });
   it("retains a rectangle only while the visible record and field order is unchanged", () => {
     const selection = captureGridSelection({ ar: 0, af: 0, rr: 1, rf: 1 }, records, fields)!;
     expect(validGridSelection(selection, records.map((r) => ({ ...r, cells: { 1: "新值" } })), [...fields])).toBe(true);
