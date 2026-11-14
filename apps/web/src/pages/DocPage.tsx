@@ -65,7 +65,9 @@ import { createVisitRecorder } from "@/lib/recentVisit";
 import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from "./docMetaState";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
-import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { DocumentMoveDialog } from "./DocumentMoveDialog";
+import { useI18n } from "@/lib/i18n";
+import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -916,6 +918,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     <div className="flex min-w-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col">
         <TopBar
+          userId={me.user.id}
           sidebarDocked={sidebarDocked}
           onGlobalSearch={onGlobalSearch}
           ancestors={ancestors.data ?? []}
@@ -1158,6 +1161,7 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
 };
 
 function TopBar({
+  userId,
   sidebarDocked,
   onGlobalSearch,
   ancestors,
@@ -1193,6 +1197,7 @@ function TopBar({
   allowDocumentPrint,
   metadataVerified,
 }: {
+  userId: number;
   sidebarDocked: boolean;
   onGlobalSearch?: () => void;
   ancestors: import("@/lib/api").DocMeta[];
@@ -1253,7 +1258,7 @@ function TopBar({
         {ancestors.map((a, i) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
             <span className={cn("text-subtle", i === 0 && "hidden sm:inline")}>/</span>
-            <a href={a.kind === "base" ? `#/base/${a.id}` : `#/doc/${a.id}`} className="truncate text-muted-foreground hover:text-foreground">
+            <a href={hrefOf(a)} className="truncate text-muted-foreground hover:text-foreground">
               {docTitle(a)}
             </a>
           </span>
@@ -1271,7 +1276,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1342,7 +1347,32 @@ function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) 
   return <button className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover" onClick={() => { (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] })); onDone(); }}><Star size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground" />{starred ? "取消收藏" : "添加到收藏"}</button>;
 }
 
+function PinMenuItem({ docId, userId, onDone }: { docId: number; userId: number; onDone: () => void }) {
+  const { t } = useI18n();
+  const qc = useQueryClient();
+  const pins = useQuery({ queryKey: ["pins"], queryFn: extrasApi.pins, refetchOnMount: "always", retry: false });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const locked = useRef(false), live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const pinned = !!pins.data?.some((item) => item.id === docId);
+  const toggle = async () => {
+    if (!pins.isSuccess || pins.isFetching || locked.current) return;
+    locked.current = true; setPending(true); setError("");
+    try {
+      await extrasApi.pinForAccount(docId, userId, !pinned);
+      await qc.invalidateQueries({ queryKey: ["pins"] });
+      if (live.current) onDone();
+    } catch {
+      void qc.invalidateQueries({ queryKey: ["pins"] });
+      if (live.current) setError(t("置顶状态未能确认，请重新检查后再试。"));
+    } finally { locked.current = false; if (live.current) setPending(false); }
+  };
+  return <div><button type="button" disabled={pending || pins.isPending || pins.isFetching || pins.isError || !!error} onClick={() => void toggle()} className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover disabled:opacity-50"><Pin size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground"/>{t(pinned ? "从“置顶”移除" : "添加到“置顶”")}</button>{(pins.isError || error) && <p role="alert" className="px-3 pb-2 text-[12px] text-destructive">{error || t("无法读取置顶状态。")} <button type="button" className="underline" onClick={() => { setError(""); void pins.refetch(); }}>{t("重新检查")}</button></p>}</div>;
+}
+
 function DocMenu({
+  userId,
   meta,
   onHistory,
   onPresentation,
@@ -1360,6 +1390,7 @@ function DocMenu({
   onAI,
   onSaveTemplate,
 }: {
+  userId: number;
   meta?: DocMeta;
   onHistory?: () => void;
   onPresentation?: () => void;
@@ -1378,8 +1409,11 @@ function DocMenu({
   onFind: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
+  const [moveOpen, setMoveOpen] = useState(false);
   const [sub, setSub] = useState<"download" | "width" | null>(null);
   const menuRoot = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => { if (!menuRoot.current?.contains(event.target as Node)) { setOpen(false); setSub(null); } };
@@ -1407,14 +1441,6 @@ function DocMenu({
     qc.invalidateQueries({ queryKey: ["drive"] });
     qc.invalidateQueries({ queryKey: ["trash"] });
     location.hash = "#/";
-  };
-  const toRoot = async () => {
-    if (!meta) return;
-    // 版本化云盘移动：folder 子树会被 fence 拒绝旧式语句
-    await driveApi.move(meta.id, null, meta.driveRevision ?? 0);
-    qc.invalidateQueries({ queryKey: ["docs"] });
-    qc.invalidateQueries({ queryKey: ["drive"] });
-    setOpen(false);
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
   const row = "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover";
@@ -1444,7 +1470,7 @@ function DocMenu({
   };
   return (
     <div className="relative" ref={menuRoot}>
-      <button className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" aria-label="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => { setOpen((o) => !o); setSub(null); }} data-more-menu>
+      <button ref={menuTrigger} className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" aria-label="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => { setOpen((o) => !o); setSub(null); }} data-more-menu>
         <MoreIcon className="size-4" />
       </button>
       {copyPending && <span role="status" className="absolute right-0 top-9 z-40 whitespace-nowrap rounded-md border bg-surface px-3 py-2 text-[13px] text-muted-foreground shadow-lg">正在创建副本…</span>}
@@ -1471,8 +1497,9 @@ function DocMenu({
             <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />评论</button>
           </div>
           {meta && <div className={group}>
+            {meta.role === "manage" && <button className={row} onClick={() => { close(); setMoveOpen(true); }}><FolderInput size={15} className={icon} />{t("移动到")}</button>}
+            <PinMenuItem docId={meta.id} userId={userId} onDone={() => { close(); requestAnimationFrame(() => menuTrigger.current?.focus()); }} />
             {meta && <StarMenuItem docId={meta.id} onDone={close} />}
-            {meta?.role === "manage" && meta.parentId && <button className={row} onClick={toRoot}><FolderInput size={15} className={icon} />移到顶层</button>}
           </div>}
           <div className={group}>
             {onSaveTemplate && <button className={row} onClick={() => { close(); onSaveTemplate(); }} data-save-template><LayoutTemplate size={15} className={icon} />保存为模板</button>}
@@ -1511,6 +1538,7 @@ function DocMenu({
           </div>}
         </div>
       )}
+      {moveOpen && meta?.role === "manage" && <DocumentMoveDialog docId={meta.id} userId={userId} onClose={() => { setMoveOpen(false); requestAnimationFrame(() => menuTrigger.current?.focus()); }} onMoved={() => { setMoveOpen(false); requestAnimationFrame(() => menuTrigger.current?.focus()); }} />}
     </div>
   );
 }

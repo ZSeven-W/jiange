@@ -414,10 +414,18 @@ export const driveApi = {
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
   createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number) =>
     request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared" }, undefined, { "X-Jiange-User-Id": String(userId) }),
-  children: (parentId: number | null = null, personal = false) =>
-    request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${parentId ? `?parent=${parentId}` : ""}${personal ? `${parentId ? "&" : "?"}scope=personal` : ""}`).then((r) => r.entries),
+  children: (parentId: number | null = null, personal = false, workspaceId?: number) => {
+    const params = new URLSearchParams();
+    if (parentId !== null) params.set("parent", String(parentId));
+    if (personal) params.set("scope", "personal");
+    if (workspaceId !== undefined) params.set("workspaceId", String(workspaceId));
+    const query = params.toString();
+    return request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${query ? `?${query}` : ""}`).then((r) => r.entries);
+  },
   move: (id: number, parentId: number | null, expected: number) =>
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
+  moveForAccount: (id: number, parentId: number | null, expected: number, userId: number) =>
+    request<void>("POST", `/api/drive/account-move/${id}`, { parentId, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   rename: (id: number, title: string, expected: number) =>
     request<DriveEntry>("POST", `/api/drive/rename/${id}`, { title, expected }),
   ancestors: (id: number) =>
@@ -470,6 +478,7 @@ export const extrasApi = {
   pins: () => request<{ docs: DocMeta[] }>("GET", "/api/pins").then((r) => r.docs),
   pin: (id: number) => request<void>("PUT", `/api/docs/${id}/pin`),
   unpin: (id: number) => request<void>("DELETE", `/api/docs/${id}/pin`),
+  pinForAccount: (id: number, userId: number, pinned: boolean) => request<void>(pinned ? "PUT" : "DELETE", `/api/docs/${id}/account-pin`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   ancestors: (id: number) => request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
 };
 export const docsApi = {
