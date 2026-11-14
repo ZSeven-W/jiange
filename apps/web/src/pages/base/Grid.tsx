@@ -747,7 +747,7 @@ export function Grid({
       <table
         className="border-collapse table-fixed text-[14px]"
         data-grid
-        style={{ width: 56 + totalW + (canEdit ? 44 : 0) }}
+        style={{ width: 56 + totalW + (canEdit ? 44 : 0), height: "100%" }}
       >
         <thead>
           <tr className="h-9 bg-surface text-left text-[13px] text-foreground">
@@ -888,6 +888,9 @@ export function Grid({
               </td>
             </tr>
           )}
+          {/* The flexible spacer keeps the summary at the viewport bottom
+              without stretching data rows when the grid contains few records. */}
+          <tr aria-hidden="true" data-grid-bottom-spacer style={{ height: "100%" }}><td colSpan={1 + winFields.length + (leadW > 0 ? 1 : 0) + (tailW > 0 ? 1 : 0) + (canEdit ? 1 : 0)} className="border-0 p-0" /></tr>
         </tbody>
         <tfoot>
           <tr className="group/stats sticky bottom-0 z-10 h-8 bg-surface text-[12px] text-muted-foreground" data-stats-row>

@@ -5,6 +5,17 @@ import type { BaseRecord, Field } from "@/lib/api";
 import { Grid } from "./Grid";
 
 describe("virtualized row sizing", () => {
+  it("keeps the footer separate from real rows in editable and read-only grids", () => {
+    const fields: Field[] = [{ id: 1, name: "任务", type: "text", position: 1, isPrimary: true }];
+    const records: BaseRecord[] = [{ id: 7, baseId: 1, position: 1, cells: { 1: "首条" } }];
+    for (const canEdit of [true, false]) {
+      const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} canEdit={canEdit} fields={fields} records={records} members={[]} onMutate={() => {}} /></QueryClientProvider>);
+      expect(html).toMatch(/<tr aria-hidden="true" data-grid-bottom-spacer="true"/);
+      expect(html).toContain("首条");
+      expect(html).toContain("1 条记录");
+      expect(html.includes('aria-label="新增一行"')).toBe(canEdit);
+    }
+  });
   it("marks the primary field independently of the visible field index", () => {
     const fields: Field[] = [
       { id: 2, name: "主标题", type: "text", position: 2, isPrimary: true },
