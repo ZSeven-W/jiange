@@ -12,10 +12,12 @@ describe("slide drafts", () => {
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
     q.edit(source, { layout: "title" }); await tick();
     expect(q.get(source).content).toMatchObject({ layout: "title", title: "标题", body: "保留正文", notes: "备注" });
+    q.edit(source, { layout: "blank-title" }); await tick();
+    expect(q.get(source).content).toMatchObject({ layout: "blank-title", title: "标题", body: "保留正文", notes: "备注" });
     q.undo(source); await tick();
-    expect(q.get(source).content).toMatchObject({ layout: "", title: "标题", body: "保留正文", notes: "备注" });
+    expect(q.get(source).content).toMatchObject({ layout: "title", title: "标题", body: "保留正文", notes: "备注" });
     q.redo(source); await tick();
-    expect(q.get(source).content.layout).toBe("title");
+    expect(q.get(source).content.layout).toBe("blank-title");
   });
   it("adopts a confirmed background batch and permits undo for each changed page", async () => {
     const second = { ...page, id: 2, pos: 2, title: "第二页" };

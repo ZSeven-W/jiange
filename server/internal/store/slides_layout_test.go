@@ -33,6 +33,10 @@ func exerciseSlidesLayout(t *testing.T, st store.Store) {
 	if err != nil || changed.Layout != "title" || changed.Body != "Keep body" {
 		t.Fatalf("change: %+v %v", changed, err)
 	}
+	changed, err = st.UpdateSlidesPageV3(ctx, guard, deck.ID, original.ID, changed.Title, changed.Body, changed.Background, "blank-title", nil, nil, changed.Revision)
+	if err != nil || changed.Layout != "blank-title" || changed.Body != "Keep body" {
+		t.Fatalf("blank layout: %+v %v", changed, err)
+	}
 	if _, err = st.UpdateSlidesPage(ctx, guard, original.ID, "old client", "", "", nil, nil, changed.Revision); !errors.Is(err, store.ErrSlideClientOutdated) {
 		t.Fatalf("old client: %v", err)
 	}
@@ -40,15 +44,19 @@ func exerciseSlidesLayout(t *testing.T, st store.Store) {
 		t.Fatalf("stale: %v", err)
 	}
 	copied, err := st.DuplicateSlidesPage(ctx, guard, deck.ID, original.ID, changed.Revision)
-	if err != nil || copied.Layout != "title" || copied.Body != changed.Body {
+	if err != nil || copied.Layout != "blank-title" || copied.Body != changed.Body {
 		t.Fatalf("copy: %+v %v", copied, err)
 	}
 	blank, err := st.InsertSlidesPage(ctx, guard, deck.ID, original.ID, changed.Revision)
 	if err != nil || blank.Layout != "" {
 		t.Fatalf("insert: %+v %v", blank, err)
 	}
+	blank, err = st.UpdateSlidesPageV3(ctx, guard, deck.ID, blank.ID, "", "", "", "blank", nil, nil, blank.Revision)
+	if err != nil || blank.Layout != "blank" {
+		t.Fatalf("empty blank layout: %+v %v", blank, err)
+	}
 	_, cloned, err := st.CopySlidesDeck(ctx, store.SlidesDeckCopy{SourceID: deck.ID, UserID: user.ID, WorkspaceID: ws.ID, Title: "Copy", Guard: &guard})
-	if err != nil || len(cloned) != 3 || cloned[0].Layout != "title" {
+	if err != nil || len(cloned) != 3 || cloned[0].Layout != "blank-title" || cloned[1].Layout != "blank" {
 		t.Fatalf("deck copy: %+v %v", cloned, err)
 	}
 	restored, err := st.UpdateSlidesPageV3(ctx, guard, deck.ID, original.ID, changed.Title, changed.Body, changed.Background, "", nil, nil, changed.Revision)

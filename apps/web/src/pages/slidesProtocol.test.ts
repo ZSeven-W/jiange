@@ -12,6 +12,13 @@ describe("slides visibility protocol", () => {
     await expect(slidesApi.pages(7, 3)).rejects.toMatchObject({ status: 426 });
   });
 
+  it("rejects unknown layouts and accepts the blank variants", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ presentationProtocol: 3, pages: [{ id: 1, hidden: false, layout: "future" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ presentationProtocol: 3, pages: [{ id: 1, hidden: false, layout: "blank-title" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(slidesApi.pages(7, 3)).rejects.toMatchObject({ status: 426 });
+    expect(await slidesApi.pages(7, 3)).toEqual([{ id: 1, hidden: false, layout: "blank-title" }]);
+  });
   it("binds a supported read to the initiating account", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ presentationProtocol: 3, pages: [{ id: 4, hidden: true, layout: "" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetch);

@@ -13,7 +13,9 @@ import (
 // content follows the table sub-CRDT integration path.
 var ErrSlideClientOutdated = errors.New("store: slide client does not support layout")
 
-func ValidSlideLayout(layout string) bool { return layout == "" || layout == "title" }
+func ValidSlideLayout(layout string) bool {
+	return layout == "" || layout == "title" || layout == "blank" || layout == "blank-title"
+}
 
 type SlidesPage struct {
 	ID         int64           `json:"id"`

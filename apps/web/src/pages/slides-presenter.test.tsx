@@ -21,6 +21,13 @@ describe("presentation surfaces", () => {
     expect(html).toContain("5.625cqw");
     expect(html).toContain("公开正文");
   });
+  it("retains the title and body on the blank layout with the original large text geometry", () => {
+    const html = renderToStaticMarkup(<SlideSurface content={{ ...page, layout: "blank-title" }}/>);
+    expect(html).toContain("text-left");
+    expect(html).toContain("5.625cqw");
+    expect(html).toContain("公开标题");
+    expect(html).toContain("公开正文");
+  });
   it("formats elapsed time across minute and hour boundaries", () => {
     expect(formatPresentationTime(0)).toBe("00:00:00");
     expect(formatPresentationTime(3661)).toBe("01:01:01");

@@ -444,7 +444,7 @@ export const driveApi = {
 };
 
 export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
-export type SlideLayout = "" | "title";
+export type SlideLayout = "" | "title" | "blank" | "blank-title";
 export interface SlidesPage {
   id: number;
   slidesId: number;
@@ -462,7 +462,7 @@ export interface SlidesPage {
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "3", "X-Jiange-User-Id": String(userId) }).then((r) => {
-    if (r?.presentationProtocol !== 3 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean" || (page.layout !== "" && page.layout !== "title"))) throw new ApiError(426, "slide_server_outdated", "服务端不支持当前幻灯片布局，请升级后重试。");
+    if (r?.presentationProtocol !== 3 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean" || (page.layout !== "" && page.layout !== "title" && page.layout !== "blank" && page.layout !== "blank-title"))) throw new ApiError(426, "slide_server_outdated", "服务端不支持当前幻灯片布局，请升级后重试。");
     return r.pages;
   }),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),

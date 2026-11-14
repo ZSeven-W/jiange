@@ -82,4 +82,11 @@ func TestSlidesLayoutProtocol(t *testing.T) {
 	if status, payload := call("GET", list, account, "3", ""); status != 200 || payload["presentationProtocol"] != float64(3) {
 		t.Fatalf("v3 read %d %+v", status, payload)
 	}
+	blank := `{"title":"Title","body":"Keep body","background":"","layout":"blank-title","notes":"note","shapes":[],"expectedRevision":2}`
+	if status, payload := call("PATCH", path, account, "", blank); status != 200 || payload["layout"] != "blank-title" || payload["body"] != "Keep body" {
+		t.Fatalf("blank update %d %+v", status, payload)
+	}
+	if status, _ := call("GET", list, account, "2", ""); status != 426 {
+		t.Fatalf("old read blank %d", status)
+	}
 }

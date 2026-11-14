@@ -3,14 +3,15 @@ import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, X } from "lucide-rea
 import type { SlidesPage } from "@/lib/api";
 import type { SlideContent } from "./slidesDraft";
 import { SlideShapes } from "./slides-shapes";
+import { hasLargeSlideTitle } from "./slides-layout";
 
 type VisibleSlide = Pick<SlideContent, "title" | "body" | "background" | "layout" | "shapes">;
 
 /** Audience rendering deliberately has no access to the speaker's notes. */
 export function SlideSurface({ content }: { content: VisibleSlide }) {
   return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: content.background || "#fff", containerType: "inline-size" }}>
-    <h1 className={content.layout === "title" ? "absolute left-[9.5%] top-[41.3%] w-[81%] overflow-hidden text-ellipsis whitespace-nowrap text-center font-semibold leading-tight text-[#1f2329]" : "overflow-hidden text-ellipsis whitespace-nowrap font-semibold leading-tight text-[#1f2329]"} style={{ fontSize: content.layout === "title" ? "5.625cqw" : "3.75cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.title}</h1>
-    <div className={content.layout === "title" ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%] overflow-hidden whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]" : "mt-[4%] whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]"} style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.body}</div>
+    <h1 aria-hidden={!content.title} className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[41.3%] w-[81%] overflow-hidden text-ellipsis whitespace-nowrap ${content.layout === "title" ? "text-center" : "text-left"} font-semibold leading-tight text-[#1f2329]` : "overflow-hidden text-ellipsis whitespace-nowrap font-semibold leading-tight text-[#1f2329]"} style={{ fontSize: hasLargeSlideTitle(content.layout) ? "5.625cqw" : "3.75cqw", minHeight: hasLargeSlideTitle(content.layout) ? undefined : "5.729cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.title}</h1>
+    <div className={hasLargeSlideTitle(content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%] overflow-hidden whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]" : "mt-[4%] whitespace-pre-wrap break-words leading-relaxed text-[#1f2329]"} style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.body}</div>
     <SlideShapes shapes={content.shapes} editable={false} selected={null}/>
   </div>;
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Palette, X } from "lucide-react";
 import type { SlideLayout } from "@/lib/api";
+import { blankSlideLayout, isBlankSlideLayout } from "./slides-layout";
 import { backgroundPopoverPosition, SLIDE_BACKGROUND_COLORS } from "./slides-background";
 
 export function SlideFormatPanel({ background, layout, usedColors, canEdit, busy, applying, onChange, onLayoutChange, onMore, onApplyAll, onClose }: {
@@ -36,8 +37,9 @@ export function SlideFormatPanel({ background, layout, usedColors, canEdit, busy
       </div>
       <button type="button" disabled={!canEdit || busy} onClick={onApplyAll} className="mt-4 h-8 w-full rounded-md border border-[#dee0e3] text-[12px] hover:bg-[#f2f3f5] disabled:opacity-40">{applying ? "正在应用…" : "应用到全部"}</button>
       <div className="mt-5 border-t border-[#e5e6eb] pt-4"><div className="mb-3 font-medium">布局</div><div className="mb-2 text-[12px] text-[#8f959e]">默认母版</div><div className="grid grid-cols-2 gap-2" role="group" aria-label="幻灯片布局">
-        <button type="button" disabled={!canEdit} aria-pressed={layout === ""} onClick={() => onLayoutChange("")} className="text-center disabled:opacity-40"><span className={`block aspect-video rounded-md border bg-white p-2 ${layout === "" ? "border-2 border-[#3370ff]" : "border-[#dee0e3]"}`}><span className="block h-1 w-3/4 rounded bg-[#b8bec5]"/><span className="mt-2 block h-0.5 w-1/2 rounded bg-[#dee0e3]"/><span className="mt-1 block h-0.5 w-2/3 rounded bg-[#dee0e3]"/></span><span className="mt-1 block text-[12px] text-[#646a73]">标题与正文</span></button>
+        <button type="button" disabled={!canEdit} aria-pressed={isBlankSlideLayout(layout)} onClick={() => onLayoutChange(blankSlideLayout(layout))} className="text-center disabled:opacity-40"><span className={`block aspect-video rounded-md border bg-white ${isBlankSlideLayout(layout) ? "border-2 border-[#3370ff]" : "border-[#dee0e3]"}`}/><span className="mt-1 block text-[12px] text-[#646a73]">空白</span></button>
         <button type="button" disabled={!canEdit} aria-pressed={layout === "title"} onClick={() => onLayoutChange("title")} className="text-center disabled:opacity-40"><span className={`grid aspect-video place-items-center rounded-md border bg-white ${layout === "title" ? "border-2 border-[#3370ff]" : "border-[#dee0e3]"}`}><span className="h-1.5 w-1/2 rounded bg-[#646a73]"/></span><span className="mt-1 block text-[12px] text-[#646a73]">标题</span></button>
+        <button type="button" disabled={!canEdit} aria-pressed={layout === ""} onClick={() => onLayoutChange("")} className="text-center disabled:opacity-40"><span className={`block aspect-video rounded-md border bg-white p-2 ${layout === "" ? "border-2 border-[#3370ff]" : "border-[#dee0e3]"}`}><span className="block h-1 w-3/4 rounded bg-[#b8bec5]"/><span className="mt-2 block h-0.5 w-1/2 rounded bg-[#dee0e3]"/><span className="mt-1 block h-0.5 w-2/3 rounded bg-[#dee0e3]"/></span><span className="mt-1 block text-[12px] text-[#646a73]">标题与正文</span></button>
       </div></div>
     </div>
   </aside>;
