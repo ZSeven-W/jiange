@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -125,6 +126,27 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 type commentPatch struct {
 	Body     *string `json:"body"`
 	Resolved *bool   `json:"resolved"`
+}
+
+// The distinct route fails closed on older servers and binds the action to
+// the account that opened the document; patchComment rechecks the session and
+// permissions in the store transaction.
+func (s *Server) patchCommentForAccount(w http.ResponseWriter, r *http.Request) {
+	u, ok := UserFrom(r.Context())
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "请重新登录")
+		return
+	}
+	id, err := strconv.ParseInt(r.Header.Get("X-Jiange-User-Id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "missing_account", "评论账号未确认")
+		return
+	}
+	if id != u.ID {
+		httpx.Error(w, http.StatusUnauthorized, "session_changed", "登录账号已变化，请重新打开文档")
+		return
+	}
+	s.patchComment(w, r)
 }
 
 func (s *Server) patchComment(w http.ResponseWriter, r *http.Request) {

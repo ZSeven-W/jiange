@@ -330,6 +330,7 @@ export const commentsApi = {
     return result;
   }),
   update: (id: number, cid: number, p: { body?: string; resolved?: boolean }) => request<Comment | undefined>("PATCH", `/api/docs/${id}/comments/${cid}`, p),
+  updateForAccount: (id: number, cid: number, userId: number, p: { resolved: boolean }) => request<Comment | undefined>("PATCH", `/api/docs/${id}/account-comments/${cid}`, p, undefined, { "X-Jiange-User-Id": String(userId) }),
   remove: (id: number, cid: number) => request<void>("DELETE", `/api/docs/${id}/comments/${cid}`),
   members: (id: number) => request<{ members: User[] }>("GET", `/api/docs/${id}/members`).then((r) => r.members),
 };

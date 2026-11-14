@@ -133,6 +133,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/comment-attempts":                s.addCommentAttempt,
 		"GET /api/docs/{id}/comment-attempts/{mutationId}":    s.getCommentAttempt,
 		"PATCH /api/docs/{id}/comments/{cid}":                 s.patchComment,
+		"PATCH /api/docs/{id}/account-comments/{cid}":         s.patchCommentForAccount,
 		"DELETE /api/docs/{id}/comments/{cid}":                s.deleteComment,
 		"POST /api/docs/{id}/duplicate":                       s.duplicateDoc,
 		"GET /api/docs/{id}/members":                          s.docMembers,

@@ -297,7 +297,7 @@ export function CommentsPanel({
 }
 
 /** 飞书评论卡片头部：头像 + 姓名 + 时间。 */
-function CommentAuthor({ name, userId, at, badge }: { name: string; userId: number; at: string; badge?: React.ReactNode }) {
+export function CommentAuthor({ name, userId, at, badge }: { name: string; userId: number; at: string; badge?: React.ReactNode }) {
   return <div className="flex min-w-0 items-center gap-2" data-comment-author>
     <Avatar name={name} color={colorFor(userId - 1)} size={24} />
     <span className="truncate text-[13px] font-medium text-foreground">{name}</span>
@@ -316,7 +316,7 @@ export function formatCommentTime(iso: string, now = new Date()) {
 }
 
 /** Renders a comment body with @人 highlighted. */
-function CommentBody({ c, members }: { c: Comment; members: User[] }) {
+export function CommentBody({ c, members }: { c: Comment; members: User[] }) {
   const parts = c.body.split(/(@[^\s@，。;；!！?？]+)/g).filter(Boolean);
   return (
     <p className="whitespace-pre-wrap">

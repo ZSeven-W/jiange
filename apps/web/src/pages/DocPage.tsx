@@ -45,6 +45,7 @@ import { DocumentPresentation } from "./DocumentPresentation";
 import { NamedVersionDialog } from "./NamedVersionDialog";
 import { namedVersionPoint } from "./namedVersionSafety";
 import { CommentsPanel, type CommentAnchor, type CommentRecovery } from "./CommentsPanel";
+import { HistoryCommentsPanel } from "./HistoryCommentsPanel";
 import { canWriteComments, commentListKey, commentMembersKey, CommentDraftJournal, CommentRecoveryGate, matchesCommentTarget, mayExportCommentDraftData, mayRetainCommentQuote, mergeRecoveredCommentDrafts, mustRedactCommentAttemptQuote, newCommentSession, redactCommentDraftQuote, revalidateCurrentCommentPolicy, type CommentTarget } from "./commentAccess";
 import { browserCommentDraftEnvironment, commentDraftStorageReady, CommentDraftStorage } from "./commentDraftStorage";
 import { browserCommentAttemptEnvironment, CommentAttemptStore } from "./commentAttempts";
@@ -207,6 +208,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const [versionTarget, setVersionTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setVersionTarget(null); }, [id, me.user.id, metadataVerified]);
   const [commentsTarget, setCommentsTarget] = useState<CommentTarget | null>(null);
+  const [commentHistoryTarget, setCommentHistoryTarget] = useState<CommentTarget | null>(null);
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
   const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
   useEffect(() => { setWidth(readDocWidth(me.user.id, id)); }, [me.user.id, id]);
@@ -284,6 +286,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const commentIdentity = useRef<CommentTarget>({ doc: id, user: me.user.id, session: commentSession });
   commentIdentity.current = { doc: id, user: me.user.id, session: commentSession };
   const commentsOpen = matchesCommentTarget(commentsTarget, id, me.user.id, commentSession);
+  const commentHistoryOpen = matchesCommentTarget(commentHistoryTarget, id, me.user.id, commentSession);
   const commentSuspended = matchesCommentTarget(commentDenial, id, me.user.id, commentSession);
   const comments = useQuery({ queryKey: commentListKey(id, me.user.id, commentSession), queryFn: () => commentsApi.list(id), enabled: metadataVerified && !commentSuspended, refetchInterval: 5000, refetchIntervalInBackground: false });
   const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
@@ -856,6 +859,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   };
 
   const toggleComments = () => {
+    setCommentHistoryTarget(null);
     if (commentAccessDenied) { commentRecoveryGate.current.reset(); revalidateCommentAccess(); return; }
     if (commentsOpen) freezeCommentDrafts();
     setCommentsTarget(commentsOpen ? null : { doc: id, user: me.user.id, session: commentSession });
@@ -947,6 +951,11 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           shareAnchor={shareAnchor}
           onShare={() => setSharing((v) => !v)}
           onComments={toggleComments}
+          onCommentHistory={commentsAvailable ? () => {
+            if (commentsOpen) freezeCommentDrafts();
+            setCommentsTarget(null);
+            setCommentHistoryTarget({ doc: id, user: me.user.id, session: commentSession });
+          } : undefined}
           onFind={() => openFind("replace")}
           onAI={aiAvailable ? () => setAiOpen((v) => !v) : undefined}
           aiOpen={aiOpen}
@@ -1143,6 +1152,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      {commentHistoryOpen && commentsAvailable && comments.data && <HistoryCommentsPanel key={`${id}:${me.user.id}:${commentSession}`} id={id} userId={me.user.id} session={commentSession} comments={comments.data} members={members.data ?? []} canSubmit={canSubmitComment} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setCommentHistoryTarget(null)} onAccessDenied={revalidateCommentAccess} onPolicyDenied={() => { void meta.refetch(); }} />}
       {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
       {mentionSummary && <DocumentMentionsDialog summary={mentionSummary} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => {
         const previous = document.activeElement;
@@ -1238,6 +1248,7 @@ function TopBar({
   onTitleCheck,
   onDocumentInfo,
   onMentionedPeople,
+  onCommentHistory,
   onExport,
   onImport,
   onOutline,
@@ -1272,6 +1283,7 @@ function TopBar({
   onTitleCheck: () => void;
   onDocumentInfo: () => void;
   onMentionedPeople?: () => void;
+  onCommentHistory?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
@@ -1328,7 +1340,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1432,6 +1444,7 @@ function DocMenu({
   onTitleCheck,
   onDocumentInfo,
   onMentionedPeople,
+  onCommentHistory,
   onExport,
   onImport,
   onOutline,
@@ -1451,6 +1464,7 @@ function DocMenu({
   onTitleCheck?: () => void;
   onDocumentInfo?: () => void;
   onMentionedPeople?: () => void;
+  onCommentHistory?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
@@ -1585,6 +1599,7 @@ function DocMenu({
             {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
             {onMentionedPeople && <button className={row} onClick={() => { close(); onMentionedPeople(); }} data-document-mentions><AtSign size={15} className={icon} />{t("提及的人")}</button>}
             {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}
+            {onCommentHistory && <button className={row} onClick={() => { close(); onCommentHistory(); }} data-comment-history-entry><MessageSquare size={15} className={icon} />{t("历史评论")}</button>}
             {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
             <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>
           </div>
