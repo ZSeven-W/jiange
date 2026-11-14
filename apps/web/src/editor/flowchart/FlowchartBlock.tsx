@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Brush, ChevronDown, ChevronLeft, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, flowWrites, isContainer, moveFlowSelection, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, normalizeStroke, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowStroke, type FlowTheme, type Port, type Shape } from "./model";
@@ -892,9 +892,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const barBtn = "flex h-8 items-center gap-1 rounded-md px-2 text-[13px] text-[#1F2329] hover:bg-hover disabled:opacity-30 dark:text-foreground";
   const menuItem = "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover";
   const railBtn = cn("grid size-9 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", compact && "size-9 shrink-0 max-[359px]:size-8");
-  const penSettings = <div className={cn("z-[90] w-[208px] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[13px] shadow-lg", compact ? "fixed bottom-[128px] left-3" : "absolute left-12 top-0")} role="group" aria-label="画笔设置" onPointerDown={(event) => event.stopPropagation()}>
-    <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{INK_COLORS.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={penColor === color} onClick={() => setPenColor(color)} className={cn("size-5 rounded-full border border-[#bbbfc4]", penColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
-    <label className="mt-3 flex items-center gap-2 text-subtle">画笔粗细<select aria-label="画笔粗细" value={penWidth} onChange={(event) => setPenWidth(Number(event.target.value))} className="ml-auto h-7 rounded border bg-surface px-2 text-foreground">{INK_WIDTHS.map((width) => <option key={width} value={width}>{width}</option>)}</select></label>
+  const penSettings = <div className="absolute bottom-[52px] right-0 z-[90] w-[208px] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[13px] shadow-lg" role="group" aria-label="画笔颜色" onPointerDown={(event) => event.stopPropagation()}>
+    <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{INK_COLORS.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={penColor === color} onClick={() => { setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", penColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
   </div>;
   const libraryGroups: { title: string; shapes: Shape[] }[] = [
     { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "note", "text", ...(upload ? ["image" as const] : [])] },
@@ -1153,10 +1152,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <button type="button" className={cn(railBtn, library && "bg-[#E1EAFF]")} title="图形库" onClick={() => setLibrary(!library)} data-flow-library-toggle><Shapes size={18} className="text-[#3370FF]" /></button>
       <span className={cn("bg-[#DEE0E3]", compact ? "mx-0.5 my-1 h-8 w-px shrink-0" : "mx-1 my-0.5 h-px")} />
       <button type="button" className={cn(railBtn, tool === "select" && !hand && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
-      <div className="relative"><button type="button" className={cn(railBtn, tool === "pen" && "bg-[#E1EAFF] text-primary")} title="画笔（再次点击设置颜色和粗细）" aria-label="画笔" aria-pressed={tool === "pen"} aria-expanded={tool === "pen" && menu === "pen"} onClick={() => { setMenu(tool === "pen" && menu !== "pen" ? "pen" : null); setTool("pen"); setHand(false); setSelected(new Set()); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
-        {tool === "pen" && menu === "pen" && (compact ? createPortal(penSettings, document.body) : penSettings)}
-      </div>
-      <button type="button" className={cn(railBtn, tool === "eraser" && "bg-[#E1EAFF] text-primary")} title="橡皮擦（擦除整条笔迹）" aria-label="橡皮擦" aria-pressed={tool === "eraser"} onClick={() => { setTool("eraser"); setHand(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-eraser-tool><Eraser size={18}/></button>
+      <button type="button" className={cn(railBtn, (tool === "pen" || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={tool === "pen" || tool === "eraser"} onClick={() => { setTool("pen"); setHand(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setShowStarter(false); }}><Square size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setShowStarter(false); }}><Type size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setShowStarter(false); }}><Diamond size={18} /></button>
@@ -1164,6 +1160,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       {upload && <button type="button" className={railBtn} title="插入图片（也可粘贴或拖入画板）" onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
       <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
+
+    {!readOnly && (tool === "pen" || tool === "eraser") && <div role="toolbar" aria-label="画笔工具" data-flow-pen-toolbar onPointerDown={(event) => event.stopPropagation()} className={cn("absolute left-1/2 z-20 flex h-12 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-[#DEE0E3] bg-surface px-2 shadow-[0_4px_16px_rgba(31,35,41,0.12)]", compact ? "bottom-[120px]" : "bottom-5")}>
+      <button type="button" aria-label="画笔模式" aria-pressed={tool === "pen"} title="画笔" className={cn(tb, tool === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setMenu(null); }}><Pencil size={17}/></button>
+      <button type="button" aria-label="荧光笔（暂不可用）" title="荧光笔暂不可用" disabled className={tb}><Brush size={17}/></button>
+      <button type="button" aria-label="橡皮擦" aria-pressed={tool === "eraser"} title="橡皮擦（擦除整条笔迹）" data-flow-eraser-tool className={cn(tb, tool === "eraser" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("eraser"); setMenu(null); }}><Eraser size={17}/></button>
+      <span className="mx-1 h-6 w-px shrink-0 bg-[#DEE0E3]"/>
+      <select aria-label="画笔粗细" title="画笔粗细" disabled={tool !== "pen"} value={penWidth} onChange={(event) => setPenWidth(Number(event.target.value))} className="h-8 max-w-[58px] rounded-md bg-surface px-1 text-[12px] text-[#646A73] disabled:opacity-30">{INK_WIDTHS.map((width) => <option key={width} value={width}>{width}</option>)}</select>
+      <div className="relative"><button type="button" aria-label="画笔颜色" aria-expanded={menu === "pen"} title="画笔颜色" disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: penColor }}/></button>{menu === "pen" && penSettings}</div>
+      <button type="button" aria-label="关闭画笔工具" title="关闭画笔工具" className={tb} onClick={() => { setTool("select"); setMenu(null); }}><X size={16}/></button>
+    </div>}
 
     {/* 左上：返回 */}
     <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />流程图</button>
