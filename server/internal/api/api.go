@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/bases/{id}/automations/{aid}":             s.patchAutomation,
 		"DELETE /api/bases/{id}/automations/{aid}":            s.deleteAutomation,
 		"POST /api/bases/{id}/import":                         s.importCSV,
+		"POST /api/bases/{id}/import-records":                 s.importBaseRecords,
+		"POST /api/bases/{id}/ai-import-preview":              s.baseAIImportPreview,
 		"GET /api/bases/{id}/export":                          s.exportCSV,
 		"GET /api/docs/{id}/comments":                         s.listComments,
 		"POST /api/docs/{id}/comments":                        s.addComment,

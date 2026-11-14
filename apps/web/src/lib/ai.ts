@@ -20,6 +20,13 @@ export const aiApi = {
   test: () => call<{ text: string }>("POST", "/api/me/ai/test"),
   /** 以某篇文档的名义调用（服务端校验可查看且允许复制该文档）。 */
   complete: (docId: number, messages: AIMessage[]) => call<{ text: string }>("POST", `/api/docs/${docId}/ai`, { messages }).then((r) => r.text),
+  completeForAccount: async (docId: number, userId: number, messages: AIMessage[], signal?: AbortSignal) => {
+    const res = await fetch(`/api/bases/${docId}/ai-import-preview`, { method: "POST", credentials: "same-origin", signal, headers: { "Content-Type": "application/json", "X-Jiange-User-Id": String(userId) }, body: JSON.stringify({ messages }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
+    if (typeof data.text !== "string") throw new Error("Invalid AI response");
+    return data.text as string;
+  },
 };
 
 /** 与服务端上限一致（字符数）。 */

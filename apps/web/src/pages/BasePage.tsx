@@ -29,6 +29,7 @@ import { ViewGlyph } from "./base/ViewGlyph";
 import { ViewConfigActions } from "./base/ViewConfigActions";
 import { CsvImport } from "./base/CsvImport";
 import { AddRecordMenu } from "./base/AddRecordMenu";
+import { AiPasteDialog } from "./base/AiPasteDialog";
 import { FormPublication } from "./base/FormPublication";
 import { FormSetup, validFormSelection } from "./base/FormSetup";
 import { saveFormConfig } from "./base/publicFormApi";
@@ -94,6 +95,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
   const [gridDetailOpen, setGridDetailOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
+  const [aiPasteOpen, setAiPasteOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [baseSidebarOpen, setBaseSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1200);
   const expandBaseSidebar = useRef<HTMLButtonElement>(null), collapseBaseSidebar = useRef<HTMLButtonElement>(null);
@@ -339,7 +341,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
-        {canEdit && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} onAdd={() => void addRecord()} />}
+        {canEdit && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} aiAllowed={!preventCopy && !q.isFetching} onAdd={() => void addRecord()} onAi={() => setAiPasteOpen(true)} />}
         {undoNotice && <span role="status" className="mx-1 max-w-72 truncate text-xs text-subtle" title={undoNotice}>{undoNotice}</span>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
@@ -489,6 +491,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         </div>
       </div>
       {autoOpen && <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />}
+      {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canEdit && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
       {sharing && <ShareDialog meta={base} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
     </div>
   );

@@ -273,6 +273,8 @@ export const baseApi = {
     request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q, signal),
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),
+  importRecordsForAccount: (id: number, userId: number, fields: Pick<Field, "id" | "name" | "type" | "options">[], rows: Record<string, Cell>[]) =>
+    request<{ imported: number }>("POST", `/api/bases/${id}/import-records`, { fields, rows }, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 export interface UserTemplate { id: number; name: string; body: string; createdAt: string }
 /** 我的模板（仅本人可见）。 */
