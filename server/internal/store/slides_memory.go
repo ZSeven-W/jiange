@@ -47,14 +47,34 @@ func (m *Memory) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesID 
 }
 
 func (m *Memory) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
+	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true)
+}
+
+func (m *Memory) InsertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
+	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false)
+}
+
+func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, err := m.slidesAccessLocked(ctx, g, slidesID, false)
 	if err != nil {
 		return SlidesPage{}, err
 	}
-	if !DocumentCopyAllowed(d.meta, m.roleLocked(g.UserID, d)) {
+	if copySource && !DocumentCopyAllowed(d.meta, m.roleLocked(g.UserID, d)) {
 		return SlidesPage{}, ErrCopyProtected
+	}
+	if pageID == 0 && expectedRevision == 0 && !copySource {
+		for _, p := range m.slides {
+			if p.SlidesID == slidesID {
+				return SlidesPage{}, ErrConflict
+			}
+		}
+		m.slidesSequence++
+		page := SlidesPage{ID: m.slidesSequence, SlidesID: slidesID, Pos: 1, Shapes: json.RawMessage(`[]`), Revision: 1, UpdatedAt: time.Now()}
+		m.slides = append(m.slides, page)
+		page.Shapes = slices.Clone(page.Shapes)
+		return page, nil
 	}
 	_, src := m.findSlidesPageLocked(pageID)
 	if src == nil || src.SlidesID != slidesID {
@@ -75,9 +95,12 @@ func (m *Memory) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slides
 		return SlidesPage{}, err
 	}
 	m.slidesSequence++
-	page := *src
+	page := SlidesPage{SlidesID: slidesID, Shapes: json.RawMessage(`[]`)}
+	if copySource {
+		page = *src
+		page.Shapes = slices.Clone(src.Shapes)
+	}
 	page.ID, page.Pos, page.Revision, page.UpdatedAt = m.slidesSequence, pos, 1, time.Now()
-	page.Shapes = slices.Clone(src.Shapes)
 	m.slides = append(m.slides, page)
 	page.Shapes = slices.Clone(page.Shapes)
 	return page, nil

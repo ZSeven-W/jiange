@@ -52,16 +52,28 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 	return page, nil
 }
 
-func (p *Postgres) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (page SlidesPage, err error) {
+func (p *Postgres) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
+	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true)
+}
+
+func (p *Postgres) InsertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
+	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false)
+}
+
+func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool) (page SlidesPage, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var src SlidesPage
-		e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
-			Scan(&src.ID, &src.SlidesID, &src.Pos, &src.Title, &src.Body, &src.Background, &src.Notes, &src.Shapes, &src.Revision, &src.UpdatedAt)
-		if errors.Is(e, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		if e != nil {
-			return e
+		if pageID > 0 {
+			e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
+				Scan(&src.ID, &src.SlidesID, &src.Pos, &src.Title, &src.Body, &src.Background, &src.Notes, &src.Shapes, &src.Revision, &src.UpdatedAt)
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			if e != nil {
+				return e
+			}
+		} else if pageID != 0 || expectedRevision != 0 || copySource {
+			return ErrConflict
 		}
 		expiry, e := drivePGSession(ctx, tx, g)
 		if e != nil {
@@ -88,23 +100,37 @@ func (p *Postgres) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slid
 		if RoleRank(role) < RoleRank(RoleEdit) {
 			return ErrForbidden
 		}
-		if !DocumentCopyAllowed(DocMeta{Kind: kind, CopyProtected: protected, CopyMinRole: copyMin}, role) {
+		if copySource && !DocumentCopyAllowed(DocMeta{Kind: kind, CopyProtected: protected, CopyMinRole: copyMin}, role) {
 			return ErrCopyProtected
 		}
-		if expectedRevision < 1 || src.Revision != expectedRevision {
-			return ErrConflict
+		pos := 1.0
+		if pageID == 0 {
+			var exists bool
+			if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slides_pages WHERE slides_id=$1)`, slidesID).Scan(&exists); e != nil {
+				return e
+			}
+			if exists {
+				return ErrConflict
+			}
+		} else {
+			if expectedRevision < 1 || src.Revision != expectedRevision {
+				return ErrConflict
+			}
+			var nextValue float64
+			e = tx.QueryRow(ctx, `SELECT pos FROM slides_pages WHERE slides_id=$1 AND (pos,id)>($2,$3) ORDER BY pos,id LIMIT 1`, slidesID, src.Pos, src.ID).Scan(&nextValue)
+			var next *float64
+			if e == nil {
+				next = &nextValue
+			} else if !errors.Is(e, pgx.ErrNoRows) {
+				return e
+			}
+			pos, e = slideCopyPosition(src.Pos, next)
+			if e != nil {
+				return e
+			}
 		}
-		var nextValue float64
-		e = tx.QueryRow(ctx, `SELECT pos FROM slides_pages WHERE slides_id=$1 AND (pos,id)>($2,$3) ORDER BY pos,id LIMIT 1`, slidesID, src.Pos, src.ID).Scan(&nextValue)
-		var next *float64
-		if e == nil {
-			next = &nextValue
-		} else if !errors.Is(e, pgx.ErrNoRows) {
-			return e
-		}
-		pos, e := slideCopyPosition(src.Pos, next)
-		if e != nil {
-			return e
+		if !copySource {
+			src.Title, src.Body, src.Background, src.Notes, src.Shapes = "", "", "", "", json.RawMessage(`[]`)
 		}
 		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at`, slidesID, pos, src.Title, src.Body, src.Background, src.Notes, src.Shapes).
 			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Revision, &page.UpdatedAt)

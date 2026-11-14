@@ -455,6 +455,7 @@ export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   pages: (deckId: number) => request<{ pages: SlidesPage[] }>("GET", `/api/slides/${deckId}/pages`).then((r) => r.pages),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
+  insertPage: (deckId: number, userId: number, afterPageId: number, expectedRevision: number) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/insert`, { afterPageId, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   duplicatePage: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/${pageId}/duplicate`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
     request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
