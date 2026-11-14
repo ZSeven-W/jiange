@@ -13,7 +13,9 @@ import { t, useI18n } from "@/lib/i18n";
 import { mentionQuery, mentionsIn, splitMentions, threadComments, type Thread } from "./recordComments";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
-import { clearRecordCommentDraftIfUnchanged, loadRecordCommentDraft, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+import { clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+import { browserRecordAttemptEnvironment, RecordCommentAttemptStore, type RecordCommentAttempt } from "./recordCommentAttempts";
+import { requireRecordCommentAttempts, sendRecordCommentAttempt } from "./recordCommentAttemptApi";
 
 const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Feishu-style empty-value hints in the record detail. */
@@ -230,7 +232,7 @@ export function RecordDetail({
         )}
       </footer>
       </div>
-      <RecordComments key={`${userId}:${baseId}:${record.id}`} baseId={baseId} userId={userId} recordId={record.id} visible={showComments} />
+      <RecordComments key={`${userId}:${baseId}:${record.id}`} baseId={baseId} userId={userId} recordId={record.id} canEdit={canEdit} visible={showComments} />
       </div>
     </aside>
   );
@@ -364,13 +366,25 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
 }
 
 /** 记录评论: threads (root + replies) with @人 and 解决/重新打开. */
-function RecordComments({ baseId, userId, recordId, visible }: { baseId: number; userId: number; recordId: number; visible: boolean }) {
+function RecordComments({ baseId, userId, recordId, canEdit, visible }: { baseId: number; userId: number; recordId: number; canEdit: boolean; visible: boolean }) {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ["record-comments", baseId, recordId, userId], queryFn: () => baseApi.recordComments(baseId, recordId) });
   const section = useRef<HTMLElement>(null);
   const [storedDraft] = useState(() => { try { return { text: typeof window === "undefined" ? "" : loadRecordCommentDraft(window.sessionStorage, userId, baseId, recordId), error: false }; } catch { return { text: "", error: true }; } });
   const [draftError, setDraftError] = useState(storedDraft.error);
-  const saveDraft = (text: string) => { try { saveRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, text); setDraftError(false); } catch { setDraftError(true); } };
+  const [rootBody, setRootBody] = useState(storedDraft.text);
+  const [confirmedDraft, setConfirmedDraft] = useState(() => { try { return typeof window !== "undefined" && isRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId); } catch { return true; } });
+  const saveDraft = (text: string) => { setRootBody(text); try { saveRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, text); clearRecordCommentDraftConfirmation(window.sessionStorage, userId, baseId, recordId); setConfirmedDraft(false); setDraftError(false); } catch { setDraftError(true); } };
+  const [attemptStore] = useState(() => { try { return typeof window === "undefined" ? null : new RecordCommentAttemptStore(browserRecordAttemptEnvironment(), userId, baseId, recordId); } catch { return null; } });
+  const [attempts, setAttempts] = useState<RecordCommentAttempt[]>([]);
+  const [attemptError, setAttemptError] = useState("");
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const refreshAttempts = () => { try { const list = attemptStore?.list(); setAttempts(list?.attempts ?? []); if (list?.damaged) setAttemptError(t("部分本机评论提交记录损坏，请保留原始数据并勿重复发送。")); } catch { setAttemptError(t("无法读取本机评论提交记录，请勿重复发送。")); } };
+  useEffect(() => {
+    refreshAttempts(); const unsubscribe = attemptStore?.subscribe(refreshAttempts);
+    const changed = () => refreshAttempts(); window.addEventListener("storage", changed);
+    return () => { unsubscribe?.(); window.removeEventListener("storage", changed); };
+  }, [attemptStore]);
   useEffect(() => { if (!visible) return; const id = requestAnimationFrame(() => section.current?.querySelector<HTMLTextAreaElement>("[data-root-comment-input]")?.focus({ preventScroll: true })); return () => cancelAnimationFrame(id); }, [visible]);
   const membersQ = useQuery({ queryKey: ["comment-members", baseId], queryFn: () => commentsApi.members(baseId), staleTime: 60_000 });
   const members = membersQ.data ?? [];
@@ -392,14 +406,38 @@ function RecordComments({ baseId, userId, recordId, visible }: { baseId: number;
   const resolved = threads.filter((t) => t.root.resolved);
   const post = async (body: string, parentId?: number) => {
     setError("");
+    setAttemptError("");
+    if (!canEdit || !attemptStore) { setError(t("无法确认账号、记录权限或安全评论协议，未发送。")); return false; }
     let revision: string | null | undefined;
     if (!parentId) { try { revision = recordCommentDraftRevision(window.sessionStorage, userId, baseId, recordId); } catch { revision = undefined; } }
-    try { await baseApi.addRecordComment(baseId, recordId, body, { mentions: mentionsIn(body, members), parentId }); }
-    catch { setError(t("评论未能确认发送，请刷新后核对。")); return false; }
+    try {
+      await requireRecordCommentAttempts(userId, baseId, recordId);
+      const result = await attemptStore.prepareAndRun(body, mentionsIn(body, members), parentId, sendRecordCommentAttempt);
+      if (!result.cleaned) setAttemptError(t("评论已确认，但本机提交记录尚未清理，请勿重复发送。"));
+      else if (result.value.state === "deleted") setAttemptError(t("该评论已发送并被删除，不会重复创建。"));
+    } catch { refreshAttempts(); setError(t("评论未能确认；请检查账号、权限和待确认记录后再操作。")); return false; }
     if (!parentId && revision !== undefined) { try { clearRecordCommentDraftIfUnchanged(window.sessionStorage, userId, baseId, recordId, revision); } catch { setDraftError(true); } }
     try { if ((await q.refetch()).isError) setError(t("评论已发送，但列表刷新失败，请稍后刷新。")); }
     catch { setError(t("评论已发送，但列表刷新失败，请稍后刷新。")); }
     return true;
+  };
+  const retryAttempt = async (attempt: RecordCommentAttempt) => {
+    if (!canEdit || !attemptStore || retrying) return;
+    setRetrying(attempt.mutationId); setAttemptError(""); setError("");
+    try {
+      await requireRecordCommentAttempts(userId, baseId, recordId);
+      const result = await attemptStore.run(attempt, async (saved) => {
+        const receipt = await sendRecordCommentAttempt(saved);
+        // Persist the warning before removing the attempt; a refetch or reload
+        // must not make an already-sent draft look like a new unsent comment.
+        if (saved.parentId === undefined) markRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId, saved.body);
+        return receipt;
+      });
+      try { setConfirmedDraft(isRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId)); } catch { setConfirmedDraft(true); }
+      setAttemptError(result.cleaned ? t("已确认评论结果；请核对输入框中保留的草稿，避免重复发送。") : t("评论已确认，但本机提交记录尚未清理，请勿重复发送。"));
+      refreshAttempts(); void q.refetch();
+    } catch { refreshAttempts(); setAttemptError(t("结果仍未确认，请检查评论列表和本机提交记录后再操作。")); }
+    finally { setRetrying(null); }
   };
   const toggle = async (cid: number, value: boolean) => {
     setError("");
@@ -458,7 +496,7 @@ function RecordComments({ baseId, userId, recordId, visible }: { baseId: number;
       </div>
       {th.replies.length > 0 && <div className="ml-9 border-l pl-3">{th.replies.map((r) => item(r, true))}</div>}
       {!th.root.resolved && (replyTo === th.root.id
-        ? <div className="ml-9 mt-2"><CommentComposer members={members} placeholder={t("回复 {name}", { name: th.root.userName })} autoFocus onSend={async (b) => { const ok = await post(b, th.root.id); if (ok) setReplyTo(null); return ok; }} onCancel={() => setReplyTo(null)} /></div>
+        ? <div className="ml-9 mt-2"><CommentComposer members={members} placeholder={t("回复 {name}", { name: th.root.userName })} autoFocus submitDisabled={!canEdit || !attemptStore} onSend={async (b) => { const ok = await post(b, th.root.id); if (ok) setReplyTo(null); return ok; }} onCancel={() => setReplyTo(null)} /></div>
         : <button type="button" className="ml-9 mt-1.5 text-[12px] text-muted-foreground hover:text-primary" onClick={() => setReplyTo(th.root.id)} data-thread-reply>{t("回复")}</button>)}
     </div>
   );
@@ -468,12 +506,18 @@ function RecordComments({ baseId, userId, recordId, visible }: { baseId: number;
         {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? t("隐藏已解决") : t("显示已解决 {n}", { n: resolved.length })}</button>}
       </h3>
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-4 py-4">
+        {attemptError && <p role="status" className="rounded-md border p-2 text-[12px] text-muted-foreground">{attemptError}</p>}
+        {attempts.map((attempt) => <div key={attempt.mutationId} className="rounded-md border p-2 text-[12px] text-muted-foreground" data-record-comment-attempt>
+          <p>{t("评论结果尚未确认，重试将使用原来的请求。")}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-foreground">{attempt.body}</p>
+          <button type="button" disabled={!canEdit || !!retrying} onClick={() => void retryAttempt(attempt)} className="mt-1 text-primary disabled:opacity-50">{retrying === attempt.mutationId ? t("正在确认…") : t("重试并确认")}</button>
+        </div>)}
         {open.map(thread)}
         {showResolved && resolved.map(thread)}
         {q.isSuccess && !threads.length && <p className="pt-12 text-center text-[13px] text-subtle">{t("当前记录暂无评论")}</p>}
         {q.isError && <p role="alert" className="text-[12px] text-destructive">{t("无法加载评论。")}</p>}
       </div>
-      <div className="shrink-0 border-t p-4"><CommentComposer members={members} placeholder={t("输入评论，@ 提及成员，Enter 发送")} initial={storedDraft.text} onDraftChange={saveDraft} root onSend={(b) => post(b)} />
+      <div className="shrink-0 border-t p-4">{confirmedDraft && <p role="status" className="mb-2 text-[12px] text-muted-foreground">{t("这份草稿对应的评论已确认发送，请修改或清除后再发送。")}</p>}<CommentComposer members={members} placeholder={t("输入评论，@ 提及成员，Enter 发送")} initial={storedDraft.text} onDraftChange={saveDraft} submitDisabled={!canEdit || !attemptStore || confirmedDraft || attempts.some((attempt) => attempt.parentId === undefined && attempt.body === rootBody.trim())} root onSend={(b) => post(b)} />
       {draftError && <p role="alert" className="mt-1 text-[12px] text-destructive">{t("本地草稿无法保存，请复制内容后再离开。")}</p>}
       {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}</div>
     </section>
@@ -481,7 +525,7 @@ function RecordComments({ baseId, userId, recordId, visible }: { baseId: number;
 }
 
 /** Textarea with an @ member picker; Enter sends, Shift+Enter breaks lines. */
-function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, initial = "", submitLabel, onDraftChange, root = false }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void; initial?: string; submitLabel?: string; onDraftChange?: (body: string) => void; root?: boolean }) {
+function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, initial = "", submitLabel, onDraftChange, submitDisabled = false, root = false }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void; initial?: string; submitLabel?: string; onDraftChange?: (body: string) => void; submitDisabled?: boolean; root?: boolean }) {
   const [body, setBody] = useState(initial);
   const latest = useRef(body);
   const revision = useRef(0);
@@ -505,7 +549,7 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, in
     const original = latest.current;
     const originalRevision = revision.current;
     const text = original.trim();
-    if (!text || sending) return;
+    if (!text || sending || submitDisabled) return;
     setSending(true);
     if (await onSend(text) && mounted.current && revision.current === originalRevision) { updateBody(""); setCaret(0); }
     if (mounted.current) setSending(false);
@@ -542,7 +586,7 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, in
           data-root-comment-input={root || undefined}
         />
         {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">{t("取消")}</button>}
-        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{submitLabel ?? t("发送")}</button>
+        <button type="button" onClick={() => void send()} disabled={!body.trim() || sending || submitDisabled} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{submitLabel ?? t("发送")}</button>
       </div>
     </div>
   );

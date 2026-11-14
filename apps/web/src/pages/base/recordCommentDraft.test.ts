@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clearRecordCommentDraftIfUnchanged, loadRecordCommentDraft, recordCommentDraftKey, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+import { clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, recordCommentDraftKey, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -29,5 +29,16 @@ describe("record comment drafts", () => {
   it("rejects invalid identities instead of sharing a draft key", () => {
     expect(() => recordCommentDraftKey(0, 1, 1)).toThrow();
     expect(() => recordCommentDraftKey(1, Number.MAX_SAFE_INTEGER + 1, 1)).toThrow();
+  });
+  it("keeps a recovered confirmation across remounts and unblocks only a changed or acknowledged draft", () => {
+    const store = storage();
+    saveRecordCommentDraft(store, 1, 2, 3, "消息");
+    expect(markRecordCommentDraftConfirmed(store, 1, 2, 3, "消息")).toBe(true);
+    expect(isRecordCommentDraftConfirmed(store, 1, 2, 3)).toBe(true);
+    expect(isRecordCommentDraftConfirmed(store, 2, 2, 3)).toBe(false);
+    saveRecordCommentDraft(store, 1, 2, 3, "消息新");
+    expect(isRecordCommentDraftConfirmed(store, 1, 2, 3)).toBe(false);
+    clearRecordCommentDraftConfirmation(store, 1, 2, 3);
+    expect(isRecordCommentDraftConfirmed(store, 1, 2, 3)).toBe(false);
   });
 });

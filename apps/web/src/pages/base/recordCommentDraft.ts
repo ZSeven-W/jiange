@@ -28,3 +28,26 @@ export function clearRecordCommentDraftIfUnchanged(storage: Storage, userId: num
   saveRecordCommentDraft(storage, userId, baseId, recordId, "");
   return true;
 }
+
+/** A recovered receipt must not silently turn the retained draft into a new send. */
+export function markRecordCommentDraftConfirmed(storage: Storage, userId: number, baseId: number, recordId: number, body: string): boolean {
+  const key = recordCommentDraftKey(userId, baseId, recordId);
+  const text = storage.getItem(key) ?? "";
+  if (text.trim() !== body) return false;
+  storage.setItem(`${key}:confirmed`, JSON.stringify({ version: 1, text, revision: recordCommentDraftRevision(storage, userId, baseId, recordId) }));
+  return true;
+}
+
+export function isRecordCommentDraftConfirmed(storage: Storage, userId: number, baseId: number, recordId: number): boolean {
+  const key = recordCommentDraftKey(userId, baseId, recordId);
+  const raw = storage.getItem(`${key}:confirmed`);
+  if (raw === null) return false;
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== "object" || (value as { version?: unknown }).version !== 1 || typeof (value as { text?: unknown }).text !== "string" || !((value as { revision?: unknown }).revision === null || typeof (value as { revision?: unknown }).revision === "string")) throw new Error("invalid confirmation marker");
+  const marker = value as { text: string; revision: string | null };
+  return marker.text === (storage.getItem(key) ?? "") && marker.revision === recordCommentDraftRevision(storage, userId, baseId, recordId);
+}
+
+export function clearRecordCommentDraftConfirmation(storage: Storage, userId: number, baseId: number, recordId: number): void {
+  storage.removeItem(`${recordCommentDraftKey(userId, baseId, recordId)}:confirmed`);
+}
