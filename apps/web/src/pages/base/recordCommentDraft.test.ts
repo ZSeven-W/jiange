@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, recordCommentDraftKey, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+import { bindRecordCommentDraft, clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, reconcileRecordCommentDraft, recordCommentDraftKey, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -40,5 +40,21 @@ describe("record comment drafts", () => {
     expect(isRecordCommentDraftConfirmed(store, 1, 2, 3)).toBe(false);
     clearRecordCommentDraftConfirmation(store, 1, 2, 3);
     expect(isRecordCommentDraftConfirmed(store, 1, 2, 3)).toBe(false);
+  });
+  it("marks only the bound tab and never overwrites a later revision", () => {
+    const first = storage(), second = storage();
+    const id = "1234567890abcdef1234567890abcdef";
+    saveRecordCommentDraft(first, 1, 2, 3, "消息");
+    saveRecordCommentDraft(second, 1, 2, 3, "消息");
+    expect(bindRecordCommentDraft(first, 1, 2, 3, id, "消息", recordCommentDraftRevision(first, 1, 2, 3))).toBe(true);
+    expect(reconcileRecordCommentDraft(first, 1, 2, 3, () => false)).toBe(false);
+    expect(reconcileRecordCommentDraft(second, 1, 2, 3, () => true)).toBe(false);
+    expect(reconcileRecordCommentDraft(first, 1, 2, 3, (key) => key === id)).toBe(true);
+    expect(isRecordCommentDraftConfirmed(first, 1, 2, 3)).toBe(true);
+    expect(loadRecordCommentDraft(first, 1, 2, 3)).toBe("消息");
+    saveRecordCommentDraft(first, 1, 2, 3, "新稿");
+    saveRecordCommentDraft(first, 1, 2, 3, "消息");
+    expect(reconcileRecordCommentDraft(first, 1, 2, 3, () => true)).toBe(false);
+    expect(isRecordCommentDraftConfirmed(first, 1, 2, 3)).toBe(false);
   });
 });

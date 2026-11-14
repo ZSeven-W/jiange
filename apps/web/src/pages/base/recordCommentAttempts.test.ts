@@ -64,4 +64,25 @@ describe("record comment attempts", () => {
     await expect(sendRecordCommentAttempt(attempt)).resolves.toEqual({ state: "committed", commentId: 8 });
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("comment-attempts"))).toBe(true);
   });
+  it("retains a content-free confirmation across stores and rejects tampering", () => {
+    const env = { storage: storage(), random: () => mutation };
+    const sender = new RecordCommentAttemptStore(env, 1, 2, 3);
+    const attempt = sender.prepare("私有内容", []);
+    const other = new RecordCommentAttemptStore(env, 1, 2, 3);
+    other.confirm(attempt, "committed");
+    expect(sender.isConfirmed(mutation)).toBe(true);
+    const confirmationKey = `jiange:record-comment-confirmation:v1:1:2:3:${mutation}`;
+    expect(env.storage.getItem(confirmationKey)).not.toContain("私有内容");
+    expect(new RecordCommentAttemptStore(env, 2, 2, 3).isConfirmed(mutation)).toBe(false);
+    env.storage.setItem(confirmationKey, "broken");
+    expect(() => sender.isConfirmed(mutation)).toThrow();
+  });
+  it("keeps the pending request when a confirmed marker cannot be saved", async () => {
+    const backing = storage();
+    const failing: Storage = { ...backing, get length() { return backing.length; }, setItem: (key, value) => { if (key.includes("record-comment-confirmation")) throw new Error("quota"); backing.setItem(key, value); } };
+    const store = new RecordCommentAttemptStore({ storage: failing, random: () => mutation }, 1, 2, 3);
+    const attempt = store.prepare("消息", []);
+    await expect(store.run(attempt, async (saved) => { store.confirm(saved, "committed"); return true; })).rejects.toThrow();
+    expect(store.list().attempts).toHaveLength(1);
+  });
 });

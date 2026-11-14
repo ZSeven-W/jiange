@@ -6,6 +6,7 @@ type Environment = { storage: Storage; locks?: Pick<LockManager, "request">; ran
 const positive = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) > 0;
 const validMutation = (n: unknown): n is string => typeof n === "string" && /^[a-f0-9]{32}$/.test(n);
 const prefix = (user: number, base: number, record: number) => `jiange:record-comment-attempt:v1:${user}:${base}:${record}:`;
+const confirmationPrefix = (user: number, base: number, record: number) => `jiange:record-comment-confirmation:v1:${user}:${base}:${record}:`;
 
 export function browserRecordAttemptEnvironment(): Environment {
   return { storage: window.localStorage, locks: navigator.locks, random: () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("") };
@@ -30,6 +31,33 @@ export class RecordCommentAttemptStore {
   }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private changed() { for (const listener of this.listeners) listener(); }
+  /** Publish a content-free receipt before removing the pending request. */
+  confirm(attempt: RecordCommentAttempt, state: "committed" | "deleted"): void {
+    const key = this.keyPrefix + attempt.mutationId;
+    const raw = this.env.storage.getItem(key);
+    if (raw === null || JSON.stringify(parse(raw, key, this.user, this.base, this.record)) !== JSON.stringify(attempt)) throw new Error("attempt changed or missing");
+    const receiptKey = confirmationPrefix(this.user, this.base, this.record) + attempt.mutationId;
+    const receipt = JSON.stringify({ version: 1, userId: this.user, baseId: this.base, recordId: this.record, mutationId: attempt.mutationId, state });
+    const previous = this.env.storage.getItem(receiptKey);
+    if (previous !== null && previous !== receipt) {
+      if (!this.isConfirmed(attempt.mutationId)) throw new Error("confirmation changed");
+      const old = JSON.parse(previous) as { state: string };
+      if (old.state !== "committed" || state !== "deleted") throw new Error("confirmation changed");
+    }
+    this.env.storage.setItem(receiptKey, receipt);
+    if (this.env.storage.getItem(receiptKey) !== receipt) throw new Error("confirmation could not be saved");
+    this.changed();
+  }
+  isConfirmed(mutationId: string): boolean {
+    if (!validMutation(mutationId)) throw new Error("invalid attempt id");
+    const raw = this.env.storage.getItem(confirmationPrefix(this.user, this.base, this.record) + mutationId);
+    if (raw === null) return false;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") throw new Error("invalid confirmation");
+    const receipt = value as Record<string, unknown>;
+    if (receipt.version !== 1 || receipt.userId !== this.user || receipt.baseId !== this.base || receipt.recordId !== this.record || receipt.mutationId !== mutationId || (receipt.state !== "committed" && receipt.state !== "deleted")) throw new Error("invalid confirmation");
+    return true;
+  }
   list(): { attempts: RecordCommentAttempt[]; damaged: number } {
     const attempts: RecordCommentAttempt[] = []; let damaged = 0;
     for (let i = 0; i < this.env.storage.length; i++) {

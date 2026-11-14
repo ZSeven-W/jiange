@@ -13,7 +13,7 @@ import { t, useI18n } from "@/lib/i18n";
 import { mentionQuery, mentionsIn, splitMentions, threadComments, type Thread } from "./recordComments";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
-import { clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+import { bindRecordCommentDraft, clearRecordCommentDraftBinding, clearRecordCommentDraftConfirmation, clearRecordCommentDraftIfUnchanged, isRecordCommentDraftConfirmed, loadRecordCommentDraft, markRecordCommentDraftConfirmed, reconcileRecordCommentDraft, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
 import { browserRecordAttemptEnvironment, RecordCommentAttemptStore, type RecordCommentAttempt } from "./recordCommentAttempts";
 import { requireRecordCommentAttempts, sendRecordCommentAttempt } from "./recordCommentAttemptApi";
 
@@ -374,15 +374,23 @@ function RecordComments({ baseId, userId, recordId, canEdit, visible }: { baseId
   const [draftError, setDraftError] = useState(storedDraft.error);
   const [rootBody, setRootBody] = useState(storedDraft.text);
   const [confirmedDraft, setConfirmedDraft] = useState(() => { try { return typeof window !== "undefined" && isRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId); } catch { return true; } });
-  const saveDraft = (text: string) => { setRootBody(text); try { saveRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, text); clearRecordCommentDraftConfirmation(window.sessionStorage, userId, baseId, recordId); setConfirmedDraft(false); setDraftError(false); } catch { setDraftError(true); } };
+  const saveDraft = (text: string) => { setRootBody(text); try { saveRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, text); clearRecordCommentDraftConfirmation(window.sessionStorage, userId, baseId, recordId); clearRecordCommentDraftBinding(window.sessionStorage, userId, baseId, recordId); setConfirmedDraft(false); setDraftError(false); } catch { setDraftError(true); } };
   const [attemptStore] = useState(() => { try { return typeof window === "undefined" ? null : new RecordCommentAttemptStore(browserRecordAttemptEnvironment(), userId, baseId, recordId); } catch { return null; } });
   const [attempts, setAttempts] = useState<RecordCommentAttempt[]>([]);
   const [attemptError, setAttemptError] = useState("");
   const [retrying, setRetrying] = useState<string | null>(null);
   const refreshAttempts = () => { try { const list = attemptStore?.list(); setAttempts(list?.attempts ?? []); if (list?.damaged) setAttemptError(t("部分本机评论提交记录损坏，请保留原始数据并勿重复发送。")); } catch { setAttemptError(t("无法读取本机评论提交记录，请勿重复发送。")); } };
+  const refreshConfirmation = () => {
+    if (!attemptStore) return;
+    try {
+      reconcileRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, (id) => attemptStore.isConfirmed(id));
+      setConfirmedDraft(isRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId));
+    } catch { setConfirmedDraft(true); setDraftError(true); }
+  };
   useEffect(() => {
-    refreshAttempts(); const unsubscribe = attemptStore?.subscribe(refreshAttempts);
-    const changed = () => refreshAttempts(); window.addEventListener("storage", changed);
+    const changed = () => { refreshAttempts(); refreshConfirmation(); };
+    changed(); const unsubscribe = attemptStore?.subscribe(changed);
+    window.addEventListener("storage", changed);
     return () => { unsubscribe?.(); window.removeEventListener("storage", changed); };
   }, [attemptStore]);
   useEffect(() => { if (!visible) return; const id = requestAnimationFrame(() => section.current?.querySelector<HTMLTextAreaElement>("[data-root-comment-input]")?.focus({ preventScroll: true })); return () => cancelAnimationFrame(id); }, [visible]);
@@ -412,7 +420,12 @@ function RecordComments({ baseId, userId, recordId, canEdit, visible }: { baseId
     if (!parentId) { try { revision = recordCommentDraftRevision(window.sessionStorage, userId, baseId, recordId); } catch { revision = undefined; } }
     try {
       await requireRecordCommentAttempts(userId, baseId, recordId);
-      const result = await attemptStore.prepareAndRun(body, mentionsIn(body, members), parentId, sendRecordCommentAttempt);
+      const result = await attemptStore.prepareAndRun(body, mentionsIn(body, members), parentId, async (attempt) => {
+        if (parentId === undefined && revision !== undefined) bindRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, attempt.mutationId, body, revision);
+        const receipt = await sendRecordCommentAttempt(attempt);
+        attemptStore.confirm(attempt, receipt.state);
+        return receipt;
+      });
       if (!result.cleaned) setAttemptError(t("评论已确认，但本机提交记录尚未清理，请勿重复发送。"));
       else if (result.value.state === "deleted") setAttemptError(t("该评论已发送并被删除，不会重复创建。"));
     } catch { refreshAttempts(); setError(t("评论未能确认；请检查账号、权限和待确认记录后再操作。")); return false; }
@@ -428,6 +441,7 @@ function RecordComments({ baseId, userId, recordId, canEdit, visible }: { baseId
       await requireRecordCommentAttempts(userId, baseId, recordId);
       const result = await attemptStore.run(attempt, async (saved) => {
         const receipt = await sendRecordCommentAttempt(saved);
+        attemptStore.confirm(saved, receipt.state);
         // Persist the warning before removing the attempt; a refetch or reload
         // must not make an already-sent draft look like a new unsent comment.
         if (saved.parentId === undefined) markRecordCommentDraftConfirmed(window.sessionStorage, userId, baseId, recordId, saved.body);

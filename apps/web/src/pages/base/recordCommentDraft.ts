@@ -51,3 +51,31 @@ export function isRecordCommentDraftConfirmed(storage: Storage, userId: number, 
 export function clearRecordCommentDraftConfirmation(storage: Storage, userId: number, baseId: number, recordId: number): void {
   storage.removeItem(`${recordCommentDraftKey(userId, baseId, recordId)}:confirmed`);
 }
+
+/** Bind only the exact local draft revision used by the request. */
+export function bindRecordCommentDraft(storage: Storage, userId: number, baseId: number, recordId: number, mutationId: string, body: string, revision: string | null): boolean {
+  if (!/^[a-f0-9]{32}$/.test(mutationId)) throw new Error("invalid attempt id");
+  const key = recordCommentDraftKey(userId, baseId, recordId);
+  if (recordCommentDraftRevision(storage, userId, baseId, recordId) !== revision || (storage.getItem(key) ?? "").trim() !== body) return false;
+  storage.setItem(`${key}:attempt`, JSON.stringify({ version: 1, mutationId, revision }));
+  return true;
+}
+
+export function clearRecordCommentDraftBinding(storage: Storage, userId: number, baseId: number, recordId: number): void {
+  storage.removeItem(`${recordCommentDraftKey(userId, baseId, recordId)}:attempt`);
+}
+
+/** Confirmation only blocks the submitting tab's unchanged draft; no text is erased. */
+export function reconcileRecordCommentDraft(storage: Storage, userId: number, baseId: number, recordId: number, isConfirmed: (mutationId: string) => boolean): boolean {
+  const key = recordCommentDraftKey(userId, baseId, recordId);
+  const raw = storage.getItem(`${key}:attempt`);
+  if (raw === null) return false;
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== "object") throw new Error("invalid draft binding");
+  const binding = value as { version?: unknown; mutationId?: unknown; revision?: unknown };
+  if (binding.version !== 1 || typeof binding.mutationId !== "string" || !/^[a-f0-9]{32}$/.test(binding.mutationId) || !(binding.revision === null || typeof binding.revision === "string")) throw new Error("invalid draft binding");
+  if (recordCommentDraftRevision(storage, userId, baseId, recordId) !== binding.revision || !isConfirmed(binding.mutationId)) return false;
+  const text = storage.getItem(key) ?? "";
+  if (!text.trim()) return false;
+  return markRecordCommentDraftConfirmed(storage, userId, baseId, recordId, text.trim());
+}
