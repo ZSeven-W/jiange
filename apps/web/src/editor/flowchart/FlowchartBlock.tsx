@@ -3,12 +3,13 @@ import { createPortal } from "react-dom";
 import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, Copy, Diamond, Download, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
-import { autoLayout, bounds, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
+import { autoLayout, bounds, flowIntentWrites, flowWrites, isContainer, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme, type Port, type Shape } from "./model";
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
 import { fitInsertedImage, pinchViewport, placeSelectionToolbar, type FlowPoint, type FlowViewport } from "./viewport";
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
+import { appliedFlowHistory, type FlowHistory } from "./history";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
 import type { ClipBlock } from "../model";
 
@@ -251,7 +252,6 @@ export interface FlowPeer { id: number; name: string; color: string; x?: number;
 export interface FlowPresence { x?: number; y?: number; sel?: string[] }
 
 type FlowClip = { nodes: FlowNode[]; edges: FlowEdge[]; source?: { origin: string; docId: number } };
-type FlowHistory = { before: FlowGraph; after: FlowGraph };
 const CLIP_MARK = "jiange-flowchart:";
 /** In-app clipboard so copy/paste works between flowchart blocks even without clipboard permission. */
 let flowClipboard: FlowClip | null = null;
@@ -368,7 +368,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     return () => ro.disconnect();
   }, []);
   const submit = (base: FlowGraph, next: FlowGraph): FlowChangeOutcome => {
-    const result = readOnly ? { graph: base, conflicts: ["permission"], applied: false } : onChange?.(next, base) ?? { graph: next, conflicts: [], applied: true };
+    const keys = onChange || readOnly ? [] : Object.keys(flowIntentWrites(flowWrites({}, base), base, next).writes);
+    const result = readOnly ? { graph, conflicts: ["permission"], applied: false, appliedKeys: [] } : onChange?.(next, base) ?? { graph: next, conflicts: [], applied: keys.length > 0, appliedKeys: keys };
     if (result.conflicts.length) {
       const nextRecovery = [...recoveryRef.current, { before: base, proposed: next, conflicts: result.conflicts }];
       recoveryRef.current = nextRecovery;
@@ -380,7 +381,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const commit = (next: FlowGraph) => {
     if (readOnly) return;
     const result = submit(graph, next);
-    if (result.applied) { setUndo((u) => [...u.slice(-99), { before: graph, after: next }]); setRedo([]); }
+    const step = appliedFlowHistory(graph, result.graph, result.appliedKeys);
+    if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); }
   };
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
@@ -447,8 +449,20 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     finally { setBusy(false); }
   };
   const nudge = (dx: number, dy: number) => commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)) });
-  const doUndo = () => { const step = undo.at(-1); if (!step) return; submit(step.after, step.before); setUndo(undo.slice(0, -1)); setRedo([...redo, step]); };
-  const doRedo = () => { const step = redo.at(-1); if (!step) return; submit(step.before, step.after); setRedo(redo.slice(0, -1)); setUndo([...undo, step]); };
+  const doUndo = () => {
+    const step = undo.at(-1); if (!step) return;
+    const result = submit(step.after, step.before);
+    const applied = appliedFlowHistory(step.after, result.graph, result.appliedKeys);
+    if (result.applied && applied) { setUndo(undo.slice(0, -1)); setRedo([...redo, { before: applied.after, after: applied.before }]); }
+    else if (!result.conflicts.length) setUndo(undo.slice(0, -1));
+  };
+  const doRedo = () => {
+    const step = redo.at(-1); if (!step) return;
+    const result = submit(step.before, step.after);
+    const applied = appliedFlowHistory(step.before, result.graph, result.appliedKeys);
+    if (result.applied && applied) { setRedo(redo.slice(0, -1)); setUndo([...undo, applied]); }
+    else if (!result.conflicts.length) setRedo(redo.slice(0, -1));
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (recoveryOpen || editing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
@@ -639,13 +653,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
     if (d.kind === "bend" || d.kind === "waypoint") {
       const base = lastInitial.current;
-      if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { const result = submit(base, graph); if (result.applied) { setUndo((u) => [...u.slice(-99), { before: base, after: graph }]); setRedo([]); } }
+      if (JSON.stringify(base.edges) !== JSON.stringify(graph.edges)) { const result = submit(base, graph); const step = appliedFlowHistory(base, result.graph, result.appliedKeys); if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); } }
       return;
     }
     if (d.kind === "move" || d.kind === "resize" || d.kind === "rotate") {
       // Commit the gesture result relative to the pre-drag graph.
       const base = lastInitial.current;
-      if (JSON.stringify(base.nodes) !== JSON.stringify(graph.nodes)) { const result = submit(base, graph); if (result.applied) { setUndo((u) => [...u.slice(-99), { before: base, after: graph }]); setRedo([]); } }
+      if (JSON.stringify(base.nodes) !== JSON.stringify(graph.nodes)) { const result = submit(base, graph); const step = appliedFlowHistory(base, result.graph, result.appliedKeys); if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); } }
     }
   };
 

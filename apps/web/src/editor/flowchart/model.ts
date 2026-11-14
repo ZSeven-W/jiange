@@ -16,7 +16,7 @@ export type EdgeKind = "orthogonal" | "straight" | "curve";
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; theme: string }
-export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean };
+export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean; appliedKeys: string[] };
 
 export const FC_VERSION = "fc.v";
 export const FC_THEME = "fc.theme";

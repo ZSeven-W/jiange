@@ -2033,7 +2033,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
                 onFlowChange={readOnly ? undefined : (graph, base) => {
-                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return { graph: base, conflicts: ["document"], applied: false };
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return { graph: base, conflicts: ["document"], applied: false, appliedKeys: [] };
                   if (flowAutoOpen === k) setFlowAutoOpen(null);
                   const tx = new Tx(doc);
                   const intent = flowIntentWrites(doc.blockInfo(b).props, base, graph);
@@ -2046,7 +2046,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                     force((x) => x + 1);
                   }
                   // No publish(): it would drop the flowchart pointer/selection presence.
-                  return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0 };
+                  return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? Object.keys(intent.writes) : [] };
                 }}
                 onTableChange={readOnly ? undefined : (rows, merges, widths) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
