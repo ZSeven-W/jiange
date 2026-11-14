@@ -39,6 +39,7 @@ export function RecordDetail({
   onPrev,
   onNext,
   position,
+  initialTab = "detail",
 }: {
   baseId: number;
   canEdit: boolean;
@@ -53,8 +54,9 @@ export function RecordDetail({
   onNext?: () => void;
   /** 1-based index and total in the current view, for the header. */
   position?: { index: number; total: number };
+  initialTab?: "detail" | "history";
 }) {
-  const [tab, setTab] = useState<"detail" | "history">("detail");
+  const [tab, setTab] = useState<"detail" | "history">(initialTab);
   const [addingField, setAddingField] = useState(false);
   const { ledger, issues } = useWriteLedger(baseId);
   type DetailEdit = { rid: number; fid: number; draft: Cell | null; dirty: boolean; authorization: string | null; authored: boolean };

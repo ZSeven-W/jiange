@@ -10,13 +10,15 @@ import { RecordDetail } from "./RecordDetail";
 import { displayValue, evalFormulas, memberName, PALETTE, personIDs, REGISTRY, setFormulaCache, optionColor } from "./registry";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
-import { ChevronRight, Expand, Lock, Pencil, Trash2, X } from "lucide-react";
+import { ChevronRight, Expand, Lock, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBatch, useWriteLedger, WriteNotAttempted } from "./writeSafety";
 import { authorizedDetailRecord } from "./recordAuthorization";
 import { captureGridSelection, checkedTargetsCurrent, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./gridSelection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./fieldReorder";
 import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
 import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } from "./selectionStatistics";
+import { RecordMenu } from "./RecordMenu";
+import { recordMenuTargets, sameRecordTargets } from "./recordMenuTargets";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -114,6 +116,11 @@ export function Grid({
   }, []);
   useEffect(() => { if (!detailAccessReady || !selectionAccessReady || groupBy) dragSelection.current = null; }, [detailAccessReady, selectionAccessReady, groupBy]);
   const [detailId, setDetailId] = useState<number | null>(null);
+  const [detailTab, setDetailTab] = useState<"detail" | "history">("detail");
+  const [detailSession, setDetailSession] = useState(0);
+  const [recordMenu, setRecordMenu] = useState<{ id: number; ids: number[]; selected: boolean; x: number; y: number; anchor: HTMLElement | null } | null>(null);
+  const menuValid = !!recordMenu && records.some((record) => record.id === recordMenu.id) && (!recordMenu.selected || sameRecordTargets(recordMenu.ids, recordMenuTargets(recordMenu.id, checked, records)));
+  useEffect(() => { if (recordMenu && !menuValid) setRecordMenu(null); }, [recordMenu, menuValid]);
   const detail = authorizedDetailRecord(detailId, authorizedRecords ?? records, detailAccessReady);
   const detailIndex = detailId === null ? -1 : records.findIndex((r) => r.id === detailId);
   useEffect(() => {
@@ -381,9 +388,10 @@ export function Grid({
     finally { refreshWrites(onMutate); }
   };
 
-  const deleteChecked = async () => {
+  const deleteChecked = async (expected?: number[]) => {
     setDragError(null);
     const targets = records.filter((r) => checked.has(r.id));
+    if (expected && !sameRecordTargets(expected, targets.map((record) => record.id))) { setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。")); return; }
     if (!targets.length || !(await ask(t("删除选中的 {n} 条记录？", { n: targets.length }), t("删除后无法直接撤销。")))) return;
     for (let index = 0; index < targets.length; index++) {
       const pending = targets.slice(index).map((record) => record.id);
@@ -399,6 +407,33 @@ export function Grid({
       if (!(await deleteRecord(rec))) return;
       setChecked((prev) => { const next = new Set(prev); next.delete(rec.id); return next; });
     }
+  };
+
+  const deleteOne = async (id: number) => {
+    setDragError(null);
+    if (!(await ask(t("删除这条记录？"), t("删除后无法直接撤销。")))) return;
+    const ready = await waitForBatchTargets(() => current.current, baseId, [id], []);
+    const snapshot = current.current;
+    const record = snapshot.visibleRecords.find((item) => item.id === id);
+    if (!ready || !record || !snapshot.mounted || !snapshot.canEdit || snapshot.baseId !== baseId || !snapshot.detailAccessReady || !snapshot.selectionAccessReady) {
+      setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。")); return;
+    }
+    await deleteRecord(record);
+  };
+
+  const openDetail = (id: number, tab: "detail" | "history") => {
+    if (!current.current.detailAccessReady || !current.current.selectionAccessReady || !current.current.visibleRecords.some((record) => record.id === id)) return;
+    if (detailId === null) { setDetailTab(tab); setDetailSession((session) => session + 1); }
+    setDetailId(id); onDetailVisibilityChange?.(true);
+  };
+
+  const openRecordMenu = (rec: BaseRecord, x: number, y: number, anchor: HTMLElement | null) => {
+    if (!detailAccessReady || !selectionAccessReady || detailId !== null) return;
+    const ids = recordMenuTargets(rec.id, checked, records);
+    if (!ids.length) return;
+    const selected = checked.has(rec.id);
+    if (!selected && checked.size) setChecked(new Set());
+    setRecordMenu({ id: rec.id, ids, selected, x, y, anchor });
   };
 
   /** Position between f and its neighbour in the full field order (left or right). */
@@ -651,20 +686,16 @@ export function Grid({
             const fill = rowFill(rec, allFields ?? fields, fills, members);
             const isChecked = checked.has(rec.id);
             return (
-            <tr key={rec.id} className={cn("group", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill}>
-              <td className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1.5 text-[12px] text-subtle [@media(hover:none)]:px-1", tall && "align-top", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined}>
-                <div className="flex h-[31px] items-center justify-center gap-1">
+            <tr key={rec.id} className={cn("group", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill} onContextMenu={(event) => { if (event.target instanceof Element && event.target.closest("input:not([type=checkbox]), textarea, [contenteditable=true]")) return; event.preventDefault(); openRecordMenu(rec, event.clientX, event.clientY, event.currentTarget.querySelector<HTMLElement>("[data-row-menu-anchor]")); }}>
+              <td tabIndex={0} data-row-menu-anchor aria-label={t("记录 {n} 操作", { n: i + 1 })} onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); openRecordMenu(rec, rect.right, rect.top, event.currentTarget); } }} className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1 text-[12px] text-subtle", tall && "align-top", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined}>
+                <div className="flex h-[31px] items-center justify-center gap-0">
                 <span className={cn("group-hover:hidden [@media(hover:none)]:hidden", isChecked && "hidden")}>{i + 1}</span>
                 <input type="checkbox" checked={isChecked} disabled={!detailAccessReady || !selectionAccessReady} onChange={() => toggleChecked(rec.id)} aria-label={t("选择记录 {n}", { n: i + 1 })} className={cn("size-3.5 cursor-pointer accent-primary group-hover:inline-block [@media(hover:none)]:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
-                <span className={cn("hidden items-center justify-center gap-0.5 group-hover:flex [@media(hover:none)]:flex")}>
-                  <button type="button" className="grid size-6 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:size-8" aria-label={t("展开记录 {n}", { n: i + 1 })} title={t("展开记录")} onClick={() => { setDetailId(rec.id); onDetailVisibilityChange?.(true); }} data-expand={rec.id}>
-                    <Expand size={14} strokeWidth={1.7} />
+                <span className={cn("hidden items-center justify-center gap-0 group-hover:flex [@media(hover:none)]:flex")}>
+                  <button type="button" className="grid size-4 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:hidden" aria-label={t("展开记录 {n}", { n: i + 1 })} title={t("展开记录")} onClick={() => openDetail(rec.id, "detail")} data-expand={rec.id}>
+                    <Expand size={13} strokeWidth={1.7} />
                   </button>
-                  {canEdit && (
-                    <button type="button" className="text-subtle hover:text-destructive [@media(hover:none)]:hidden" title={t("删除记录")} onClick={() => void deleteRecord(rec)}>
-                      ✕
-                    </button>
-                  )}
+                  <button type="button" className="grid size-4 place-items-center rounded text-subtle hover:bg-hover [@media(hover:none)]:size-7" aria-label={t("记录 {n} 操作", { n: i + 1 })} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openRecordMenu(rec, rect.right, rect.bottom, event.currentTarget); }}><MoreHorizontal size={14}/></button>
                 </span>
                 </div>
               </td>
@@ -750,7 +781,7 @@ export function Grid({
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
     {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
     {checkedCount > 0 && (
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px]" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
+      <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px] [@media(hover:hover)_and_(pointer:fine)]:hidden" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
         <span>{t("已选择")} <b className="font-medium text-primary">{checkedCount}</b> {t("条记录")}</span>
         {canEdit && <button type="button" disabled={!detailAccessReady || !selectionAccessReady} className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white disabled:opacity-50" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />{t("删除")}</button>}
         <button type="button" className="ml-auto grid size-7 place-items-center rounded-md text-subtle hover:bg-white" aria-label={t("取消选择")} onClick={() => setChecked(new Set())}><X size={15} /></button>
@@ -776,6 +807,8 @@ export function Grid({
       {detailId !== null && !detailAccessReady && <aside className="fixed inset-y-0 right-0 z-40 grid w-full max-w-[420px] place-items-center border-l bg-surface text-[13px] text-subtle shadow-xl" role="status">{t("正在确认记录访问权限…")}</aside>}
       {detail && (
         <RecordDetail
+          key={detailSession}
+          initialTab={detailTab}
           baseId={baseId}
           canEdit={canEdit}
           preventCopy={preventCopy}
@@ -978,6 +1011,7 @@ export function Grid({
         </tfoot>
       </table>
     </div>
+    {recordMenu && menuValid && <RecordMenu x={recordMenu.x} y={recordMenu.y} multiple={recordMenu.ids.length > 1} canEdit={canEdit} ready={detailAccessReady && selectionAccessReady} anchor={recordMenu.anchor} onClose={() => setRecordMenu(null)} onDetail={() => { openDetail(recordMenu.id, "detail"); setRecordMenu(null); }} onHistory={() => { openDetail(recordMenu.id, "history"); setRecordMenu(null); }} onDelete={() => { const menu = recordMenu; setRecordMenu(null); if (menu.selected) void deleteChecked(menu.ids); else void deleteOne(menu.id); }} />}
     {selectedStats && <div data-selection-statistics role="status" className="pointer-events-none absolute bottom-12 right-3 z-20 flex items-center rounded-md border border-[#dee0e3] bg-surface px-3 py-2 text-[12px] text-[#646a73] shadow-[0_2px_8px_rgba(31,35,41,0.12)] sm:right-6">
       <span>{t("平均值")}: <span className="tabular-nums">{formatSelectionNumber(selectedStats.average)}</span></span>
       <span className="mx-3 h-4 w-px bg-[#e5e6eb]" />
