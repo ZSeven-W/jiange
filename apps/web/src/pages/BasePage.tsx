@@ -28,6 +28,7 @@ import { createdViewSelectionResult, isCreatedView, NewViewMenu, type CreatedVie
 import { ViewGlyph } from "./base/ViewGlyph";
 import { ViewConfigActions } from "./base/ViewConfigActions";
 import { CsvImport } from "./base/CsvImport";
+import { AddRecordMenu } from "./base/AddRecordMenu";
 import { FormPublication } from "./base/FormPublication";
 import { FormSetup, validFormSelection } from "./base/FormSetup";
 import { saveFormConfig } from "./base/publicFormApi";
@@ -285,6 +286,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     if (ledger.blocked("batch")) return;
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
+    setUndoNotice(null);
     try { const rec = await baseApi.addRecord(id); ledger.complete(op); undoStack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
     catch { ledger.fail(op, t("无法确认是否创建，请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(refresh); }
@@ -337,11 +339,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
-        {canEdit && current?.type !== "form" && <span className="mr-1 flex shrink-0 items-center gap-0.5 border-r pr-1.5">
-          <button type="button" disabled={!undoStack.canUndo} onClick={() => void runUndo(false)} aria-label={t("撤销")} title={undoStack.undoLabel ? `${t("撤销")}：${undoStack.undoLabel} (⌘/Ctrl+Z)` : t("撤销")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-undo><Undo2 size={16} /></button>
-          <button type="button" disabled={!undoStack.canRedo} onClick={() => void runUndo(true)} aria-label={t("重做")} title={undoStack.redoLabel ? `${t("重做")}：${undoStack.redoLabel} (⌘/Ctrl+Shift+Z)` : t("重做")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-redo><Redo2 size={16} /></button>
-        </span>}
-        {canEdit && current?.type !== "form" && <button disabled={ledger.blocked("record:create") || ledger.blocked("batch")} className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void addRecord()}><Plus size={15} />{t("添加记录")}<ChevronDown size={13} className="opacity-70" aria-hidden /></button>}
+        {canEdit && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} onAdd={() => void addRecord()} />}
         {undoNotice && <span role="status" className="mx-1 max-w-72 truncate text-xs text-subtle" title={undoNotice}>{undoNotice}</span>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
@@ -377,6 +375,10 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {current?.type === "grid" && <RowHeightBar cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <FillBar fields={fields} cfg={cfg} onChange={setCfg} />}
         <span className="ml-auto" aria-hidden />
+        {canEdit && current?.type !== "form" && <span className="ml-1 flex shrink-0 items-center gap-0.5 border-l pl-1.5">
+          <button type="button" disabled={!undoStack.canUndo} onClick={() => void runUndo(false)} aria-label={t("撤销")} title={undoStack.undoLabel ? `${t("撤销")}：${undoStack.undoLabel} (⌘/Ctrl+Z)` : t("撤销")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-undo><Undo2 size={16} /></button>
+          <button type="button" disabled={!undoStack.canRedo} onClick={() => void runUndo(true)} aria-label={t("重做")} title={undoStack.redoLabel ? `${t("重做")}：${undoStack.redoLabel} (⌘/Ctrl+Shift+Z)` : t("重做")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-redo><Redo2 size={16} /></button>
+        </span>}
         {(current?.type === "grid" || current?.type === "kanban") && <ToolbarSearch value={filter} onChange={setFilter} />}
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
         {current?.type === "calendar" && (
