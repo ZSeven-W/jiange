@@ -28,6 +28,7 @@ type SlidesPage struct {
 type SlidesStore interface {
 	CreateSlidesFile(ctx context.Context, guard RestoreGuard, slidesID int64, file FileMeta) (FileMeta, error)
 	CreateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID int64, title string) (SlidesPage, error)
+	DuplicateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error)
 	ListSlidesPages(ctx context.Context, userID, slidesID int64) ([]SlidesPage, error)
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
 	DeleteSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64) error

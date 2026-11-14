@@ -52,6 +52,73 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 	return page, nil
 }
 
+func (p *Postgres) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (page SlidesPage, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var src SlidesPage
+		e := tx.QueryRow(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at FROM slides_pages WHERE id=$1 AND slides_id=$2 FOR UPDATE`, pageID, slidesID).
+			Scan(&src.ID, &src.SlidesID, &src.Pos, &src.Title, &src.Body, &src.Background, &src.Notes, &src.Shapes, &src.Revision, &src.UpdatedAt)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		expiry, e := drivePGSession(ctx, tx, g)
+		if e != nil {
+			return e
+		}
+		// Allocate positions under an exclusive node lock. Acquire it before
+		// lockCopySource's share locks so concurrent copies do not deadlock by
+		// upgrading two shared locks on the same deck.
+		var copyMin string
+		e = tx.QueryRow(ctx, `SELECT copy_min_role FROM nodes WHERE id=$1 FOR UPDATE`, slidesID).Scan(&copyMin)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		role, protected, kind, e := lockCopySource(ctx, tx, slidesID, g.UserID)
+		if e != nil {
+			return e
+		}
+		if kind != "slides" {
+			return ErrNotFound
+		}
+		if RoleRank(role) < RoleRank(RoleEdit) {
+			return ErrForbidden
+		}
+		if !DocumentCopyAllowed(DocMeta{Kind: kind, CopyProtected: protected, CopyMinRole: copyMin}, role) {
+			return ErrCopyProtected
+		}
+		if expectedRevision < 1 || src.Revision != expectedRevision {
+			return ErrConflict
+		}
+		var nextValue float64
+		e = tx.QueryRow(ctx, `SELECT pos FROM slides_pages WHERE slides_id=$1 AND (pos,id)>($2,$3) ORDER BY pos,id LIMIT 1`, slidesID, src.Pos, src.ID).Scan(&nextValue)
+		var next *float64
+		if e == nil {
+			next = &nextValue
+		} else if !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+		pos, e := slideCopyPosition(src.Pos, next)
+		if e != nil {
+			return e
+		}
+		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id,slides_id,pos,title,body,background,notes,shapes,revision,updated_at`, slidesID, pos, src.Title, src.Body, src.Background, src.Notes, src.Shapes).
+			Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Revision, &page.UpdatedAt)
+		if e != nil {
+			return e
+		}
+		return drivePGEnd(ctx, g, expiry)
+	})
+	if err != nil {
+		return SlidesPage{}, err
+	}
+	return page, nil
+}
+
 func (p *Postgres) CreateSlidesFile(ctx context.Context, g RestoreGuard, slidesID int64, file FileMeta) (out FileMeta, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		if e := p.slidesAccessGuarded(ctx, tx, g, slidesID); e != nil {

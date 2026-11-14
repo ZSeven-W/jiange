@@ -2,7 +2,7 @@ import { ApiError, type SlidesPage } from "@/lib/api";
 
 export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "notes" | "shapes">;
 const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color && (item.width ?? 16) === (other.width ?? 16) && (item.height ?? 20) === (other.height ?? 20) && (item.rotation ?? 0) === (other.rotation ?? 0) && (item.text ?? "") === (other.text ?? "") && (item.fontSize ?? 24) === (other.fontSize ?? 24) && (item.bold ?? false) === (other.bold ?? false) && (item.align ?? "left") === (other.align ?? "left") && item.fileId === other.fileId; });
-const sameContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
+export const sameSlideContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
 export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
 type History = { undo: SlideContent[]; redo: SlideContent[]; group: string | null; at: number };
 const HISTORY_LIMIT = 100;
@@ -33,7 +33,7 @@ export class SlidesDraftQueue {
   edit(page: SlidesPage, patch: Partial<SlideContent>, group?: string) {
     const current = this.get(page);
     const next: SlideDraft = { ...current, content: { ...current.content, ...patch } };
-    if (sameContent(current.content, next.content)) return;
+    if (sameSlideContent(current.content, next.content)) return;
     const history = this.history.get(page.id) ?? { undo: [], redo: [], group: null, at: 0 };
     const now = Date.now();
     if (!group || history.group !== group || now - history.at > 1000 || history.redo.length) {
@@ -92,7 +92,7 @@ export class SlidesDraftQueue {
       latest.state = "saved";
       this.onSaved(saved);
       this.onChange();
-      if (!sameContent(latest.content, sent)) void this.save(id);
+      if (!sameSlideContent(latest.content, sent)) void this.save(id);
     } catch (error) {
       const latest = this.drafts.get(id);
       if (!latest) return;

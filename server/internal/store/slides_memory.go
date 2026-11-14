@@ -46,6 +46,43 @@ func (m *Memory) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesID 
 	return page, nil
 }
 
+func (m *Memory) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, err := m.slidesAccessLocked(ctx, g, slidesID, false)
+	if err != nil {
+		return SlidesPage{}, err
+	}
+	if !DocumentCopyAllowed(d.meta, m.roleLocked(g.UserID, d)) {
+		return SlidesPage{}, ErrCopyProtected
+	}
+	_, src := m.findSlidesPageLocked(pageID)
+	if src == nil || src.SlidesID != slidesID {
+		return SlidesPage{}, ErrNotFound
+	}
+	if expectedRevision < 1 || src.Revision != expectedRevision {
+		return SlidesPage{}, ErrConflict
+	}
+	var next *float64
+	for _, p := range m.slides {
+		if p.SlidesID == slidesID && p.ID != pageID && (p.Pos > src.Pos || p.Pos == src.Pos && p.ID > src.ID) && (next == nil || p.Pos < *next) {
+			pos := p.Pos
+			next = &pos
+		}
+	}
+	pos, err := slideCopyPosition(src.Pos, next)
+	if err != nil {
+		return SlidesPage{}, err
+	}
+	m.slidesSequence++
+	page := *src
+	page.ID, page.Pos, page.Revision, page.UpdatedAt = m.slidesSequence, pos, 1, time.Now()
+	page.Shapes = slices.Clone(src.Shapes)
+	m.slides = append(m.slides, page)
+	page.Shapes = slices.Clone(page.Shapes)
+	return page, nil
+}
+
 func (m *Memory) CreateSlidesFile(ctx context.Context, g RestoreGuard, slidesID int64, file FileMeta) (FileMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
