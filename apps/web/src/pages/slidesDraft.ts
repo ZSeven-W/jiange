@@ -4,7 +4,8 @@ export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "n
 const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color && (item.width ?? 16) === (other.width ?? 16) && (item.height ?? 20) === (other.height ?? 20) && (item.rotation ?? 0) === (other.rotation ?? 0) && (item.text ?? "") === (other.text ?? "") && (item.fontSize ?? 24) === (other.fontSize ?? 24) && (item.bold ?? false) === (other.bold ?? false) && (item.align ?? "left") === (other.align ?? "left") && item.fileId === other.fileId; });
 export const sameSlideContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
 export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
-type History = { undo: SlideContent[]; redo: SlideContent[]; group: string | null; at: number };
+type HistoryEntry = { content: SlideContent; batchId?: number };
+type History = { undo: HistoryEntry[]; redo: HistoryEntry[]; group: string | null; at: number };
 const HISTORY_LIMIT = 100;
 
 /** Serialise writes per page; keep the user's latest text when a write fails. */
@@ -17,6 +18,7 @@ export class SlidesDraftQueue {
     private readonly write: (page: SlidesPage, content: SlideContent) => Promise<SlidesPage>,
     private readonly onSaved: (page: SlidesPage) => void,
     onChange: () => void,
+    private readonly onUserEdit: () => void = () => {},
   ) { this.onChange = onChange; }
 
   dispose() { this.onChange = () => {}; }
@@ -39,10 +41,11 @@ export class SlidesDraftQueue {
     const current = this.get(page);
     const next: SlideDraft = { ...current, content: { ...current.content, ...patch } };
     if (sameSlideContent(current.content, next.content)) return;
+    this.onUserEdit();
     const history = this.history.get(page.id) ?? { undo: [], redo: [], group: null, at: 0 };
     const now = Date.now();
     if (!group || history.group !== group || now - history.at > 1000 || history.redo.length) {
-      history.undo.push(current.content);
+      history.undo.push({ content: current.content });
       if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
     }
     history.redo = [];
@@ -65,7 +68,7 @@ export class SlidesDraftQueue {
   }
 
   /** Adopt a confirmed background batch without losing newer local edits. */
-  acceptBackgroundBatch(before: readonly SlidesPage[], after: readonly SlidesPage[]): boolean {
+  acceptBackgroundBatch(before: readonly SlidesPage[], after: readonly SlidesPage[], batchId = 0): boolean {
     if (before.length !== after.length || !before.length) return false;
     const pairs = before.map((page, index) => {
       const existing = this.drafts.get(page.id);
@@ -80,11 +83,57 @@ export class SlidesDraftQueue {
       if (page.background === saved.background) continue;
       if (superseded) this.history.delete(page.id);
       const history = this.history.get(page.id) ?? { undo: [], redo: [], group: null, at: 0 };
-      history.undo.push(current.content); if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
+      history.undo.push({ content: current.content, batchId }); if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
       history.redo = []; history.group = null; this.history.set(page.id, history);
       this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, notes: saved.notes, shapes: saved.shapes }, state: "saved" });
     }
     this.onChange(); return true;
+  }
+
+  /** A batch can travel only while every page still matches the operation and
+   * its per-page history has no newer edits above that operation. */
+  canTravelBackgroundBatch(currentPages: readonly SlidesPage[], source: readonly SlidesPage[], target: readonly SlidesPage[], direction: "undo" | "redo", batchId = 0): boolean {
+    if (!currentPages.length || currentPages.length !== source.length || source.length !== target.length) return false;
+    const sources = new Map(source.map((page) => [page.id, page]));
+    const targets = new Map(target.map((page) => [page.id, page]));
+    if (sources.size !== source.length || targets.size !== target.length || new Set(currentPages.map((page) => page.id)).size !== currentPages.length) return false;
+    let changed = false;
+    for (const page of currentPages) {
+      const from = sources.get(page.id), to = targets.get(page.id), current = this.get(page);
+      if (!from || !to || from.slidesId !== to.slidesId || current.page.slidesId !== from.slidesId || current.state !== "saved" || current.page.hidden !== from.hidden || from.hidden !== to.hidden || !sameSlideContent(current.content, from) || !sameSlideContent({ ...from, background: to.background }, to)) return false;
+      if (from.background === to.background) continue;
+      changed = true;
+      const candidate = this.history.get(page.id)?.[direction].at(-1);
+      if (!candidate || candidate.batchId !== batchId || !sameSlideContent(candidate.content, to)) return false;
+    }
+    return changed;
+  }
+
+  /** Apply a server-confirmed batch undo/redo without triggering another write. */
+  acceptBackgroundTravel(before: readonly SlidesPage[], after: readonly SlidesPage[], source: readonly SlidesPage[], target: readonly SlidesPage[], direction: "undo" | "redo", batchId = 0): boolean {
+    if (before.length !== after.length || !this.canTravelBackgroundBatch(before, source, target, direction, batchId)) return false;
+    const targets = new Map(target.map((page) => [page.id, page]));
+    for (let index = 0; index < before.length; index++) {
+      const page = before[index], saved = after[index], to = targets.get(page.id);
+      if (!saved || !to || saved.id !== page.id || saved.slidesId !== page.slidesId || saved.pos !== page.pos || saved.hidden !== page.hidden || saved.background !== to.background || saved.revision !== page.revision + (saved.background === page.background ? 0 : 1) || !sameSlideContent({ ...page, background: saved.background }, saved)) return false;
+    }
+    for (let index = 0; index < before.length; index++) {
+      const page = before[index], saved = after[index];
+      if (page.background === saved.background) continue;
+      const history = this.history.get(page.id)!;
+      const current = this.get(page);
+      history[direction].pop();
+      const opposite = history[direction === "undo" ? "redo" : "undo"];
+      opposite.push({ content: current.content, batchId }); if (opposite.length > HISTORY_LIMIT) opposite.shift();
+      history.group = null;
+      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, notes: saved.notes, shapes: saved.shapes }, state: "saved" });
+    }
+    this.onChange(); return true;
+  }
+
+  isBackgroundHistoryTop(page: SlidesPage, target: SlidesPage, direction: "undo" | "redo", batchId = 0): boolean {
+    const current = this.get(page), candidate = this.history.get(page.id)?.[direction].at(-1);
+    return current.state === "saved" && current.content.background !== target.background && !!candidate && candidate.batchId === batchId && sameSlideContent(candidate.content, target);
   }
 
   canUndo(page: SlidesPage) { this.get(page); return !!this.history.get(page.id)?.undo.length; }
@@ -98,12 +147,12 @@ export class SlidesDraftQueue {
     const history = this.history.get(page.id);
     if (!history) return;
     const from = history[direction], to = history[direction === "undo" ? "redo" : "undo"];
-    const content = from.pop();
-    if (!content) return;
-    to.push(current.content);
+    const entry = from.pop();
+    if (!entry) return;
+    to.push({ content: current.content, batchId: entry.batchId });
     if (to.length > HISTORY_LIMIT) to.shift();
     history.group = null;
-    this.apply(page.id, { ...current, content });
+    this.apply(page.id, { ...current, content: entry.content });
   }
 
   private apply(id: number, next: SlideDraft) {

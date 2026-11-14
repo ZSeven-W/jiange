@@ -65,6 +65,18 @@ func exerciseSlidesBackground(t *testing.T, st store.Store) {
 	if err != nil || len(noOp) != 2 || noOp[0].Revision != current[0].Revision || noOp[1].Revision != current[1].Revision {
 		t.Fatalf("noop=%+v %v", noOp, err)
 	}
+	changes := []store.SlideBackgroundChange{{ID: pages[0].ID, Revision: pages[0].Revision, Background: ""}, {ID: pages[1].ID, Revision: pages[1].Revision, Background: "#aabbcc"}}
+	if _, err := op.ApplySlidesBackgroundChanges(ctx, g, deck.ID, changes); err != nil {
+		t.Fatalf("different backgrounds: %v", err)
+	}
+	pages, err = st.ListSlidesPages(ctx, owner.ID, deck.ID)
+	if err != nil || len(pages) != 2 || pages[0].Background != "" || pages[1].Background != "#aabbcc" || pages[0].Title != "标题" {
+		t.Fatalf("restore=%+v err=%v", pages, err)
+	}
+	if _, err := op.ApplySlidesBackgroundChanges(ctx, g, deck.ID, changes); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale changes: %v", err)
+	}
+	current = []store.SlideVersion{{ID: pages[0].ID, Revision: pages[0].Revision}, {ID: pages[1].ID, Revision: pages[1].Revision}}
 	viewer, _, err := st.CreateUser(ctx, "background-viewer@example.test", "Viewer", "hash")
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +177,10 @@ func TestPostgresSlidesBackgroundRollsBack(t *testing.T) {
 	_, err = st.ApplySlidesBackground(ctx, g, deck.ID, "#123456", []store.SlideVersion{{ID: pages[0].ID, Revision: pages[0].Revision}, {ID: second.ID, Revision: second.Revision}})
 	if err == nil {
 		t.Fatal("expected trigger failure")
+	}
+	_, err = st.ApplySlidesBackgroundChanges(ctx, g, deck.ID, []store.SlideBackgroundChange{{ID: pages[0].ID, Revision: pages[0].Revision, Background: "#112233"}, {ID: second.ID, Revision: second.Revision, Background: "#445566"}})
+	if err == nil {
+		t.Fatal("expected heterogeneous trigger failure")
 	}
 	pages, err = st.ListSlidesPages(ctx, owner.ID, deck.ID)
 	if err != nil || len(pages) != 2 || pages[0].Background != "" || pages[1].Background != "" {

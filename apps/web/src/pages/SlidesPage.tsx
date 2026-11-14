@@ -15,8 +15,11 @@ import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAc
 import { playableSlides, presentationStart } from "./slidesVisibility";
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
-import { applyBackgroundReceipts } from "./slides-background";
+import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
+
+type BackgroundAction = { id: number; before: Page[]; after: Page[] };
+type BackgroundHistory = { undo: BackgroundAction[]; redo: BackgroundAction[] };
 
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
 export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number }) {
@@ -30,6 +33,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [formatOpen, setFormatOpen] = useState(false);
   const [backgroundApplying, setBackgroundApplying] = useState(false);
   const [backgroundBatchUnknown, setBackgroundBatchUnknown] = useState(false);
+  const [backgroundHistory, setBackgroundHistory] = useState<BackgroundHistory>({ undo: [], redo: [] });
+  const backgroundHistoryRef = useRef(backgroundHistory);
+  const backgroundBatchSequence = useRef(0);
+  backgroundHistoryRef.current = backgroundHistory;
   const [uploadingImage, setUploadingImage] = useState(false);
   const [copyingDeck, setCopyingDeck] = useState(false);
   const [createdCopyId, setCreatedCopyId] = useState<number | null>(null);
@@ -59,6 +66,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const imageUpload = useRef<AbortController | null>(null);
   const activePageRef = useRef<number | null>(null);
   const canEditRef = useRef(false);
+  const backgroundHistoryAction = useRef<(redo: boolean) => boolean>(() => false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId, userId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
   const visitRecorder = useMemo(() => createVisitRecorder(
     () => docsApi.recordVisit(deckId),
@@ -76,6 +84,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     (page, content) => slidesApi.update(page.id, content.title, content.body, content.background, page.revision, content.notes, content.shapes),
     (saved) => qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
     () => setDraftVersion((version) => version + 1),
+    () => setBackgroundHistory((history) => history.redo.length ? { ...history, redo: [] } : history),
   ), [deckId, userId, qc]);
   useEffect(() => () => queue.dispose(), [queue]);
   useEffect(() => () => { imageUpload.current?.abort(); imageUpload.current = null; }, []);
@@ -209,6 +218,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (!(target instanceof HTMLElement) || (target !== document.body && !target.closest("[data-slides-editor]"))) return;
       if (target.matches("input, textarea, [contenteditable=true]") && !target.hasAttribute("data-slide-history")) return;
       event.preventDefault();
+      if (backgroundHistoryAction.current(redo)) return;
       if (redo) queue.redo(active); else queue.undo(active);
       if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null);
     };
@@ -248,6 +258,66 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
 
   const beginPageAction = () => { pageActionCount.current++; setPageActions(pageActionCount.current); };
   const endPageAction = () => { pageActionCount.current--; setPageActions(pageActionCount.current); };
+  const mergeBackgroundPages = (after: Page[]) => {
+    const byId = new Map(after.map((page) => [page.id, page]));
+    qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((page) => { const saved = byId.get(page.id); return saved && page.revision <= saved.revision ? { ...saved, pos: page.pos, updatedAt: Date.parse(page.updatedAt) > Date.parse(saved.updatedAt) ? page.updatedAt : saved.updatedAt } : page; }));
+  };
+  const historyAvailable = (redo: boolean) => {
+    const action = backgroundHistory[redo ? "redo" : "undo"].at(-1);
+    if (!action) return false;
+    return queue.canTravelBackgroundBatch(list, redo ? action.before : action.after, redo ? action.after : action.before, redo ? "redo" : "undo", action.id);
+  };
+  const historyBlocksPartial = (redo: boolean) => {
+    const action = backgroundHistory[redo ? "redo" : "undo"].at(-1);
+    if (!active || !action) return false;
+    const target = (redo ? action.after : action.before).find((page) => page.id === active.id);
+    const source = (redo ? action.before : action.after).find((page) => page.id === active.id);
+    if (!target || !source) return false;
+    const current = queue.get(active);
+    // An unchanged page must not jump to an older per-page action while a
+    // newer whole-deck action is still waiting to be reconciled.
+    if (source.background === target.background && current.state === "saved" && current.page.hidden === source.hidden && sameSlideContent(current.content, source)) return true;
+    return queue.isBackgroundHistoryTop(active, target, redo ? "redo" : "undo", action.id);
+  };
+  const tryBackgroundHistory = (redo: boolean): boolean => {
+    const action = backgroundHistory[redo ? "redo" : "undo"].at(-1);
+    if (!action) return false;
+    const source = redo ? action.before : action.after;
+    const target = redo ? action.after : action.before;
+    const direction = redo ? "redo" : "undo";
+    if (!queue.canTravelBackgroundBatch(list, source, target, direction, action.id)) {
+      if (!historyBlocksPartial(redo)) return false;
+      setOperationError("批量背景涉及的页面已变化，请先核对全部页面。"); return true;
+    }
+    if (!canEdit || !pages.isSuccess || pages.isFetching || queue.hasUnsaved() || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) {
+      setOperationError("请等待页面保存和刷新完成后再操作。"); return true;
+    }
+    const before = list.map((page) => queue.get(page).page);
+    const targetById = new Map(target.map((page) => [page.id, page.background]));
+    const changes = before.map((page) => ({ id: page.id, revision: page.revision, background: targetById.get(page.id)! }));
+    setOperationError(""); setBackgroundApplying(true); beginPageAction();
+    void (async () => {
+      try {
+        const response = await slidesApi.changeBackgrounds(deckId, userId, changes);
+        const after = applyBackgroundChangeReceipts(before, changes, response?.pages);
+        if (!after || backgroundHistoryRef.current[direction].at(-1) !== action || !queue.acceptBackgroundTravel(before, after, source, target, direction, action.id)) { setBackgroundBatchUnknown(true); setOperationError("背景操作已提交，但页面状态发生变化；请保留内容并重新打开核对。"); void invalidate(); return; }
+        mergeBackgroundPages(after);
+        setBackgroundHistory((history) => {
+          const from = history[direction], opposite = direction === "undo" ? "redo" : "undo";
+          if (from.at(-1) !== action) return history;
+          return { ...history, [direction]: from.slice(0, -1), [opposite]: [...history[opposite], action].slice(-50) };
+        });
+        void invalidate();
+      } catch (error) {
+        const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+        if (!known) setBackgroundBatchUnknown(true);
+        setOperationError(known ? error.status === 409 ? "页面已变化，未修改背景，请刷新后核对。" : error.status === 404 || error.status === 405 ? "服务端不支持整份背景撤销，请升级后重试。" : error.message : "背景操作结果未确认，请重新打开并检查后再编辑。");
+        void invalidate();
+      } finally { setBackgroundApplying(false); endPageAction(); }
+    })();
+    return true;
+  };
+  backgroundHistoryAction.current = tryBackgroundHistory;
   const startPresentation = async () => {
     if (playbackCheck.current || visibilityUnknown || backgroundBatchUnknown || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
     playbackCheck.current = true; setCheckingPlayback(true); setOperationError("");
@@ -309,9 +379,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     try {
       const response = await slidesApi.applyBackground(deckId, userId, color, before.map(({ id, revision }) => ({ id, revision })));
       const after = applyBackgroundReceipts(before, color, response?.pages);
-      if (!after || !queue.acceptBackgroundBatch(before, after)) { setBackgroundBatchUnknown(true); setOperationError("背景已提交，但页面状态发生变化；请保留内容并重新打开核对。"); void invalidate(); return; }
-      const byId = new Map(after.map((page) => [page.id, page]));
-      qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((page) => { const saved = byId.get(page.id); return saved && page.revision <= saved.revision ? { ...saved, pos: page.pos, updatedAt: Date.parse(page.updatedAt) > Date.parse(saved.updatedAt) ? page.updatedAt : saved.updatedAt } : page; }));
+      const id = ++backgroundBatchSequence.current;
+      if (!after || !queue.acceptBackgroundBatch(before, after, id)) { setBackgroundBatchUnknown(true); setOperationError("背景已提交，但页面状态发生变化；请保留内容并重新打开核对。"); void invalidate(); return; }
+      mergeBackgroundPages(after);
+      if (before.some((page, index) => page.background !== after[index].background)) setBackgroundHistory((history) => ({ undo: [...history.undo, { id, before, after }].slice(-50), redo: [] }));
       void invalidate();
     } catch (error) {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
@@ -355,8 +426,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <div className="flex shrink-0 items-center gap-0.5 border-r border-[#e5e6eb] pr-2">
-              <button type="button" aria-label="撤销本页内容" title="撤销本页内容 (⌘/Ctrl+Z)" disabled={!canEdit || !active || !queue.canUndo(active)} onClick={() => { if (active) { queue.undo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={16}/></button>
-              <button type="button" aria-label="重做本页内容" title="重做本页内容 (⌘/Ctrl+Shift+Z)" disabled={!canEdit || !active || !queue.canRedo(active)} onClick={() => { if (active) { queue.redo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={16}/></button>
+              <button type="button" aria-label={historyAvailable(false) || historyBlocksPartial(false) ? "撤销整份背景" : "撤销本页内容"} title={historyAvailable(false) || historyBlocksPartial(false) ? "撤销整份背景 (⌘/Ctrl+Z)" : "撤销本页内容 (⌘/Ctrl+Z)"} disabled={!canEdit || !active || !(historyAvailable(false) || historyBlocksPartial(false) || queue.canUndo(active))} onClick={() => { if (active && !tryBackgroundHistory(false)) { queue.undo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={16}/></button>
+              <button type="button" aria-label={historyAvailable(true) || historyBlocksPartial(true) ? "重做整份背景" : "重做本页内容"} title={historyAvailable(true) || historyBlocksPartial(true) ? "重做整份背景 (⌘/Ctrl+Shift+Z)" : "重做本页内容 (⌘/Ctrl+Shift+Z)"} disabled={!canEdit || !active || !(historyAvailable(true) || historyBlocksPartial(true) || queue.canRedo(active))} onClick={() => { if (active && !tryBackgroundHistory(true)) { queue.redo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={16}/></button>
             </div>
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("text")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>

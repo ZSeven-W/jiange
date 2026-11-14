@@ -15,6 +15,12 @@ type SlideVersion struct {
 	Revision int64 `json:"revision"`
 }
 
+type SlideBackgroundChange struct {
+	ID         int64  `json:"id"`
+	Revision   int64  `json:"revision"`
+	Background string `json:"background"`
+}
+
 // The result contains only the IDs and revisions the caller supplied.
 type SlideBackgroundReceipt struct {
 	ID        int64     `json:"id"`
@@ -24,6 +30,7 @@ type SlideBackgroundReceipt struct {
 
 type SlidesBackgroundStore interface {
 	ApplySlidesBackground(context.Context, RestoreGuard, int64, string, []SlideVersion) ([]SlideBackgroundReceipt, error)
+	ApplySlidesBackgroundChanges(context.Context, RestoreGuard, int64, []SlideBackgroundChange) ([]SlideBackgroundReceipt, error)
 }
 
 var slideBackgroundColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -42,8 +49,40 @@ func validateSlideBackground(background string, expected []SlideVersion) error {
 	return nil
 }
 
+// The heterogeneous form restores existing per-page backgrounds. Legacy
+// pages may contain color strings other than six-digit hex; retain the same
+// length boundary as the established single-page API.
+func validateSlideBackgroundChanges(changes []SlideBackgroundChange) error {
+	if len(changes) == 0 || len(changes) > 1000 {
+		return ErrConflict
+	}
+	seen := make(map[int64]bool, len(changes))
+	for _, item := range changes {
+		if item.ID <= 0 || item.Revision <= 0 || len(item.Background) > 200 || seen[item.ID] {
+			return ErrConflict
+		}
+		seen[item.ID] = true
+	}
+	return nil
+}
+
+func uniformBackgroundChanges(background string, expected []SlideVersion) []SlideBackgroundChange {
+	changes := make([]SlideBackgroundChange, len(expected))
+	for i, item := range expected {
+		changes[i] = SlideBackgroundChange{ID: item.ID, Revision: item.Revision, Background: background}
+	}
+	return changes
+}
+
 func (m *Memory) ApplySlidesBackground(ctx context.Context, guard RestoreGuard, deckID int64, background string, expected []SlideVersion) ([]SlideBackgroundReceipt, error) {
 	if err := validateSlideBackground(background, expected); err != nil {
+		return nil, err
+	}
+	return m.ApplySlidesBackgroundChanges(ctx, guard, deckID, uniformBackgroundChanges(background, expected))
+}
+
+func (m *Memory) ApplySlidesBackgroundChanges(ctx context.Context, guard RestoreGuard, deckID int64, expected []SlideBackgroundChange) ([]SlideBackgroundReceipt, error) {
+	if err := validateSlideBackgroundChanges(expected); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
@@ -76,8 +115,8 @@ func (m *Memory) ApplySlidesBackground(ctx context.Context, guard RestoreGuard, 
 	now := time.Now()
 	for _, item := range expected {
 		i := indexes[item.ID]
-		if m.slides[i].Background != background {
-			m.slides[i].Background = background
+		if m.slides[i].Background != item.Background {
+			m.slides[i].Background = item.Background
 			m.slides[i].Revision++
 			m.slides[i].UpdatedAt = now
 		}
@@ -89,6 +128,13 @@ func (m *Memory) ApplySlidesBackground(ctx context.Context, guard RestoreGuard, 
 
 func (p *Postgres) ApplySlidesBackground(ctx context.Context, guard RestoreGuard, deckID int64, background string, expected []SlideVersion) (result []SlideBackgroundReceipt, err error) {
 	if err := validateSlideBackground(background, expected); err != nil {
+		return nil, err
+	}
+	return p.ApplySlidesBackgroundChanges(ctx, guard, deckID, uniformBackgroundChanges(background, expected))
+}
+
+func (p *Postgres) ApplySlidesBackgroundChanges(ctx context.Context, guard RestoreGuard, deckID int64, expected []SlideBackgroundChange) (result []SlideBackgroundReceipt, err error) {
+	if err := validateSlideBackgroundChanges(expected); err != nil {
 		return nil, err
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
@@ -158,7 +204,7 @@ func (p *Postgres) ApplySlidesBackground(ctx context.Context, guard RestoreGuard
 		result = make([]SlideBackgroundReceipt, 0, len(expected))
 		// Stable update order limits lock-order inversions with concurrent work.
 		ordered := slices.Clone(expected)
-		slices.SortFunc(ordered, func(a, b SlideVersion) int {
+		slices.SortFunc(ordered, func(a, b SlideBackgroundChange) int {
 			if a.ID < b.ID {
 				return -1
 			}
@@ -169,8 +215,8 @@ func (p *Postgres) ApplySlidesBackground(ctx context.Context, guard RestoreGuard
 		})
 		for _, item := range ordered {
 			page := pages[item.ID]
-			if page.background != background {
-				if e = tx.QueryRow(ctx, `UPDATE slides_pages SET background=$2,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING revision,updated_at`, item.ID, background).Scan(&page.revision, &page.updatedAt); e != nil {
+			if page.background != item.Background {
+				if e = tx.QueryRow(ctx, `UPDATE slides_pages SET background=$2,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING revision,updated_at`, item.ID, item.Background).Scan(&page.revision, &page.updatedAt); e != nil {
 					return e
 				}
 			}

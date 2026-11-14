@@ -20,7 +20,13 @@ type Receipt = { id: number; revision: number; updatedAt: string };
 
 /** A receipt may only advance the exact submitted pages by the expected amount. */
 export function applyBackgroundReceipts(before: readonly SlidesPage[], background: string, value: unknown): SlidesPage[] | null {
+  return applyBackgroundChangeReceipts(before, before.map((page) => ({ id: page.id, background })), value);
+}
+
+export function applyBackgroundChangeReceipts(before: readonly SlidesPage[], targets: readonly { id: number; background: string }[], value: unknown): SlidesPage[] | null {
   if (!Array.isArray(value) || value.length !== before.length || !before.length || new Set(before.map((page) => page.id)).size !== before.length || before.some((page) => !Number.isSafeInteger(page.id) || page.id <= 0 || !Number.isSafeInteger(page.revision) || page.revision < 1)) return null;
+  if (targets.length !== before.length || new Set(targets.map((target) => target.id)).size !== targets.length || targets.some((target) => typeof target.background !== "string")) return null;
+  const colors = new Map(targets.map((target) => [target.id, target.background]));
   const byId = new Map<number, Receipt>();
   for (const item of value) {
     if (!item || typeof item !== "object" || !Number.isSafeInteger(item.id) || item.id <= 0 || !Number.isSafeInteger(item.revision) || item.revision < 1 || typeof item.updatedAt !== "string" || !Number.isFinite(Date.parse(item.updatedAt)) || byId.has(item.id)) return null;
@@ -29,6 +35,8 @@ export function applyBackgroundReceipts(before: readonly SlidesPage[], backgroun
   const result: SlidesPage[] = [];
   for (const page of before) {
     const receipt = byId.get(page.id);
+    const background = colors.get(page.id);
+    if (background === undefined) return null;
     const expected = page.revision + (page.background === background ? 0 : 1);
     if (!receipt || receipt.revision !== expected) return null;
     result.push({ ...page, background, revision: receipt.revision, updatedAt: receipt.updatedAt });

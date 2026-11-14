@@ -197,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/bases/{id}/records/{rid}/comment-attempts", s.requireUser(http.HandlerFunc(s.addRecordCommentAttempt)))
 	mux.Handle("GET /api/bases/{id}/records/{rid}/comment-attempts/{mutationId}", s.requireUser(http.HandlerFunc(s.getRecordCommentAttempt)))
 	mux.Handle("POST /api/slides/{id}/background-all", s.requireUser(http.HandlerFunc(s.applySlidesBackground)))
+	mux.Handle("POST /api/slides/{id}/background-changes", s.requireUser(http.HandlerFunc(s.applySlidesBackgroundChanges)))
 	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
 	mux.Handle("GET /api/public/{token}/cover/image", http.HandlerFunc(s.getPublicCoverImage))
 	mux.Handle("GET /api/public/{token}/files/{id}", http.HandlerFunc(s.getPublicFile))

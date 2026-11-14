@@ -18,6 +18,83 @@ describe("slide drafts", () => {
     expect(q.get(after[1]).content.background).toBe("");
     expect(q.get(after[0]).content.background).toBe("#112233");
   });
+  it("undoes and redoes a background batch as one guarded history transition", () => {
+    const second = { ...page, id: 2, pos: 2, background: "#abcdef" };
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});
+    const before = [page, second];
+    const applied = before.map((item) => ({ ...item, background: "#112233", revision: 2 }));
+    expect(q.acceptBackgroundBatch(before, applied)).toBe(true);
+    expect(q.canTravelBackgroundBatch(applied, applied, before, "undo")).toBe(true);
+    const restored = before.map((item) => ({ ...item, revision: 3 }));
+    expect(q.acceptBackgroundTravel(applied, restored, applied, before, "undo")).toBe(true);
+    expect(restored.map((item) => q.get(item).content.background)).toEqual(["", "#abcdef"]);
+    expect(q.canTravelBackgroundBatch(restored, before, applied, "redo")).toBe(true);
+    const redone = applied.map((item) => ({ ...item, revision: 4 }));
+    expect(q.acceptBackgroundTravel(restored, redone, before, applied, "redo")).toBe(true);
+    expect(redone.map((item) => q.get(item).content.background)).toEqual(["#112233", "#112233"]);
+  });
+  it("supports consecutive background batches in reverse and forward order", () => {
+    const second = { ...page, id: 2, pos: 2 }, original = [page, second];
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});
+    const first = original.map((item) => ({ ...item, background: "#112233", revision: 2 }));
+    const secondBatch = first.map((item) => ({ ...item, background: "#445566", revision: 3 }));
+    expect(q.acceptBackgroundBatch(original, first)).toBe(true);
+    expect(q.acceptBackgroundBatch(first, secondBatch)).toBe(true);
+    const undoSecond = first.map((item) => ({ ...item, revision: 4 }));
+    expect(q.acceptBackgroundTravel(secondBatch, undoSecond, secondBatch, first, "undo")).toBe(true);
+    const undoFirst = original.map((item) => ({ ...item, revision: 5 }));
+    expect(q.acceptBackgroundTravel(undoSecond, undoFirst, first, original, "undo")).toBe(true);
+    const redoFirst = first.map((item) => ({ ...item, revision: 6 }));
+    expect(q.acceptBackgroundTravel(undoFirst, redoFirst, original, first, "redo")).toBe(true);
+    const redoSecond = secondBatch.map((item) => ({ ...item, revision: 7 }));
+    expect(q.acceptBackgroundTravel(redoFirst, redoSecond, first, secondBatch, "redo")).toBe(true);
+  });
+  it("reports new content edits but not confirmed background history moves", () => {
+    const onEdit = vi.fn();
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {}, onEdit);
+    q.edit(page, { title: "" });
+    expect(onEdit).not.toHaveBeenCalled();
+    const applied = { ...page, background: "#112233", revision: 2 };
+    expect(q.acceptBackgroundBatch([page], [applied])).toBe(true);
+    expect(q.acceptBackgroundTravel([applied], [{ ...page, revision: 3 }], [applied], [page], "undo")).toBe(true);
+    expect(onEdit).not.toHaveBeenCalled();
+    q.edit({ ...page, revision: 3 }, { title: "新标题" });
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+  it("does not mistake an identical single-page redo for a batch history entry", async () => {
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(page, { background: "#112233" }); await tick();
+    const colored = q.get(page).page;
+    q.undo(colored); await tick();
+    const restored = q.get(colored).page;
+    expect(q.canRedo(restored)).toBe(true);
+    expect(q.isBackgroundHistoryTop(restored, colored, "redo", 42)).toBe(false);
+    q.redo(restored); await tick();
+    expect(q.get(restored).content.background).toBe("#112233");
+  });
+  it("refuses batch history after another page gained an unsaved edit", () => {
+    const second = { ...page, id: 2, pos: 2 };
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});
+    const before = [page, second], applied = before.map((item) => ({ ...item, background: "#112233", revision: 2 }));
+    expect(q.acceptBackgroundBatch(before, applied)).toBe(true);
+    q.edit(applied[1], { title: "未保存的修改" });
+    expect(q.canTravelBackgroundBatch(applied, applied, before, "undo")).toBe(false);
+    const restored = before.map((item) => ({ ...item, revision: 3 }));
+    expect(q.acceptBackgroundTravel(applied, restored, applied, before, "undo")).toBe(false);
+    expect(q.get(applied[1]).content.title).toBe("未保存的修改");
+    expect(q.get(applied[0]).content.background).toBe("#112233");
+  });
+  it("leaves already-matching pages alone while travelling a batch", () => {
+    const second = { ...page, id: 2, pos: 2, background: "#112233" };
+    const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});
+    const before = [page, second], applied = [{ ...page, background: "#112233", revision: 2 }, second];
+    expect(q.acceptBackgroundBatch(before, applied)).toBe(true);
+    expect(q.canTravelBackgroundBatch(applied, applied, before, "undo")).toBe(true);
+    const restored = [{ ...page, revision: 3 }, second];
+    expect(q.acceptBackgroundTravel(applied, restored, applied, before, "undo")).toBe(true);
+    expect(q.get(second).content.background).toBe("#112233");
+    expect(q.canTravelBackgroundBatch([restored[0]], before, applied, "redo")).toBe(false);
+  });
   it("rejects the whole background batch if any page gained a local edit", () => {
     const second = { ...page, id: 2, pos: 2 };
     const q = new SlidesDraftQueue(() => new Promise(() => {}), () => {}, () => {});

@@ -81,4 +81,27 @@ func TestSlidesBackgroundAccountAndVersions(t *testing.T) {
 	if res, _ := call(fmt.Sprint(deck.CreatorID), body); res.StatusCode != 409 {
 		t.Fatalf("stale: %d", res.StatusCode)
 	}
+	changePath := fmt.Sprintf("%s/api/slides/%d/background-changes", ts.URL, deck.ID)
+	change := func(account, body string) int {
+		req, e := http.NewRequest("POST", changePath, bytes.NewBufferString(body))
+		if e != nil {
+			t.Fatal(e)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if account != "" {
+			req.Header.Set("X-Jiange-User-Id", account)
+		}
+		res, e := owner.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer res.Body.Close()
+		return res.StatusCode
+	}
+	if status := change(fmt.Sprint(deck.CreatorID), fmt.Sprintf(`{"changes":[{"id":%d,"revision":2}]}`, page.ID)); status != 400 {
+		t.Fatalf("missing background: %d", status)
+	}
+	if status := change(fmt.Sprint(deck.CreatorID), fmt.Sprintf(`{"changes":[{"id":%d,"revision":2,"background":""}]}`, page.ID)); status != 200 {
+		t.Fatalf("restore: %d", status)
+	}
 }
