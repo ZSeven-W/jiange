@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { t, useI18n } from "@/lib/i18n";
 import { createPortal } from "react-dom";
-import { MoreVertical } from "lucide-react";
+import { ArrowLeft, ArrowRight, Copy, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { ApiError, baseApi, type View } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
 import { popupPosition } from "./popupPosition";
@@ -34,6 +34,7 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
   const { ledger } = useWriteLedger(baseId);
   const menuRef = useRef<HTMLDivElement>(null);
   const anchors = useRef(new Map<number, HTMLButtonElement>());
+  const tabs = useRef(new Map<number, HTMLButtonElement>());
   const pending = useRef<symbol | null>(null);
   const dragging = useRef<{ baseId: number; source: number; order: number[] } | null>(null);
   const identity = useRef({ baseId, canEdit, alive: true });
@@ -45,23 +46,35 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
   }, []);
   useEffect(() => { pending.current = null; setBusy(false); setMenu(null); setMessage(null); }, [baseId]);
   useEffect(() => { if (!canEdit) setMenu(null); }, [canEdit]);
-  useEffect(() => {
-    if (menu === null) return;
+  useLayoutEffect(() => {
+    if (menu === null) { setPosition(null); return; }
     const place = () => {
       const rect = anchors.current.get(menu)?.getBoundingClientRect();
-      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 192, 240));
+      if (rect) setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, 180, 220));
     };
     const close = (e: MouseEvent) => {
       if (!menuRef.current?.contains(e.target as Node) && !anchors.current.get(menu)?.contains(e.target as Node)) setMenu(null);
     };
-    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") { setMenu(null); anchors.current.get(menu)?.focus(); } };
+    const focusOutside = (e: FocusEvent) => { if (!menuRef.current?.contains(e.target as Node) && !anchors.current.get(menu)?.contains(e.target as Node)) setMenu(null); };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); setMenu(null); anchors.current.get(menu)?.focus({ preventScroll: true }); return; }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || !menuRef.current?.contains(document.activeElement)) return;
+      const buttons = [...menuRef.current.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
+      if (!buttons.length) return;
+      e.preventDefault();
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : e.key === "ArrowDown" ? (current + 1) % buttons.length : (current + buttons.length - 1) % buttons.length;
+      buttons[next].focus();
+    };
     place();
     document.addEventListener("mousedown", close);
+    document.addEventListener("focusin", focusOutside);
     document.addEventListener("keydown", escape);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("focusin", focusOutside); document.removeEventListener("keydown", escape); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   }, [menu]);
+  useEffect(() => { if (menu !== null && position) menuRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true }); }, [menu, !!position]);
 
   const valid = (originalBase: number) => identity.current.alive && identity.current.baseId === originalBase && identity.current.canEdit;
   const run = async (label: string, draft: string, action: () => Promise<number | void>, preserveRejectedViewId?: number) => {
@@ -132,16 +145,23 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
         onDragEnd={() => { dragging.current = null; }}
         onDragOver={(event) => { if (canEdit && event.dataTransfer.types.includes("application/x-jiange-view")) event.preventDefault(); }}
         onDrop={(event) => { event.preventDefault(); const drag = dragging.current; dragging.current = null; const source = views.find((item) => item.id === drag?.source); if (drag && drag.baseId === baseId && source && canEdit) reorder(source, view, drag.order); }}>
-        <button type="button" role="tab" aria-selected={view.id === activeId} data-view-tab={view.type} className="flex h-full items-center gap-1.5 pl-3 pr-1" onClick={() => onSelect(view.id)}>{icon(view.type)}<span>{view.name}</span></button>
+        <button type="button" role="tab" ref={(el) => { if (el) tabs.current.set(view.id, el); else tabs.current.delete(view.id); }} tabIndex={view.id === activeId ? 0 : -1} aria-selected={view.id === activeId} data-view-tab={view.type} data-view-id={view.id} className="flex h-full items-center gap-1.5 pl-3 pr-1" onClick={() => onSelect(view.id)} onKeyDown={(event) => {
+          if (event.altKey || event.ctrlKey || event.metaKey || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          const index = views.findIndex((item) => item.id === view.id);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? views.length - 1 : event.key === "ArrowRight" ? (index + 1) % views.length : (index + views.length - 1) % views.length;
+          if (!views[next]) return;
+          event.preventDefault(); onSelect(views[next].id); tabs.current.get(views[next].id)?.focus();
+        }}>{icon(view.type)}<span>{view.name}</span></button>
         {canEdit && <button type="button" ref={(el) => { if (el) anchors.current.set(view.id, el); else anchors.current.delete(view.id); }} aria-label={t("{name}视图菜单", { name: view.name })} aria-expanded={menu === view.id} disabled={busy || ledger.blocked("view:write")} onClick={() => setMenu(menu === view.id ? null : view.id)} className={`mr-1 grid size-6 place-items-center rounded hover:bg-hover disabled:opacity-50 ${view.id === activeId ? "text-muted-foreground" : "text-subtle sm:opacity-0 sm:group-hover/view:opacity-100"}`}><MoreVertical size={16} /></button>}
       </div>)}
     </div>
-    {selected && position && createPortal(<div ref={menuRef} style={position} role="menu" className="fixed z-[100] rounded-lg border bg-surface p-1 text-[13px] shadow-lg">
-      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void rename(selected)}>{t("重命名")}</button>
-      <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => void duplicate(selected)}>{t("复制视图")}</button>
-      {selectedIndex > 0 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex - 1])}>{t("向左移动")}</button>}
-      {selectedIndex >= 0 && selectedIndex < views.length - 1 && <button type="button" role="menuitem" className="block w-full rounded px-3 py-2 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex + 1])}>{t("向右移动")}</button>}
-      <button type="button" role="menuitem" disabled={views.length <= 1} className="block w-full rounded px-3 py-2 text-left text-destructive hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void remove(selected)}>{t("删除视图")}</button>
+    {selected && position && createPortal(<div ref={menuRef} style={position} role="menu" aria-label={t("视图操作")} className="fixed z-[100] overflow-y-auto rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]">
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover" onClick={() => void rename(selected)}><Pencil size={15}/>{t("重命名")}</button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover" onClick={() => void duplicate(selected)}><Copy size={15}/>{t("复制视图")}</button>
+      {selectedIndex > 0 && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex - 1])}><ArrowLeft size={15}/>{t("向左移动")}</button>}
+      {selectedIndex >= 0 && selectedIndex < views.length - 1 && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover" onClick={() => reorder(selected, views[selectedIndex + 1])}><ArrowRight size={15}/>{t("向右移动")}</button>}
+      <div className="my-1 border-t"/>
+      <button type="button" role="menuitem" disabled={views.length <= 1} className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void remove(selected)}><Trash2 size={15}/>{t("删除视图")}</button>
     </div>, document.body)}
     {message && <span role="alert" title={message} className="max-w-28 shrink truncate text-xs text-destructive">{message}</span>}
   </>;

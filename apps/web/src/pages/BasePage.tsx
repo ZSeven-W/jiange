@@ -24,6 +24,8 @@ import { canExportBase } from "./base/csvAvailability";
 import { blocksBaseCopy, guardBaseClipboard } from "./base/copyPolicy";
 import { formatBaseChange, lastBaseChange } from "./base/viewPresentation";
 import { ViewTabs } from "./base/ViewTabs";
+import { createdViewSelectionResult, isCreatedView, NewViewMenu, type CreatedViewSelection } from "./base/NewViewMenu";
+import { ViewGlyph } from "./base/ViewGlyph";
 import { ViewConfigActions } from "./base/ViewConfigActions";
 import { CsvImport } from "./base/CsvImport";
 import { FormPublication } from "./base/FormPublication";
@@ -37,7 +39,7 @@ import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/aiFilter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, BarChart3, Calendar, Check, ChevronDown, ChevronRight, CircleChevronDown, ClipboardList, Eye, Filter, Home, Images, Info, KanbanSquare, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Undo2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -59,13 +61,13 @@ const OP_LABEL: Record<string, string> = {
 const EMPTY_CONFIG: ViewConfig = {};
 
 /** Bitable page: views, filters/sorts (temporary until saved), grid. */
-export function BasePage({ id }: { id: number }) {
+export function BasePage({ id, userId }: { id: number; userId: number }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   const key = ["base", id];
   // A fresh object is required on each successful access check. The filtered
   // query is scoped to that exact authorization snapshot, never an old cache.
-  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.get(id, signal), refetchOnMount: "always", structuralSharing: false });
+  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.getForAccount(id, userId, signal), refetchOnMount: "always", structuralSharing: false });
   const [queryScope] = useState(newBaseQueryScope);
   const authorizationEpoch = useRef(new BaseAuthorizationEpoch());
   const queryEpoch = authorizationEpoch.current.read(id, q.data, q.isFetching);
@@ -82,6 +84,8 @@ export function BasePage({ id }: { id: number }) {
   }, [accessReady, q.isFetching, visitRecorder]);
   useBaseSync(id, { ready: accessReady, restricted: !!q.data?.writeRestricted });
   const [viewId, setViewId] = useState<number | null>(null);
+  const viewSelectionRevision = useRef(0);
+  const [createdViewSelection, setCreatedViewSelection] = useState<CreatedViewSelection | null>(null);
   // 撤销/重做：本人在本页的单元格编辑与新增记录（条件写入，不覆盖他人更新）。
   const [undoStack] = useState(() => new BaseUndoStack());
   useSyncExternalStore(undoStack.subscribe, undoStack.snapshot, undoStack.snapshot);
@@ -90,6 +94,21 @@ export function BasePage({ id }: { id: number }) {
   const [gridDetailOpen, setGridDetailOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [baseSidebarOpen, setBaseSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1200);
+  const expandBaseSidebar = useRef<HTMLButtonElement>(null), collapseBaseSidebar = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1200px)");
+    const change = () => setBaseSidebarOpen(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  const createScope = useRef({ id, userId, alive: false });
+  const createAllowed = useRef(false);
+  useEffect(() => {
+    const scope = { id, userId, alive: true };
+    createScope.current = scope;
+    return () => { scope.alive = false; };
+  }, [id, userId]);
   const [viewError, setViewError] = useState<string | null>(null);
   const { ledger, issues } = useWriteLedger(id);
   const [saveError, setSaveError] = useState(false);
@@ -137,6 +156,23 @@ export function BasePage({ id }: { id: number }) {
   const queryDenied = queryActive && serverQuery.isError && isBaseAuthorizationError(serverQuery.error);
   const authorizationFence = useRef(new BaseAuthorizationFence());
   const queryAccessBlocked = authorizationFence.current.observe(q.data, q.isSuccess, q.isFetching, queryDenied, queryActive && serverQuery.isSuccess);
+  createAllowed.current = !!(accessReady && !q.isFetching && !queryAccessBlocked && q.data && !q.data.writeRestricted && (q.data.base.role === "edit" || q.data.base.role === "manage"));
+  useEffect(() => { if (q.isError || queryAccessBlocked) setViewMenuOpen(false); }, [q.isError, queryAccessBlocked]);
+  useEffect(() => {
+    const selection = createdViewSelection;
+    if (!selection) return;
+    const result = createdViewSelectionResult(selection, { baseId: id, userId, revision: viewSelectionRevision.current, ready: accessReady, fetching: q.isFetching, blocked: queryAccessBlocked, snapshot: q.data });
+    if (result === "wait") return;
+    if (result === "select") {
+      setViewId(selection.viewId);
+      const previous = document.activeElement;
+      if (!previous || previous === document.body || previous === document.documentElement) requestAnimationFrame(() => {
+        if (document.activeElement === previous || document.activeElement === document.body || document.activeElement === document.documentElement) document.querySelector<HTMLButtonElement>(`[data-view-id="${selection.viewId}"]`)?.focus({ preventScroll: true });
+      });
+    }
+    if (result === "missing") setViewError(t("视图已创建，但列表未显示，请重新加载。"));
+    setCreatedViewSelection(null);
+  }, [createdViewSelection, id, userId, accessReady, q.isFetching, q.data, queryAccessBlocked]);
   const revalidateBase = q.refetch;
   useEffect(() => {
     if (!authorizationFence.current.takeAutomaticRetry(queryDenied)) return;
@@ -204,26 +240,34 @@ export function BasePage({ id }: { id: number }) {
   };
   const newView = async (type: import("@/lib/api").View["type"], name: string) => {
     setViewMenuOpen(false);
+    const scope = createScope.current;
+    const selectionRevision = viewSelectionRevision.current;
+    const currentScope = () => scope.alive && createScope.current === scope && scope.id === id && scope.userId === userId;
+    if (!currentScope() || !createAllowed.current) return;
     setViewError(null);
     const op = ledger.begin(t("新建视图"), name, "view:write");
     if (op === null) return;
     let v: import("@/lib/api").View;
     try {
-      v = await baseApi.addView(id, { type, name });
+      const response: unknown = await baseApi.addViewForAccount(id, userId, { type, name });
+      if (!isCreatedView(response, id, type, name)) throw new Error("invalid view response");
+      v = response;
     } catch (error) {
       if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
         ledger.complete(op);
-        setViewError(t("无法新建视图，请检查权限或视图配置。"));
+        if (currentScope()) setViewError(t("无法新建视图，请检查权限或视图配置。"));
       } else {
         ledger.fail(op, t("无法确认视图是否创建，请刷新并核对后再操作。"));
-        setViewError(t("无法确认视图是否创建，请核对列表。"));
+        if (currentScope()) setViewError(t("无法确认视图是否创建，请核对列表。"));
       }
-      refreshWrites(refresh);
+      if (currentScope()) refreshWrites(refresh);
       return;
     }
     ledger.complete(op);
-    try { await refresh(); setViewId(v.id); setCfgState(v.config ?? EMPTY_CONFIG); }
-    catch { setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
+    if (!currentScope()) return;
+    setCreatedViewSelection({ baseId: id, userId, viewId: v.id, revision: selectionRevision, baseline: qc.getQueryData(key) });
+    try { await refresh(); }
+    catch { if (currentScope()) setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
   };
   const undoApi: UndoApi = {
     setCellsIf: (rid, expected, cells) => baseApi.setCellsIf(id, rid, expected, cells),
@@ -265,33 +309,27 @@ export function BasePage({ id }: { id: number }) {
       {!directDetailOpen && !gridDetailOpen && <WriteIssues ledger={ledger} issues={issues} />}
       {q.data.writeRestricted && <div role="status" className="border-b bg-[#fff8e8] px-4 py-2 text-[12px] text-[#8f6200]">{t("此表启用了权限视图，当前暂不支持在受限权限下编辑。你可以查看允许访问的数据。")}</div>}
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex" data-base-sidebar>
-          <label className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
+        <aside className={cn("hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex", !baseSidebarOpen && "md:hidden")} data-base-sidebar>
+          <div className="mb-2 flex items-center gap-1"><label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label><button ref={collapseBaseSidebar} type="button" aria-label={t("收起数据表侧栏")} title={t("收起数据表侧栏")} onClick={() => { setBaseSidebarOpen(false); requestAnimationFrame(() => expandBaseSidebar.current?.focus({ preventScroll: true })); }} className="grid size-7 shrink-0 place-items-center rounded text-subtle hover:bg-hover"><ChevronsLeft size={15}/></button></div>
           <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
-          <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+          <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
           {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />{t("工作流")}</button>}
-          {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => setViewMenuOpen(true)} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
+          {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => { setPane("table"); setViewMenuOpen(true); }} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <nav aria-label={t("多维表格导航")} className="flex shrink-0 gap-1 border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
             <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
-            <button type="button" onClick={() => setPane("dashboard")} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+            <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
           </nav>
+        {pane === "dashboard" && !baseSidebarOpen && <div className="hidden h-11 shrink-0 items-center border-b bg-[#f7f8fa] px-3 md:flex"><button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="flex h-8 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button></div>}
         {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
         <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", pane === "dashboard" && "hidden")}>
           <div className="flex min-h-0 flex-1 flex-col bg-surface">
       {/* 视图导航 */}
       <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 whitespace-nowrap border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
-        <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewIcon type={type} />} onSelect={setViewId} onRefresh={refresh} />
-        {canEdit && (
-          <div className="relative shrink-0">
-            <button disabled={ledger.blocked("view:write")} className="flex h-8 items-center gap-1 rounded px-2 text-subtle hover:bg-hover hover:text-foreground disabled:opacity-50" title={t("新建视图")} aria-label={t("新建视图")} aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((v) => !v)}><Plus size={15} /><span className="hidden sm:inline">{t("新建视图")}</span></button>
-            {viewMenuOpen && <div className="absolute left-0 top-8 z-30 w-44 rounded-lg border bg-surface p-1.5 shadow-lg max-sm:fixed max-sm:left-4 max-sm:top-24">
-              <div className="px-2.5 pb-1 pt-1 text-[12px] text-subtle">{t("基础视图")}</div>
-              {([ ["grid", "表格视图", Table2, "text-[#3370ff]"], ["kanban", "看板视图", KanbanSquare, "text-[#19a55b]"], ["calendar", "日历视图", Calendar, "text-[#0ea5a4]"], ["gantt", "甘特视图", BarChart3, "text-[#df4f9a]"], ["gallery", "画册视图", Images, "text-[#8758d8]"], ["form", "表单视图", ClipboardList, "text-[#ed823d]"] ] as const).map(([type, name, Icon, color]) => <button key={type} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-hover" onClick={() => void newView(type, t(name))}><Icon size={16} className={color} />{t(name)}</button>)}
-            </div>}
-          </div>
-        )}
+        {pane === "table" && !baseSidebarOpen && <button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="mr-1 hidden h-8 shrink-0 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover md:flex"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button>}
+        <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewGlyph type={type} />} onSelect={(view) => { viewSelectionRevision.current++; setViewId(view); }} onRefresh={refresh} />
+        <NewViewMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen} canEdit={canEdit} busy={q.isFetching || ledger.blocked("view:write")} onCreate={(type, name) => void newView(type, name)} />
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
@@ -451,13 +489,6 @@ export function BasePage({ id }: { id: number }) {
       {sharing && <ShareDialog meta={base} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
     </div>
   );
-}
-
-function ViewIcon({ type }: { type: import("@/lib/api").View["type"] }) {
-  const icons = { grid: Table2, kanban: KanbanSquare, gallery: Images, calendar: Calendar, gantt: BarChart3, form: ClipboardList };
-  const colors = { grid: "text-[#3370ff]", kanban: "text-[#19a55b]", gallery: "text-[#8758d8]", calendar: "text-[#0ea5a4]", gantt: "text-[#df4f9a]", form: "text-[#ed823d]" };
-  const Icon = icons[type] ?? Table2;
-  return <Icon size={15} strokeWidth={1.7} className={colors[type]} />;
 }
 
 /** Toolbar popover: the label button toggles; outside clicks close; inner clicks stay. */

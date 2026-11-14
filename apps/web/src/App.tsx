@@ -165,7 +165,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
       ) : route.page === "base" ? (
-        <BasePage key={route.id} id={route.id} />
+        <BasePage key={`${route.id}:${me.user.id}`} id={route.id} userId={me.user.id} />
       ) : route.page === "join" ? (
         <JoinLink token={route.token} />
       ) : route.page === "drive" ? (

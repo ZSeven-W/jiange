@@ -221,15 +221,17 @@ export interface View {
   config: ViewConfig;
   pos: number;
 }
+type BaseSnapshot = { base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean };
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
   get: (id: number, signal?: AbortSignal) =>
-    request<{ base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean }>(
+    request<BaseSnapshot>(
       "GET",
       `/api/bases/${id}`,
       undefined,
       signal,
     ),
+  getForAccount: (id: number, userId: number, signal?: AbortSignal) => request<BaseSnapshot>("GET", `/api/bases/${id}/account-snapshot`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   /** 双向关联：反向引用列表 */
   reverse: (id: number) =>
     request<{ expansions?: { reverse?: { sourceBase: number; fieldId: number; from: Record<string, number[]>; titles: Record<string, string> }[] } }>("GET", `/api/bases/${id}`).then((r) => r.expansions?.reverse ?? []),
@@ -261,6 +263,7 @@ export const baseApi = {
   updateAutomation: (id: number, aid: number, a: Partial<Automation>) => request<Automation>("PATCH", `/api/bases/${id}/automations/${aid}`, a),
   deleteAutomation: (id: number, aid: number) => request<void>("DELETE", `/api/bases/${id}/automations/${aid}`),
   addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
+  addViewForAccount: (id: number, userId: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/account-views`, v, undefined, { "X-Jiange-User-Id": String(userId) }),
   patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
   renameView: (id: number, vid: number, expectedName: string, name: string) => request<View>("POST", `/api/bases/${id}/views/${vid}/rename`, { expectedName, name }),
   duplicateView: (id: number, vid: number) => request<View>("POST", `/api/bases/${id}/views/${vid}/duplicate`, {}),
