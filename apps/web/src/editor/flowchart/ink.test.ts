@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flowBounds, flowIntentWrites, flowWrites, normalizeStroke, readFlow, type FlowGraph } from "./model";
+import { flowBounds, flowIntentWrites, flowWrites, moveFlowSelection, normalizeStroke, readFlow, type FlowGraph } from "./model";
 import { appliedFlowHistory } from "./history";
 import { describeUnappliedFlows } from "./recovery";
 
@@ -30,5 +30,19 @@ describe("canvas ink", () => {
     const intent = flowIntentWrites(withInk, blank, oldClient);
     expect(intent.writes["fc.s.s1"]).toBeUndefined();
     expect(readFlow({ ...withInk, ...intent.writes }).strokes).toEqual([stroke]);
+  });
+  it("moves selected ink and nodes together without exceeding bounds or changing other objects", () => {
+    const node = { id: "n1", shape: "rect" as const, text: "A", x: 0, y: 0, w: 100, h: 60 };
+    const nearEdge = { ...stroke, points: [{ x: 19990, y: 20 }, { x: 19998, y: 80 }] };
+    const other = { ...stroke, id: "s2" };
+    const graph: FlowGraph = { ...blank, nodes: [node], strokes: [nearEdge, other] };
+    const next = moveFlowSelection(graph, new Set(["n1", "s1"]), 50, -10);
+    expect(next.nodes[0].x).toBe(2);
+    expect(next.strokes?.[0].points).toEqual([{ x: 19992, y: 10 }, { x: 20000, y: 70 }]);
+    expect(next.strokes?.[1]).toEqual(other);
+    const undo = flowIntentWrites(flowWrites({}, next), next, graph);
+    expect(Object.keys(undo.writes).sort()).toEqual(["fc.n.n1", "fc.s.s1"]);
+    const fractional = { ...graph, nodes: [{ ...node, x: 19999.4 }], strokes: [] };
+    expect(moveFlowSelection(fractional, new Set(["n1"]), 1, 0).nodes[0].x).toBe(19999.4);
   });
 });

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { fitInsertedImage, pinchViewport, placeSelectionToolbar } from "./viewport";
+import { fitInsertedImage, pinchViewport, placeSelectionToolbar, resizeViewportCenter } from "./viewport";
 
 describe("flowchart pinch", () => {
+  it("keeps the same canvas centre as the viewport narrows", () => {
+    const view = { x: 100, y: 50, zoom: 2 };
+    const next = resizeViewportCenter(view, { w: 1000, h: 800 }, { w: 400, h: 600 });
+    expect(next).toEqual({ x: 250, y: 100, zoom: 2 });
+    expect(next.x + 400 / (2 * next.zoom)).toBe(view.x + 1000 / (2 * view.zoom));
+  });
   it("keeps the touched point anchored while zooming and moving", () => {
     const initial = { x: 100, y: 50, zoom: 1 };
     const result = pinchViewport(initial, { x: 80, y: 100 }, { x: 110, y: 120 }, 100, 200);

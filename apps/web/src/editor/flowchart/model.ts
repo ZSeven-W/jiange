@@ -337,6 +337,23 @@ export function flowBounds(graph: FlowGraph): { x: number; y: number; w: number;
   return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
 }
 
+/** Keep a whole selection inside the coordinate limit without distorting ink. */
+export function boundedFlowOffset(nodes: readonly Pick<FlowNode, "x" | "y">[], strokes: readonly FlowStroke[], dx: number, dy: number): { x: number; y: number } {
+  let minX = -40000, maxX = 40000, minY = -40000, maxY = 40000;
+  const include = (x: number, y: number) => { minX = Math.max(minX, -20000 - x); maxX = Math.min(maxX, 20000 - x); minY = Math.max(minY, -20000 - y); maxY = Math.min(maxY, 20000 - y); };
+  nodes.forEach((node) => include(node.x, node.y));
+  strokes.forEach((stroke) => stroke.points.forEach((point) => include(point.x, point.y)));
+  return { x: Math.max(Math.ceil(minX), Math.min(Math.floor(maxX), Math.round(Number.isFinite(dx) ? dx : 0))), y: Math.max(Math.ceil(minY), Math.min(Math.floor(maxY), Math.round(Number.isFinite(dy) ? dy : 0))) };
+}
+
+export function moveFlowSelection(graph: FlowGraph, selected: ReadonlySet<string>, dx: number, dy: number): FlowGraph {
+  const nodes = graph.nodes.filter((node) => selected.has(node.id));
+  const strokes = (graph.strokes ?? []).filter((stroke) => selected.has(stroke.id));
+  if (!nodes.length && !strokes.length) return graph;
+  const offset = boundedFlowOffset(nodes, strokes, dx, dy);
+  return { ...graph, nodes: graph.nodes.map((node) => selected.has(node.id) ? { ...node, x: node.x + offset.x, y: node.y + offset.y } : node), ...(graph.strokes ? { strokes: graph.strokes.map((stroke) => selected.has(stroke.id) ? { ...stroke, points: stroke.points.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y })) } : stroke) } : {}) };
+}
+
 export function bounds(nodes: FlowNode[]): { x: number; y: number; w: number; h: number } {
   if (!nodes.length) return { x: 0, y: 0, w: 400, h: 240 };
   const x0 = Math.min(...nodes.map((n) => n.x)), y0 = Math.min(...nodes.map((n) => n.y));

@@ -1,6 +1,12 @@
 export type FlowViewport = { x: number; y: number; zoom: number };
 export type FlowPoint = { x: number; y: number };
 
+/** Preserve the visible canvas centre when panels or the viewport resize. */
+export function resizeViewportCenter(view: FlowViewport, before: { w: number; h: number }, after: { w: number; h: number }): FlowViewport {
+  if (!(view.zoom > 0) || before.w <= 0 || before.h <= 0 || after.w <= 0 || after.h <= 0) return view;
+  return { ...view, x: view.x + (before.w - after.w) / (2 * view.zoom), y: view.y + (before.h - after.h) / (2 * view.zoom) };
+}
+
 /** Keep the initial canvas point under the moving two-finger midpoint. */
 export function pinchViewport(initial: FlowViewport, start: FlowPoint, current: FlowPoint, startDistance: number, distance: number): FlowViewport {
   if (!(startDistance > 0) || !(distance > 0) || !Number.isFinite(distance)) return initial;
