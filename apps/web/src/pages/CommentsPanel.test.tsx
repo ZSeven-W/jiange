@@ -17,6 +17,18 @@ function renderPanel(canEdit: boolean, canManage: boolean) {
 }
 
 describe("comment permissions", () => {
+  it("shows only unresolved top-level threads in the active panel", () => {
+    const client = new QueryClient();
+    const resolved: Comment = { ...thread, id: 3, body: "旧的已解决评论", resolved: true };
+    client.setQueryData(commentListKey(7, 1, 1), [thread, reply, resolved, { ...reply, id: 4, parentId: 3, body: "历史回复" }]);
+    client.setQueryData(commentMembersKey(7, 1, 1), []);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><CommentsPanel id={7} meId={1} session={1} canEdit canManage draft={null} onDraftSent={() => {}} activeThread={null} onActivate={() => {}} onClose={() => {}} onAccessDenied={() => {}} onDismissRecovery={() => {}} onSnapshot={() => {}} onComposerSuspended={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("一条评论");
+    expect(html).toContain("我的回复");
+    expect(html).not.toContain("旧的已解决评论");
+    expect(html).not.toContain("历史回复");
+    expect(html).toContain("评论（1）");
+  });
   it("permits authorized viewers to comment without treating malformed or anonymous policies as grants", () => {
     expect(canWriteComments({ role: "view", commentMinRole: "view", permissionsRevision: 0 })).toBe(true);
     expect(canWriteComments({ role: "view", commentMinRole: "edit", permissionsRevision: 1 })).toBe(false);

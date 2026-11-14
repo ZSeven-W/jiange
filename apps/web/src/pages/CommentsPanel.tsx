@@ -201,12 +201,25 @@ export function CommentsPanel({
   // A failed revalidation must not keep exposing stale cached comments.
   const comments = list.isSuccess ? list.data : [];
   const visibleMembers = members.isSuccess ? members.data : [];
-  const threads = useMemo(() => comments.filter((c) => !c.parentId), [comments]);
+  const threads = useMemo(() => comments.filter((c) => !c.parentId && !c.resolved), [comments]);
   const replies = useMemo(() => {
     const m = new Map<number, Comment[]>();
     for (const c of comments) if (c.parentId) m.set(c.parentId, [...(m.get(c.parentId) ?? []), c]);
     return m;
   }, [comments]);
+
+  // A collaborator can resolve or delete the thread while a reply is being
+  // composed. The input has already been journaled on each change; move it to
+  // recovery when the thread disappears instead of silently losing it.
+  useEffect(() => {
+    if (replyTo !== null && list.isSuccess && !threads.some((thread) => thread.id === replyTo)) {
+      onComposerSuspended();
+      setReplyTo(null);
+    }
+  }, [replyTo, list.isSuccess, threads, onComposerSuspended]);
+  useEffect(() => {
+    if (activeThread !== null && list.isSuccess && !threads.some((thread) => thread.id === activeThread)) onActivate(null);
+  }, [activeThread, list.isSuccess, threads, onActivate]);
 
   return (
     <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full flex-col border-l bg-surface shadow-xl sm:max-w-[296px] md:top-16 xl:z-20 xl:shadow-none" data-comments-panel>
@@ -238,16 +251,16 @@ export function CommentsPanel({
         {canEdit && <Composer key={`${id}:${meId}:${session}:root`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={draft} canSubmit={canSubmit} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
         {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
         {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
-        {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{canEdit ? "还没有评论，可以在上方添加" : "还没有评论"}</p>}
+        {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">暂无未解决的评论</p>}
         {threads.map((t) => (
           <div
             key={t.id}
-            className={`group/thread mb-2.5 cursor-pointer rounded-lg border bg-surface p-3 text-[14px] leading-[1.6] transition-shadow hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)] ${activeThread === t.id ? "border-primary shadow-[0_2px_8px_rgba(31,35,41,0.08)]" : ""} ${t.resolved ? "opacity-55" : ""}`}
+            className={`group/thread mb-2.5 cursor-pointer rounded-lg border bg-surface p-3 text-[14px] leading-[1.6] transition-shadow hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)] ${activeThread === t.id ? "border-primary shadow-[0_2px_8px_rgba(31,35,41,0.08)]" : ""}`}
             onClick={() => onActivate(activeThread === t.id ? null : t.id)}
             data-thread={t.id}
           >
             {t.quote && <div className="mb-2.5 truncate border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle" data-thread-quote data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t.quote}</div>}
-            <CommentAuthor name={t.userName} userId={t.userId} at={t.createdAt} badge={t.resolved ? <span className="rounded bg-[#E1EAFF] px-1.5 py-px text-[11px] font-medium text-primary">已解决</span> : null} />
+            <CommentAuthor name={t.userName} userId={t.userId} at={t.createdAt} />
             <div className="mt-1 pl-8"><CommentBody c={t} members={visibleMembers} /></div>
             {(replies.get(t.id) ?? []).map((rp) => (
               <div key={rp.id} className="mt-3" data-comment-reply={rp.id}>
@@ -276,9 +289,9 @@ export function CommentsPanel({
                   disabled={actionPending || !canSubmit}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void runAction(() => commentsApi.update(id, t.id, { resolved: !t.resolved }));
+                    void runAction(() => commentsApi.updateForAccount(id, t.id, meId, { resolved: true }));
                   }}
-                >{t.resolved ? "重新打开" : "解决"}</button>
+                >解决</button>
                 {(t.userId === meId || canManage) && (
                   <button disabled={actionPending || !canSubmit} className="ml-auto rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>删除</button>
                 )}
