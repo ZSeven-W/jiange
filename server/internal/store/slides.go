@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
@@ -10,6 +11,10 @@ import (
 // SlidesPage is one ordered page of a slides (presentation) node. The first
 // slice carries plain title/bullet-body/background; rich collaborative
 // content follows the table sub-CRDT integration path.
+var ErrSlideClientOutdated = errors.New("store: slide client does not support layout")
+
+func ValidSlideLayout(layout string) bool { return layout == "" || layout == "title" }
+
 type SlidesPage struct {
 	ID         int64           `json:"id"`
 	SlidesID   int64           `json:"slidesId"`
@@ -17,6 +22,7 @@ type SlidesPage struct {
 	Title      string          `json:"title"`
 	Body       string          `json:"body"`
 	Background string          `json:"background"`
+	Layout     string          `json:"layout"`
 	Notes      string          `json:"notes"`
 	Shapes     json.RawMessage `json:"shapes"`
 	Hidden     bool            `json:"hidden"`
@@ -35,6 +41,7 @@ type SlidesStore interface {
 	DuplicateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error)
 	ListSlidesPages(ctx context.Context, userID, slidesID int64) ([]SlidesPage, error)
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
+	UpdateSlidesPageV3(ctx context.Context, guard RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)
 	SetSlidesPageHidden(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64, hidden bool) (SlidesPage, error)
 	DeleteSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64) error
 	// Delete only the specified version from the expected deck.

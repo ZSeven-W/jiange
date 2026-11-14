@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
+	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
 // Slides pages: guarded mutations (session revalidation + edit access on the
@@ -42,7 +44,8 @@ func (s *Server) postSlidesPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
-	if r.Header.Get("X-Jiange-Slides-Version") == "2" {
+	version := r.Header.Get("X-Jiange-Slides-Version")
+	if version == "2" || version == "3" {
 		if r.Header.Get("X-Jiange-User-Id") == "" {
 			httpx.Error(w, http.StatusBadRequest, "missing_account", "查看账号未确认")
 			return
@@ -60,19 +63,48 @@ func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "list pages") {
 		return
 	}
-	if r.Header.Get("X-Jiange-Slides-Version") != "2" {
-		for _, page := range pages {
-			if page.Hidden {
-				httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持隐藏页面的幻灯片编辑器")
-				return
-			}
+	for _, page := range pages {
+		if (version != "2" && version != "3" && page.Hidden) || (version != "3" && page.Layout != "") {
+			httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持当前页面的幻灯片编辑器")
+			return
 		}
 	}
+	protocol := 2
+	if version == "3" {
+		protocol = 3
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.JSON(w, http.StatusOK, map[string]any{"pages": pages, "presentationProtocol": 2})
+	httpx.JSON(w, http.StatusOK, map[string]any{"pages": pages, "presentationProtocol": protocol})
 }
 
 func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
+	s.patchSlidesContent(w, r, false)
+}
+func (s *Server) patchSlidesPageV3(w http.ResponseWriter, r *http.Request) {
+	s.patchSlidesContent(w, r, true)
+}
+func (s *Server) patchSlidesContent(w http.ResponseWriter, r *http.Request, v3 bool) {
+	var deck int64
+	if v3 {
+		u, ok := UserFrom(r.Context())
+		if !ok {
+			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "请重新登录")
+			return
+		}
+		if r.Header.Get("X-Jiange-User-Id") == "" {
+			httpx.Error(w, http.StatusBadRequest, "missing_account", "操作账号未确认")
+			return
+		}
+		if !driveExpectedUser(w, r, u.ID) {
+			return
+		}
+		var err error
+		deck, err = strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || deck <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_id", "幻灯片标识无效")
+			return
+		}
+	}
 	g, ok := s.driveGuard(w, r)
 	if !ok {
 		return
@@ -84,6 +116,7 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		Notes            *string          `json:"notes"`
 		Shapes           *json.RawMessage `json:"shapes"`
 		ExpectedRevision int64            `json:"expectedRevision"`
+		Layout           *string          `json:"layout"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -105,7 +138,20 @@ func (s *Server) patchSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_id", "page id required")
 		return
 	}
-	page, err := s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.Notes, in.Shapes, in.ExpectedRevision)
+	var page store.SlidesPage
+	if v3 {
+		if in.Layout == nil || !store.ValidSlideLayout(*in.Layout) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_layout", "页面布局无效")
+			return
+		}
+		page, err = s.Store.UpdateSlidesPageV3(r.Context(), g, deck, pid, in.Title, in.Body, in.Background, *in.Layout, in.Notes, in.Shapes, in.ExpectedRevision)
+	} else {
+		page, err = s.Store.UpdateSlidesPage(r.Context(), g, pid, in.Title, in.Body, in.Background, in.Notes, in.Shapes, in.ExpectedRevision)
+	}
+	if errors.Is(err, store.ErrSlideClientOutdated) {
+		httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持当前布局的幻灯片编辑器")
+		return
+	}
 	if driveWriteErr(w, err, "update page") {
 		return
 	}

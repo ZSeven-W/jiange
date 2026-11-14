@@ -15,6 +15,12 @@ describe("presentation surfaces", () => {
     expect(presenter).toContain(page.notes);
     expect(presenter).toContain("1 / 1");
   });
+  it("renders the centered title layout while retaining body content", () => {
+    const html = renderToStaticMarkup(<SlideSurface content={{ ...page, layout: "title" }}/>);
+    expect(html).toContain("text-center");
+    expect(html).toContain("5.625cqw");
+    expect(html).toContain("公开正文");
+  });
   it("formats elapsed time across minute and hour boundaries", () => {
     expect(formatPresentationTime(0)).toBe("00:00:00");
     expect(formatPresentationTime(3661)).toBe("01:01:01");

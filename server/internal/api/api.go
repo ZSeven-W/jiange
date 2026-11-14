@@ -163,6 +163,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/slides/{id}/pages/{pid}/duplicate":         s.duplicateSlidesPage,
 		"POST /api/slides/{id}/pages/{pid}/delete":            s.deleteSlidesPageVersion,
 		"PATCH /api/slides/{id}/pages/{pid}/visibility":       s.setSlidesPageVisibility,
+		"PATCH /api/slides/{id}/pages/{pid}/content":          s.patchSlidesPageV3,
 		"GET /api/slides/{id}/pages":                          s.listSlidesPages,
 		"PATCH /api/slides/pages/{pid}":                       s.patchSlidesPage,
 		"DELETE /api/slides/pages/{pid}":                      s.deleteSlidesPage,

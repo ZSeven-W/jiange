@@ -7,6 +7,16 @@ const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", back
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {
+  it("saves and undoes layout without losing existing title, body or notes", async () => {
+    const source = { ...page, title: "标题", body: "保留正文", notes: "备注" };
+    const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});
+    q.edit(source, { layout: "title" }); await tick();
+    expect(q.get(source).content).toMatchObject({ layout: "title", title: "标题", body: "保留正文", notes: "备注" });
+    q.undo(source); await tick();
+    expect(q.get(source).content).toMatchObject({ layout: "", title: "标题", body: "保留正文", notes: "备注" });
+    q.redo(source); await tick();
+    expect(q.get(source).content.layout).toBe("title");
+  });
   it("adopts a confirmed background batch and permits undo for each changed page", async () => {
     const second = { ...page, id: 2, pos: 2, title: "第二页" };
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});

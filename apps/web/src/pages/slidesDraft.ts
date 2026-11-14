@@ -1,8 +1,8 @@
 import { ApiError, type SlidesPage } from "@/lib/api";
 
-export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "notes" | "shapes">;
+export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "layout" | "notes" | "shapes">;
 const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color && (item.width ?? 16) === (other.width ?? 16) && (item.height ?? 20) === (other.height ?? 20) && (item.rotation ?? 0) === (other.rotation ?? 0) && (item.text ?? "") === (other.text ?? "") && (item.fontSize ?? 24) === (other.fontSize ?? 24) && (item.bold ?? false) === (other.bold ?? false) && (item.align ?? "left") === (other.align ?? "left") && item.fileId === other.fileId; });
-export const sameSlideContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
+export const sameSlideContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && (a.layout ?? "") === (b.layout ?? "") && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
 export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
 type HistoryEntry = { content: SlideContent; batchId?: number };
 type History = { undo: HistoryEntry[]; redo: HistoryEntry[]; group: string | null; at: number };
@@ -34,7 +34,7 @@ export class SlidesDraftQueue {
       return current;
     }
     if (current) { this.drafts.delete(page.id); this.history.delete(page.id); }
-    return { page, content: { title: page.title, body: page.body, background: page.background, notes: page.notes, shapes: page.shapes }, state: "saved" };
+    return { page, content: { title: page.title, body: page.body, background: page.background, layout: page.layout ?? "", notes: page.notes, shapes: page.shapes }, state: "saved" };
   }
 
   edit(page: SlidesPage, patch: Partial<SlideContent>, group?: string) {
@@ -73,7 +73,7 @@ export class SlidesDraftQueue {
     const pairs = before.map((page, index) => {
       const existing = this.drafts.get(page.id);
       const superseded = !!existing && existing.state === "saved" && existing.page.revision < page.revision;
-      const current = !existing || superseded ? { page, content: { title: page.title, body: page.body, background: page.background, notes: page.notes, shapes: page.shapes }, state: "saved" as const } : existing;
+      const current = !existing || superseded ? { page, content: { title: page.title, body: page.body, background: page.background, layout: page.layout ?? "", notes: page.notes, shapes: page.shapes }, state: "saved" as const } : existing;
       return { page, saved: after[index], current, superseded };
     });
     for (const { page, saved, current } of pairs) {
@@ -85,7 +85,7 @@ export class SlidesDraftQueue {
       const history = this.history.get(page.id) ?? { undo: [], redo: [], group: null, at: 0 };
       history.undo.push({ content: current.content, batchId }); if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
       history.redo = []; history.group = null; this.history.set(page.id, history);
-      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, notes: saved.notes, shapes: saved.shapes }, state: "saved" });
+      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, layout: saved.layout ?? "", notes: saved.notes, shapes: saved.shapes }, state: "saved" });
     }
     this.onChange(); return true;
   }
@@ -126,7 +126,7 @@ export class SlidesDraftQueue {
       const opposite = history[direction === "undo" ? "redo" : "undo"];
       opposite.push({ content: current.content, batchId }); if (opposite.length > HISTORY_LIMIT) opposite.shift();
       history.group = null;
-      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, notes: saved.notes, shapes: saved.shapes }, state: "saved" });
+      this.drafts.set(page.id, { page: saved, content: { title: saved.title, body: saved.body, background: saved.background, layout: saved.layout ?? "", notes: saved.notes, shapes: saved.shapes }, state: "saved" });
     }
     this.onChange(); return true;
   }
@@ -170,7 +170,7 @@ export class SlidesDraftQueue {
     this.onChange();
     try {
       const saved = await this.write(base, sent);
-      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.hidden !== base.hidden || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background || saved.notes !== sent.notes || !sameShapes(saved.shapes, sent.shapes)) {
+      if (saved.id !== id || saved.revision !== base.revision + 1 || saved.hidden !== base.hidden || saved.title !== sent.title || saved.body !== sent.body || saved.background !== sent.background || (saved.layout ?? "") !== (sent.layout ?? "") || saved.notes !== sent.notes || !sameShapes(saved.shapes, sent.shapes)) {
         throw new Error("unexpected slide response");
       }
       const latest = this.drafts.get(id);

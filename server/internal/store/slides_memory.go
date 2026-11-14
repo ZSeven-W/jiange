@@ -154,14 +154,26 @@ func (m *Memory) findSlidesPageLocked(pageID int64) (int, *SlidesPage) {
 }
 
 func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
+	return m.updateSlidesPage(ctx, g, 0, pageID, title, body, background, nil, notes, shapes, expectedRevision)
+}
+func (m *Memory) UpdateSlidesPageV3(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
+	if slidesID <= 0 || !ValidSlideLayout(layout) {
+		return SlidesPage{}, ErrConflict
+	}
+	return m.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision)
+}
+func (m *Memory) updateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background string, layout *string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	i, p := m.findSlidesPageLocked(pageID)
-	if p == nil {
+	if p == nil || (slidesID != 0 && p.SlidesID != slidesID) {
 		return SlidesPage{}, ErrNotFound
 	}
 	if _, err := m.slidesAccessLocked(ctx, g, p.SlidesID, false); err != nil {
 		return SlidesPage{}, err
+	}
+	if layout == nil && p.Layout != "" {
+		return SlidesPage{}, ErrSlideClientOutdated
 	}
 	if expectedRevision < 1 || p.Revision != expectedRevision {
 		return SlidesPage{}, ErrConflict
@@ -182,6 +194,9 @@ func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID in
 		}
 	}
 	m.slides[i].Title, m.slides[i].Body, m.slides[i].Background = title, body, background
+	if layout != nil {
+		m.slides[i].Layout = *layout
+	}
 	if notes != nil {
 		m.slides[i].Notes = *notes
 	}
@@ -386,7 +401,7 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 		if err != nil {
 			return DocMeta{}, nil, err
 		}
-		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Notes: page.Notes, Shapes: shapes, Hidden: page.Hidden, Revision: 1, UpdatedAt: now}
+		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Layout: page.Layout, Notes: page.Notes, Shapes: shapes, Hidden: page.Hidden, Revision: 1, UpdatedAt: now}
 		copied = append(copied, next)
 	}
 	if err := ctx.Err(); err != nil {

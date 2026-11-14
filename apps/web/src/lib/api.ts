@@ -444,6 +444,7 @@ export const driveApi = {
 };
 
 export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
+export type SlideLayout = "" | "title";
 export interface SlidesPage {
   id: number;
   slidesId: number;
@@ -451,6 +452,7 @@ export interface SlidesPage {
   title: string;
   body: string;
   background: string;
+  layout?: SlideLayout;
   notes: string;
   shapes: SlideShape[];
   hidden: boolean;
@@ -459,8 +461,8 @@ export interface SlidesPage {
 }
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
-  pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "2", "X-Jiange-User-Id": String(userId) }).then((r) => {
-    if (r?.presentationProtocol !== 2 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean")) throw new ApiError(426, "slide_server_outdated", "服务端不支持幻灯片隐藏状态，请升级后重试。");
+  pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "3", "X-Jiange-User-Id": String(userId) }).then((r) => {
+    if (r?.presentationProtocol !== 3 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean" || (page.layout !== "" && page.layout !== "title"))) throw new ApiError(426, "slide_server_outdated", "服务端不支持当前幻灯片布局，请升级后重试。");
     return r.pages;
   }),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
@@ -469,8 +471,8 @@ export const slidesApi = {
   setPageHidden: (deckId: number, pageId: number, userId: number, expectedRevision: number, hidden: boolean) => request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pageId}/visibility`, { hidden, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   applyBackground: (deckId: number, userId: number, background: string, expected: { id: number; revision: number }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-all`, { background, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   changeBackgrounds: (deckId: number, userId: number, changes: { id: number; revision: number; background: string }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-changes`, { changes }, undefined, { "X-Jiange-User-Id": String(userId) }),
-  update: (pid: number, title: string, body: string, background: string, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
-    request<SlidesPage>("PATCH", `/api/slides/pages/${pid}`, { title, body, background, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }),
+  update: (deckId: number, pid: number, userId: number, title: string, body: string, background: string, layout: SlideLayout, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
+    request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pid}/content`, { title, body, background, layout, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }, undefined, { "X-Jiange-User-Id": String(userId) }),
   removeVersion: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<{ deletedId: number; slidesId: number; revision: number }>("POST", `/api/slides/${deckId}/pages/${pageId}/delete`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
