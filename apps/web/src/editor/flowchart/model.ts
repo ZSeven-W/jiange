@@ -15,7 +15,7 @@ export type EdgeKind = "orthogonal" | "straight" | "curve";
 
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
-export interface FlowStroke { id: string; points: { x: number; y: number }[]; color: string; width: number }
+export interface FlowStroke { id: string; points: { x: number; y: number }[]; color: string; width: number; marker?: true }
 export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; strokes?: FlowStroke[]; theme: string }
 export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean; appliedKeys: string[] };
 
@@ -25,6 +25,8 @@ export const FC_HEIGHT = "fc.h";
 const nodeKey = (id: string) => `fc.n.${id}`;
 const edgeKey = (id: string) => `fc.e.${id}`;
 const strokeKey = (id: string) => `fc.s.${id}`;
+// Separate marker metadata survives old clients rewriting a known stroke.
+const markerKey = (id: string) => `fc.marker.${id}`;
 
 export const SHAPES: { id: Shape; label: string; w: number; h: number }[] = [
   { id: "rect", label: "矩形（处理）", w: 140, h: 60 },
@@ -142,7 +144,7 @@ export function normalizeStroke(raw: unknown, id?: string): FlowStroke | null {
     if (!p || typeof p !== "object" || typeof p.x !== "number" || typeof p.y !== "number" || !Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 20000 || Math.abs(p.y) > 20000) return null;
     points.push({ x: Math.round(p.x), y: Math.round(p.y) });
   }
-  return { id: sid, points, color: r.color as string, width: r.width };
+  return { id: sid, points, color: r.color as string, width: r.width, ...(r.marker === true ? { marker: true as const } : {}) };
 }
 
 /** Read the graph from block props; edges to missing nodes are dropped. */
@@ -153,7 +155,7 @@ export function readFlow(props: Record<string, string>): FlowGraph {
     try {
       if (key.startsWith("fc.n.")) { const n = normalizeNode(JSON.parse(value), key.slice(5)); if (n) nodes.push(n); }
       else if (key.startsWith("fc.e.")) { const e = normalizeEdge(JSON.parse(value), key.slice(5)); if (e) edges.push(e); }
-      else if (key.startsWith("fc.s.")) { const s = normalizeStroke(JSON.parse(value), key.slice(5)); if (s) strokes.push(s); }
+      else if (key.startsWith("fc.s.")) { const s = normalizeStroke(JSON.parse(value), key.slice(5)); if (s) { const { marker: _ignored, ...legacyStroke } = s; strokes.push(props[markerKey(s.id)] === "1" ? { ...legacyStroke, marker: true } : legacyStroke); } }
     } catch { /* skip corrupt entry */ }
   }
   const ids = new Set(nodes.map((n) => n.id));
@@ -164,7 +166,7 @@ export function readFlow(props: Record<string, string>): FlowGraph {
 function canonicalStroke(stroke: FlowStroke): string | null {
   const value = normalizeStroke(stroke, stroke.id);
   if (!value) return null;
-  const { id: _id, ...rest } = value;
+  const { id: _id, marker: _marker, ...rest } = value;
   return JSON.stringify(rest);
 }
 function storedStroke(raw: string | undefined, id: string): string | null {
@@ -201,7 +203,7 @@ export function flowWrites(props: Record<string, string>, next: FlowGraph): Reco
   for (const e of next.edges) { seenE.add(e.id); const v = canonicalEdge(e); if (v && canonicalStored(props[edgeKey(e.id)], "e", e.id) !== v) writes[edgeKey(e.id)] = v; }
   if (next.strokes) {
     const seen = new Set<string>();
-    for (const stroke of next.strokes) { seen.add(stroke.id); const value = canonicalStroke(stroke); if (value && storedStroke(props[strokeKey(stroke.id)], stroke.id) !== value) writes[strokeKey(stroke.id)] = value; }
+    for (const stroke of next.strokes) { seen.add(stroke.id); const value = canonicalStroke(stroke); if (value && storedStroke(props[strokeKey(stroke.id)], stroke.id) !== value) writes[strokeKey(stroke.id)] = value; if (value && stroke.marker && !props[markerKey(stroke.id)]) writes[markerKey(stroke.id)] = "1"; }
     for (const [key, value] of Object.entries(props)) if (key.startsWith("fc.s.") && value && !seen.has(key.slice(5))) writes[key] = "";
   }
   for (const [key, value] of Object.entries(props)) {
@@ -303,9 +305,15 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
   for (const id of new Set([...oldStrokes.keys(), ...newStrokes.keys()])) {
     const key = strokeKey(id), previous = oldStrokes.get(id), nextStroke = newStrokes.get(id);
     const before = previous ? canonicalStroke(previous) : null, after = nextStroke ? canonicalStroke(nextStroke) : null;
-    if (before === after) continue;
-    const now = storedStroke(props[key], id);
-    if ((!!props[key] && now === null) || (now !== before && now !== after)) { conflicts.add(key); continue; }
+    const oldMarker = previous?.marker === true, nextMarker = nextStroke?.marker === true;
+    if (before === after && oldMarker === nextMarker) continue;
+    const now = storedStroke(props[key], id), metadata = props[markerKey(id)] || "";
+    // Styles are immutable per stroke; preserve marker metadata on deletion so
+    // undo and old clients cannot accidentally turn it into an opaque stroke.
+    if ((previous && nextStroke && oldMarker !== nextMarker) || (metadata !== "" && metadata !== "1") ||
+        (previous && oldMarker !== (metadata === "1")) || (!previous && metadata === "1" && !nextMarker) ||
+        (!!props[key] && now === null) || (now !== before && now !== after)) { conflicts.add(key); continue; }
+    if (nextStroke && nextMarker && metadata !== "1") writes[markerKey(id)] = "1";
     if (now !== after) writes[key] = after ?? "";
   }
 

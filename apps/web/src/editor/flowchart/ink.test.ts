@@ -75,3 +75,35 @@ describe("canvas ink", () => {
     expect(restored.strokes?.map((s) => [s.id, s.color])).toEqual([["s1", "#3370FF"], ["s2", "#1F2329"]]);
   });
 });
+
+describe("highlighter compatibility", () => {
+  const blank: FlowGraph = { nodes: [], edges: [], theme: "feishu" };
+  const marker = { id: "smarker", points: [{ x: 0, y: 0 }, { x: 100, y: 0 }], color: "#FFEE24", width: 20, marker: true as const };
+  it("retains marker style through creation, old-client stroke updates, erase and undo", () => {
+    const created = flowIntentWrites({}, blank, { ...blank, strokes: [marker] });
+    expect(created.writes["fc.marker.smarker"]).toBe("1");
+    let props = created.writes;
+    expect(readFlow(props).strokes).toEqual([marker]);
+    // An older client rewrites the original stroke JSON without knowing the marker key.
+    props = { ...props, "fc.s.smarker": JSON.stringify({ points: [{ x: 1, y: 1 }, { x: 101, y: 1 }], color: marker.color, width: marker.width }) };
+    const moved = readFlow(props);
+    expect(moved.strokes?.[0].marker).toBe(true);
+    const erased = flowIntentWrites(props, moved, { ...blank, strokes: [] });
+    expect(erased.writes["fc.s.smarker"]).toBe("");
+    expect(erased.writes["fc.marker.smarker"]).toBeUndefined();
+    props = { ...props, ...erased.writes };
+    const undo = flowIntentWrites(props, readFlow(props), moved);
+    expect(readFlow({ ...props, ...undo.writes }).strokes).toEqual(moved.strokes);
+  });
+  it("rejects stale or malformed marker metadata and preserves unrelated strokes", () => {
+    const graph = { ...blank, strokes: [marker] };
+    const props = flowWrites({}, graph);
+    const moved = { ...graph, strokes: [{ ...marker, points: [{ x: 10, y: 10 }] }] };
+    expect(flowIntentWrites({ ...props, "fc.marker.smarker": "future" }, graph, moved).conflicts).toContain("fc.s.smarker");
+    expect(flowIntentWrites({ ...props, "fc.marker.smarker": "" }, graph, moved).conflicts).toContain("fc.s.smarker");
+    const replacement = { ...blank, strokes: [{ ...marker, marker: undefined }] };
+    expect(flowIntentWrites(props, graph, replacement).conflicts).toContain("fc.s.smarker");
+    expect(flowIntentWrites({ ...props, "fc.s.smarker": "" }, blank, replacement).conflicts).toContain("fc.s.smarker");
+    expect(readFlow(props).strokes).toEqual([marker]);
+  });
+});

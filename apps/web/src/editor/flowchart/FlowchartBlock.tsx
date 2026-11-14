@@ -159,7 +159,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         return <g key={stroke.id} data-flow-stroke={stroke.id} opacity={erasing?.has(stroke.id) ? 0.2 : undefined}>
           <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(touchZoom ? 28 / touchZoom : 16, stroke.width + 12)} strokeLinecap="round" strokeLinejoin="round" onPointerDown={onStrokeDown && stroke !== draftStroke ? (event) => onStrokeDown(event, stroke) : undefined}/>
           {selected?.has(stroke.id) && <path d={d} fill="none" stroke="#3370FF" strokeOpacity={0.35} strokeWidth={stroke.width + 5} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" data-ink-selection/>}
-          <path d={d} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
+          <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
       {graph.edges.map((e) => {
@@ -286,6 +286,7 @@ type Guide = { x1: number; y1: number; x2: number; y2: number };
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
 const INK_COLORS = [["#1F2329", "黑色"], ["#D83931", "红色"], ["#DE7802", "橙色"], ["#DC9B04", "黄色"], ["#2EA121", "绿色"], ["#3370FF", "蓝色"], ["#6425D0", "紫色"], ["#8F959E", "灰色"]] as const;
 const INK_WIDTHS = [2, 3, 5, 8, 12] as const;
+const MARKER_WIDTHS = [8, 12, 16, 20, 24] as const;
 
 export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, upload, assets, canCopy = true }: {
   initial: FlowGraph; readOnly: boolean;
@@ -339,6 +340,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const erase = useRef<{ pointerId: number; base: FlowGraph; last: FlowPoint; ids: Set<string>; bounds: Map<string, ReturnType<typeof inkPointBounds>> } | null>(null);
   const [erasePreview, setErasePreview] = useState<Set<string> | null>(null);
   const [penColor, setPenColor] = useState("#1F2329"), [penWidth, setPenWidth] = useState(3);
+  const [penKind, setPenKind] = useState<"pen" | "marker">("pen");
+  const [markerColor, setMarkerColor] = useState("#FFEE24"), [markerWidth, setMarkerWidth] = useState(20);
   const [editing, setEditing] = useState<{ id: string; kind: "node" | "edge"; value: string } | null>(null);
   const [view, setView] = useState(() => { const b = flowBounds(initial); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -438,7 +441,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (readOnly || event.button !== 0 || (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current))) return;
     const p = toWorld(event.clientX, event.clientY);
     const point = { x: Math.round(Math.max(-20000, Math.min(20000, p.x))), y: Math.round(Math.max(-20000, Math.min(20000, p.y))) };
-    const stroke: FlowStroke = { id: newFlowId("s"), points: [point], color: penColor, width: penWidth };
+    const stroke: FlowStroke = { id: newFlowId("s"), points: [point], color: penKind === "marker" ? markerColor : penColor, width: penKind === "marker" ? markerWidth : penWidth, ...(penKind === "marker" ? { marker: true as const } : {}) };
     ink.current = { pointerId: event.pointerId, stroke }; setInkPreview(stroke); setSelected(new Set()); setShowStarter(false); autoFit.current = false;
     svgWrap.current?.setPointerCapture(event.pointerId);
   };
@@ -892,8 +895,10 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const barBtn = "flex h-8 items-center gap-1 rounded-md px-2 text-[13px] text-[#1F2329] hover:bg-hover disabled:opacity-30 dark:text-foreground";
   const menuItem = "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover";
   const railBtn = cn("grid size-9 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", compact && "size-9 shrink-0 max-[359px]:size-8");
+  const activeInkColor = penKind === "marker" ? markerColor : penColor;
+  const inkColors = penKind === "marker" ? [["#FFEE24", "黄色"], ["#FFB3CC", "粉色"], ["#98E7A5", "绿色"], ["#8DCBFF", "蓝色"], ["#D1B3FF", "紫色"]] as const : INK_COLORS;
   const penSettings = <div className="absolute bottom-[52px] right-0 z-[90] w-[208px] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[13px] shadow-lg" role="group" aria-label="画笔颜色" onPointerDown={(event) => event.stopPropagation()}>
-    <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{INK_COLORS.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={penColor === color} onClick={() => { setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", penColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
+    <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{inkColors.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={activeInkColor === color} onClick={() => { penKind === "marker" ? setMarkerColor(color) : setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", activeInkColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
   </div>;
   const libraryGroups: { title: string; shapes: Shape[] }[] = [
     { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "note", "text", ...(upload ? ["image" as const] : [])] },
@@ -1162,12 +1167,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </aside>}
 
     {!readOnly && (tool === "pen" || tool === "eraser") && <div role="toolbar" aria-label="画笔工具" data-flow-pen-toolbar onPointerDown={(event) => event.stopPropagation()} className={cn("absolute left-1/2 z-20 flex h-12 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-[#DEE0E3] bg-surface px-2 shadow-[0_4px_16px_rgba(31,35,41,0.12)]", compact ? "bottom-[120px]" : "bottom-5")}>
-      <button type="button" aria-label="画笔模式" aria-pressed={tool === "pen"} title="画笔" className={cn(tb, tool === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setMenu(null); }}><Pencil size={17}/></button>
-      <button type="button" aria-label="荧光笔（暂不可用）" title="荧光笔暂不可用" disabled className={tb}><Brush size={17}/></button>
+      <button type="button" aria-label="画笔模式" aria-pressed={tool === "pen" && penKind === "pen"} title="画笔" className={cn(tb, tool === "pen" && penKind === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("pen"); setMenu(null); }}><Pencil size={17}/></button>
+      <button type="button" aria-label="荧光笔" aria-pressed={tool === "pen" && penKind === "marker"} title="荧光笔" className={cn(tb, tool === "pen" && penKind === "marker" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("marker"); setMenu(null); }}><Brush size={17}/></button>
       <button type="button" aria-label="橡皮擦" aria-pressed={tool === "eraser"} title="橡皮擦（擦除整条笔迹）" data-flow-eraser-tool className={cn(tb, tool === "eraser" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("eraser"); setMenu(null); }}><Eraser size={17}/></button>
       <span className="mx-1 h-6 w-px shrink-0 bg-[#DEE0E3]"/>
-      <select aria-label="画笔粗细" title="画笔粗细" disabled={tool !== "pen"} value={penWidth} onChange={(event) => setPenWidth(Number(event.target.value))} className="h-8 max-w-[58px] rounded-md bg-surface px-1 text-[12px] text-[#646A73] disabled:opacity-30">{INK_WIDTHS.map((width) => <option key={width} value={width}>{width}</option>)}</select>
-      <div className="relative"><button type="button" aria-label="画笔颜色" aria-expanded={menu === "pen"} title="画笔颜色" disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: penColor }}/></button>{menu === "pen" && penSettings}</div>
+      <select aria-label="画笔粗细" title="画笔粗细" disabled={tool !== "pen"} value={penKind === "marker" ? markerWidth : penWidth} onChange={(event) => penKind === "marker" ? setMarkerWidth(Number(event.target.value)) : setPenWidth(Number(event.target.value))} className="h-8 max-w-[58px] rounded-md bg-surface px-1 text-[12px] text-[#646A73] disabled:opacity-30">{(penKind === "marker" ? MARKER_WIDTHS : INK_WIDTHS).map((width) => <option key={width} value={width}>{width}</option>)}</select>
+      <div className="relative"><button type="button" aria-label="画笔颜色" aria-expanded={menu === "pen"} title="画笔颜色" disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: activeInkColor }}/></button>{menu === "pen" && penSettings}</div>
       <button type="button" aria-label="关闭画笔工具" title="关闭画笔工具" className={tb} onClick={() => { setTool("select"); setMenu(null); }}><X size={16}/></button>
     </div>}
 
