@@ -14,6 +14,7 @@ export function describeUnappliedFlows(attempts: UnappliedFlow[]): string {
       };
       changed(attempt.before.nodes, attempt.proposed.nodes, "fc.n.");
       changed(attempt.before.edges, attempt.proposed.edges, "fc.e.");
+      changed(attempt.before.strokes ?? [], attempt.proposed.strokes ?? [], "fc.s.");
       if (attempt.before.theme !== attempt.proposed.theme) ids.add("fc.theme");
     }
     const lines = [`第 ${index + 1} 次未应用的操作`];
@@ -27,6 +28,9 @@ export function describeUnappliedFlows(attempts: UnappliedFlow[]): string {
       } else if (key.startsWith("fc.e.")) {
         const id = key.slice(5), previous = attempt.before.edges.find((e) => e.id === id), next = attempt.proposed.edges.find((e) => e.id === id), edge: FlowEdge | undefined = next ?? previous;
         if (edge) lines.push(`${next ? previous ? "修改" : "新增或恢复" : "删除"}连线${edge.label ? `：${edge.label}` : ""}`);
+      } else if (key.startsWith("fc.s.")) {
+        const id = key.slice(5), previous = attempt.before.strokes?.find((stroke) => stroke.id === id), next = attempt.proposed.strokes?.find((stroke) => stroke.id === id);
+        if (previous || next) lines.push(`${next ? previous ? "修改" : "新增或恢复" : "删除"}笔迹（${(next ?? previous)!.points.length} 个点）`);
       } else if (key === "fc.theme") lines.push(`切换风格：${themeOf(attempt.proposed.theme).label}`);
     }
     if (lines.length === 1) lines.push("文档状态或权限发生变化，操作未应用。");
