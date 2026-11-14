@@ -66,8 +66,10 @@ import { docMetaKey, docMetaState, isDocAccessDenied, shouldRetryDocMeta } from 
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./documentCopy";
 import { markdownExportLosses } from "./markdownExport";
 import { DocumentMoveDialog } from "./DocumentMoveDialog";
+import { DocumentMentionsDialog } from "./DocumentMentionsDialog";
+import { collectDocumentMentions } from "./documentMentions";
 import { useI18n } from "@/lib/i18n";
-import { Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -199,6 +201,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState(false);
   const [presenting, setPresenting] = useState(false);
+  const [mentionsTarget, setMentionsTarget] = useState<{ doc: number; user: number } | null>(null);
+  useEffect(() => { setMentionsTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { setPresenting(false); }, [id, me.user.id, metadataVerified]);
   const [versionTarget, setVersionTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setVersionTarget(null); }, [id, me.user.id, metadataVerified]);
@@ -285,6 +289,10 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
   const commentAccessDenied = (comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error)) || commentSuspended;
   const commentsAvailable = metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
+  const mentionSummary = useMemo(() => {
+    if (mentionsTarget?.doc !== id || mentionsTarget.user !== me.user.id || !metadataVerified || !sync.client.doc) return null;
+    return collectDocumentMentions(sync.client.doc.view(), commentsAvailable && !members.isFetching ? members.data : []);
+  }, [mentionsTarget, id, me.user.id, metadataVerified, sync.client.doc, sync.version, commentsAvailable, members.isFetching, members.data]);
   const commentDraftExportAllowed = mayExportCommentDraftData(meta.data, permissionsVerified, commentsAvailable);
   const commentDraftExportAllowedRef = useRef(false);
   commentDraftExportAllowedRef.current = commentDraftExportAllowed;
@@ -952,6 +960,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           onCreateVersion={canEditContent ? () => setVersionTarget({ doc: id, user: me.user.id }) : undefined}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
           onDocumentInfo={() => setInfoTarget({ doc: id, user: me.user.id })}
+          onMentionedPeople={sync.client.doc ? () => setMentionsTarget({ doc: id, user: me.user.id }) : undefined}
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
           onImport={canEditContent ? importFile : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
@@ -1135,6 +1144,27 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
+      {mentionSummary && <DocumentMentionsDialog summary={mentionSummary} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => {
+        const previous = document.activeElement;
+        setMentionsTarget(null);
+        requestAnimationFrame(() => {
+          const active = document.activeElement;
+          if (active && active !== previous && active !== document.body && active !== document.documentElement) return;
+          document.querySelector<HTMLButtonElement>("[data-more-menu]")?.focus({ preventScroll: true });
+        });
+      }} onJump={(person) => {
+        const current = sync.client.doc && collectDocumentMentions(sync.client.doc.view()).people.find((item) => item.userId === person.userId);
+        const area = scrollArea.current;
+        if (!current || !area) return false;
+        const block = area.querySelector<HTMLElement>(`[data-block="${current.firstBlock}"]`);
+        const target = block && [...block.querySelectorAll<HTMLElement>("[data-member]")].find((item) => item.dataset.member === String(person.userId));
+        if (!target) return false;
+        area.scrollTo({ top: area.scrollTop + target.getBoundingClientRect().top - area.getBoundingClientRect().top - 48, behavior: "smooth" });
+        const marker = String(performance.now());
+        target.setAttribute("data-mention-located", marker);
+        window.setTimeout(() => { if (target.getAttribute("data-mention-located") === marker) target.removeAttribute("data-mention-located"); }, 2500);
+        return true;
+      }} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
       {metadataVerified && history && (
@@ -1207,6 +1237,7 @@ function TopBar({
   onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
+  onMentionedPeople,
   onExport,
   onImport,
   onOutline,
@@ -1240,6 +1271,7 @@ function TopBar({
   onCreateVersion?: () => void;
   onTitleCheck: () => void;
   onDocumentInfo: () => void;
+  onMentionedPeople?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   readOnly: boolean;
@@ -1296,7 +1328,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1399,6 +1431,7 @@ function DocMenu({
   onCreateVersion,
   onTitleCheck,
   onDocumentInfo,
+  onMentionedPeople,
   onExport,
   onImport,
   onOutline,
@@ -1417,6 +1450,7 @@ function DocMenu({
   onCreateVersion?: () => void;
   onTitleCheck?: () => void;
   onDocumentInfo?: () => void;
+  onMentionedPeople?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
@@ -1549,6 +1583,7 @@ function DocMenu({
           {onCreateVersion && <div className={group}><button className={row} onClick={() => { close(); onCreateVersion(); }} data-save-named-version><FileText size={15} className={icon} />另存为版本</button></div>}
           <div className={group}>
             {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
+            {onMentionedPeople && <button className={row} onClick={() => { close(); onMentionedPeople(); }} data-document-mentions><AtSign size={15} className={icon} />{t("提及的人")}</button>}
             {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}
             {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
             <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>

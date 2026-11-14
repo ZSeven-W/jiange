@@ -171,6 +171,12 @@
   transition: background-color 0.6s ease;
 }
 
+/* Temporary location feedback after jumping to a person mentioned in the document. */
+[data-mention-located] {
+  outline: 2px solid #3370ff;
+  outline-offset: 2px;
+}
+
 /* 飞书文档选区：浅蓝底、保留原文字颜色 */
 [data-editor] ::selection,
 [data-editor]::selection,
