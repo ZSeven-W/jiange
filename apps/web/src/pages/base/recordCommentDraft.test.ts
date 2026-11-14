@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { clearRecordCommentDraftIfUnchanged, loadRecordCommentDraft, recordCommentDraftKey, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
+
+function storage(): Storage {
+  const values = new Map<string, string>();
+  return { get length() { return values.size; }, clear: () => values.clear(), getItem: (key) => values.get(key) ?? null, key: (index) => [...values.keys()][index] ?? null, removeItem: (key) => { values.delete(key); }, setItem: (key, value) => { values.set(key, value); } };
+}
+
+describe("record comment drafts", () => {
+  it("isolates user, base and record, including whitespace", () => {
+    const store = storage();
+    saveRecordCommentDraft(store, 1, 2, 3, " 草稿 ");
+    expect(loadRecordCommentDraft(store, 1, 2, 3)).toBe(" 草稿 ");
+    expect(loadRecordCommentDraft(store, 2, 2, 3)).toBe("");
+    expect(loadRecordCommentDraft(store, 1, 2, 4)).toBe("");
+    saveRecordCommentDraft(store, 1, 2, 3, "");
+    expect(loadRecordCommentDraft(store, 1, 2, 3)).toBe("");
+  });
+  it("does not clear a newer edit, even when its text matches the sent draft", () => {
+    const store = storage();
+    saveRecordCommentDraft(store, 1, 2, 3, "原稿");
+    const revision = recordCommentDraftRevision(store, 1, 2, 3);
+    saveRecordCommentDraft(store, 1, 2, 3, "新稿");
+    saveRecordCommentDraft(store, 1, 2, 3, "原稿");
+    expect(clearRecordCommentDraftIfUnchanged(store, 1, 2, 3, revision)).toBe(false);
+    expect(loadRecordCommentDraft(store, 1, 2, 3)).toBe("原稿");
+    expect(clearRecordCommentDraftIfUnchanged(store, 1, 2, 3, recordCommentDraftRevision(store, 1, 2, 3))).toBe(true);
+  });
+  it("rejects invalid identities instead of sharing a draft key", () => {
+    expect(() => recordCommentDraftKey(0, 1, 1)).toThrow();
+    expect(() => recordCommentDraftKey(1, Number.MAX_SAFE_INTEGER + 1, 1)).toThrow();
+  });
+});

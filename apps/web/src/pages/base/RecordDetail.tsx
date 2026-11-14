@@ -13,6 +13,7 @@ import { t, useI18n } from "@/lib/i18n";
 import { mentionQuery, mentionsIn, splitMentions, threadComments, type Thread } from "./recordComments";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
+import { clearRecordCommentDraftIfUnchanged, loadRecordCommentDraft, recordCommentDraftRevision, saveRecordCommentDraft } from "./recordCommentDraft";
 
 const isBlank = (v: Cell | undefined) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Feishu-style empty-value hints in the record detail. */
@@ -29,6 +30,7 @@ import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, useWriteLed
  * row-expansion panel. */
 export function RecordDetail({
   baseId,
+  userId,
   canEdit,
   preventCopy = false,
   fields,
@@ -40,8 +42,10 @@ export function RecordDetail({
   onNext,
   position,
   initialTab = "detail",
+  initialComment = false,
 }: {
   baseId: number;
+  userId: number;
   canEdit: boolean;
   preventCopy?: boolean;
   fields: Field[];
@@ -55,8 +59,10 @@ export function RecordDetail({
   /** 1-based index and total in the current view, for the header. */
   position?: { index: number; total: number };
   initialTab?: "detail" | "history";
+  initialComment?: boolean;
 }) {
   const [tab, setTab] = useState<"detail" | "history">(initialTab);
+  const [showComments, setShowComments] = useState(initialComment);
   const [addingField, setAddingField] = useState(false);
   const { ledger, issues } = useWriteLedger(baseId);
   type DetailEdit = { rid: number; fid: number; draft: Cell | null; dirty: boolean; authorization: string | null; authored: boolean };
@@ -116,16 +122,19 @@ export function RecordDetail({
   };
 
   return (
-    <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-[800px] flex-col border-l bg-surface shadow-[-6px_0_24px_rgba(31,35,41,0.08)] md:top-16" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
+    <aside className="fixed bottom-0 right-0 top-0 z-[60] flex w-full max-w-[800px] flex-col border-l bg-surface shadow-[-6px_0_24px_rgba(31,35,41,0.08)] md:top-16" data-record-detail onKeyDown={(event) => event.stopPropagation()} onPaste={(event) => event.stopPropagation()} onCopyCapture={(event) => { if (preventCopy) event.preventDefault(); }} onCutCapture={(event) => { if (preventCopy) event.preventDefault(); }}>
       <header className="flex h-14 shrink-0 items-center gap-1 border-b px-5 text-[13px] text-muted-foreground">
         <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onPrev} disabled={!onPrev} aria-label={t("上一条记录")} title={t("上一条记录")} data-record-prev><ChevronUp size={18} strokeWidth={1.7} /></button>
         <button type="button" className="grid size-8 place-items-center rounded-md hover:bg-hover disabled:opacity-40" onClick={onNext} disabled={!onNext} aria-label={t("下一条记录")} title={t("下一条记录")} data-record-next><ChevronDown size={18} strokeWidth={1.7} /></button>
         <span className="ml-1 text-[12px] text-subtle">{position ? `${position.index} / ${position.total}` : null}<span className="ml-2">{t("记录 #{id}", { id: row.id })}</span></span>
-        <button className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label={t("关闭")}>
+        <button type="button" className={cn("ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground", showComments && "bg-[#e8efff] text-primary")} onClick={() => setShowComments((show) => !show)} aria-label={t("评论")} aria-pressed={showComments} data-record-comments-toggle><MessageSquare size={16}/></button>
+        <button className="grid size-8 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label={t("关闭")}>
           <X size={18} strokeWidth={1.7} />
         </button>
       </header>
-      <div className="shrink-0 px-10 pt-6">
+      <div className="flex min-h-0 flex-1">
+      <div className={cn("min-h-0 min-w-0 flex-1 flex-col", showComments ? "hidden md:flex" : "flex")}>
+      <div className="shrink-0 px-6 pt-6 sm:px-10">
         <h2 className="truncate text-[24px] font-semibold leading-8 text-foreground" data-record-title>{recordTitle(row, fields, members) || t("未命名记录")}</h2>
         <div className="mt-4 flex h-9 items-end gap-6 border-b text-[14px]" role="tablist" aria-label={t("记录详情")}>
           {(["detail", "history"] as const).map((tKey) => <button key={tKey} type="button" role="tab" aria-selected={tab === tKey} onClick={() => setTab(tKey)} className={cn("-mb-px border-b-2 pb-2", tab === tKey ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground")} data-record-tab={tKey}>{tKey === "detail" ? t("详情") : t("历史")}</button>)}
@@ -195,9 +204,8 @@ export function RecordDetail({
         )}
       </div>
       <ReverseLinks baseId={baseId} recordId={record.id} />
-      <RecordComments baseId={baseId} recordId={record.id} />
       </div>}
-      <footer className="flex items-center gap-3 border-t px-10 py-2.5 text-[12px] text-subtle">
+      <footer className="flex flex-wrap items-center gap-3 border-t px-6 py-2.5 text-[12px] text-subtle sm:px-10">
         <span>{t("创建于 {time}", { time: row.createdAt ? new Date(row.createdAt).toLocaleString("zh-CN", { hour12: false }) : "—" })}</span>
         <span>{t("修改于 {time}", { time: row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "—" })}</span>
         {canEdit && (
@@ -221,6 +229,9 @@ export function RecordDetail({
           </button>
         )}
       </footer>
+      </div>
+      <RecordComments key={`${userId}:${baseId}:${record.id}`} baseId={baseId} userId={userId} recordId={record.id} visible={showComments} />
+      </div>
     </aside>
   );
 }
@@ -353,9 +364,14 @@ function RecordHistory({ baseId, record, fields, members }: { baseId: number; re
 }
 
 /** 记录评论: threads (root + replies) with @人 and 解决/重新打开. */
-function RecordComments({ baseId, recordId }: { baseId: number; recordId: number }) {
+function RecordComments({ baseId, userId, recordId, visible }: { baseId: number; userId: number; recordId: number; visible: boolean }) {
   const { t } = useI18n();
-  const q = useQuery({ queryKey: ["record-comments", baseId, recordId], queryFn: () => baseApi.recordComments(baseId, recordId) });
+  const q = useQuery({ queryKey: ["record-comments", baseId, recordId, userId], queryFn: () => baseApi.recordComments(baseId, recordId) });
+  const section = useRef<HTMLElement>(null);
+  const [storedDraft] = useState(() => { try { return { text: typeof window === "undefined" ? "" : loadRecordCommentDraft(window.sessionStorage, userId, baseId, recordId), error: false }; } catch { return { text: "", error: true }; } });
+  const [draftError, setDraftError] = useState(storedDraft.error);
+  const saveDraft = (text: string) => { try { saveRecordCommentDraft(window.sessionStorage, userId, baseId, recordId, text); setDraftError(false); } catch { setDraftError(true); } };
+  useEffect(() => { if (!visible) return; const id = requestAnimationFrame(() => section.current?.querySelector<HTMLTextAreaElement>("[data-root-comment-input]")?.focus({ preventScroll: true })); return () => cancelAnimationFrame(id); }, [visible]);
   const membersQ = useQuery({ queryKey: ["comment-members", baseId], queryFn: () => commentsApi.members(baseId), staleTime: 60_000 });
   const members = membersQ.data ?? [];
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 60_000 });
@@ -376,8 +392,14 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
   const resolved = threads.filter((t) => t.root.resolved);
   const post = async (body: string, parentId?: number) => {
     setError("");
-    try { await baseApi.addRecordComment(baseId, recordId, body, { mentions: mentionsIn(body, members), parentId }); await q.refetch(); return true; }
+    let revision: string | null | undefined;
+    if (!parentId) { try { revision = recordCommentDraftRevision(window.sessionStorage, userId, baseId, recordId); } catch { revision = undefined; } }
+    try { await baseApi.addRecordComment(baseId, recordId, body, { mentions: mentionsIn(body, members), parentId }); }
     catch { setError(t("评论未能确认发送，请刷新后核对。")); return false; }
+    if (!parentId && revision !== undefined) { try { clearRecordCommentDraftIfUnchanged(window.sessionStorage, userId, baseId, recordId, revision); } catch { setDraftError(true); } }
+    try { if ((await q.refetch()).isError) setError(t("评论已发送，但列表刷新失败，请稍后刷新。")); }
+    catch { setError(t("评论已发送，但列表刷新失败，请稍后刷新。")); }
+    return true;
   };
   const toggle = async (cid: number, value: boolean) => {
     setError("");
@@ -400,8 +422,8 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
     <div key={c.id} className={cn("flex gap-2.5 text-[13px]", reply && "mt-2.5")} data-record-comment={c.id}>
       <Avatar name={c.userName} color={colorFor(c.userId - 1)} size={reply ? 22 : 26} />
       <div className="group/comment-body min-w-0 flex-1">
-        <div className="group/comment flex items-center"><span className="font-medium">{c.userName}</span><span className="ml-2 text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
-          {c.userId === myId && editing !== c.id && <span className={cn("ml-2 flex items-center gap-0.5 text-[12px] opacity-0 focus-within:opacity-100 group-hover/comment:opacity-100 [@media(hover:none)]:opacity-100", !reply && "mr-24")}>
+        <div className={cn("group/comment flex min-w-0 flex-wrap items-center gap-x-2", !reply && "pr-14")}><span className="max-w-24 truncate whitespace-nowrap font-medium">{c.userName}</span><span className="whitespace-nowrap text-[12px] text-subtle">{new Date(c.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
+          {c.userId === myId && editing !== c.id && <span className="flex items-center gap-0.5 text-[12px] opacity-0 focus-within:opacity-100 group-hover/comment:opacity-100 [@media(hover:none)]:opacity-100">
             <button type="button" className="rounded px-1 text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => setEditing(c.id)} data-comment-edit>{t("编辑")}</button>
             <button type="button" className="rounded px-1 text-muted-foreground hover:bg-hover hover:text-destructive" onClick={() => void remove(c)} data-comment-delete>{t("删除")}</button>
           </span>}
@@ -441,24 +463,31 @@ function RecordComments({ baseId, recordId }: { baseId: number; recordId: number
     </div>
   );
   return (
-    <section className="border-t px-10 py-4" data-record-comments>
-      <h3 className="mb-3 flex items-center gap-1.5 text-[14px] font-medium"><MessageSquare size={15} strokeWidth={1.7} />{t("评论")}{q.data?.comments.length ? <span className="text-subtle">{q.data.comments.length}</span> : null}
+    <section ref={section} className={cn("min-h-0 w-full flex-col border-l bg-surface md:w-[320px] md:shrink-0", visible ? "flex" : "hidden")} data-record-comments>
+      <h3 className="flex h-14 shrink-0 items-center gap-1.5 border-b px-5 text-[14px] font-medium">{t("评论")} ({q.data?.comments.length ?? 0})
         {resolved.length > 0 && <button type="button" className="ml-auto text-[12px] font-normal text-muted-foreground hover:text-primary" onClick={() => setShowResolved((v) => !v)} data-show-resolved>{showResolved ? t("隐藏已解决") : t("显示已解决 {n}", { n: resolved.length })}</button>}
       </h3>
-      <div className="space-y-2.5">
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-4 py-4">
         {open.map(thread)}
         {showResolved && resolved.map(thread)}
+        {q.isSuccess && !threads.length && <p className="pt-12 text-center text-[13px] text-subtle">{t("当前记录暂无评论")}</p>}
         {q.isError && <p role="alert" className="text-[12px] text-destructive">{t("无法加载评论。")}</p>}
       </div>
-      <div className="mt-3"><CommentComposer members={members} placeholder={t("输入评论，@ 提及成员，Enter 发送")} onSend={(b) => post(b)} /></div>
-      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}
+      <div className="shrink-0 border-t p-4"><CommentComposer members={members} placeholder={t("输入评论，@ 提及成员，Enter 发送")} initial={storedDraft.text} onDraftChange={saveDraft} root onSend={(b) => post(b)} />
+      {draftError && <p role="alert" className="mt-1 text-[12px] text-destructive">{t("本地草稿无法保存，请复制内容后再离开。")}</p>}
+      {error && <p role="alert" className="mt-1 text-[12px] text-destructive">{error}</p>}</div>
     </section>
   );
 }
 
 /** Textarea with an @ member picker; Enter sends, Shift+Enter breaks lines. */
-function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, initial = "", submitLabel }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void; initial?: string; submitLabel?: string }) {
+function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, initial = "", submitLabel, onDraftChange, root = false }: { members: User[]; placeholder: string; autoFocus?: boolean; onSend: (body: string) => Promise<boolean>; onCancel?: () => void; initial?: string; submitLabel?: string; onDraftChange?: (body: string) => void; root?: boolean }) {
   const [body, setBody] = useState(initial);
+  const latest = useRef(body);
+  const revision = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const updateBody = (next: string) => { revision.current++; latest.current = next; setBody(next); onDraftChange?.(next); };
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [sending, setSending] = useState(false);
@@ -469,15 +498,17 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, in
     if (!mq) return;
     const next = body.slice(0, mq.start) + "@" + m.name + " " + body.slice(caret);
     const pos = mq.start + m.name.length + 2;
-    setBody(next); setCaret(pos); setActive(0);
+    updateBody(next); setCaret(pos); setActive(0);
     requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(pos, pos); });
   };
   const send = async () => {
-    const text = body.trim();
+    const original = latest.current;
+    const originalRevision = revision.current;
+    const text = original.trim();
     if (!text || sending) return;
     setSending(true);
-    if (await onSend(text)) { setBody(""); setCaret(0); }
-    setSending(false);
+    if (await onSend(text) && mounted.current && revision.current === originalRevision) { updateBody(""); setCaret(0); }
+    if (mounted.current) setSending(false);
   };
   return (
     <div className="relative">
@@ -495,7 +526,7 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, in
           ref={ref}
           autoFocus={autoFocus}
           value={body}
-          onChange={(e) => { setBody(e.target.value); setCaret(e.target.selectionStart); setActive(0); }}
+          onChange={(e) => { updateBody(e.target.value); setCaret(e.target.selectionStart); setActive(0); }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={(e) => {
             if (matches.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); setActive((a) => (a + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length); return; }
@@ -508,6 +539,7 @@ function CommentComposer({ members, placeholder, autoFocus, onSend, onCancel, in
           placeholder={placeholder}
           className="max-h-28 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none"
           data-record-comment-input
+          data-root-comment-input={root || undefined}
         />
         {onCancel && <button type="button" onClick={onCancel} className="h-7 shrink-0 rounded-md px-2 text-[12px] text-muted-foreground hover:bg-hover">{t("取消")}</button>}
         <button type="button" onClick={() => void send()} disabled={!body.trim() || sending} className="h-7 shrink-0 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{submitLabel ?? t("发送")}</button>

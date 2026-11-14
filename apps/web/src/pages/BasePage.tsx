@@ -442,6 +442,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         return rec ? (
           <RecordDetail
             baseId={id}
+            userId={userId}
             canEdit={canEdit}
             preventCopy={preventCopy}
             fields={fields}
@@ -469,7 +470,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} userId={userId} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });

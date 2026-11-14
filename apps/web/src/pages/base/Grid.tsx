@@ -40,6 +40,7 @@ interface Edit {
 
 export function Grid({
   baseId,
+  userId,
   canEdit,
   fields,
   allFields,
@@ -59,6 +60,7 @@ export function Grid({
   undo,
 }: {
   baseId: number;
+  userId: number;
   canEdit: boolean;
   fields: Field[];
   /** Full authorized order, including fields hidden only in the current view. */
@@ -117,6 +119,7 @@ export function Grid({
   useEffect(() => { if (!detailAccessReady || !selectionAccessReady || groupBy) dragSelection.current = null; }, [detailAccessReady, selectionAccessReady, groupBy]);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<"detail" | "history">("detail");
+  const [detailComment, setDetailComment] = useState(false);
   const [detailSession, setDetailSession] = useState(0);
   const [recordMenu, setRecordMenu] = useState<{ id: number; ids: number[]; selected: boolean; x: number; y: number; anchor: HTMLElement | null } | null>(null);
   const menuValid = !!recordMenu && records.some((record) => record.id === recordMenu.id) && (!recordMenu.selected || sameRecordTargets(recordMenu.ids, recordMenuTargets(recordMenu.id, checked, records)));
@@ -421,9 +424,9 @@ export function Grid({
     await deleteRecord(record);
   };
 
-  const openDetail = (id: number, tab: "detail" | "history") => {
+  const openDetail = (id: number, tab: "detail" | "history", comment = false) => {
     if (!current.current.detailAccessReady || !current.current.selectionAccessReady || !current.current.visibleRecords.some((record) => record.id === id)) return;
-    if (detailId === null) { setDetailTab(tab); setDetailSession((session) => session + 1); }
+    if (detailId === null) { setDetailTab(tab); setDetailComment(comment); setDetailSession((session) => session + 1); }
     setDetailId(id); onDetailVisibilityChange?.(true);
   };
 
@@ -804,13 +807,15 @@ export function Grid({
         }
       }}
     >
-      {detailId !== null && !detailAccessReady && <aside className="fixed inset-y-0 right-0 z-40 grid w-full max-w-[420px] place-items-center border-l bg-surface text-[13px] text-subtle shadow-xl" role="status">{t("正在确认记录访问权限…")}</aside>}
+      {detailId !== null && !detailAccessReady && <aside className="fixed inset-y-0 right-0 z-[60] grid w-full max-w-[420px] place-items-center border-l bg-surface text-[13px] text-subtle shadow-xl" role="status">{t("正在确认记录访问权限…")}</aside>}
       {detail && (
         <RecordDetail
           key={detailSession}
           initialTab={detailTab}
           baseId={baseId}
+          userId={userId}
           canEdit={canEdit}
+          initialComment={detailComment}
           preventCopy={preventCopy}
           fields={fields}
           record={detail}
@@ -1011,7 +1016,7 @@ export function Grid({
         </tfoot>
       </table>
     </div>
-    {recordMenu && menuValid && <RecordMenu x={recordMenu.x} y={recordMenu.y} multiple={recordMenu.ids.length > 1} canEdit={canEdit} ready={detailAccessReady && selectionAccessReady} anchor={recordMenu.anchor} onClose={() => setRecordMenu(null)} onDetail={() => { openDetail(recordMenu.id, "detail"); setRecordMenu(null); }} onHistory={() => { openDetail(recordMenu.id, "history"); setRecordMenu(null); }} onDelete={() => { const menu = recordMenu; setRecordMenu(null); if (menu.selected) void deleteChecked(menu.ids); else void deleteOne(menu.id); }} />}
+    {recordMenu && menuValid && <RecordMenu x={recordMenu.x} y={recordMenu.y} multiple={recordMenu.ids.length > 1} canEdit={canEdit} ready={detailAccessReady && selectionAccessReady} anchor={recordMenu.anchor} onClose={() => setRecordMenu(null)} onDetail={() => { openDetail(recordMenu.id, "detail"); setRecordMenu(null); }} onHistory={() => { openDetail(recordMenu.id, "history"); setRecordMenu(null); }} onComment={() => { openDetail(recordMenu.id, "detail", true); setRecordMenu(null); }} onDelete={() => { const menu = recordMenu; setRecordMenu(null); if (menu.selected) void deleteChecked(menu.ids); else void deleteOne(menu.id); }} />}
     {selectedStats && <div data-selection-statistics role="status" className="pointer-events-none absolute bottom-12 right-3 z-20 flex items-center rounded-md border border-[#dee0e3] bg-surface px-3 py-2 text-[12px] text-[#646a73] shadow-[0_2px_8px_rgba(31,35,41,0.12)] sm:right-6">
       <span>{t("平均值")}: <span className="tabular-nums">{formatSelectionNumber(selectedStats.average)}</span></span>
       <span className="mx-3 h-4 w-px bg-[#e5e6eb]" />

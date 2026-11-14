@@ -6,7 +6,7 @@ import { Grid } from "./Grid";
 
 const fields: Field[] = [{ id: 1, name: "任务", type: "text", position: 1, isPrimary: true }];
 const records: BaseRecord[] = [{ id: 9, baseId: 1, position: 1, cells: { 1: "准备会议" } }];
-const renderGrid = (canEdit: boolean) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} canEdit={canEdit} fields={fields} allFields={fields} records={records} members={[]} onMutate={() => {}} /></QueryClientProvider>);
+const renderGrid = (canEdit: boolean) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><Grid baseId={1} userId={1} canEdit={canEdit} fields={fields} allFields={fields} records={records} members={[]} onMutate={() => {}} /></QueryClientProvider>);
 
 describe("grid touch and keyboard affordances", () => {
   it("exposes an actionable record detail and field menu without requiring hover", () => {
