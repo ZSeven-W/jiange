@@ -152,3 +152,35 @@ describe("mind map styles", () => {
     expect(addition.conflicts).toContain("fc.ms.s"); expect(addition.writes["fc.m.s"]).toBeUndefined();
   });
 });
+
+describe("mind map paint", () => {
+  const sibling: MindTopic = { id: "s", parent: "r", order: 1, text: "同级" };
+  const graph: FlowGraph = { ...blank, mind: [root, child, sibling], mindStyles: { c: { shape: "oval", size: 24 } } };
+  it("persists fill and branch style independently from older clients and supports undo", () => {
+    const props = flowWrites({}, graph), proposed: FlowGraph = { ...graph, mindPaints: { c: { fill: "#E1E9FF", fillOpacity: 70, stroke: "#E86D68", line: "dashed", width: 3, opacity: 80 } } };
+    const intent = flowIntentWrites(props, graph, proposed), savedProps = { ...props, ...intent.writes }, saved = readFlow(savedProps);
+    expect(saved.mindPaints?.c).toEqual({ fill: "#e1e9ff", fillOpacity: 70, stroke: "#e86d68", line: "dashed", width: 3, opacity: 80 });
+    expect(intent.writes["fc.ms.c"]).toBeUndefined();
+    const oldStyleEdit = flowIntentWrites(savedProps, graph, { ...graph, mindStyles: { c: { shape: "rect", size: 24 } } });
+    expect(readFlow({ ...savedProps, ...oldStyleEdit.writes }).mindPaints?.c).toEqual(saved.mindPaints?.c);
+    const history = appliedFlowHistory(graph, saved, Object.keys(intent.writes))!;
+    expect(flowIntentWrites(savedProps, saved, history.before).writes["fc.mp.c"]).toBe("");
+  });
+  it("retains paint after delete and undo, and rejects unknown metadata on new ids", () => {
+    const styled = { ...graph, mindPaints: { c: { fill: "none" } } }, props = flowWrites({}, styled);
+    const deletion = flowIntentWrites(props, styled, { ...styled, mind: [root, sibling] }), deleted = { ...props, ...deletion.writes }, after = readFlow(deleted);
+    const history = appliedFlowHistory(styled, after, Object.keys(deletion.writes))!;
+    const undo = flowIntentWrites(deleted, after, history.before);
+    expect(readFlow({ ...deleted, ...undo.writes }).mindPaints?.c).toEqual({ fill: "none" });
+    const newTopic: MindTopic = { id: "n", parent: "r", order: 2, text: "新" };
+    const conflict = flowIntentWrites({ ...props, "fc.mp.n": '{"future":true}' }, styled, { ...styled, mind: [...styled.mind!, newTopic] });
+    expect(conflict.conflicts).toContain("fc.mp.n"); expect(conflict.writes["fc.m.n"]).toBeUndefined();
+  });
+  it("does not half-apply copied style when that sibling's paint changed remotely", () => {
+    const base: FlowGraph = { ...graph, mindPaints: { s: { stroke: "#5b7ff1" } } }, props = flowWrites({}, base);
+    const remote = { ...props, "fc.mp.s": '{"stroke":"#e86d68"}' };
+    const desired: FlowGraph = { ...base, mindStyles: { ...base.mindStyles, s: { shape: "oval" } }, mindPaints: { ...base.mindPaints, s: { stroke: "#79c968" } } };
+    const conflict = flowIntentWrites(remote, base, desired);
+    expect(conflict.conflicts).toContain("fc.mp.s"); expect(conflict.writes["fc.ms.s"]).toBeUndefined(); expect(conflict.writes["fc.mp.s"]).toBeUndefined();
+  });
+});

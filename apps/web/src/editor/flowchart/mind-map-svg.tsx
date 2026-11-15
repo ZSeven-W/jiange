@@ -1,8 +1,9 @@
-import { layoutMindTopics, type MindStyles, type MindTopic } from "./mindmap";
+import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTopic } from "./mindmap";
 
-export function MindMapSvg({ topics, styles = {}, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   styles?: MindStyles;
+  paints?: MindPaints;
   collapsed?: ReadonlySet<string>;
   selected?: string | null;
   editing?: { id: string; value: string } | null;
@@ -18,21 +19,22 @@ export function MindMapSvg({ topics, styles = {}, collapsed = new Set(), selecte
   const children = new Map<string, string[]>();
   for (const topic of topics) if (topic.parent) children.set(topic.parent, [...(children.get(topic.parent) ?? []), topic.id]);
   const descendants = (id: string): number => { const pending = [...(children.get(id) ?? [])], seen = new Set<string>(); while (pending.length) { const next = pending.pop()!; if (seen.has(next)) continue; seen.add(next); pending.push(...(children.get(next) ?? [])); } return seen.size; };
+  const lineProps = (paint?: MindPaint) => ({ fill: "none", stroke: paint?.stroke ?? "#5b7ff1", strokeWidth: paint?.width ?? 2, strokeOpacity: (paint?.opacity ?? 100) / 100, strokeDasharray: paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined, pointerEvents: "none" as const });
   return <g data-mindmap>
     {nodes.map((node) => {
       const parent = node.topic.parent ? byId.get(node.topic.parent) : null;
       if (!parent) return null;
       const startX = parent.x + parent.w, startY = parent.y + parent.h / 2, endY = node.y + node.h / 2, mid = startX + 30;
-      return <path key={`edge-${node.topic.id}`} d={`M${startX},${startY} H${mid} V${endY} H${node.x}`} fill="none" stroke="#5b7ff1" strokeWidth={2} pointerEvents="none"/>;
+      return <g key={`edge-${node.topic.id}`}><path d={`M${startX},${startY} H${mid} V${endY}`} {...lineProps(paints[parent.topic.id])}/><path data-mind-branch={node.topic.id} d={`M${mid},${endY} H${node.x}`} {...lineProps(paints[node.topic.id])}/></g>;
     })}
     {nodes.map((node) => {
-      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), centered = root || shape !== "text";
+      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), centered = root || shape !== "text";
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
       return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
         <title>{node.topic.text}</title>
-        <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={root && shape !== "text" ? "#5b7ff1" : "transparent"} stroke={!root && shape !== "text" ? "#5b7ff1" : "transparent"} strokeWidth={2}/>
+        <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
         <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={active ? "#3370ff" : "transparent"} strokeWidth={2}/>
-        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={centered ? node.x + node.w / 2 : node.x + 8} y={node.y + node.h / 2} dominantBaseline="central" textAnchor={centered ? "middle" : "start"} fill={node.topic.text ? style?.color ?? (root && shape !== "text" ? "#fff" : "#1f2329") : "#a3a8af"} fontSize={size}>{label || (onSelect ? "输入文本" : "")}</text>}
+        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={centered ? node.x + node.w / 2 : node.x + 8} y={node.y + node.h / 2} dominantBaseline="central" textAnchor={centered ? "middle" : "start"} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : "#a3a8af"} fontSize={size}>{label || (onSelect ? "输入文本" : "")}</text>}
         {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={node.h}>
           <input autoFocus aria-label="思维导图节点文字" maxLength={500} value={editing.value} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onDraft?.(event.target.value)} onBlur={() => onFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); onFinish?.(); } if (event.key === "Escape") { event.preventDefault(); onCancel?.(); } }} style={{ width: "100%", height: "100%", boxSizing: "border-box", border: "2px solid #3370ff", outline: "none", padding: "0 6px", borderRadius: 3, fontSize: size, textAlign: centered ? "center" : "left", color: style?.color ?? "#1f2329", background: "#fff" }}/>
         </foreignObject>}

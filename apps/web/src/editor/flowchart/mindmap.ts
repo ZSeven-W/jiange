@@ -2,6 +2,15 @@
 export type MindTopic = { id: string; parent: string | null; order: number; text: string; x?: number; y?: number };
 export type MindStyle = { shape?: "text" | "oval" | "rect"; size?: number; color?: string };
 export type MindStyles = Record<string, MindStyle>;
+export type MindPaint = { fill?: string; fillOpacity?: number; stroke?: string; line?: "solid" | "dashed" | "dotted"; width?: number; opacity?: number };
+export type MindPaints = Record<string, MindPaint>;
+export function mindDefaultTextColor(root: boolean, shape: MindStyle["shape"], paint?: MindPaint): string {
+  if (!root || shape === "text") return "#1f2329";
+  const fill = paint?.fill ?? "#5b7ff1";
+  if (fill === "none" || (paint?.fillOpacity ?? 100) < 50) return "#1f2329";
+  const r = parseInt(fill.slice(1, 3), 16), g = parseInt(fill.slice(3, 5), 16), b = parseInt(fill.slice(5, 7), 16);
+  return r * 0.299 + g * 0.587 + b * 0.114 > 160 ? "#1f2329" : "#ffffff";
+}
 export type PositionedTopic = { topic: MindTopic; x: number; y: number; w: number; h: number };
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PREFIX = "fc.m.";
@@ -126,6 +135,44 @@ export function mindStyleIntent(props: Record<string, string>, before: MindStyle
     const key = mindStyleKey(id), raw = props[key] ?? "", was = canonicalMindStyle(before[id]), desired = canonicalMindStyle(after[id]);
     if (oldTopics.has(id) && was === desired) continue;
     let now: string | null = ""; if (raw) { try { now = canonicalMindStyle(JSON.parse(raw)); } catch { now = null; } }
+    if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (oldTopics.has(id) && now !== was && now !== desired)) { conflicts.push(key); continue; }
+    if (now !== desired) writes[key] = desired;
+  }
+  return { writes, conflicts };
+}
+
+// Paint lives separately so clients that know only shape/text styles can still edit them.
+export const mindPaintKey = (id: string) => `fc.mp.${id}`;
+export function normalizeMindPaint(input: unknown): MindPaint | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => !["fill", "fillOpacity", "stroke", "line", "width", "opacity"].includes(key))) return null;
+  const hex = (value: unknown) => typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+  if (raw.fill !== undefined && raw.fill !== "none" && !hex(raw.fill)) return null;
+  if (raw.stroke !== undefined && !hex(raw.stroke)) return null;
+  if (raw.line !== undefined && !["solid", "dashed", "dotted"].includes(String(raw.line))) return null;
+  if (raw.width !== undefined && (typeof raw.width !== "number" || !Number.isInteger(raw.width) || raw.width < 1 || raw.width > 4)) return null;
+  for (const key of ["opacity", "fillOpacity"]) if (raw[key] !== undefined && (typeof raw[key] !== "number" || !Number.isInteger(raw[key]) || (raw[key] as number) < 0 || (raw[key] as number) > 100)) return null;
+  return { ...(raw.fill !== undefined ? { fill: String(raw.fill).toLowerCase() } : {}), ...(raw.fillOpacity !== undefined ? { fillOpacity: raw.fillOpacity as number } : {}), ...(raw.stroke !== undefined ? { stroke: String(raw.stroke).toLowerCase() } : {}), ...(raw.line !== undefined ? { line: raw.line as MindPaint["line"] } : {}), ...(raw.width !== undefined ? { width: raw.width as number } : {}), ...(raw.opacity !== undefined ? { opacity: raw.opacity as number } : {}) };
+}
+export function canonicalMindPaint(paint: MindPaint | undefined): string | null {
+  if (!paint) return "";
+  const value = normalizeMindPaint(paint); return value ? (Object.keys(value).length ? JSON.stringify(value) : "") : null;
+}
+export function readMindPaints(props: Record<string, string>, topics: readonly MindTopic[]): MindPaints {
+  const paints: MindPaints = {};
+  for (const topic of topics) { const raw = props[mindPaintKey(topic.id)]; if (!raw) continue; try { const paint = normalizeMindPaint(JSON.parse(raw)); if (paint) paints[topic.id] = paint; } catch { /* preserve malformed data */ } }
+  return paints;
+}
+export function mindPaintIntent(props: Record<string, string>, before: MindPaints, after: MindPaints, beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>): { writes: Record<string, string>; conflicts: string[] } {
+  const oldTopics = new Set(beforeTopics.map((topic) => topic.id)), nextTopics = new Set(afterTopics.map((topic) => topic.id));
+  const added = afterTopics.filter((topic) => !oldTopics.has(topic.id)).map((topic) => topic.id);
+  const writes: Record<string, string> = {}, conflicts: string[] = [];
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after), ...added])) {
+    if (!nextTopics.has(id) || (!oldTopics.has(id) && !topicWrites[mindKey(id)])) continue;
+    const key = mindPaintKey(id), raw = props[key] ?? "", was = canonicalMindPaint(before[id]), desired = canonicalMindPaint(after[id]);
+    if (oldTopics.has(id) && was === desired) continue;
+    let now: string | null = ""; if (raw) { try { now = canonicalMindPaint(JSON.parse(raw)); } catch { now = null; } }
     if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (oldTopics.has(id) && now !== was && now !== desired)) { conflicts.push(key); continue; }
     if (now !== desired) writes[key] = desired;
   }

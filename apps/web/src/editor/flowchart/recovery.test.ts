@@ -26,4 +26,12 @@ describe("flowchart unapplied content", () => {
       expect(text).toContain('"size":24');
     }
   });
+  it("describes unapplied node paint changes", () => {
+    const original: FlowGraph = { ...before, mind: [{ id: "m", parent: null, order: 0, text: "主题", x: 0, y: 0 }] };
+    const proposed: FlowGraph = { ...original, mindPaints: { m: { stroke: "#e86d68", line: "dashed" } } };
+    for (const conflict of ["fc.mp.m", "permission"]) {
+      const text = describeUnappliedFlows([{ before: original, proposed, conflicts: [conflict] }]);
+      expect(text).toContain("修改思维导图节点配色：主题"); expect(text).toContain('"line":"dashed"');
+    }
+  });
 });

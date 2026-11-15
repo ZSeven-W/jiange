@@ -39,4 +39,17 @@ describe("mind map rendering", () => {
     expect(styled).toContain('rx="20"');
     expect(styled).toContain('stroke="#5b7ff1"');
   });
+  it("paints only the selected branch and retains fill and line style in SVG", () => {
+    const tree: MindTopic[] = [topics[0], { ...topics[1], text: "一" }, { id: "s", parent: "r", order: 1, text: "二" }];
+    const markup = renderToStaticMarkup(<svg><MindMapSvg topics={tree} styles={{ c: { shape: "oval" } }} paints={{ c: { fill: "#e1e9ff", stroke: "#e86d68", line: "dashed", width: 3, opacity: 80 } }}/></svg>);
+    expect(markup).toContain('fill="#e1e9ff"');
+    expect(markup).toMatch(/data-mind-branch="c"[^>]*stroke="#e86d68"[^>]*stroke-width="3"[^>]*stroke-opacity="0.8"[^>]*stroke-dasharray="6 4"/);
+    expect(markup).toMatch(/data-mind-branch="s"[^>]*stroke="#5b7ff1"/);
+  });
+  it("keeps root text readable when its fill is light or transparent", () => {
+    for (const fill of ["none", "#e1e9ff"]) {
+      const markup = renderToStaticMarkup(<svg><MindMapSvg topics={[topics[0]]} paints={{ r: { fill } }}/></svg>);
+      expect(markup).toContain('fill="#1f2329"');
+    }
+  });
 });
