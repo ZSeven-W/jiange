@@ -38,30 +38,31 @@ export interface MenuItem {
 }
 
 export const SLASH_ITEMS: MenuItem[] = [
-  // 飞书斜杠菜单「基础」分组顺序（2026-11-11 实测）：文本、一至四级标题、有序列表、无序列表、代码块。
+  // 按当前飞书的基础与常用分组排列，未移除扩展命令。
   { id: "paragraph", label: "文本", group: "基础", icon: "T", py: ["wen", "ben"], en: ["text", "paragraph", "正文", "zhengwen"] },
   { id: "h1", label: "一级标题", group: "基础", icon: "H1", py: ["yi", "ji", "biao", "ti"], en: ["h1", "heading1"] },
   { id: "h2", label: "二级标题", group: "基础", icon: "H2", py: ["er", "ji", "biao", "ti"], en: ["h2", "heading2"] },
   { id: "h3", label: "三级标题", group: "基础", icon: "H3", py: ["san", "ji", "biao", "ti"], en: ["h3", "heading3"] },
-  { id: "h4", label: "四级标题", group: "基础", icon: "H4", py: ["si", "ji", "biao", "ti"], en: ["h4", "heading4"] },
   { id: "ordered", label: "有序列表", group: "基础", icon: "1.", py: ["you", "xu", "lie", "biao"], en: ["ordered", "number", "ol"] },
   { id: "bullet", label: "无序列表", group: "基础", icon: "•", py: ["wu", "xu", "lie", "biao"], en: ["bullet", "list", "ul"] },
   { id: "code", label: "代码块", group: "基础", icon: "</>", py: ["dai", "ma", "kuai"], en: ["code"] },
-  { id: "todo", label: "待办事项", group: "基础", icon: "☑", py: ["dai", "ban", "shi", "xiang"], en: ["todo", "task", "check"] },
   { id: "quote", label: "引用", group: "基础", icon: "❝", py: ["yin", "yong"], en: ["quote"] },
-  { id: "h5", label: "五级标题", group: "基础", icon: "H5", py: ["wu", "ji", "biao", "ti"], en: ["h5", "heading5"] },
-  { id: "h6", label: "六级标题", group: "基础", icon: "H6", py: ["liu", "ji", "biao", "ti"], en: ["h6", "heading6"] },
-  { id: "image", label: "图片", group: "媒体", icon: "图", py: ["tu", "pian"], en: ["image", "picture", "img"] },
-  { id: "file", label: "附件", group: "媒体", icon: "附", py: ["fu", "jian"], en: ["file", "attachment"] },
-  { id: "video", label: "视频", group: "媒体", icon: "视", py: ["shi", "pin"], en: ["video"] },
-  { id: "bookmark", label: "网页卡片", group: "媒体", icon: "链", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
+  { id: "divider", label: "分割线", group: "基础", icon: "—", py: ["fen", "ge", "xian"], en: ["divider", "hr", "line"] },
+  { id: "link", label: "链接", group: "基础", icon: "链", py: ["lian", "jie"], en: ["link", "hyperlink"] },
+  { id: "todo", label: "待办事项", group: "常用", icon: "☑", py: ["dai", "ban", "shi", "xiang"], en: ["todo", "task", "check"] },
+  { id: "image", label: "图片", group: "常用", icon: "图", py: ["tu", "pian"], en: ["image", "picture", "img"] },
+  { id: "file", label: "附件", group: "常用", icon: "附", py: ["fu", "jian"], en: ["file", "attachment"] },
+  { id: "video", label: "视频", group: "常用", icon: "视", py: ["shi", "pin"], en: ["video"] },
+  { id: "table", label: "表格", group: "常用", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
+  { id: "columns", label: "分栏", group: "常用", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
+  { id: "bookmark", label: "网页卡片", group: "其他", icon: "链", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
   { id: "callout", label: "高亮块", group: "其他", icon: "亮", py: ["gao", "liang", "kuai"], en: ["callout", "highlight"] },
-  { id: "table", label: "表格", group: "其他", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
-  { id: "divider", label: "分割线", group: "其他", icon: "—", py: ["fen", "ge", "xian"], en: ["divider", "hr", "line"] },
   { id: "math", label: "公式", group: "其他", icon: "∑", py: ["gong", "shi"], en: ["math", "latex", "formula"] },
   { id: "flowchart", label: "流程图", group: "其他", icon: "流", py: ["liu", "cheng", "tu"], en: ["flowchart", "flow", "drawio", "liuchengtu"] },
   { id: "diagram", label: "Mermaid 图表", group: "其他", icon: "图", py: ["tu", "biao"], en: ["diagram", "mermaid"] },
-  { id: "columns", label: "分栏", group: "其他", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
+  { id: "h4", label: "四级标题", group: "其他", icon: "H4", py: ["si", "ji", "biao", "ti"], en: ["h4", "heading4"] },
+  { id: "h5", label: "五级标题", group: "其他", icon: "H5", py: ["wu", "ji", "biao", "ti"], en: ["h5", "heading5"] },
+  { id: "h6", label: "六级标题", group: "其他", icon: "H6", py: ["liu", "ji", "biao", "ti"], en: ["h6", "heading6"] },
 ];
 
 export function filterItems(q: string, items = SLASH_ITEMS): MenuItem[] {

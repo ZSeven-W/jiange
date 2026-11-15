@@ -9,7 +9,7 @@ describe("Feishu-style slash menu layout", () => {
   it("lists blocks under group headers in Feishu's basic order, without an icon grid", () => {
     const html = render();
     expect(html).not.toContain("data-slash-grid");
-    const order = ["paragraph", "h1", "h2", "h3", "h4", "ordered", "bullet", "code"].map((id) => html.indexOf(`data-value="${id}"`));
+    const order = ["paragraph", "h1", "h2", "h3", "ordered", "bullet", "code", "quote", "divider", "link"].map((id) => html.indexOf(`data-value="${id}"`));
     expect(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1]))).toBe(true);
     expect(html.indexOf("基础")).toBeLessThan(order[0]);
     expect(html).toContain("文本");

@@ -34,6 +34,8 @@ import {
 import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
+import { SlashLinkPopover } from "./SlashLinkPopover";
+import { captureInlineLink, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slashLink";
 import { applyTableEdit, CLIPPABLE_BLOCKS, EMPTY_TABLE, parseTableData, type ClipBlock } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
@@ -198,6 +200,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
+  const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
   const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
   const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" } | null>(null);
@@ -429,6 +432,22 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     },
     [sync.client, um, publish],
   );
+
+  const focusEditorPosition = (doc: Doc, position: Pos, afterLink = false) => {
+    const captured = captureInlineLink(doc, position);
+    requestAnimationFrame(() => {
+      const el = root.current, active = document.activeElement;
+      if (!captured || !mounted.current || !el || readOnlyRef.current || currentClient.current !== sync.client || sync.client.doc !== doc || (active && active !== document.body && !el.contains(active))) return;
+      const current = resolveInlineLink(doc, captured);
+      if (!current) return;
+      el.focus({ preventScroll: true });
+      const point = posToDom(el, current), selection = document.getSelection();
+      if (!point || !selection) return;
+      sel.current = { a: current, f: current };
+      selection.setBaseAndExtent(point.node, point.offset, point.node, point.offset);
+      if (afterLink) stored.current = { ...(stored.current ?? {}), link: null };
+    });
+  };
 
   /** AI 结果写回：替换该块文字，或在其后插入；多段结果按 Markdown 拆成多个块。 */
   const applyAiResult = useCallback((blockKey: string, result: string, mode: "replace" | "insert", range?: { start: number; end: number }) => {
@@ -1270,6 +1289,23 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       }
       return anchor;
     };
+    if (it.id === "link") {
+      const caret = root.current ? caretRect(root.current, checked ? { b: m.at.b, o: checked.start } : m.at) : null;
+      const result: { captured: InlineLinkAnchor | null } = { captured: null };
+      run((tx) => {
+        if (!m.fromButton && (!m.query || !resolveSlashQuery(tx.doc, m.query))) return;
+        const block = m.fromButton && !m.insertAfter ? m.at.b : targetBlock(tx);
+        if (!block || !tx.doc.hasBlock(block)) return;
+        const offset = m.query ? consumeSlashQuery(tx, m.query) : 0;
+        if (offset === null) return;
+        result.captured = captureInlineLink(tx.doc, { b: block, o: offset });
+        return { b: block, o: offset };
+      }, undefined, !!m.insertAfter);
+      if (!result.captured) { setColumnNotice("命令内容或编辑位置已变化，原文已保留，请重试。"); return; }
+      um.seal();
+      setSlashLink({ captured: result.captured, client: sync.client, x: caret?.left ?? window.innerWidth / 2, y: caret?.bottom ?? 80 });
+      return;
+    }
     if (it.id.startsWith("doc:")) {
       let applied = false;
       run((tx) => {
@@ -1833,6 +1869,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
           um.seal();
         }}
       />}
+      {slashLink && <SlashLinkPopover x={slashLink.x} y={slashLink.y} onCancel={() => { const position = resolveInlineLink(slashLink.captured.doc, slashLink.captured); setSlashLink(null); if (position) focusEditorPosition(slashLink.captured.doc, position); }} onConfirm={(text, url) => {
+        const captured = slashLink.captured, position = resolveInlineLink(captured.doc, captured);
+        if (currentClient.current !== slashLink.client || sync.client !== slashLink.client || readOnlyRef.current || sync.client.doc !== captured.doc || !position) {
+          setSlashLink(null); setConflictDraft({ text: `${text}\n${url}`, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return;
+        }
+        sel.current = { a: position, f: position };
+        const result: { position: Pos | null } = { position: null };
+        run((tx) => { result.position = insertInlineLink(tx, captured, text, url); return result.position ?? undefined; });
+        setSlashLink(null);
+        if (!result.position) setConflictDraft({ text: `${text}\n${url}`, message: "文档内容已变化，本次操作没有应用。请复制草稿后重试。" });
+        else { um.seal(); focusEditorPosition(captured.doc, result.position, true); }
+      }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}

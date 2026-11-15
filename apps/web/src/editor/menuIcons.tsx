@@ -50,6 +50,7 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   flowchart: Workflow,
   video: Play,
   bookmark: Link2,
+  link: Link2,
   table: Table2,
   columns: Columns2,
   divider: Minus,

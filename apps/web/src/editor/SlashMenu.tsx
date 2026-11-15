@@ -62,7 +62,7 @@ export function SlashMenu({
   onHover: (i: number) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const [placement, setPlacement] = useState({ dx: 0, dy: 0, maxHeight: 360 });
+  const [placement, setPlacement] = useState({ dx: 0, dy: 0, maxHeight: 480 });
   const placementRef = useRef(placement);
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -86,7 +86,7 @@ export function SlashMenu({
         if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) { top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom); }
       }
       const edge = 8;
-      const wantedHeight = Math.min(360, el.scrollHeight + 2);
+      const wantedHeight = Math.min(480, el.scrollHeight + 2);
       const below = Math.max(0, bottom - edge - naturalTop);
       // y is the bottom of the caret plus a small gap; place above its line
       // when there is more useful space there than below it.
