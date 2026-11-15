@@ -26,5 +26,8 @@ describe("mind node image", () => {
     expect(bounds.side).toBeGreaterThan(node.w);
     expect(bounds.side).toBeGreaterThan(node.h);
     expect(bounds.pixels).toBeLessThanOrEqual(2048);
+    const tall = mindNodeImageBounds(topics, new Set(), {}, "child", { child: Array.from({ length: 100 }, () => "说明").join("\n") }, { child: { size: 24 } })!;
+    expect(tall.side).toBeGreaterThan(1024);
+    expect(tall.pixels).toBe(2048);
   });
 });

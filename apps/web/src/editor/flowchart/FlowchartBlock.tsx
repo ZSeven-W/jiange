@@ -12,7 +12,7 @@ import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
-import { canonicalMindDescription, layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
+import { canonicalMindDescription, layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
@@ -186,7 +186,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -372,7 +372,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   useEffect(() => { imageCopyMounted.current = true; return () => { imageCopyMounted.current = false; }; }, []);
   const [mindMenu, setMindMenu] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const [mindOffer, setMindOffer] = useState<string | null>(null);
-  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat"; left: number; top: number } | null>(null);
+  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description"; left: number; top: number } | null>(null);
   useEffect(() => { setMindOffer(null); setMindPaintMenu(null); }, [mindSelected]);
   useEffect(() => {
     if (!mindMenu) return;
@@ -409,7 +409,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<"theme" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
   useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") setMindSelected(null); }, [tool, menu]);
-  useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, graph.mindStyles, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
+  useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
   const [hand, setHand] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
@@ -525,6 +525,19 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const mindTextFormats = { ...graph.mindTextFormats, [mindSelected]: { ...graph.mindTextFormats?.[mindSelected], ...change } };
     if (commitMind(graph, { ...graph, mindTextFormats }).applied) setMindOffer(mindSelected);
   };
+  const fitMindNodeIfClipped = (value: FlowGraph, id: string) => {
+    if (!compact) return null;
+    const node = layoutMindTopics(value.mind ?? [], new Set(value.mindCollapsed ?? []), value.mindStyles, value.mindDescriptions, value.mindDescriptionStyles).find((item) => item.topic.id === id);
+    return node && ((node.x - view.x) * view.zoom < 12 || (node.x + node.w + 50 - view.x) * view.zoom > size.w - 12) ? requestAnimationFrame(() => fit(value, size, 40)) : null;
+  };
+  const updateMindDescriptionStyle = (change: Partial<MindDescriptionStyle>) => {
+    if (readOnly || !mindSelected || !graph.mind?.some((topic) => topic.id === mindSelected)) return;
+    const style = { ...mindDescriptionStyleAt(graph.mindDescriptionStyles, mindSelected), ...change };
+    const description = mindDescriptionAt(graph.mindDescriptions, mindSelected) ?? "";
+    if (description && mindDescriptionLines(description, style.size ?? 12).length > 128) { setNotice({ ok: false, text: "此字号会使描述超过 128 行，请缩短描述或选择较小字号。" }); return; }
+    const mindDescriptionStyles = { ...graph.mindDescriptionStyles, [mindSelected]: style };
+    commitMind(graph, { ...graph, mindDescriptionStyles });
+  };
   const applyMindStyleToSiblings = () => {
     const topic = graph.mind?.find((item) => item.id === mindSelected);
     if (!topic?.parent) return;
@@ -536,9 +549,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
     commitMind(graph, { ...graph, mindStyles: styles, mindPaints: paints, mindTextFormats: textFormats }); setMindOffer(null);
   };
-  const openMindPaintMenu = (kind: "fill" | "line" | "shape" | "textColor" | "textFormat", target: HTMLElement) => {
+  const openMindPaintMenu = (kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description", target: HTMLElement) => {
     if (mindPaintMenu?.kind === kind) { setMindPaintMenu(null); return; }
-    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : kind === "textColor" ? 250 : kind === "textFormat" ? 112 : kind === "shape" ? 86 : 180, w = kind === "shape" ? 144 : kind === "textFormat" ? 200 : 244;
+    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : kind === "textColor" ? 250 : kind === "description" ? 250 : kind === "textFormat" ? 112 : kind === "shape" ? 86 : 180, w = kind === "shape" ? 144 : kind === "textFormat" ? 200 : 244;
     let left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.left));
     let top = rect.top >= h + 8 ? rect.top - h - 8 : Math.min(window.innerHeight - h - 8, rect.bottom + 8);
     // Keep the popup away from the visible tree when space permits.
@@ -566,7 +579,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const finishMindDescription = () => {
     const edit = mindDescriptionEditingRef.current; if (!edit) return;
-    if (canonicalMindDescription(edit.value) === null) { setNotice({ ok: false, text: "描述最多 2000 个字符，换行后不超过 128 行。" }); return; }
+    if (canonicalMindDescription(edit.value) === null || mindDescriptionLines(edit.value, mindDescriptionStyleAt(edit.base.mindDescriptionStyles, edit.id)?.size ?? 12).length > 128) { setNotice({ ok: false, text: "描述最多 2000 个字符，换行后不超过 128 行。" }); return; }
     mindDescriptionEditingRef.current = null; setMindDescriptionEditing(null);
     if ((mindDescriptionAt(edit.base.mindDescriptions, edit.id) ?? "") === edit.value) return;
     const mindDescriptions = { ...edit.base.mindDescriptions, ...(edit.value ? { [edit.id]: edit.value } : {}) };
@@ -692,7 +705,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const openMindMenu = (x: number, y: number) => {
     const rect = svgWrap.current?.getBoundingClientRect();
-    const obstacles = rect ? layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions).map((node) => ({ x: rect.left + (node.x - view.x) * view.zoom, y: rect.top + (node.y - view.y) * view.zoom, w: node.w * view.zoom, h: node.h * view.zoom })).filter((box) => box.x + box.w > 0 && box.y + box.h > 0 && box.x < window.innerWidth && box.y < window.innerHeight) : [];
+    const obstacles = rect ? layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).map((node) => ({ x: rect.left + (node.x - view.x) * view.zoom, y: rect.top + (node.y - view.y) * view.zoom, w: node.w * view.zoom, h: node.h * view.zoom })).filter((box) => box.x + box.w > 0 && box.y + box.h > 0 && box.x < window.innerWidth && box.y < window.innerHeight) : [];
     const toolbar = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-mind-toolbar]")?.getBoundingClientRect();
     if (toolbar) obstacles.push({ x: toolbar.left, y: toolbar.top, w: toolbar.width, h: toolbar.height });
     const globalTools = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-flow-global-tools]")?.getBoundingClientRect();
@@ -709,7 +722,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const id = mindSelected, svg = svgWrap.current?.querySelector<SVGSVGElement>("[data-flow-svg]");
     if (!id || !canCopy || !svg || mindEditingRef.current || mindDescriptionEditingRef.current) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器不支持复制图片。" }); return; }
-    const bounds = mindNodeImageBounds(graph.mind ?? [], effectiveCollapsed, graph.mindStyles ?? {}, id, graph.mindDescriptions);
+    const bounds = mindNodeImageBounds(graph.mind ?? [], effectiveCollapsed, graph.mindStyles ?? {}, id, graph.mindDescriptions, graph.mindDescriptionStyles);
     const markup = bounds && mindNodeImageSvg(svg, id, bounds);
     if (!bounds || !markup) { setNotice({ ok: false, text: "节点已变化，请重新选择后复制。" }); return; }
     const snapshot = JSON.stringify(graph), sessionRevision = getMindTextStyleSessionRevision();
@@ -752,15 +765,20 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     erase.current = state; setErasePreview(new Set()); setSelected(new Set()); setMenu(null); setShowStarter(false); markErased(state, point);
     svgWrap.current?.setPointerCapture(event.pointerId);
   };
-  const fit = (g = graph, viewport = size) => {
+  const fit = (g = graph, viewport = size, extraRight = 0) => {
     autoFit.current = true;
     const b = flowBounds(readOnly && g === graph ? { ...g, mindCollapsed: [...effectiveCollapsed] } : g);
     // 左侧留出竖向工具条，上下留出浮动栏。
-    const padL = compact ? 24 : readOnly ? 40 : 90, padR = compact ? 24 : 40, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
+    const padL = compact ? 24 : readOnly ? 40 : 90, padR = (compact ? 24 : 40) + extraRight, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
     const zoom = Math.min(mindBoard ? 1 : 1.5, Math.max(0.2, Math.min(usableW / Math.max(1, b.w), usableH / Math.max(1, b.h))));
     const offsetY = compact ? 28 + (usableH - b.h * zoom) / 2 : (viewport.h - b.h * zoom) / 2;
     setView({ zoom, x: b.x - (padL + (usableW - b.w * zoom) / 2) / zoom, y: b.y - offsetY / zoom });
   };
+  useEffect(() => {
+    if (!compact || !mindSelected || drag || mindEditing || mindDescriptionEditing) return;
+    const frame = fitMindNodeIfClipped(graph, mindSelected);
+    return () => { if (frame !== null) cancelAnimationFrame(frame); };
+  }, [compact, mindSelected, graph, drag, mindEditing, mindDescriptionEditing]); // preserve manual panning until the selection or graph changes
   const addNode = (shape: Shape, at?: { x: number; y: number }) => {
     const spec = SHAPES.find((s) => s.id === shape)!;
     const c = at ?? { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
@@ -1072,7 +1090,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         commitMind(d.base, { ...d.base, mind: d.base.mind.map((item) => item.id === d.id ? { ...item, x, y } : item) });
         return;
       }
-      const drop = mindDropAt(d.base.mind, layoutMindTopics(d.base.mind, new Set(d.base.mindCollapsed ?? []), d.base.mindStyles, d.base.mindDescriptions), d.id, toWorld(e.clientX, e.clientY));
+      const drop = mindDropAt(d.base.mind, layoutMindTopics(d.base.mind, new Set(d.base.mindCollapsed ?? []), d.base.mindStyles, d.base.mindDescriptions, d.base.mindDescriptionStyles), d.id, toWorld(e.clientX, e.clientY));
       const moved = drop && moveMindTopic(d.base.mind, d.id, drop); if (!moved || !drop) return;
       commitMind(d.base, { ...d.base, mind: moved, ...(drop.kind === "child" ? { mindCollapsed: (d.base.mindCollapsed ?? []).filter((id) => id !== drop.target) } : {}) });
       return;
@@ -1258,10 +1276,11 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const obstacles = [...graph.nodes.map((node) => ({ x: node.x, y: node.y, w: node.w, h: node.h })), ...(graph.strokes ?? []).map((stroke) => flowBounds({ nodes: [], edges: [], strokes: [stroke], theme: graph.theme }))].map((box) => ({ x: (box.x - view.x) * view.zoom - obstaclePadding, y: (box.y - view.y) * view.zoom - obstaclePadding, w: box.w * view.zoom + 2 * obstaclePadding, h: box.h * view.zoom + 2 * obstaclePadding }));
   const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x - 16) * view.zoom, y: (anchorBox.y - view.y - 16) * view.zoom, w: (anchorBox.w + 32) * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize, obstacles) : null;
   const reserveStyleBar = compact && !readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0 || selectedStrokes.length > 0);
-  const mindPositions = layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
+  const mindPositions = layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
   const mindDefaultColor = mindDefaultTextColor(mindAnchor?.topic.parent === null, graph.mindStyles?.[mindSelected!]?.shape ?? "rect", graph.mindPaints?.[mindSelected!]);
   const currentPaint = graph.mindPaints?.[mindSelected!] ?? {};
   const currentTextFormat = graph.mindTextFormats?.[mindSelected!] ?? {};
+  const currentDescriptionStyle = mindDescriptionStyleAt(graph.mindDescriptionStyles, mindSelected!) ?? {};
   const selectedShape = graph.mindStyles?.[mindSelected!]?.shape ?? (mindAnchor?.topic.parent === null ? "rect" : "text");
   const hasMindSiblings = !!mindAnchor?.topic.parent && (graph.mind ?? []).filter((topic) => topic.parent === mindAnchor.topic.parent).length > 1;
   const mindViewport = svgWrap.current?.getBoundingClientRect();
@@ -1278,7 +1297,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const rootPreview = movingMind && movingTopic?.parent === null ? { x: Math.round(Math.max(-20000, Math.min(20000, movingTopic.x! + (movingMind.currentX - movingMind.startX) / view.zoom))), y: Math.round(Math.max(-20000, Math.min(20000, movingTopic.y! + (movingMind.currentY - movingMind.startY) / view.zoom))) } : null;
   const renderedGraph = rootPreview && movingMind ? { ...graph, mind: graph.mind?.map((topic) => topic.id === movingMind.id ? { ...topic, ...rootPreview } : topic) } : graph;
   const dragPoint = movingMind && !rootPreview && svgWrap.current ? toWorld(movingMind.currentX, movingMind.currentY) : null;
-  const mindDragPreview = dragPoint && movingMind?.base.mind ? { id: movingMind.id, ...dragPoint, drop: mindDropAt(movingMind.base.mind, layoutMindTopics(movingMind.base.mind, new Set(movingMind.base.mindCollapsed ?? []), movingMind.base.mindStyles, movingMind.base.mindDescriptions), movingMind.id, dragPoint) } : null;
+  const mindDragPreview = dragPoint && movingMind?.base.mind ? { id: movingMind.id, ...dragPoint, drop: mindDropAt(movingMind.base.mind, layoutMindTopics(movingMind.base.mind, new Set(movingMind.base.mindCollapsed ?? []), movingMind.base.mindStyles, movingMind.base.mindDescriptions, movingMind.base.mindDescriptionStyles), movingMind.id, dragPoint) } : null;
 
   return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag && !["mind", "pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
@@ -1546,6 +1565,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <select aria-label="文字大小" title="文字大小" className="h-8 w-14 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14)} onChange={(event) => updateMindStyle({ size: Number(event.target.value) })}>{[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => <option key={size} value={size}>{size}</option>)}</select>
       <button type="button" data-mind-paint-trigger aria-label="文字格式" aria-expanded={mindPaintMenu?.kind === "textFormat"} title="文字格式" className={barBtn} onClick={(event) => openMindPaintMenu("textFormat", event.currentTarget)}><span className="text-[15px]">A</span><AlignLeft size={12}/><ChevronDown size={11}/></button>
       <button type="button" aria-label={mindDescriptionAt(graph.mindDescriptions, mindSelected) ? "编辑描述" : "添加描述"} title="添加或编辑描述 (Shift + Enter)" className={barBtn} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}><Plus size={15}/></button>
+      {mindDescriptionAt(graph.mindDescriptions, mindSelected) && <button type="button" data-mind-paint-trigger aria-label="描述样式" aria-expanded={mindPaintMenu?.kind === "description"} title="描述字号和颜色" className={barBtn} onClick={(event) => openMindPaintMenu("description", event.currentTarget)}><span className="text-[13px]">Aa</span><ChevronDown size={11}/></button>}
       <span className="mx-1 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
       <button type="button" data-mind-menu-trigger className={cn(barBtn, !compact && "order-last")} aria-label="更多节点操作" aria-expanded={!!mindMenu} title="更多" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (mindMenu) setMindMenu(null); else openMindMenu(rect.left, compact ? 8 : rect.top - 288); }}><MoreHorizontal size={16}/></button>
       {compact && <><button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button><button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button><button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button><button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button></>}
@@ -1572,11 +1592,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>删除 <span className="text-[#8f959e]">⌫</span></button>
     </div>}
 
-    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式" }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
-      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色" }[mindPaintMenu.kind]}</div>}
+    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式", description: "描述样式" }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
+      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色", description: "描述样式" }[mindPaintMenu.kind]}</div>}
       {mindPaintMenu.kind === "shape" && <div className="flex gap-1">{(["text", "oval", "rect"] as const).map((shape) => <button key={shape} type="button" aria-label={{ text: "文字形状", oval: "椭圆形状", rect: "矩形形状" }[shape]} aria-pressed={selectedShape === shape} className={cn("grid size-8 place-items-center rounded hover:bg-hover", selectedShape === shape && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => { updateMindStyle({ shape }); setMindPaintMenu(null); }}>{shape === "text" ? <Type size={17}/> : shape === "oval" ? <Circle size={17} className="scale-y-75"/> : <Square size={17}/>}</button>)}</div>}
       {mindPaintMenu.kind === "textFormat" && <><div className="flex gap-1 border-b border-[#e5e6eb] pb-2">{([ ["bold", "加粗", Bold], ["strike", "删除线", Strikethrough], ["underline", "下划线", Underline], ["italic", "斜体", Italic] ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-label={label} aria-pressed={!!currentTextFormat[key]} className={cn("grid size-8 place-items-center rounded hover:bg-hover", currentTextFormat[key] && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ [key]: currentTextFormat[key] ? undefined : true })}><Icon size={16}/></button>)}</div><div className="mt-2 flex gap-1">{([ ["left", "左对齐", AlignLeft], ["center", "居中对齐", AlignCenter], ["right", "右对齐", AlignRight] ] as const).map(([align, label, Icon]) => <button key={align} type="button" aria-label={label} aria-pressed={(currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align} className={cn("grid h-8 flex-1 place-items-center rounded hover:bg-hover", (currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ align })}><Icon size={16}/></button>)}</div></>}
       {mindPaintMenu.kind === "textColor" && <><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="自动文字颜色" className="size-6 rounded border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindStyle({ color: undefined })}>A</button>{MIND_PALETTE.slice(0, 7).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字`} aria-pressed={graph.mindStyles?.[mindSelected]?.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646A73]">背景颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无文字背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindTextFormat({ highlight: undefined })}/>{MIND_PALETTE.slice(4, 11).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字背景`} aria-pressed={currentTextFormat.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindTextFormat({ highlight: color })}/>)}</div><div className="mt-2 flex gap-3"><label className="relative cursor-pointer text-[#646A73]">自定义文字色<input aria-label="自定义文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646A73]">自定义背景色<input aria-label="自定义文字背景" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentTextFormat.highlight ?? "#fff5c7"} onChange={(event) => updateMindTextFormat({ highlight: event.target.value })}/></label></div></>}
+      {mindPaintMenu.kind === "description" && <><label className="mb-3 flex items-center justify-between text-[#646a73]">字号<select aria-label="描述字号" value={currentDescriptionStyle.size ?? 12} onChange={(event) => updateMindDescriptionStyle({ size: Number(event.target.value) })} className="h-7 w-20 rounded border border-[#dee0e3] bg-surface px-2 text-[#1f2329]">{[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => <option key={size} value={size}>{size}</option>)}</select></label><div className="mb-2 text-[#646a73]">文字颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="默认描述颜色" className="size-6 rounded border border-[#d4d7dc] text-[#8f959e]" onClick={() => updateMindDescriptionStyle({ color: undefined })}>A</button>{[0, 1, 4, 5, 6, 8, 9].map((index) => MIND_PALETTE[index]).map(([color, name]) => <button key={color} type="button" aria-label={`${name}描述文字`} aria-pressed={currentDescriptionStyle.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindDescriptionStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646a73]">文字背景</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无描述背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindDescriptionStyle({ highlight: undefined })}/>{MIND_PALETTE.slice(9, 16).map(([color, name]) => <button key={color} type="button" aria-label={`${name}描述背景`} aria-pressed={currentDescriptionStyle.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindDescriptionStyle({ highlight: color })}/>)}</div><div className="mt-3 flex gap-3"><label className="relative cursor-pointer text-[#646a73]">自定义文字色<input aria-label="自定义描述文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.color ?? "#8f959e"} onChange={(event) => updateMindDescriptionStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646a73]">自定义背景色<input aria-label="自定义描述背景颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.highlight ?? "#fff5c7"} onChange={(event) => updateMindDescriptionStyle({ highlight: event.target.value })}/></label></div></>}
       {(mindPaintMenu.kind === "line" || mindPaintMenu.kind === "fill") && <>
       {mindPaintMenu.kind === "line" && <><div className="mb-2 flex gap-1">{(["solid", "dashed", "dotted"] as const).map((line) => <button key={line} type="button" aria-label={{ solid: "实线", dashed: "虚线", dotted: "点线" }[line]} aria-pressed={(currentPaint.line ?? "solid") === line} className={cn("h-7 flex-1 rounded text-[16px] hover:bg-hover", (currentPaint.line ?? "solid") === line && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindPaint({ line })}>{line === "solid" ? "—" : line === "dashed" ? "---" : "····"}</button>)}</div><div className="mb-2 flex gap-1">{[1, 2, 3, 4].map((width) => <button key={width} type="button" aria-label={`线宽 ${width}`} aria-pressed={(currentPaint.width ?? 2) === width} className={cn("grid h-7 flex-1 place-items-center rounded hover:bg-hover", (currentPaint.width ?? 2) === width && "bg-[#e1eaff]")} onClick={() => updateMindPaint({ width })}><span className="rounded-full bg-[#1f2329]" style={{ width: 3 + width * 2, height: 3 + width * 2 }}/></button>)}</div></>}
       <div className="grid grid-cols-8 gap-1.5">{mindPaintMenu.kind === "fill" && <button type="button" aria-label="无填充" title="无填充" className="size-6 rounded-full border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindPaint({ fill: "none" })}/>} {mindPaintMenu.kind === "line" && <button type="button" aria-label="自动线条颜色" title="自动线条颜色" className="size-6 rounded-full border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindPaint({ stroke: undefined })}>✦</button>}{MIND_PALETTE.map(([color, name]) => <button key={color} type="button" aria-label={`${name}${mindPaintMenu.kind === "fill" ? "填充" : "线条"}`} title={name} aria-pressed={(mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color} className={cn("size-6 rounded-full border border-[#d4d7dc]", (mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color && "ring-2 ring-[#3370ff] ring-offset-1")} style={{ background: color }} onClick={() => updateMindPaint(mindPaintMenu.kind === "fill" ? { fill: color } : { stroke: color })}/>)}</div>

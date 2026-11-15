@@ -1,5 +1,5 @@
 import { SHAPES, themeOf, type FlowEdge, type FlowGraph, type FlowNode } from "./model";
-import { mindDescriptionAt } from "./mindmap";
+import { mindDescriptionAt, mindDescriptionStyleAt } from "./mindmap";
 
 export type UnappliedFlow = { before: FlowGraph; proposed: FlowGraph; conflicts: string[] };
 
@@ -21,6 +21,7 @@ export function describeUnappliedFlows(attempts: UnappliedFlow[]): string {
       for (const id of new Set([...Object.keys(attempt.before.mindPaints ?? {}), ...Object.keys(attempt.proposed.mindPaints ?? {})])) if (JSON.stringify(attempt.before.mindPaints?.[id]) !== JSON.stringify(attempt.proposed.mindPaints?.[id])) ids.add(`fc.mp.${id}`);
       for (const id of new Set([...Object.keys(attempt.before.mindTextFormats ?? {}), ...Object.keys(attempt.proposed.mindTextFormats ?? {})])) if (JSON.stringify(attempt.before.mindTextFormats?.[id]) !== JSON.stringify(attempt.proposed.mindTextFormats?.[id])) ids.add(`fc.mt.${id}`);
       for (const id of new Set([...Object.keys(attempt.before.mindDescriptions ?? {}), ...Object.keys(attempt.proposed.mindDescriptions ?? {})])) if (mindDescriptionAt(attempt.before.mindDescriptions, id) !== mindDescriptionAt(attempt.proposed.mindDescriptions, id)) ids.add(`fc.md.${id}`);
+      for (const id of new Set([...Object.keys(attempt.before.mindDescriptionStyles ?? {}), ...Object.keys(attempt.proposed.mindDescriptionStyles ?? {})])) if (JSON.stringify(mindDescriptionStyleAt(attempt.before.mindDescriptionStyles, id)) !== JSON.stringify(mindDescriptionStyleAt(attempt.proposed.mindDescriptionStyles, id))) ids.add(`fc.mds.${id}`);
       const oldFolded = new Set(attempt.before.mindCollapsed ?? []), newFolded = new Set(attempt.proposed.mindCollapsed ?? []);
       for (const id of new Set([...oldFolded, ...newFolded])) if (oldFolded.has(id) !== newFolded.has(id)) ids.add(`fc.mc.${id}`);
       if (attempt.before.theme !== attempt.proposed.theme) ids.add("fc.theme");
@@ -39,6 +40,9 @@ export function describeUnappliedFlows(attempts: UnappliedFlow[]): string {
       } else if (key.startsWith("fc.s.")) {
         const id = key.slice(5), previous = attempt.before.strokes?.find((stroke) => stroke.id === id), next = attempt.proposed.strokes?.find((stroke) => stroke.id === id);
         if (previous || next) lines.push(`${next ? previous ? "修改" : "新增或恢复" : "删除"}笔迹（${(next ?? previous)!.points.length} 个点）`);
+      } else if (key.startsWith("fc.mds.")) {
+        const id = key.slice(7), topic = attempt.proposed.mind?.find((item) => item.id === id) ?? attempt.before.mind?.find((item) => item.id === id);
+        if (topic) lines.push(`修改思维导图描述样式：${topic.text || "（空）"} ${JSON.stringify(mindDescriptionStyleAt(attempt.proposed.mindDescriptionStyles, id) ?? {})}`);
       } else if (key.startsWith("fc.md.")) {
         const id = key.slice(6), topic = attempt.proposed.mind?.find((item) => item.id === id) ?? attempt.before.mind?.find((item) => item.id === id);
         if (topic) lines.push(`修改思维导图描述：${topic.text || "（空）"}\n${mindDescriptionAt(attempt.proposed.mindDescriptions, id) ?? "（已清空）"}`);

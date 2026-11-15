@@ -7,6 +7,8 @@ export type MindPaints = Record<string, MindPaint>;
 export type MindTextFormat = { bold?: true; italic?: true; underline?: true; strike?: true; highlight?: string; align?: "left" | "center" | "right" };
 export type MindTextFormats = Record<string, MindTextFormat>;
 export type MindDescriptions = Record<string, string>;
+export type MindDescriptionStyle = { size?: number; color?: string; highlight?: string };
+export type MindDescriptionStyles = Record<string, MindDescriptionStyle>;
 export function mindDescriptionAt(descriptions: MindDescriptions | undefined, id: string): string | undefined {
   return descriptions && Object.hasOwn(descriptions, id) ? descriptions[id] : undefined;
 }
@@ -22,6 +24,7 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PREFIX = "fc.m.";
 export const mindKey = (id: string) => `${PREFIX}${id}`;
 export const mindDescriptionKey = (id: string) => `fc.md.${id}`;
+export const mindDescriptionStyleKey = (id: string) => `fc.mds.${id}`;
 const validCoord = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 20000;
 
 export function normalizeMindTopic(input: unknown, id?: string): MindTopic | null {
@@ -51,7 +54,7 @@ export function readMindTopics(props: Record<string, string>): MindTopic[] {
 }
 
 /** Reject stale writes and deletes that would orphan a concurrently added child. */
-export function mindIntentWrites(props: Record<string, string>, before: readonly MindTopic[], after: readonly MindTopic[], beforeDescriptions?: MindDescriptions): { writes: Record<string, string>; conflicts: string[] } {
+export function mindIntentWrites(props: Record<string, string>, before: readonly MindTopic[], after: readonly MindTopic[], beforeDescriptions?: MindDescriptions, beforeDescriptionStyles?: MindDescriptionStyles): { writes: Record<string, string>; conflicts: string[] } {
   const old = new Map(before.map((n) => [n.id, n])), next = new Map(after.map((n) => [n.id, n]));
   const candidates = new Map<string, string>(), conflicts = new Set<string>();
   const live = readMindTopics(props), liveMap = new Map(live.map((node) => [node.id, node]));
@@ -81,6 +84,10 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
     if (prior && !target && beforeDescriptions) {
       const descriptionKey = mindDescriptionKey(id), currentDescription = storedMindDescription(props[descriptionKey]);
       if (currentDescription === null || currentDescription !== canonicalMindDescription(mindDescriptionAt(beforeDescriptions, id))) { conflicts.add(key); conflicts.add(descriptionKey); continue; }
+    }
+    if (prior && !target && beforeDescriptionStyles) {
+      const styleKey = mindDescriptionStyleKey(id), currentStyle = storedMindDescriptionStyle(props[styleKey]);
+      if (currentStyle === null || currentStyle !== canonicalMindDescriptionStyle(mindDescriptionStyleAt(beforeDescriptionStyles, id))) { conflicts.add(key); conflicts.add(styleKey); continue; }
     }
     if (structural.includes(id) && now !== desired && affectedParents(id).some((parent) => !sameAncestry(parent) || siblings(before, parent) !== siblings([...liveMap.values()], parent))) { conflicts.add(key); continue; }
     candidates.set(id, desired ?? "");
@@ -155,7 +162,7 @@ export function readMindDescriptions(props: Record<string, string>, topics: read
   }
   return Object.fromEntries(result);
 }
-export function mindDescriptionIntent(props: Record<string, string>, before: MindDescriptions, after: MindDescriptions, beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>): { writes: Record<string, string>; conflicts: string[] } {
+export function mindDescriptionIntent(props: Record<string, string>, before: MindDescriptions, after: MindDescriptions, beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>, afterStyles: MindDescriptionStyles = {}): { writes: Record<string, string>; conflicts: string[] } {
   const old = new Set(beforeTopics.map((topic) => topic.id)), next = new Set(afterTopics.map((topic) => topic.id));
   const added = afterTopics.filter((topic) => !old.has(topic.id)).map((topic) => topic.id), writes: Record<string, string> = {}, conflicts: string[] = [];
   for (const id of new Set([...Object.keys(before), ...Object.keys(after), ...added])) {
@@ -163,18 +170,74 @@ export function mindDescriptionIntent(props: Record<string, string>, before: Min
     const key = mindDescriptionKey(id), was = canonicalMindDescription(mindDescriptionAt(before, id)), desired = canonicalMindDescription(mindDescriptionAt(after, id)), now = storedMindDescription(props[key]);
     if (old.has(id) && was === desired) continue;
     if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (old.has(id) && now !== was && now !== desired) || (!old.has(id) && now !== "" && now !== desired)) { conflicts.push(key); continue; }
+    const currentStyle = storedMindDescriptionStyle(props[mindDescriptionStyleKey(id)]), plannedStyle = canonicalMindDescriptionStyle(mindDescriptionStyleAt(afterStyles, id));
+    if (currentStyle === null || plannedStyle === null) { conflicts.push(key); continue; }
+    const currentSize = currentStyle ? (JSON.parse(currentStyle) as MindDescriptionStyle).size ?? 12 : 12;
+    const plannedSize = plannedStyle ? (JSON.parse(plannedStyle) as MindDescriptionStyle).size ?? 12 : 12;
+    const text = mindDescriptionAt(after, id) ?? "";
+    if (text && mindDescriptionLines(text, Math.max(currentSize, plannedSize)).length > 128) { conflicts.push(key); continue; }
+    if (now !== desired) writes[key] = desired;
+  }
+  return { writes, conflicts };
+}
+
+export function mindDescriptionStyleAt(styles: MindDescriptionStyles | undefined, id: string): MindDescriptionStyle | undefined {
+  return styles && Object.hasOwn(styles, id) ? styles[id] : undefined;
+}
+export function normalizeMindDescriptionStyle(input: unknown): MindDescriptionStyle | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => !["size", "color", "highlight"].includes(key))) return null;
+  if (raw.size !== undefined && (typeof raw.size !== "number" || !Number.isInteger(raw.size) || raw.size < 12 || raw.size > 96)) return null;
+  for (const key of ["color", "highlight"]) if (raw[key] !== undefined && (typeof raw[key] !== "string" || !/^#[0-9a-fA-F]{6}$/.test(raw[key]))) return null;
+  return { ...(raw.size !== undefined ? { size: raw.size as number } : {}), ...(raw.color !== undefined ? { color: String(raw.color).toLowerCase() } : {}), ...(raw.highlight !== undefined ? { highlight: String(raw.highlight).toLowerCase() } : {}) };
+}
+export function canonicalMindDescriptionStyle(value: MindDescriptionStyle | undefined): string | null {
+  if (value === undefined) return "";
+  const normalized = normalizeMindDescriptionStyle(value);
+  return normalized ? Object.keys(normalized).length ? JSON.stringify(normalized) : "" : null;
+}
+function storedMindDescriptionStyle(raw: string | undefined): string | null {
+  if (!raw) return "";
+  try { return canonicalMindDescriptionStyle(JSON.parse(raw)); } catch { return null; }
+}
+export function readMindDescriptionStyles(props: Record<string, string>, topics: readonly MindTopic[]): MindDescriptionStyles {
+  const result: [string, MindDescriptionStyle][] = [];
+  for (const topic of topics) { const canonical = storedMindDescriptionStyle(props[mindDescriptionStyleKey(topic.id)]); if (canonical) result.push([topic.id, JSON.parse(canonical)]); }
+  return Object.fromEntries(result);
+}
+export function mindDescriptionStyleIntent(props: Record<string, string>, before: MindDescriptionStyles, after: MindDescriptionStyles, beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>, afterDescriptions: MindDescriptions = {}): { writes: Record<string, string>; conflicts: string[] } {
+  const old = new Set(beforeTopics.map((topic) => topic.id)), next = new Set(afterTopics.map((topic) => topic.id));
+  const added = afterTopics.filter((topic) => !old.has(topic.id)).map((topic) => topic.id), writes: Record<string, string> = {}, conflicts: string[] = [];
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after), ...added])) {
+    if (!next.has(id) || (!old.has(id) && !topicWrites[mindKey(id)])) continue;
+    const key = mindDescriptionStyleKey(id), was = canonicalMindDescriptionStyle(mindDescriptionStyleAt(before, id)), desired = canonicalMindDescriptionStyle(mindDescriptionStyleAt(after, id)), now = storedMindDescriptionStyle(props[key]);
+    if (old.has(id) && was === desired) continue;
+    if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (old.has(id) && now !== was && now !== desired) || (!old.has(id) && now !== "" && now !== desired)) { conflicts.push(key); continue; }
+    const currentDescription = storedMindDescription(props[mindDescriptionKey(id)]), plannedDescription = canonicalMindDescription(mindDescriptionAt(afterDescriptions, id));
+    if (currentDescription === null || plannedDescription === null) { conflicts.push(key); continue; }
+    const size = desired ? (JSON.parse(desired) as MindDescriptionStyle).size ?? 12 : 12;
+    const values = [currentDescription ? JSON.parse(currentDescription) as string : "", mindDescriptionAt(afterDescriptions, id) ?? ""];
+    if (values.some((text) => text && mindDescriptionLines(text, size).length > 128)) { conflicts.push(key); continue; }
     if (now !== desired) writes[key] = desired;
   }
   return { writes, conflicts };
 }
 
 /** Wrap each paragraph into predictable lines for the canvas and exported image. */
-export function mindDescriptionLines(value: string): string[] {
+export function mindDescriptionTextWidth(value: string, size: number): number {
+  return [...value].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? size : size * 0.58), 0);
+}
+export function mindDescriptionLines(value: string, size = 12): string[] {
   const lines: string[] = [];
   for (const paragraph of value.split("\n")) {
-    const chars = [...paragraph];
-    if (!chars.length) lines.push("");
-    else for (let i = 0; i < chars.length; i += 24) lines.push(chars.slice(i, i + 24).join(""));
+    let line = "", width = 0;
+    for (const ch of [...paragraph]) {
+      const advance = mindDescriptionTextWidth(ch, size);
+      if (line && width + advance > 288) { lines.push(line); line = ""; width = 0; }
+      line += ch; width += advance;
+    }
+    lines.push(line);
   }
   return lines;
 }
@@ -184,17 +247,17 @@ export function mindTitleHeight(topic: MindTopic, styles: MindStyles = {}): numb
 }
 
 /** A bounded, deterministic rightward tree layout. */
-export function layoutMindTopics(topics: readonly MindTopic[], collapsed: ReadonlySet<string> = new Set(), styles: MindStyles = {}, descriptions: MindDescriptions = {}): PositionedTopic[] {
+export function layoutMindTopics(topics: readonly MindTopic[], collapsed: ReadonlySet<string> = new Set(), styles: MindStyles = {}, descriptions: MindDescriptions = {}, descriptionStyles: MindDescriptionStyles = {}): PositionedTopic[] {
   const children = new Map<string, MindTopic[]>();
   for (const topic of topics) if (topic.parent) { const group = children.get(topic.parent) ?? []; group.push(topic); children.set(topic.parent, group); }
   for (const group of children.values()) group.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sizes = new Map<string, number>();
   const dimensions = (topic: MindTopic) => {
     const root = topic.parent === null, size = styles[topic.id]?.size ?? (root ? 16 : 14), description = mindDescriptionAt(descriptions, topic.id);
-    const lines = description ? mindDescriptionLines(description) : [];
-    const descWidth = lines.reduce((max, line) => Math.max(max, [...line].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? 12 : 7), 0) + 28), 0);
+    const descSize = mindDescriptionStyleAt(descriptionStyles, topic.id)?.size ?? 12, lines = description ? mindDescriptionLines(description, descSize) : [];
+    const descWidth = lines.reduce((max, line) => Math.max(max, mindDescriptionTextWidth(line, descSize) + 28), 0);
     const w = Math.max(root ? 104 : 90, Math.min(600, [...topic.text].length * size + 32), descWidth);
-    const h = mindTitleHeight(topic, styles) + (lines.length ? lines.length * 16 + 8 : 0);
+    const h = mindTitleHeight(topic, styles) + (lines.length ? lines.length * Math.ceil(descSize * 1.35) + 8 : 0);
     return { w, h };
   };
   const subtree = (topic: MindTopic): number => { const group = collapsed.has(topic.id) ? [] : children.get(topic.id) ?? []; const h = Math.max(dimensions(topic).h + 10, group.length ? group.reduce((total, child) => total + subtree(child), 0) + (group.length - 1) * 12 : 40); sizes.set(topic.id, h); return h; };
