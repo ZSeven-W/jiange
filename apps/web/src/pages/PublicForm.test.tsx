@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseHash } from "@/lib/route";
-import { formCells, PublicFormField, publicFormPendingKey, publicFormResponseIsDefinite, supportsPublicFormField } from "./PublicForm";
+import { formCells, PublicFormField, publicFormPendingKey, publicFormReceiptIsConfirmed, publicFormResponseIsDefinite, supportsPublicFormField, validPublicFormDefinition } from "./PublicForm";
 import { closeForm, formLink, isFormToken, publishForm, readFormPublication, saveFormConfig } from "./base/publicFormApi";
 import { ApiError } from "@/lib/api";
 
 const token = "a".repeat(43);
 afterEach(() => vi.unstubAllGlobals());
 describe("published forms", () => {
+  it("rejects malformed definitions and only confirms an explicit creation receipt", () => {
+    expect(validPublicFormDefinition({ title: "表单", desc: "", fields: [{ id: 1, name: "姓名", type: "text" }] })).toBe(true);
+    expect(validPublicFormDefinition({ title: "表单", desc: "", fields: [{ id: 1, name: "姓名", type: "text" }, { id: 1, name: "重复", type: "text" }] })).toBe(false);
+    expect(validPublicFormDefinition({ title: "表单", desc: "", fields: [{ id: 1, name: "方式", type: "select", options: [1] }] })).toBe(false);
+    expect(publicFormReceiptIsConfirmed(201, { ok: true })).toBe(true);
+    expect(publicFormReceiptIsConfirmed(200, { ok: true })).toBe(false);
+    expect(publicFormReceiptIsConfirmed(201, {})).toBe(false);
+  });
   it("routes only opaque tokens and treats legacy numeric links as closed", () => {
     expect(parseHash(`#/form/${token}`)).toEqual({ page: "form", token });
     expect(parseHash("#/form/12/34")).toEqual({ page: "legacy-form" });

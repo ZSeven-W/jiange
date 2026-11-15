@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand";
+import { clearPublicFormDraft, readPublicFormDraft, writePublicFormDraft, type FormDraftEntry } from "./public-form-draft";
 
 export interface FormFieldDef {
   id: number;
@@ -13,6 +14,19 @@ export interface FormFieldDef {
 }
 interface FormDefinition { title: string; desc: string; fields: FormFieldDef[] }
 export type FormValue = string | string[] | boolean;
+export function validPublicFormDefinition(value: unknown): value is FormDefinition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  if (typeof data.title !== "string" || typeof data.desc !== "string" || !Array.isArray(data.fields) || data.fields.length > 1000) return false;
+  const ids = new Set<number>();
+  for (const item of data.fields) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const field = item as Record<string, unknown>;
+    if (!Number.isSafeInteger(field.id) || (field.id as number) <= 0 || ids.has(field.id as number) || typeof field.name !== "string" || typeof field.type !== "string" || (field.description !== undefined && typeof field.description !== "string") || (field.required !== undefined && typeof field.required !== "boolean") || (field.options !== undefined && (!Array.isArray(field.options) || field.options.length > 1000 || !field.options.every((option) => typeof option === "string")))) return false;
+    ids.add(field.id as number);
+  }
+  return true;
+}
 const SUPPORTED = new Set(["text", "number", "checkbox", "select", "multi_select", "date", "url", "phone", "email", "rating"]);
 export const supportsPublicFormField = (type: string) => SUPPORTED.has(type);
 /** These server responses are returned before a record can be written. */
@@ -20,6 +34,9 @@ export function publicFormResponseIsDefinite(status: number, code: unknown): boo
   return (status < 500 && status !== 408 && status !== 429)
     || (status === 429 && code === "form_rate_limited")
     || (status === 503 && code === "form_busy");
+}
+export function publicFormReceiptIsConfirmed(status: number, value: unknown): boolean {
+  return status === 201 && !!value && typeof value === "object" && !Array.isArray(value) && (value as { ok?: unknown }).ok === true;
 }
 export function formCells(fields: FormFieldDef[], values: Record<number, FormValue>): Record<string, unknown> {
   const cells: Record<string, unknown> = {};
@@ -48,15 +65,20 @@ export async function publicFormPendingKey(token: string): Promise<string> {
 function pending(key: string): boolean { try { return sessionStorage.getItem(key) === "1"; } catch { return false; } }
 function setPending(key: string, value: boolean): boolean { try { if (value) sessionStorage.setItem(key, "1"); else sessionStorage.removeItem(key); return true; } catch { return false; } }
 
+function FormDraftRecovery({ unmatched, unreadable }: { unmatched: readonly FormDraftEntry[]; unreadable: string | null }) {
+  return <>{unmatched.length > 0 && <details className="mt-3 rounded-md border p-3 text-[12px] text-muted-foreground"><summary className="cursor-pointer">部分草稿对应的问题已变化，可展开复制</summary><textarea aria-label="未匹配的草稿内容" readOnly value={unmatched.map((entry) => `${entry.name}：${Array.isArray(entry.value) ? entry.value.join("、") : String(entry.value)}`).join("\n")} className="mt-2 h-24 w-full rounded border bg-surface p-2 text-foreground"/></details>}
+    {unreadable !== null && <details className="mt-3 rounded-md border p-3 text-[12px] text-muted-foreground"><summary className="cursor-pointer">旧草稿无法自动恢复，新填写内容不会覆盖它</summary><textarea aria-label="无法读取的草稿" readOnly value={unreadable} className="mt-2 h-24 w-full rounded border bg-surface p-2 text-foreground"/></details>}</>;
+}
+
 /** A fieldset keeps the question and its choices associated for assistive technology. */
-export function PublicFormField({ field, value, onChange }: { field: FormFieldDef; value: FormValue | undefined; onChange: (value: FormValue) => void }) {
+export function PublicFormField({ field, value, onChange, disabled = false }: { field: FormFieldDef; value: FormValue | undefined; onChange: (value: FormValue) => void; disabled?: boolean }) {
   const id = useId(), labelId = `${id}-label`, descriptionId = `${id}-description`;
   const selected = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
   const selectedValue = typeof value === "string" ? value : "";
   const inputClass = "h-9 w-full rounded-md border bg-surface px-2.5 text-[16px] outline-none focus:border-primary sm:text-[14px]";
   const optionClass = "flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[14px] hover:bg-hover sm:min-h-9";
-  return <fieldset className="min-w-0" aria-describedby={field.description ? descriptionId : undefined}>
+  return <fieldset disabled={disabled} className="min-w-0" aria-describedby={field.description ? descriptionId : undefined}>
     <legend id={labelId} className="mb-1 block text-[13px] font-medium">{field.name}{field.required && <span className="ml-1 text-destructive" aria-label="必填">*</span>}</legend>
     {field.description && <p id={descriptionId} className="mb-2 text-[12px] text-muted-foreground">{field.description}</p>}
     {!supportsPublicFormField(field.type) ? <span className="block text-[13px] text-subtle">此字段暂不支持在公开收集表中填写</span>
@@ -95,34 +117,71 @@ export function PublicForm({ token }: { token: string }) {
   const [uncertain, setUncertain] = useState(false);
   const [submissionKey, setSubmissionKey] = useState<string | null>(null);
   const [storageError, setStorageError] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftError, setDraftError] = useState("");
+  const [unmatched, setUnmatched] = useState<FormDraftEntry[]>([]);
+  const [unreadable, setUnreadable] = useState<string | null>(null);
+  const [defToken, setDefToken] = useState<string | null>(null);
+  const [keyToken, setKeyToken] = useState<string | null>(null);
   const alive = useRef(true);
-  const submitting = useRef(false);
+  const submitting = useRef<{ token: string; generation: number } | null>(null);
+  const generation = useRef(0);
+  const tokenRef = useRef(token); tokenRef.current = token;
+  const valuesRef = useRef(values); valuesRef.current = values;
   useEffect(() => {
     const abort = new AbortController();
     let active = true;
     let timedOut = false;
     const timeout = window.setTimeout(() => { timedOut = true; abort.abort(); }, 15_000);
     alive.current = true;
-    setLoading(true); setDef(null); setErr(""); setValues({}); setDone(false); setUncertain(false); setSubmissionKey(null); setStorageError("");
-    void publicFormPendingKey(token).then((key) => { if (active) { setSubmissionKey(key); setUncertain(pending(key)); } }).catch(() => { if (active) setStorageError("浏览器无法安全保存提交状态，暂不能提交。"); });
+    generation.current++;
+    setLoading(true); setDef(null); setDefToken(null); setKeyToken(null); setErr(""); setValues({}); valuesRef.current = {}; setDone(false); setBusy(false); setUncertain(false); setSubmissionKey(null); setStorageError(""); setDraftReady(false); setDraftError(""); setUnmatched([]); setUnreadable(null);
+    void publicFormPendingKey(token).then((key) => { if (active) { setSubmissionKey(key); setKeyToken(token); setUncertain(pending(key)); } }).catch(() => { if (active) { setStorageError("浏览器无法安全保存提交状态，暂不能提交。"); setDraftReady(true); } });
     void fetch(tokenPath(token), { credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer", signal: abort.signal })
-      .then(async (r) => { if (!r.ok) throw new Error(r.status === 404 ? "收集表不存在或已关闭。" : "暂时无法加载收集表，请稍后重试。"); return await r.json() as FormDefinition; })
-      .then((value) => { if (active) setDef(value); })
+      .then(async (r) => { if (!r.ok) throw new Error(r.status === 404 ? "收集表不存在或已关闭。" : "暂时无法加载收集表，请稍后重试。"); const value: unknown = await r.json(); if (!validPublicFormDefinition(value)) throw new Error("收集表配置无效，请联系收集者。"); return value; })
+      .then((value) => { if (active) { setDef(value); setDefToken(token); } })
       .catch((e) => { if (active && (!abort.signal.aborted || timedOut)) setErr(timedOut ? "加载超时，请稍后重新打开收集表。" : e instanceof Error ? e.message : "暂时无法加载收集表。"); })
       .finally(() => { window.clearTimeout(timeout); if (active) setLoading(false); });
     return () => { active = false; alive.current = false; window.clearTimeout(timeout); abort.abort(); };
   }, [token]);
 
+  useEffect(() => {
+    if (draftReady || !def || defToken !== token || !submissionKey || keyToken !== token) return;
+    let restored;
+    try { restored = readPublicFormDraft(sessionStorage, submissionKey, def.fields); }
+    catch { restored = { values: {}, unmatched: [], unreadable: "浏览器存储不可用，无法自动恢复草稿。" }; }
+    valuesRef.current = restored.values; setValues(restored.values); setUnmatched(restored.unmatched); setUnreadable(restored.unreadable); setDraftReady(true);
+  }, [def, defToken, token, submissionKey, keyToken, draftReady]);
+  useEffect(() => {
+    if (draftReady || loading || def || !submissionKey || keyToken !== token) return;
+    let restored;
+    try { restored = readPublicFormDraft(sessionStorage, submissionKey, []); }
+    catch { restored = { values: {}, unmatched: [], unreadable: "浏览器存储不可用，无法自动恢复草稿。" }; }
+    setUnmatched(restored.unmatched); setUnreadable(restored.unreadable); setDraftReady(true);
+  }, [draftReady, loading, def, submissionKey, keyToken, token]);
+
+  const updateValue = (id: number, value: FormValue) => {
+    const next = { ...valuesRef.current, [id]: value }; valuesRef.current = next; setValues(next);
+    if (!def || !submissionKey || !draftReady || unreadable !== null || defToken !== token || keyToken !== token) return;
+    let saved = false;
+    try { saved = writePublicFormDraft(sessionStorage, submissionKey, def.fields, next, unmatched); } catch { /* storage access can be blocked */ }
+    setDraftError(saved ? "" : "本标签页无法保存填写草稿，请勿刷新或关闭页面。");
+  };
+
   const submit = async () => {
-    if (submitting.current || uncertain || !def || !submissionKey) return;
+    if (submitting.current?.token === token || uncertain || !def || !submissionKey || !draftReady || defToken !== token || keyToken !== token) return;
     let cells: Record<string, unknown>;
-    try { cells = formCells(def.fields, values); }
+    const submittedValues = valuesRef.current;
+    try { cells = formCells(def.fields, submittedValues); }
     catch (error) { setErr(error instanceof Error ? error.message : "填写内容无效。"); return; }
     if (!Object.keys(cells).length) { setErr("请填写至少一项内容。"); return; }
     // A lost response may follow a committed record. Preserve an unknown
     // marker for this tab across reloads; never retry automatically.
     if (!setPending(submissionKey, true)) { setErr("浏览器无法保存提交状态，请检查存储设置后重试。"); return; }
-    submitting.current = true; setBusy(true); setErr("");
+    const attempt = { token, generation: generation.current };
+    submitting.current = attempt; setBusy(true); setErr("");
+    const requestGeneration = attempt.generation;
+    const current = () => alive.current && generation.current === requestGeneration && tokenRef.current === token;
     const request = new AbortController();
     const timeout = window.setTimeout(() => request.abort(), 15_000);
     try {
@@ -131,18 +190,25 @@ export function PublicForm({ token }: { token: string }) {
         const data = await res.json().catch(() => ({}));
         if (publicFormResponseIsDefinite(res.status, data.error)) {
           const cleared = setPending(submissionKey, false);
-          if (alive.current) { if (!cleared) setUncertain(true); if (res.status === 404) setDef(null); setErr(res.status === 404 ? "收集表已关闭或链接已失效。" : data.message || "提交失败，请检查填写内容。"); }
-        } else if (alive.current) { setUncertain(true); setErr("无法确认是否提交成功，请联系收集者核对，避免重复提交。"); }
+          if (current()) { if (!cleared) setUncertain(true); if (res.status === 404) { setUnmatched([...unmatched, ...def.fields.flatMap((field) => submittedValues[field.id] === undefined ? [] : [{ id: field.id, name: field.name, type: field.type, value: submittedValues[field.id] }])]); setDef(null); } setErr(res.status === 404 ? "收集表已关闭或链接已失效。" : data.message || "提交失败，请检查填写内容。"); }
+        } else if (current()) { setUncertain(true); setErr("无法确认是否提交成功，请联系收集者核对，避免重复提交。"); }
         return;
       }
-      setPending(submissionKey, false);
-      if (alive.current) setDone(true);
+      const receipt = await res.json().catch(() => null);
+      if (!publicFormReceiptIsConfirmed(res.status, receipt)) { if (current()) { setUncertain(true); setErr("无法确认是否提交成功，请联系收集者核对，避免重复提交。"); } return; }
+      // A later visit to the same form may already contain new answers.
+      // An obsolete request must not clear that visit's draft or marker.
+      if (!current()) return;
+      let cleared = unreadable !== null;
+      if (!cleared) { try { cleared = unmatched.length ? writePublicFormDraft(sessionStorage, submissionKey, [], {}, unmatched) : clearPublicFormDraft(sessionStorage, submissionKey); } catch { cleared = false; } }
+      if (cleared) setPending(submissionKey, false);
+      if (current()) { setDone(true); if (!cleared) setDraftError("提交成功，但本地草稿未能清理；请勿重复提交。"); }
     } catch {
-      if (alive.current) { setUncertain(true); setErr("无法确认是否提交成功，请联系收集者核对，避免重复提交。"); }
+      if (current()) { setUncertain(true); setErr("无法确认是否提交成功，请联系收集者核对，避免重复提交。"); }
     } finally {
       window.clearTimeout(timeout);
-      submitting.current = false;
-      if (alive.current) setBusy(false);
+      if (submitting.current === attempt) submitting.current = null;
+      if (current()) setBusy(false);
     }
   };
 
@@ -150,14 +216,18 @@ export function PublicForm({ token }: { token: string }) {
     <div className="w-full max-w-md rounded-2xl border bg-surface p-5 shadow-sm sm:p-8">
       {loading && <p role="status" className="py-10 text-center text-[13px] text-subtle">正在加载收集表…</p>}
       {err && !def && <p role="alert" className="text-center text-[14px] text-destructive">{err}</p>}
-      {done ? <div className="py-10 text-center" data-form-done><div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#D9F5D6] text-[22px] text-[#237B19]">✓</div><p className="text-[16px] font-medium">提交成功</p><p className="mt-1 text-[13px] text-muted-foreground">感谢你的反馈！</p></div> : def && <>
+      {!loading && !def && <FormDraftRecovery unmatched={unmatched} unreadable={unreadable}/>}
+      {done && defToken === token ? <div className="py-10 text-center" data-form-done><div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#D9F5D6] text-[22px] text-[#237B19]">✓</div><p className="text-[16px] font-medium">提交成功</p><p className="mt-1 text-[13px] text-muted-foreground">感谢你的反馈！</p><FormDraftRecovery unmatched={unmatched} unreadable={unreadable}/>{draftError && <p role="alert" className="mt-3 text-[13px] text-destructive">{draftError}</p>}</div> : def && defToken === token && <>
         <h1 className="text-[20px] font-semibold">{def.title || "表单"}</h1>
         {def.desc && <p className="mb-5 mt-1 text-[13px] text-muted-foreground">{def.desc}</p>}
-        <div className="mt-5 space-y-5">{def.fields.map((f) => <PublicFormField key={f.id} field={f} value={values[f.id]} onChange={(value) => setValues((previous) => ({ ...previous, [f.id]: value }))} />)}</div>
+        <div className="mt-5 space-y-5">{def.fields.map((f) => <PublicFormField key={f.id} field={f} value={values[f.id]} disabled={busy || !draftReady || defToken !== token || (!!submissionKey && keyToken !== token)} onChange={(value) => updateValue(f.id, value)} />)}</div>
+        {draftReady && submissionKey && unreadable === null && !draftError && <p className="sr-only" role="status">填写内容自动保存在当前标签页，提交后清除已提交内容。</p>}
+        <FormDraftRecovery unmatched={unmatched} unreadable={unreadable}/>
+        {draftError && <p role="alert" className="mt-3 text-[13px] text-destructive">{draftError}</p>}
         {err && <p role="alert" className="mt-3 text-[13px] text-destructive">{err}</p>}
         {storageError && <p role="alert" className="mt-3 text-[13px] text-destructive">{storageError}</p>}
         {uncertain && !err && <p role="alert" className="mt-3 text-[13px] text-destructive">上次提交结果尚未确认，请联系收集者核对，避免重复提交。</p>}
-        <button type="button" className="mt-6 h-10 w-full rounded-md bg-primary text-[14px] font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={busy || uncertain || !submissionKey} onClick={() => void submit()} data-form-submit>{busy ? "提交中…" : "提交"}</button>
+        <button type="button" className="mt-6 h-10 w-full rounded-md bg-primary text-[14px] font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={busy || uncertain || !submissionKey || !draftReady || defToken !== token || keyToken !== token} onClick={() => void submit()} data-form-submit>{busy ? "提交中…" : "提交"}</button>
         <p className="mt-3 flex items-center justify-center gap-1 text-[12px] text-subtle"><span>由</span><Logo className="gap-1" markClassName="size-4" wordmarkClassName="h-[11px]"/><span>表单收集</span></p>
       </>}
     </div>
