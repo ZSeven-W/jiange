@@ -3,7 +3,7 @@ export function slidePageMenuPosition(x: number, y: number, viewportWidth: numbe
   const margin = 8;
   const width = Math.max(1, Math.min(188, viewportWidth - margin * 2));
   const maxHeight = Math.max(1, viewportHeight - margin * 2);
-  const height = Math.min(252, maxHeight);
+  const height = Math.min(325, maxHeight);
   const top = Math.max(margin, Math.min(y, viewportHeight - height - margin));
   return {
     left: Math.max(margin, Math.min(x, viewportWidth - width - margin)),
