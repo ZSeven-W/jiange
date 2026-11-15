@@ -16,10 +16,10 @@ import { parseMarkdown } from "@/lib/markdown";
 import { type StarterTemplate } from "./starterTemplateData";
 import { TemplateLibrary } from "./TemplateLibrary";
 import { stageStarter } from "./pendingStarter";
-import { BOARD_TITLE, stageBoard } from "./boardStarter";
+import { BOARD_TITLE, MINDMAP_TITLE, stageBoard, type BoardStarterKind } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { ask, askText } from "@/components/ui/ask";
-import { ChevronDown, FileText, Folder, FolderOpen, Plus, Star } from "lucide-react";
+import { ChevronDown, FileText, Folder, FolderOpen, ListTree, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
@@ -62,9 +62,16 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     mutationFn: (type: "doc" | "base") => type === "base" ? baseApi.create() : docsApi.create(""),
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
+  const currentUser = useRef(me.user.id); currentUser.current = me.user.id;
   const createBoard = useMutation({
-    mutationFn: async () => { const doc = await docsApi.create(BOARD_TITLE); stageBoard(me.user.id, doc.id); return doc; },
-    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
+    mutationFn: async (kind: BoardStarterKind) => {
+      const owner = me.user.id;
+      const doc = kind === "mindmap" ? await driveApi.createWordImportNode(MINDMAP_TITLE, null, true, owner) : await docsApi.create(BOARD_TITLE);
+      if (!Number.isSafeInteger(doc.id) || doc.id <= 0 || (kind === "mindmap" && doc.kind !== "doc") || ("creatorId" in doc && doc.creatorId !== undefined && doc.creatorId !== owner)) throw new Error("invalid document response");
+      stageBoard(owner, doc.id, kind); return { doc, owner };
+    },
+    onSuccess: ({ doc, owner }) => { void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === owner) go(hrefOf({ id: doc.id, kind: "doc" })); else setImportError(t("创建结果未确认，请检查文档库。")); },
+    onError: () => setImportError(t("创建结果未确认，请检查文档库。")),
   });
   const createDriveItem = useMutation({
     mutationFn: ({ kind, title }: { kind: "slides" | "folder"; title: string }) => driveApi.createNode(kind, title, null, true),
@@ -137,7 +144,8 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     <div className="my-1 border-t" />
     <button role="menuitem" disabled={createDriveItem.isPending} onClick={async () => { setNewMenu(false); const title = await askText(t("新建文件夹"), t("文件夹名称"), t("未命名文件夹")); if (title?.trim()) createDriveItem.mutate({ kind: "folder", title: title.trim() }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="folder" />{t("文件夹")}</button>
     <div className="mt-1 border-t px-4 pb-1 pt-3 text-[13px] text-subtle">{t("文档应用")}</div>
-    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate(); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-board><BoardBadge />{t("画板")}</button>
+    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate("board"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-board><BoardBadge />{t("画板")}</button>
+    <button role="menuitem" disabled={createBoard.isPending} onClick={() => { setNewMenu(false); createBoard.mutate("mindmap"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-mindmap><ListTree size={20} className="shrink-0 text-[#1caff0]"/>{t("思维导图")}</button>
   </div>;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">

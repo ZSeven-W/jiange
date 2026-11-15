@@ -265,3 +265,23 @@ func TestSearchRechecksTitleAfterEnumeration(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchFindsMindMapTopicText(t *testing.T) {
+	view := collab.DocView{Blocks: []collab.BlockView{{Type: "flowchart", Props: map[string]string{
+		"fc.m.root":  `{"parent":null,"order":0,"text":"项目计划","x":0,"y":0}`,
+		"fc.m.child": `{"parent":"root","order":0,"text":"研发安排"}`,
+	}}}}
+	if !searchableDocument(view, "研发安排") {
+		t.Fatal("missing mind-map topic")
+	}
+	if searchableDocument(view, "not-present") {
+		t.Fatal("matched absent text")
+	}
+	view.Blocks[0].Props["fc.m.orphan"] = `{"parent":"missing","order":0,"text":"不可见"}`
+	view.Blocks[0].Props["fc.m.cycleA"] = `{"parent":"cycleB","order":0,"text":"循环内容"}`
+	view.Blocks[0].Props["fc.m.cycleB"] = `{"parent":"cycleA","order":0,"text":"其他"}`
+	view.Blocks[0].Props["fc.m.invalid"] = `{"parent":"root","order":null,"text":"无效节点"}`
+	if searchableDocument(view, "不可见") || searchableDocument(view, "循环内容") || searchableDocument(view, "无效节点") {
+		t.Fatal("matched invisible topics")
+	}
+}

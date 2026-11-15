@@ -19,7 +19,7 @@ import { formatDriveTime, ownRootFolders, sortDriveDocuments, sortDriveFolders, 
 import { batchMessage, pruneSelection, runDriveBatch, toggleId } from "./drive-batch";
 import { moveDriveColumn, readDriveColumns, writeDriveColumns, type DriveColumn, type DriveColumnPreferences } from "./drive-columns";
 import { DriveDocGlyph, NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
-import { ArrowDownUp, Check, ChevronDown, ChevronRight, Ellipsis, Eye, EyeOff, FileInput, FileText, FileUp, Folder, FolderUp, GripVertical, LayoutGrid, Link2, List, ListFilter, Presentation, Search, Shapes } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, ChevronRight, Ellipsis, Eye, EyeOff, FileInput, FileText, FileUp, Folder, FolderUp, GripVertical, LayoutGrid, Link2, List, ListFilter, ListTree, Presentation, Search, Shapes } from "lucide-react";
 
 function driveColumnStorage(): Storage | undefined {
   try { return typeof window === "undefined" ? undefined : window.localStorage; } catch { return undefined; }
@@ -28,6 +28,7 @@ function driveColumnStorage(): Storage | undefined {
 /** Cloud drive: folder navigation and file operations use the guarded drive API. */
 export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderId: number | null; personalRoot: boolean; userId: number; uploads: DriveUploadManager }) {
   const uploadState = useSyncExternalStore(uploads.subscribe, uploads.snapshot, uploads.snapshot);
+  const currentUser = useRef(userId); currentUser.current = userId;
   const pickerGate = useRef(new DirectoryPickerGate());
   const pickerPending = useRef(false);
   const [useFallbackPicker, setUseFallbackPicker] = useState(false);
@@ -121,14 +122,14 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
     try { finishBatch("收藏", await runDriveBatch(chosen, (entry) => starredIds.has(entry.id) ? Promise.resolve() : extrasApi.star(entry.id))); void favorites.refetch(); }
     finally { setBatchPending(false); }
   };
-  const newItem = async (kind: "doc" | "base" | "slides" | "board" | "folder") => {
+  const newItem = async (kind: "doc" | "base" | "slides" | "board" | "mindmap" | "folder") => {
     setCreating(false); setError("");
-    const label = kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : "文件夹";
+    const label = kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹";
     const title = await askText(`新建${label}`, `${label}名称`);
     if (!title?.trim()) return;
-    if (kind === "board") {
+    if (kind === "board" || kind === "mindmap") {
       // 与飞书一致：画板是一篇只含画板的文档，打开后直接进入画板。
-      try { const entry = await driveApi.createNode("doc", title.trim(), folderId, scope); stageBoard(userId, entry.id); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); location.hash = hrefOf({ id: entry.id, kind: "doc" }); }
+      try { const entry = kind === "mindmap" ? await driveApi.createWordImportNode(title.trim(), folderId, scope, userId) : await driveApi.createNode("doc", title.trim(), folderId, scope); if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || entry.kind !== "doc" || (entry.creatorId !== undefined && entry.creatorId !== userId)) throw new Error("invalid document response"); stageBoard(userId, entry.id, kind); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === userId) location.hash = hrefOf({ id: entry.id, kind: "doc" }); else setError("创建结果未确认，请检查文档库。"); }
       catch { failure(); }
       return;
     }
@@ -190,7 +191,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       <div className="grid grid-cols-2 gap-2 pt-2 md:grid-cols-4 md:gap-3 xl:grid-cols-[repeat(4,305px)]">
         <div className="relative min-w-0">
           <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5]", creating && "bg-[#f2f3f5]")}><NewDocGlyph/><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-[#1f2329]">新建</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">新建文档开始协作</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", creating && "rotate-180")}/></button>
-          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label="新建" className="absolute left-0 top-[68px] z-40 w-full min-w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "slides", "base", "board", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "board" ? <span className="grid size-5 place-items-center rounded bg-[#7F3BF5] text-white"><Shapes size={13}/></span> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : "文件夹"}</span></button>)}</div></>}
+          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label="新建" className="absolute left-0 top-[68px] z-40 w-full min-w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "slides", "base", "board", "mindmap", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "board" ? <span className="grid size-5 place-items-center rounded bg-[#7F3BF5] text-white"><Shapes size={13}/></span> : kind === "mindmap" ? <ListTree size={20} className="text-[#1caff0]"/> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹"}</span></button>)}</div></>}
         </div>
         <div className="relative min-w-0">
           <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading" || uploadState.phase === "scanning"} onKeyDown={(event) => { if (event.key === "Escape" && uploadMenu) { event.stopPropagation(); setUploadMenu(false); } }} onClick={() => { if (pickerPending.current && fallbackPickerSupported) { setUseFallbackPicker(true); uploads.selectionError("目录选择器未返回，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。"); } pickerPending.current = false; pickerGate.current.invalidate(); setUploadMenu((open) => !open); }} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" || uploadState.phase === "scanning" ? "上传中" : "上传"}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">上传本地文件</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", uploadMenu && "rotate-180")}/></button>

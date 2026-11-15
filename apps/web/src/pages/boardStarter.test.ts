@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
-import { BOARD_SEED, hasBoard, stageBoard, takeBoard } from "./boardStarter";
+import { BOARD_SEED, MINDMAP_SEED, hasBoard, peekBoardKind, stageBoard, takeBoard } from "./boardStarter";
 import { insertStarterBlocks } from "./starterTemplateOps";
 import { bodyBlocks } from "@/editor/model";
+import { readFlow } from "@/editor/flowchart/model";
 
 describe("board starter", () => {
   it("stages per user and document", () => {
@@ -11,6 +12,19 @@ describe("board starter", () => {
     expect(hasBoard(2, 7)).toBe(false);
     takeBoard(1, 7);
     expect(hasBoard(1, 7)).toBe(false);
+  });
+
+  it("stages a mind map for the correct user and inserts a real tree", () => {
+    stageBoard(5, 9, "mindmap");
+    expect(peekBoardKind(5, 9)).toBe("mindmap");
+    expect(peekBoardKind(6, 9)).toBeNull();
+    const doc = new Doc(1); new Tx(doc).create("paragraph", null, ROOT);
+    expect(insertStarterBlocks(doc, [MINDMAP_SEED])).not.toBeNull();
+    const graph = readFlow(doc.blockInfo(bodyBlocks(doc)[0]).props);
+    expect(graph.mind).toHaveLength(4);
+    expect(graph.mind?.filter((topic) => topic.parent === null)).toHaveLength(1);
+    takeBoard(5, 9);
+    expect(peekBoardKind(5, 9)).toBeNull();
   });
 
   it("inserts a single flowchart block into an empty document only", () => {

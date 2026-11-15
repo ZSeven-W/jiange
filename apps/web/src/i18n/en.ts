@@ -273,6 +273,8 @@ export const en: Record<string, string> = {
   "复选框": "Checkbox",
   "多维表格": "Base",
   "画板": "Whiteboard",
+  "思维导图": "Mind map",
+  "创建结果未确认，请检查文档库。": "Creation could not be confirmed. Check your document library.",
   "多维表格不存在或无权访问": "The base does not exist or you cannot access it",
   "多选": "Multi-select",
   "大于": "is greater than",

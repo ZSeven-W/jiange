@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Brush, ChevronDown, ChevronLeft, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, LayoutTemplate, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Brush, ChevronDown, ChevronLeft, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, LayoutTemplate, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, flowWrites, isContainer, moveFlowSelection, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, normalizeStroke, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowStroke, type FlowTheme, type Port, type Shape } from "./model";
@@ -10,6 +10,8 @@ import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
 import { fitInsertedImage, pinchViewport, placeSelectionToolbar, resizeViewportCenter, type FlowPoint, type FlowViewport } from "./viewport";
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
+import { MindMapSvg } from "./mind-map-svg";
+import { layoutMindTopics, type MindTopic } from "./mindmap";
 import { inkHitByEraser, inkPointBounds, scaleInk } from "./inkGeometry";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
 import type { ClipBlock } from "../model";
@@ -109,7 +111,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -119,6 +121,13 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   resizeStroke?: string | null;
   erasing?: ReadonlySet<string> | null;
   draftStroke?: FlowStroke | null;
+  mindSelected?: string | null;
+  mindEditing?: { id: string; value: string } | null;
+  onMindSelect?: (topic: MindTopic) => void;
+  onMindEdit?: (topic: MindTopic) => void;
+  onMindDraft?: (value: string) => void;
+  onMindFinish?: () => void;
+  onMindCancel?: () => void;
   onPortDown?: (e: React.PointerEvent, n: FlowNode, port: Port) => void;
   onCanvasDown?: (e: React.PointerEvent) => void;
   onNodeDouble?: (n: FlowNode) => void;
@@ -162,6 +171,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -250,7 +260,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
-    {graph.nodes.length || graph.strokes?.length ? <FlowSvg graph={graph} width="100%" height="100%" idPrefix="fcp" /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
+    {graph.nodes.length || graph.strokes?.length || graph.mind?.length ? <FlowSvg graph={graph} width="100%" height="100%" idPrefix="fcp" /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
@@ -301,6 +311,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   canCopy?: boolean;
 }) {
   const [graph, setGraph] = useState(initial);
+  const mindBoard = useRef(!!initial.mind?.length && !initial.nodes.length && !initial.strokes?.length).current;
   const [undo, setUndo] = useState<FlowHistory[]>([]);
   const [redo, setRedo] = useState<FlowHistory[]>([]);
   const [recovery, setRecovery] = useState<UnappliedFlow[]>([]);
@@ -333,6 +344,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     return () => { document.removeEventListener("keydown", trap, true); if (previous?.isConnected) previous.focus(); };
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mindSelected, setMindSelected] = useState<string | null>(null);
+  const [mindEditing, setMindEditing] = useState<{ id: string; value: string; base: FlowGraph } | null>(null);
+  const mindEditingRef = useRef<typeof mindEditing>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [tool, setTool] = useState<Shape | "select" | "pen" | "eraser">("select");
   const ink = useRef<{ pointerId: number; stroke: FlowStroke } | null>(null);
@@ -346,7 +360,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [view, setView] = useState(() => { const b = flowBounds(initial); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<"theme" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
-  useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); }, [tool, menu]);
+  useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") setMindSelected(null); }, [tool, menu]);
+  useEffect(() => { if (mindSelected && !mindEditing && !graph.mind?.some((topic) => topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, mindSelected, mindEditing]);
   const [hand, setHand] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
@@ -372,7 +387,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     presenceRef.current({ x: presence.current.x, y: presence.current.y, sel: selectedKey ? selectedKey.split(",").slice(0, 50) : [] });
   };
   const [compact, setCompact] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
-  const [library, setLibrary] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
+  const [library, setLibrary] = useState(() => !mindBoard && (typeof window === "undefined" || window.innerWidth >= 768));
   const [libQuery, setLibQuery] = useState("");
   const [showStarter, setShowStarter] = useState(true);
   const [aiText, setAiText] = useState("");
@@ -385,7 +400,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const imageRef = useRef<HTMLInputElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const measuredSize = useRef<{ w: number; h: number } | null>(null);
-  const gestureActive = useRef(false); gestureActive.current = !!drag || !!inkPreview || !!erasePreview;
+  const gestureActive = useRef(false); gestureActive.current = !!drag || !!inkPreview || !!erasePreview || !!mindEditing;
   const autoFit = useRef(true);
   const pinch = useRef<{ view: FlowViewport; center: FlowPoint; distance: number } | null>(null);
   const suppressTouch = useRef(false);
@@ -398,7 +413,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   }, []);
   // Remote edits arrive through `initial`; adopt them when not mid-gesture.
   const lastInitial = useRef(initial);
-  useEffect(() => { if (initial !== lastInitial.current && !drag && !editing && !inkPreview && !erasePreview) { lastInitial.current = initial; setGraph(initial); } }, [initial, drag, editing, inkPreview, erasePreview]);
+  useEffect(() => { if (initial !== lastInitial.current && !drag && !editing && !inkPreview && !erasePreview && !mindEditing) { lastInitial.current = initial; setGraph(initial); } }, [initial, drag, editing, inkPreview, erasePreview, mindEditing]);
   useEffect(() => {
     const el = svgWrap.current;
     if (!el) return;
@@ -428,6 +443,54 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const result = submit(graph, next);
     const step = appliedFlowHistory(graph, result.graph, result.appliedKeys);
     if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); }
+  };
+  const commitMind = (base: FlowGraph, next: FlowGraph) => {
+    const result = submit(base, next), step = appliedFlowHistory(base, result.graph, result.appliedKeys);
+    if (result.applied && step) { setUndo((history) => [...history.slice(-99), step]); setRedo([]); }
+    return result;
+  };
+  const startMindEdit = (topic: MindTopic) => {
+    if (readOnly) return;
+    const edit = { id: topic.id, value: topic.text, base: graph };
+    mindEditingRef.current = edit; setMindEditing(edit); setMindSelected(topic.id); setSelected(new Set());
+  };
+  const finishMindEdit = () => {
+    const edit = mindEditingRef.current; if (!edit) return;
+    mindEditingRef.current = null; setMindEditing(null);
+    const previous = edit.base.mind?.find((topic) => topic.id === edit.id);
+    if (!previous || previous.text === edit.value) return;
+    commitMind(edit.base, { ...edit.base, mind: edit.base.mind!.map((topic) => topic.id === edit.id ? { ...topic, text: edit.value } : topic) });
+  };
+  const cancelMindEdit = () => { mindEditingRef.current = null; setMindEditing(null); };
+  const addMindMap = () => {
+    if (readOnly || (graph.mind?.length ?? 0) + 4 > 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return; }
+    const root = newFlowId("m"), x = Math.round(Math.max(-20000, Math.min(20000, view.x + size.w / view.zoom / 2 - 120))), y = Math.round(Math.max(-20000, Math.min(20000, view.y + size.h / view.zoom / 2 - 24)));
+    const topics: MindTopic[] = [{ id: root, parent: null, order: 0, text: "", x, y }, ...[0, 1, 2].map((order) => ({ id: newFlowId("m"), parent: root, order, text: "" }))];
+    const result = commitMind(graph, { ...graph, mind: [...(graph.mind ?? []), ...topics] });
+    if (result.applied && result.graph.mind?.some((topic) => topic.id === root)) { setMindSelected(root); setSelected(new Set()); setTool("select"); setHand(false); setShowStarter(false); }
+  };
+  const addMindTopic = (sibling: boolean) => {
+    const parentTopic = graph.mind?.find((topic) => topic.id === mindSelected);
+    const parent = sibling ? parentTopic?.parent : parentTopic?.id;
+    if (readOnly || !parentTopic || !parent) return;
+    if ((graph.mind?.length ?? 0) >= 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return; }
+    let ancestor = graph.mind?.find((topic) => topic.id === parent), depth = 0;
+    while (ancestor?.parent && depth < 33) { depth++; ancestor = graph.mind?.find((topic) => topic.id === ancestor!.parent); }
+    if (!ancestor || depth >= 32) { setNotice({ ok: false, text: "思维导图层级已达上限。" }); return; }
+    const siblings = graph.mind!.filter((topic) => topic.parent === parent).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    const index = siblings.findIndex((topic) => topic.id === parentTopic.id), next = sibling && index >= 0 ? siblings[index + 1] : undefined;
+    const order = sibling && next ? (parentTopic.order + next.order) / 2 : Math.max(-1, ...siblings.map((topic) => topic.order)) + 1;
+    if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: "节点顺序空间不足，请在末尾添加。" }); return; }
+    const topic: MindTopic = { id: newFlowId("m"), parent, order, text: "" };
+    const result = commitMind(graph, { ...graph, mind: [...graph.mind!, topic] });
+    if (result.applied && result.graph.mind?.some((item) => item.id === topic.id)) { setMindSelected(topic.id); setSelected(new Set()); }
+  };
+  const removeMindTopic = () => {
+    if (readOnly || !mindSelected || !graph.mind) return;
+    const ids = new Set([mindSelected]); let previous = 0;
+    while (ids.size !== previous) { previous = ids.size; for (const topic of graph.mind) if (topic.parent && ids.has(topic.parent)) ids.add(topic.id); }
+    const result = commitMind(graph, { ...graph, mind: graph.mind.filter((topic) => !ids.has(topic.id)) });
+    if (!result.graph.mind?.some((topic) => topic.id === mindSelected)) setMindSelected(null);
   };
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
@@ -467,7 +530,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const b = flowBounds(g);
     // 左侧留出竖向工具条，上下留出浮动栏。
     const padL = compact ? 24 : readOnly ? 40 : 90, padR = compact ? 24 : 40, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
-    const zoom = Math.min(1.5, Math.max(0.2, Math.min(usableW / Math.max(1, b.w), usableH / Math.max(1, b.h))));
+    const zoom = Math.min(mindBoard ? 1 : 1.5, Math.max(0.2, Math.min(usableW / Math.max(1, b.w), usableH / Math.max(1, b.h))));
     const offsetY = compact ? 28 + (usableH - b.h * zoom) / 2 : (viewport.h - b.h * zoom) / 2;
     setView({ zoom, x: b.x - (padL + (usableW - b.w * zoom) / 2) / zoom, y: b.y - offsetY / zoom });
   };
@@ -541,9 +604,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (recoveryOpen || editing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
-      if (e.key === "Escape") { e.preventDefault(); if (menu) setMenu(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
-      if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); removeSelected(); }
+      if (recoveryOpen || editing || mindEditing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
+      if (e.key === "Escape") { e.preventDefault(); if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); if (mindSelected) removeMindTopic(); else removeSelected(); }
+      const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
+      if (mindSelected && !readOnly && !onButton && e.key === "Tab") { e.preventDefault(); addMindTopic(false); }
+      if (mindSelected && !readOnly && !onButton && e.key === "Enter") { e.preventDefault(); addMindTopic(true); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !readOnly) { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelected(new Set([...graph.nodes.map((n) => n.id), ...(graph.strokes ?? []).map((stroke) => stroke.id)])); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !readOnly) { e.preventDefault(); const c = clipOfSelection(); if (c) pasteClip(c, 20); }
@@ -637,7 +703,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     };
   });
   useEffect(() => {
-    if (!autoFit.current || (!graph.nodes.length && !graph.strokes?.length) || drag) return;
+    if (!autoFit.current || (!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length) || drag) return;
     const id = requestAnimationFrame(() => { const el = svgWrap.current; if (el && el.clientWidth && el.clientHeight) fit(graph, { w: el.clientWidth, h: el.clientHeight }); });
     return () => cancelAnimationFrame(id);
   }, [size.w, size.h, compact, !!drag]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -817,7 +883,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     setBusy(true); setNotice(null);
     try {
       const { graph: g, warnings } = await parseDrawio(text);
-      const merged = graph.nodes.length || graph.strokes?.length ? appendGraph(graph, g) : { ...g, theme: graph.theme };
+      const merged = graph.nodes.length || graph.strokes?.length || graph.mind?.length ? appendGraph(graph, g) : { ...g, theme: graph.theme };
       commit(merged); requestAnimationFrame(() => fit(merged));
       setNotice({ ok: true, text: `已导入 ${g.nodes.length} 个图形、${g.edges.length} 条连线${warnings.length ? `；${warnings.join("；")}` : ""}` });
     } catch (err) { setNotice({ ok: false, text: err instanceof DrawioError ? err.message : "导入失败，请确认文件来自 draw.io / diagrams.net" }); }
@@ -829,7 +895,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     try {
       const parsed = parseFlowchartAnswer(await ai(flowchartPrompt(aiText)));
       if (!parsed) { setNotice({ ok: false, text: "AI 没有返回可用的流程图，请换种描述再试" }); return; }
-      const next = graph.nodes.length || graph.strokes?.length ? appendGraph(graph, parsed.graph) : { ...parsed.graph, theme: graph.theme };
+      const next = graph.nodes.length || graph.strokes?.length || graph.mind?.length ? appendGraph(graph, parsed.graph) : { ...parsed.graph, theme: graph.theme };
       commit(next); requestAnimationFrame(() => fit(next)); setMenu(null);
       setNotice({ ok: true, text: `AI 生成了 ${parsed.graph.nodes.length} 个节点${parsed.dropped ? `，${parsed.dropped} 项无效内容已忽略` : ""}，请核对` });
     } catch (err) { setNotice({ ok: false, text: aiErrorText(err) }); }
@@ -837,11 +903,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const download = (name: string, blob: Blob) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 0); };
   const exportAs = async (kind: "svg" | "png" | "drawio") => {
+    if (mindEditingRef.current) { setNotice({ ok: false, text: "请先完成节点文字编辑。" }); return; }
     setMenu(null);
+    if (kind === "drawio" && graph.mind?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持思维导图，请使用 PNG 或 SVG。" }); return; }
     if (kind === "drawio" && graph.strokes?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持笔迹，请使用 PNG 或 SVG。" }); return; }
     if (kind === "drawio") return download("流程图.drawio", new Blob([toDrawio(graph)], { type: "application/xml" }));
     const svg = await inlineImages(svgMarkup(graph));
-    if (kind === "svg") return download("流程图.svg", new Blob([svg], { type: "image/svg+xml" }));
+    if (kind === "svg") return download(mindBoard ? "思维导图.svg" : "流程图.svg", new Blob([svg], { type: "image/svg+xml" }));
     const b = flowBounds(graph), scale = 2, w = (b.w + 80) * scale, h = (b.h + 80) * scale;
     const img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
@@ -849,7 +917,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     ctx.drawImage(img, 0, 0, w, h);
-    canvas.toBlob((blob) => blob && download("流程图.png", blob), "image/png");
+    canvas.toBlob((blob) => blob && download(mindBoard ? "思维导图.png" : "流程图.png", blob), "image/png");
   };
 
   const alignNodes = (k: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => {
@@ -882,7 +950,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const applyTemplate = (t: FlowTemplate) => {
     const g = t.build(graph.theme);
-    const next = graph.nodes.length || graph.strokes?.length ? appendGraph(graph, g) : g;
+    const next = graph.nodes.length || graph.strokes?.length || graph.mind?.length ? appendGraph(graph, g) : g;
     commit(next); setMenu(null); setShowStarter(false); requestAnimationFrame(() => fit(next));
   };
 
@@ -916,10 +984,19 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const obstacles = [...graph.nodes.map((node) => ({ x: node.x, y: node.y, w: node.w, h: node.h })), ...(graph.strokes ?? []).map((stroke) => flowBounds({ nodes: [], edges: [], strokes: [stroke], theme: graph.theme }))].map((box) => ({ x: (box.x - view.x) * view.zoom - obstaclePadding, y: (box.y - view.y) * view.zoom - obstaclePadding, w: box.w * view.zoom + 2 * obstaclePadding, h: box.h * view.zoom + 2 * obstaclePadding }));
   const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x - 16) * view.zoom, y: (anchorBox.y - view.y - 16) * view.zoom, w: (anchorBox.w + 32) * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize, obstacles) : null;
   const reserveStyleBar = compact && !readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0 || selectedStrokes.length > 0);
+  const mindPositions = layoutMindTopics(graph.mind ?? []), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
+  const mindViewport = svgWrap.current?.getBoundingClientRect();
+  const mindRoot = (id: string) => { let topic = graph.mind?.find((item) => item.id === id), depth = 0; while (topic?.parent && depth++ < 32) topic = graph.mind?.find((item) => item.id === topic!.parent); return topic?.id; };
+  const sameTree = mindAnchor ? mindPositions.filter((item) => mindRoot(item.topic.id) === mindRoot(mindAnchor.topic.id)) : [];
+  const treeTop = mindViewport && sameTree.length ? mindViewport.top + (Math.min(...sameTree.map((item) => item.y)) - view.y) * view.zoom : 0;
+  const treeBottom = mindViewport && sameTree.length ? mindViewport.top + (Math.max(...sameTree.map((item) => item.y + item.h)) - view.y) * view.zoom : 0;
+  const windowHeight = typeof window === "undefined" ? 720 : window.innerHeight;
+  const toolbarTop = treeTop - 50 >= 64 ? treeTop - 50 : treeBottom + 8 <= windowHeight - 52 ? treeBottom + 8 : 64;
+  const mindToolbarStyle = !compact && mindAnchor && mindViewport ? { left: Math.max(165, Math.min(window.innerWidth - 165, mindViewport.left + (mindAnchor.x + mindAnchor.w / 2 - view.x) * view.zoom)), top: toolbarTop } : undefined;
 
   return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag && !["pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
-    <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
+    <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: mindBoard ? "none" : `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
       onTouchStart={(e) => {
         if (e.touches.length !== 2) return;
         if (e.target instanceof Element && e.target.closest("[data-flow-style-bar],[data-flow-template-picker],textarea")) return;
@@ -946,11 +1023,11 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
+      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} onMindSelect={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { if (mindEditing) finishMindEdit(); setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : startMindEdit} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
         onCanvasDown={(e) => {
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
-          setMenu(null);
+          setMenu(null); setMindSelected(null);
           if (tool === "pen") { startInk(e); return; }
           if (tool === "eraser") { startErase(e); return; }
           if (tool !== "select" && !readOnly) {
@@ -967,7 +1044,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           setSelected(base);
           setDrag({ kind: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y, base });
         }}
-        onNodeDown={(e, n) => {
+        onNodeDown={(e, n) => { setMindSelected(null);
           e.stopPropagation(); setMenu(null);
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (tool === "pen") { startInk(e); return; }
@@ -995,7 +1072,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           for (const c of graph.nodes) if (next.has(c.id) && isContainer(c.shape)) for (const x of graph.nodes) if (!isContainer(x.shape) && x.x >= c.x && x.y >= c.y && x.x + x.w <= c.x + c.w && x.y + x.h <= c.y + c.h) moving.add(x.id);
           if (!readOnly) setDrag({ kind: "move", ids: [...moving], startX: e.clientX, startY: e.clientY, origin: new Map(graph.nodes.filter((x) => moving.has(x.id)).map((x) => [x.id, { x: x.x, y: x.y }])), strokeOrigin: new Map((graph.strokes ?? []).filter((stroke) => moving.has(stroke.id)).map((stroke) => [stroke.id, stroke])) });
         }}
-        onEdgeDown={(e, edge) => {
+        onEdgeDown={(e, edge) => { setMindSelected(null);
           e.stopPropagation(); setMenu(null);
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (tool === "pen") { startInk(e); return; }
@@ -1028,7 +1105,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           }
           setSelected(e.shiftKey ? new Set(selected).add(edge.id) : new Set([edge.id]));
         }}
-        onStrokeDown={(e, stroke) => {
+        onStrokeDown={(e, stroke) => { setMindSelected(null);
           e.stopPropagation(); setMenu(null);
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (tool === "pen") { startInk(e); return; }
@@ -1062,7 +1139,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         return <textarea autoFocus value={editing.value} placeholder="输入文本" onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
           className={cn("absolute select-text resize-none rounded border-2 border-primary bg-surface p-1 text-center outline-none", compact ? "text-[16px]" : "text-[14px]")} style={{ left: (anchor.x - view.x) * view.zoom, top: (anchor.y - view.y) * view.zoom, width: anchor.w * view.zoom, height: Math.max(32, anchor.h * view.zoom) }} data-flow-text-editor />;
       })()}
-      {!graph.nodes.length && !graph.strokes?.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 grid place-items-center">
+      {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 grid place-items-center">
         <div className={cn("pointer-events-auto w-[min(560px,calc(100%-32px))] overflow-y-auto rounded-xl border border-[#DEE0E3] bg-surface p-4 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "max-h-[calc(100%-24px)]" : "max-h-[calc(100%-190px)]")} style={{ touchAction: "pan-y" }} onPointerDown={(e) => e.stopPropagation()} data-flow-template-picker>
           <div className="mb-3 flex items-center text-[14px] font-medium">从模板创建<button type="button" aria-label="关闭模板" onClick={() => setShowStarter(false)} className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover"><X size={16}/></button></div>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" onClick={() => applyTemplate(t)} className="rounded-lg border border-[#DEE0E3] p-2 text-left hover:border-primary dark:border-border" data-flow-template={t.id}><div className="text-[13px] font-medium">{t.label}</div><div className="mt-1 text-[11px] leading-4 text-subtle">{t.desc}</div></button>)}</div>
@@ -1158,6 +1235,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <span className={cn("bg-[#DEE0E3]", compact ? "mx-0.5 my-1 h-8 w-px shrink-0" : "mx-1 my-0.5 h-px")} />
       <button type="button" className={cn(railBtn, tool === "select" && !hand && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
       <button type="button" className={cn(railBtn, (tool === "pen" || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={tool === "pen" || tool === "eraser"} onClick={() => { setTool("pen"); setHand(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
+      <button type="button" className={railBtn} aria-label="插入思维导图" title="插入思维导图" onClick={addMindMap} data-flow-mindmap-tool><ListTree size={18}/></button>
       <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setShowStarter(false); }}><Square size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setShowStarter(false); }}><Type size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setShowStarter(false); }}><Diamond size={18} /></button>
@@ -1165,6 +1243,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       {upload && <button type="button" className={railBtn} title="插入图片（也可粘贴或拖入画板）" onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
       <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
+
+    {!readOnly && mindSelected && !mindEditing && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
+      <button type="button" className={barBtn} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}>编辑文字</button>
+      <button type="button" className={barBtn} onClick={() => addMindTopic(false)}><Plus size={14}/>子节点</button>
+      <button type="button" className={barBtn} disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}>同级节点</button>
+      <button type="button" className={barBtn} onClick={removeMindTopic}><Trash2 size={14}/>删除</button>
+    </div>}
 
     {!readOnly && (tool === "pen" || tool === "eraser") && <div role="toolbar" aria-label="画笔工具" data-flow-pen-toolbar onPointerDown={(event) => event.stopPropagation()} className={cn("absolute left-1/2 z-20 flex h-12 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-[#DEE0E3] bg-surface px-2 shadow-[0_4px_16px_rgba(31,35,41,0.12)]", compact ? "bottom-[120px]" : "bottom-5")}>
       <button type="button" aria-label="画笔模式" aria-pressed={tool === "pen" && penKind === "pen"} title="画笔" className={cn(tb, tool === "pen" && penKind === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("pen"); setMenu(null); }}><Pencil size={17}/></button>
@@ -1177,7 +1262,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </div>}
 
     {/* 左上：返回 */}
-    <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />流程图</button>
+    <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />{mindBoard ? "思维导图" : "流程图"}</button>
 
     {/* 右上：风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
     <div className={cn(floatBar, "absolute right-3 top-3 z-20")}>
@@ -1188,8 +1273,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         <div className="relative"><button type="button" aria-label="风格" title="风格" className={barBtn} onClick={() => setMenu(menu === "theme" ? null : "theme")} data-flow-theme-btn><Palette size={15} /><span className="hidden md:inline">风格</span></button>
           {menu === "theme" && <div className={cn(pop, "right-0 grid w-[300px] grid-cols-3 gap-1.5 p-2")}>{THEMES.map((t) => <button key={t.id} type="button" onClick={() => { commit({ ...graph, theme: t.id }); setMenu(null); }} className={cn("rounded-md border p-1.5 text-center text-[12px] hover:border-primary", graph.theme === t.id && "border-primary text-primary")} data-flow-theme={t.id}><span className="mb-1 block h-8 rounded" style={{ background: t.canvas, border: `1px solid #DEE0E3` }}><span className="mx-auto mt-2 block h-4 w-10" style={{ background: t.palette ? t.palette[0].split("/")[0] : t.fill, border: `${t.strokeWidth}px solid ${t.palette ? t.palette[0].split("/")[1] : t.stroke}`, borderRadius: t.radius / 2 }} /></span>{t.label}</button>)}</div>}
         </div>
-        <button type="button" aria-label="自动排版" className={barBtn} onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title="按连线关系自动排版"><Spline size={15} /><span className="hidden md:inline">自动排版</span></button>
-        <div className="relative"><button type="button" aria-label="AI 生成" className={cn(barBtn, !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? "用 AI 生成流程图" : "请先在 AI 设置中配置 API Key"} data-flow-ai-btn><Sparkles size={15} className="text-primary" /><span className="hidden md:inline">AI 生成</span></button>
+        <button type="button" aria-label="自动排版" disabled={!graph.nodes.length} className={barBtn} onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title={graph.nodes.length ? "按连线关系自动排版流程图" : "暂无流程图图形可排版"}><Spline size={15} /><span className="hidden md:inline">自动排版</span></button>
+        <div className="relative"><button type="button" aria-label={mindBoard ? "AI 生成流程图" : "AI 生成"} className={cn(barBtn, !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? "用 AI 生成流程图" : "请先在 AI 设置中配置 API Key"} data-flow-ai-btn><Sparkles size={15} className="text-primary" /><span className="hidden md:inline">{mindBoard ? "AI 生成流程图" : "AI 生成"}</span></button>
           {menu === "ai" && ai && <div className={cn(pop, "right-0 w-[360px] p-3")}>
             <textarea autoFocus value={aiText} onChange={(e) => setAiText(e.target.value)} rows={4} maxLength={1000} placeholder="描述流程，例如：用户注册流程，包含填写信息、校验手机号、校验失败重试、创建账号、发送欢迎邮件" className="w-full select-text resize-none rounded-md border p-2 text-[13px] outline-none focus:border-primary" data-flow-ai-input />
             <div className="mt-2 flex items-center gap-2"><span className="text-[12px] text-subtle">{graph.nodes.length ? "结果将追加到画布右侧" : "结果会自动排版"}</span><button type="button" disabled={busy || !aiText.trim()} onClick={() => void runAI()} className="ml-auto flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{busy && <Loader2 size={12} className="animate-spin" />}生成</button></div>
@@ -1205,7 +1290,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     {notice && <div role={notice.ok ? "status" : "alert"} className={cn("absolute left-1/2 top-16 z-20 max-w-[520px] -translate-x-1/2 rounded-md border bg-surface px-3 py-1.5 text-[12px] shadow", notice.ok ? "text-[#1F2329]" : "text-destructive")}>{notice.text}<button type="button" className="ml-2 text-subtle" onClick={() => setNotice(null)}>×</button></div>}
 
     {recovery.length > 0 && <div className="pointer-events-none absolute right-0 top-16 z-[95] flex justify-center px-3" style={{ left: !readOnly && library && !compact ? 260 : 0 }}><div ref={recoveryBannerRef} role="alert" className="pointer-events-auto flex w-full max-w-[480px] items-center gap-2 rounded-lg border border-[#ffd591] bg-[#fff7e6] px-3 py-2 text-[12px] text-[#7a4b00] shadow-md"><span>{recovery.some((item) => item.conflicts.includes("permission") || item.conflicts.includes("document")) ? "文档状态或编辑权限已变化" : "协作者修改了同一对象"}，部分操作未应用；原输入已暂存。</span><button type="button" className="ml-auto shrink-0 underline" onClick={() => setRecoveryOpen(true)}>查看未应用内容</button></div></div>}
-    {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="未应用的流程图内容"><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">未应用的流程图内容</h2><p className="mt-2 text-[13px] text-subtle">请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。</p><textarea aria-label="未应用内容" readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download("流程图未应用内容.json", new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>下载完整备份</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>继续编辑</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>已保留，清除暂存</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>丢弃并退出</button></div></div></div>}
+    {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">{mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}</h2><p className="mt-2 text-[13px] text-subtle">请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。</p><textarea aria-label="未应用内容" readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download(mindBoard ? "思维导图未应用内容.json" : "流程图未应用内容.json", new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>下载完整备份</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>继续编辑</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>已保留，清除暂存</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>丢弃并退出</button></div></div></div>}
 
     {/* 右下：撤销重做、缩放 */}
     <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
@@ -1254,6 +1339,8 @@ export function svgMarkup(graph: FlowGraph): string {
   const live = document.querySelector<SVGSVGElement>("[data-flow-editor] [data-flow-svg]");
   if (!live) return "";
   const clone = live.cloneNode(true) as SVGSVGElement;
+  clone.querySelectorAll("[data-mind-placeholder]").forEach((element) => element.remove());
+  clone.querySelectorAll("[data-mind-outline]").forEach((element) => element.setAttribute("stroke", "transparent"));
   const b = flowBounds(graph);
   clone.setAttribute("viewBox", `${b.x - 40} ${b.y - 40} ${b.w + 80} ${b.h + 80}`);
   clone.setAttribute("width", String(b.w + 80));

@@ -1,3 +1,4 @@
+import { canonicalMindTopic, layoutMindTopics, mindIntentWrites, mindKey, readMindTopics, storedMindTopic, type MindTopic } from "./mindmap";
 /**
  * 可编辑流程图（文档中的 flowchart 块）。
  *
@@ -16,7 +17,7 @@ export type EdgeKind = "orthogonal" | "straight" | "curve";
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
 export interface FlowStroke { id: string; points: { x: number; y: number }[]; color: string; width: number; marker?: true }
-export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; strokes?: FlowStroke[]; theme: string }
+export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; strokes?: FlowStroke[]; mind?: MindTopic[]; theme: string }
 export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean; appliedKeys: string[] };
 
 export const FC_VERSION = "fc.v";
@@ -160,7 +161,8 @@ export function readFlow(props: Record<string, string>): FlowGraph {
   }
   const ids = new Set(nodes.map((n) => n.id));
   nodes.sort((a, b) => (a.z ?? 0) - (b.z ?? 0) || a.id.localeCompare(b.id));
-  return { nodes, edges: edges.filter((e) => ids.has(e.from) && ids.has(e.to)).sort((a, b) => a.id.localeCompare(b.id)), ...(strokes.length ? { strokes: strokes.sort((a, b) => a.id.localeCompare(b.id)) } : {}), theme: themeOf(props[FC_THEME]).id };
+  const mind = readMindTopics(props);
+  return { nodes, edges: edges.filter((e) => ids.has(e.from) && ids.has(e.to)).sort((a, b) => a.id.localeCompare(b.id)), ...(strokes.length ? { strokes: strokes.sort((a, b) => a.id.localeCompare(b.id)) } : {}), ...(mind.length ? { mind } : {}), theme: themeOf(props[FC_THEME]).id };
 }
 
 function canonicalStroke(stroke: FlowStroke): string | null {
@@ -205,6 +207,11 @@ export function flowWrites(props: Record<string, string>, next: FlowGraph): Reco
     const seen = new Set<string>();
     for (const stroke of next.strokes) { seen.add(stroke.id); const value = canonicalStroke(stroke); if (value && storedStroke(props[strokeKey(stroke.id)], stroke.id) !== value) writes[strokeKey(stroke.id)] = value; if (value && stroke.marker && !props[markerKey(stroke.id)]) writes[markerKey(stroke.id)] = "1"; }
     for (const [key, value] of Object.entries(props)) if (key.startsWith("fc.s.") && value && !seen.has(key.slice(5))) writes[key] = "";
+  }
+  if (next.mind) {
+    const seen = new Set<string>();
+    for (const topic of next.mind) { seen.add(topic.id); const value = canonicalMindTopic(topic), existing = storedMindTopic(props[mindKey(topic.id)], topic.id); if (value && (!existing || canonicalMindTopic(existing) !== value)) writes[mindKey(topic.id)] = value; }
+    for (const [key, value] of Object.entries(props)) if (key.startsWith("fc.m.") && value && !seen.has(key.slice(5))) writes[key] = "";
   }
   for (const [key, value] of Object.entries(props)) {
     if (!value) continue;
@@ -317,6 +324,11 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
     if (now !== after) writes[key] = after ?? "";
   }
 
+  if (next.mind !== undefined) {
+    const mindResult = mindIntentWrites(props, base.mind ?? [], next.mind);
+    Object.assign(writes, mindResult.writes); mindResult.conflicts.forEach((key) => conflicts.add(key));
+  }
+
   if (base.theme !== next.theme) {
     const now = themeOf(props[FC_THEME]).id;
     if (now !== base.theme && now !== next.theme) conflicts.add(FC_THEME);
@@ -327,7 +339,7 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
 }
 
 let counter = 0;
-export function newFlowId(prefix: "n" | "e" | "s"): string {
+export function newFlowId(prefix: "n" | "e" | "s" | "m"): string {
   counter = (counter + 1) % 1_000_000;
   return `${prefix}${Date.now().toString(36)}${counter.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -340,6 +352,7 @@ export function flowBounds(graph: FlowGraph): { x: number; y: number; w: number;
     const x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
     boxes.push({ x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y });
   }
+  for (const item of layoutMindTopics(graph.mind ?? [])) boxes.push({ x: item.x, y: item.y, w: item.w, h: item.h });
   if (!boxes.length) return { x: 0, y: 0, w: 400, h: 240 };
   const x = Math.min(...boxes.map((b) => b.x)), y = Math.min(...boxes.map((b) => b.y));
   return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
@@ -553,6 +566,9 @@ export function toMermaid(graph: FlowGraph): string {
   const ids = new Map(graph.nodes.map((n, i) => [n.id, `N${i + 1}`]));
   const lines = ["flowchart TD"];
   for (const n of graph.nodes) { const [a, b] = wrap[n.shape]; lines.push(`  ${ids.get(n.id)}${a}${q(n.text || (n.shape === "image" ? "图片" : " "))}${b}`); }
+  const mindIds = new Map((graph.mind ?? []).map((topic, index) => [topic.id, `M${index + 1}`]));
+  for (const topic of graph.mind ?? []) lines.push(`  ${mindIds.get(topic.id)}[${q(topic.text || " ")}]`);
+  for (const topic of graph.mind ?? []) if (topic.parent && mindIds.has(topic.parent)) lines.push(`  ${mindIds.get(topic.parent)} --- ${mindIds.get(topic.id)}`);
   for (const e of graph.edges) {
     const arrow = e.arrow === "none" ? (e.dashed ? "-.-" : "---") : e.arrow === "both" ? (e.dashed ? "<-.->" : "<-->") : e.dashed ? "-.->" : "-->";
     lines.push(`  ${ids.get(e.from)} ${arrow}${e.label ? `|${q(e.label)}|` : ""} ${ids.get(e.to)}`);

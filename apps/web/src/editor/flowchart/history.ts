@@ -8,7 +8,7 @@ export type FlowHistory = { before: FlowGraph; after: FlowGraph };
  * become part of a later undo/redo operation.
  */
 export function appliedFlowHistory(before: FlowGraph, after: FlowGraph, keys: readonly string[]): FlowHistory | null {
-  const selected = new Set(keys.filter((key) => key === "fc.theme" || key.startsWith("fc.n.") || key.startsWith("fc.e.") || key.startsWith("fc.s.")));
+  const selected = new Set(keys.filter((key) => key === "fc.theme" || key.startsWith("fc.n.") || key.startsWith("fc.e.") || key.startsWith("fc.s.") || key.startsWith("fc.m.")));
   if (!selected.size) return null;
   const restore = <T extends { id: string }>(current: T[], original: T[], prefix: string): T[] => {
     const old = new Map(original.map((item) => [item.id, item]));
@@ -18,7 +18,7 @@ export function appliedFlowHistory(before: FlowGraph, after: FlowGraph, keys: re
     return result;
   };
   return {
-    before: { nodes: restore(after.nodes, before.nodes, "fc.n."), edges: restore(after.edges, before.edges, "fc.e."), ...(after.strokes || before.strokes ? { strokes: restore(after.strokes ?? [], before.strokes ?? [], "fc.s.") } : {}), theme: selected.has("fc.theme") ? before.theme : after.theme },
+    before: { nodes: restore(after.nodes, before.nodes, "fc.n."), edges: restore(after.edges, before.edges, "fc.e."), ...(after.strokes || before.strokes ? { strokes: restore(after.strokes ?? [], before.strokes ?? [], "fc.s.") } : {}), ...(after.mind || before.mind ? { mind: restore(after.mind ?? [], before.mind ?? [], "fc.m.") } : {}), theme: selected.has("fc.theme") ? before.theme : after.theme },
     after,
   };
 }

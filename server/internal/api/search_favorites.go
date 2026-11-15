@@ -140,7 +140,10 @@ func searchableDocument(view collab.DocView, needle string) bool {
 			}
 			continue
 		case "flowchart":
-			// Editable flowchart: node text and edge labels are stored per object (fc.n.* / fc.e.*).
+			// Editable flowchart: node text, mind-map topics and edge labels are stored per object.
+			if searchableMindTopics(block.Props, contains) {
+				return true
+			}
 			for key, raw := range block.Props {
 				if raw == "" || !(strings.HasPrefix(key, "fc.n.") || strings.HasPrefix(key, "fc.e.")) {
 					continue
