@@ -74,7 +74,39 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean } | null>(null);
   const lastFindNavigation = useRef<number | null>(null);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const drag = dragSelection.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-table-position]");
+      if (!cell || !root.current?.contains(cell)) return;
+      const [r, c] = (cell.dataset.tablePosition ?? "").split(":").map(Number);
+      if (!Number.isInteger(r) || !Number.isInteger(c)) return;
+      if (!drag.active && r === drag.r && c === drag.c) return;
+      drag.active = true;
+      setRange(normRange({ r0: drag.r, c0: drag.c, r1: r, c1: c }));
+      window.getSelection()?.removeAllRanges();
+    };
+    const stop = (event: PointerEvent) => {
+      const drag = dragSelection.current;
+      if (drag?.pointerId !== event.pointerId) return;
+      if (drag.active && document.activeElement instanceof HTMLTextAreaElement && root.current?.contains(document.activeElement)) {
+        const input = document.activeElement;
+        input.setSelectionRange(input.selectionEnd, input.selectionEnd);
+      }
+      dragSelection.current = null;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, []);
   useLayoutEffect(() => {
     if (!findCells.length) return;
     root.current?.querySelectorAll<HTMLTextAreaElement>('[data-find-match="true"] [data-table-cell]').forEach(syncFindOverlay);
@@ -164,7 +196,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                 const activeFind = found?.ranges.some((range) => range.active) ?? false;
                 const showMirror = !!found && !(editing?.r === ri && editing.c === ci);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} data-table-position={`${ri}:${ci}`} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
                     {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap break-words px-2 py-[8.5px]">{found ? tableFindText(cell, found.ranges) : cell}</span> : (
                       <div className="relative grid">
                       <div aria-hidden="true" className="invisible col-start-1 row-start-1 max-h-[237px] min-h-[39px] overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]">{cell}{"\u200b"}</div>
@@ -176,6 +208,11 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                         onFocus={() => { setFocus({ r: ri, c: ci }); setEditing({ r: ri, c: ci }); }}
                         onBlur={(event) => { syncFindOverlay(event.currentTarget); setEditing(null); }}
                         onScroll={(event) => syncFindOverlay(event.currentTarget)}
+                        onPointerDown={(event) => {
+                          if (event.pointerType === "mouse" && event.button === 0 && !event.shiftKey) {
+                            dragSelection.current = { pointerId: event.pointerId, r: ri, c: ci, active: false };
+                          }
+                        }}
                         onKeyDown={(e) => {
                           if (e.key !== "Tab" || e.nativeEvent.isComposing) return;
                           const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
@@ -196,7 +233,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
-                        className={cn("relative col-start-1 row-start-1 block h-full max-h-[237px] min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none focus:shadow-[inset_0_0_0_2px_#3370FF]", showMirror && "text-transparent")}
+                        className={cn("relative col-start-1 row-start-1 block h-full max-h-[237px] min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none", multi && sel ? "caret-transparent" : "focus:shadow-[inset_0_0_0_2px_#3370FF]", showMirror && "text-transparent")}
                         data-table-cell={`${ri}:${ci}`}
                       />
                       </div>
