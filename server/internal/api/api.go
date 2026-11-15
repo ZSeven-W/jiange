@@ -160,6 +160,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/drive/rename/{id}":                         s.postDriveRename,
 		"POST /api/slides/{id}/pages":                         s.postSlidesPage,
 		"POST /api/slides/{id}/pages/insert":                  s.insertSlidesPage,
+		"POST /api/slides/{id}/pages/reorder":                 s.reorderSlides,
 		"POST /api/slides/{id}/pages/{pid}/duplicate":         s.duplicateSlidesPage,
 		"POST /api/slides/{id}/pages/{pid}/delete":            s.deleteSlidesPageVersion,
 		"PATCH /api/slides/{id}/pages/{pid}/visibility":       s.setSlidesPageVisibility,

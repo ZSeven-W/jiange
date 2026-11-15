@@ -474,7 +474,7 @@ export const slidesApi = {
   update: (deckId: number, pid: number, userId: number, title: string, body: string, background: string, layout: SlideLayout, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
     request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pid}/content`, { title, body, background, layout, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }, undefined, { "X-Jiange-User-Id": String(userId) }),
   removeVersion: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<{ deletedId: number; slidesId: number; revision: number }>("POST", `/api/slides/${deckId}/pages/${pageId}/delete`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
-  move: (pid: number, pos: number) => request<void>("POST", `/api/slides/pages/${pid}/move`, { pos }),
+  reorder: (deckId: number, userId: number, expected: { id: number; pos: number }[], pageId: number, to: number) => request<{ positions: unknown }>("POST", `/api/slides/${deckId}/pages/reorder`, { expected, pageId, to }, undefined, { "X-Jiange-User-Id": String(userId) }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
     const data = new FormData(); data.append("file", file);
     const res = await fetch(`/api/slides/${deckId}/images`, { method: "POST", body: data, signal, headers: { "X-Jiange-Upload": "1", "X-Jiange-User-Id": String(userId) } });
