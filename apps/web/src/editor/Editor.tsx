@@ -1753,13 +1753,19 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
     const location = /^table:(\d+):(\d+):/.exec(key);
-    const aliases = location ? findBatchHistory.capture(d, [{ client: Number(location[1]), clock: Number(location[2]) }]) : [];
+    const block = location ? { client: Number(location[1]), clock: Number(location[2]) } : null;
+    const aliases = block ? findBatchHistory.capture(d, [block]) : [];
+    if (block && tableStructureHistory.beforeEditStep(d, block, key, redo) === "conflict") {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
+      return;
+    }
     const result = applyTableHistory(d, sync.client, um, tableHistory, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
       return;
     }
     setTableHistoryConflict(null);
+    if (block) tableStructureHistory.afterEditStep(d, block, key, redo, result.ops);
     findBatchHistory.finishTableChange(d, key, redo, aliases);
     sync.client.push(result.ops);
     force((x) => x + 1);
@@ -1773,6 +1779,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
       return;
     }
+    const location = /^table-structure:(\d+):(\d+):/.exec(key);
+    if (location && result.rebase) tableHistory.rebaseStructure(sync.client, `table:${location[1]}:${location[2]}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
     setTableHistoryConflict(null); sync.client.push(result.ops); force((x) => x + 1); publish();
   };
   findBatchHistoryActionRef.current = (key, redo) => {
@@ -1947,7 +1955,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         role="textbox"
         aria-multiline
         data-editor
-        className="outline-none"
+        className={cn("outline-none", (columnNotice || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
         onKeyDown={onKeyDown}
         onCopy={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e); }}
         onCut={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e, true); }}
@@ -1988,6 +1996,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
               if (!result.ok) return result.message;
               if (!result.changed) return null;
               const aliases = findBatchHistory.capture(doc, [b]);
+              const structureBefore = tableStructureHistory.capture(doc, b, um);
               const tx = new Tx(doc);
               writeTable(tx, b, current.props, result.rows, doc.client);
               if (!tx.ops.length) return null;
@@ -1997,6 +2006,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
               findBatchHistory.recordTableChange(key, aliases, false);
               um.seal();
               um.recordMarker(key, false);
+              tableStructureHistory.recordEdit(doc, b, key, structureBefore, false, um);
               sync.client.push(tx.ops);
               um.seal();
               force((x) => x + 1);
@@ -2080,6 +2090,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                   const previousVersion = doc.propVersion(b, "tableData");
                   const historyGuard = tableHistoryGuard(doc, b);
                   const aliases = findBatchHistory.capture(doc, [b]);
+                  const structureBefore = tableStructureHistory.capture(doc, b, um);
                   const rows = applyTableEdit(before, r, c, v);
                   // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
                   writeTable(tx, b, info.props, rows, doc.client);
@@ -2091,6 +2102,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                     const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, historyGuard, kind, Date.now(), um.peekMarker(false) === key);
                     findBatchHistory.recordTableChange(key, aliases, merged);
                     um.recordMarker(key, merged);
+                    tableStructureHistory.recordEdit(doc, b, key, structureBefore, merged, um);
                   }
                   sync.client.push(tx.ops);
                   force((x) => x + 1);

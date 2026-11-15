@@ -65,6 +65,21 @@ export class TableCellHistory {
     }
   }
 
+  /** A verified structural undo/redo may recreate the same logical registers at new versions. */
+  rebaseStructure(doc: object, tablePrefix: string, logicalVersion: Version, actualVersion: Version, logicalGuard: Version, actualGuard: Version): void {
+    const histories = this.sessions.get(doc);
+    if (!histories) return;
+    for (const [key, history] of histories) {
+      if (!key.startsWith(tablePrefix)) continue;
+      for (const entry of [history.undo.at(-1), history.redo.at(-1)]) {
+        if (entry && entry.expected === logicalVersion && entry.typeVersion === logicalGuard) {
+          entry.expected = actualVersion;
+          entry.typeVersion = actualGuard;
+        }
+      }
+    }
+  }
+
   discard(doc: object, key: string, redo: boolean): void {
     const histories = this.sessions.get(doc);
     const history = histories?.get(key);
