@@ -7,6 +7,41 @@ const page: SlidesPage = { id: 1, slidesId: 2, pos: 1, title: "", body: "", back
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("slide drafts", () => {
+  it("holds unsent edits until permission is verified and then saves the latest draft", async () => {
+    let allowed = false;
+    const write = vi.fn((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {}, () => {}, () => allowed);
+    q.edit(page, { title: "A" });
+    q.edit(page, { title: "AB", body: "正文" });
+    expect(q.get(page).state).toBe("pending");
+    expect(q.hasUnsaved()).toBe(true);
+    expect(q.unsavedDrafts()[0].content).toMatchObject({ title: "AB", body: "正文" });
+    q.resumePending();
+    expect(write).not.toHaveBeenCalled();
+    allowed = true;
+    q.resumePending();
+    await tick();
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0][1]).toMatchObject({ title: "AB", body: "正文" });
+    expect(q.get(page).state).toBe("saved");
+  });
+  it("does not send newer edits if verification starts during an in-flight save", async () => {
+    let allowed = true;
+    let finish!: (saved: SlidesPage) => void;
+    const write = vi.fn().mockImplementationOnce((base: SlidesPage, content: SlideContent) => new Promise<SlidesPage>((resolve) => { finish = () => resolve({ ...base, ...content, revision: base.revision + 1 }); }))
+      .mockImplementation((base: SlidesPage, content: SlideContent) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }));
+    const q = new SlidesDraftQueue(write, () => {}, () => {}, () => {}, () => allowed);
+    q.edit(page, { title: "A" });
+    allowed = false;
+    q.edit(page, { title: "AB" });
+    finish(page); await tick();
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(q.get(page)).toMatchObject({ state: "pending", content: { title: "AB" } });
+    allowed = true; q.resumePending(); await tick();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[1][0].revision).toBe(2);
+    expect(q.get(page)).toMatchObject({ state: "saved", content: { title: "AB" } });
+  });
   it("saves and undoes layout without losing existing title, body or notes", async () => {
     const source = { ...page, title: "标题", body: "保留正文", notes: "备注" };
     const q = new SlidesDraftQueue((base, content) => Promise.resolve({ ...base, ...content, revision: base.revision + 1 }), () => {}, () => {});

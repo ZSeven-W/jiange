@@ -3,7 +3,7 @@ import { ApiError, type SlidesPage } from "@/lib/api";
 export type SlideContent = Pick<SlidesPage, "title" | "body" | "background" | "layout" | "notes" | "shapes">;
 const sameShapes = (a: SlideContent["shapes"], b: SlideContent["shapes"]) => a.length === b.length && a.every((item, i) => { const other = b[i]; return item.id === other.id && item.kind === other.kind && item.x === other.x && item.y === other.y && item.color === other.color && (item.width ?? 16) === (other.width ?? 16) && (item.height ?? 20) === (other.height ?? 20) && (item.rotation ?? 0) === (other.rotation ?? 0) && (item.text ?? "") === (other.text ?? "") && (item.fontSize ?? 24) === (other.fontSize ?? 24) && (item.bold ?? false) === (other.bold ?? false) && (item.align ?? "left") === (other.align ?? "left") && item.fileId === other.fileId; });
 export const sameSlideContent = (a: SlideContent, b: SlideContent) => a.title === b.title && a.body === b.body && a.background === b.background && (a.layout ?? "") === (b.layout ?? "") && a.notes === b.notes && sameShapes(a.shapes, b.shapes);
-export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "conflict" | "unknown" };
+export type SlideDraft = { page: SlidesPage; content: SlideContent; state: "saved" | "saving" | "pending" | "conflict" | "unknown" };
 type HistoryEntry = { content: SlideContent; batchId?: number };
 type History = { undo: HistoryEntry[]; redo: HistoryEntry[]; group: string | null; at: number };
 const HISTORY_LIMIT = 100;
@@ -19,11 +19,24 @@ export class SlidesDraftQueue {
     private readonly onSaved: (page: SlidesPage) => void,
     onChange: () => void,
     private readonly onUserEdit: () => void = () => {},
+    private readonly mayWrite: () => boolean = () => true,
   ) { this.onChange = onChange; }
 
   dispose() { this.onChange = () => {}; }
 
   hasUnsaved() { return [...this.drafts.values()].some((draft) => draft.state !== "saved"); }
+
+  /** Resume only writes that have not been sent, after permissions are verified. */
+  resumePending() {
+    if (!this.mayWrite()) return;
+    for (const [id, draft] of this.drafts) {
+      if (draft.state !== "pending") continue;
+      draft.state = "saved";
+      void this.save(id);
+    }
+  }
+
+  unsavedDrafts() { return [...this.drafts.values()].filter((draft) => draft.state !== "saved"); }
 
   get(page: SlidesPage): SlideDraft {
     const current = this.drafts.get(page.id);
@@ -164,6 +177,7 @@ export class SlidesDraftQueue {
   private async save(id: number) {
     const current = this.drafts.get(id);
     if (!current || current.state !== "saved") return;
+    if (!this.mayWrite()) { current.state = "pending"; this.onChange(); return; }
     const sent = { ...current.content };
     const base = current.page;
     current.state = "saving";

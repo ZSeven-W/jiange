@@ -29,6 +29,10 @@ describe("two-column creation preset", () => {
     expect(selected).not.toContain("调整图形左上边界");
     const unselected = renderToStaticMarkup(<SlideShapes shapes={TWO_COLUMN_SHAPES} editable={false} selected={null}/>);
     expect(unselected).not.toContain("<textarea");
+    const checking = renderToStaticMarkup(<SlideShapes shapes={TWO_COLUMN_SHAPES} editable={false} textEditable selected="preset-two-left"/>);
+    expect(checking).toContain('aria-label="文本框内容"');
+    expect(checking).not.toMatch(/<textarea[^>]*readonly/i);
+    expect(checking).not.toContain("调整图形左上边界");
   });
   it("moves existing title and body into editable columns without losing other objects", () => {
     const extra = { id: "existing", kind: "rectangle" as const, x: 2, y: 2, color: "#3370ff" };

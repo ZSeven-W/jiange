@@ -18,9 +18,10 @@ const handles: { id: ResizeHandle; label: string; left: string; top: string; cur
   { id: "w", label: "左", left: "0%", top: "50%", cursor: "ew-resize" },
 ];
 
-export function SlideShapes({ shapes, editable, selected, onSelect, onChange, onTextChange, onTextBlur, scale = 1 }: {
+export function SlideShapes({ shapes, editable, textEditable = editable, selected, onSelect, onChange, onTextChange, onTextBlur, scale = 1 }: {
   shapes: SlideShape[];
   editable: boolean;
+  textEditable?: boolean;
   selected: string | null;
   onSelect?: (id: string) => void;
   onChange?: (shape: SlideShape) => void;
@@ -49,7 +50,7 @@ export function SlideShapes({ shapes, editable, selected, onSelect, onChange, on
       onPointerCancel={() => { drag.current = null; setPreview(null); }}
       onClick={(event) => { if (event.detail === 0) onSelect?.(shape.id); }}
       onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; if (move) { event.preventDefault(); onChange?.({ ...shape, x: clamp(shape.x + move[0], 100 - (shape.width ?? 16)), y: clamp(shape.y + move[1], 100 - (shape.height ?? 20)) }); } }}>{editingText ? <GripHorizontal size={14}/> : graphic}</button>
-    {editingText && <textarea autoFocus readOnly={!editable} aria-label="文本框内容" data-slide-history maxLength={1000} value={item.text ?? ""} onChange={(event) => { if (editable) onTextChange?.(item.id, event.target.value); }} onBlur={onTextBlur} placeholder={placeholder ?? "输入文字"} className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[0.4cqw] py-[0.2cqw] leading-[1.3] outline-none placeholder:text-[#a3aab3]" style={textStyle}/>}
+    {editingText && <textarea autoFocus readOnly={!textEditable} aria-label="文本框内容" data-slide-history maxLength={1000} value={item.text ?? ""} onChange={(event) => { if (textEditable) onTextChange?.(item.id, event.target.value); }} onBlur={onTextBlur} placeholder={placeholder ?? "输入文字"} className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[0.4cqw] py-[0.2cqw] leading-[1.3] outline-none placeholder:text-[#a3aab3]" style={textStyle}/>}
     {editable && selected === item.id && handles.map((handle) => <button key={handle.id} type="button" aria-label={`调整图形${handle.label}边界`} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: handle.left, top: handle.top, transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: handle.cursor }}
       onPointerDown={(event) => { const canvas = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]"); if (!canvas) return; const rect = canvas.getBoundingClientRect(); if (!rect.width || !rect.height) return; event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); resizing.current = { shape, handle: handle.id, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; }}
       onPointerMove={(event) => { const d = resizing.current; if (!d || d.shape.id !== shape.id || d.handle !== handle.id) return; setPreview(resizeSlideShape(d.shape, d.handle, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); }}
