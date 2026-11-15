@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GripHorizontal } from "lucide-react";
 import type { SlideShape } from "@/lib/api";
-import { SlideShapeGraphic } from "./slide-shape-catalog";
+import { isLineSlideShape, SlideShapeGraphic } from "./slide-shape-catalog";
 import { resizeSlideShape, type ResizeHandle } from "./slides-shape-resize";
+import { moveSlideLineEndpoint, type LineEndpoint } from "./slides-line-endpoints";
 import { slidePresetControlLabel, slidePresetPlaceholder } from "./slides-layout-preset";
 
 const clamp = (value: number, max: number) => Math.round(Math.min(max, Math.max(0, value)) * 10) / 10;
@@ -31,7 +32,9 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
 }) {
   const drag = useRef<{ shape: SlideShape; startX: number; startY: number; width: number; height: number } | null>(null);
   const resizing = useRef<{ shape: SlideShape; handle: ResizeHandle; startX: number; startY: number; width: number; height: number } | null>(null);
+  const lineDrag = useRef<{ shape: SlideShape; endpoint: LineEndpoint; pointer: number; startX: number; startY: number; width: number; height: number } | null>(null);
   const [preview, setPreview] = useState<SlideShape | null>(null);
+  useEffect(() => { if (!editable) { drag.current = null; resizing.current = null; lineDrag.current = null; setPreview(null); } }, [editable]);
   return <>{shapes.map((shape) => {
     const item = preview?.id === shape.id ? preview : shape;
     const placeholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
@@ -39,6 +42,7 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
     const graphic = item.kind === "text" ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
     const style = { left: `${item.x}%`, top: `${item.y}%`, width: `${item.width ?? 16}%`, height: `${item.height ?? 20}%`, transform: `rotate(${item.rotation ?? 0}deg)` };
     const editingText = item.kind === "text" && selected === item.id;
+    const line = item.kind !== "text" && item.kind !== "image" && isLineSlideShape(item.kind);
     // Keep the active textarea mounted across temporary permission checks so
     // a background refetch does not discard focus or the browser's selection.
     if (!editable && !editingText) return <div key={item.id} className="pointer-events-none absolute" style={style}>{graphic}</div>;
@@ -51,7 +55,13 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
       onClick={(event) => { if (event.detail === 0) onSelect?.(shape.id); }}
       onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; if (move) { event.preventDefault(); onChange?.({ ...shape, x: clamp(shape.x + move[0], 100 - (shape.width ?? 16)), y: clamp(shape.y + move[1], 100 - (shape.height ?? 20)) }); } }}>{editingText ? <GripHorizontal size={14}/> : graphic}</button>
     {editingText && <textarea autoFocus readOnly={!textEditable} aria-label="文本框内容" data-slide-history maxLength={1000} value={item.text ?? ""} onChange={(event) => { if (textEditable) onTextChange?.(item.id, event.target.value); }} onBlur={onTextBlur} placeholder={placeholder ?? "输入文字"} className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[0.4cqw] py-[0.2cqw] leading-[1.3] outline-none placeholder:text-[#a3aab3]" style={textStyle}/>}
-    {editable && selected === item.id && handles.map((handle) => <button key={handle.id} type="button" aria-label={`调整图形${handle.label}边界`} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: handle.left, top: handle.top, transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: handle.cursor }}
+    {editable && selected === item.id && line && (["start", "end"] as const).map((endpoint) => <button key={endpoint} type="button" aria-label={endpoint === "start" ? "调整线条起点" : "调整线条终点"} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: endpoint === "start" ? "5%" : "95%", top: "50%", transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: "crosshair" }}
+      onPointerDown={(event) => { const rect = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]")?.getBoundingClientRect(); if (!rect?.width || !rect.height) return; event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); lineDrag.current = { shape, endpoint, pointer: event.pointerId, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; }}
+      onPointerMove={(event) => { const d = lineDrag.current; if (!d || d.pointer !== event.pointerId || d.shape.id !== shape.id || d.endpoint !== endpoint) return; setPreview(moveSlideLineEndpoint(d.shape, endpoint, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); }}
+      onPointerUp={(event) => { const d = lineDrag.current; if (!d || d.pointer !== event.pointerId || d.shape.id !== shape.id || d.endpoint !== endpoint) return; if (event.clientX !== d.startX || event.clientY !== d.startY) onChange?.(moveSlideLineEndpoint(d.shape, endpoint, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); lineDrag.current = null; setPreview(null); }}
+      onPointerCancel={(event) => { if (lineDrag.current?.pointer === event.pointerId) { lineDrag.current = null; setPreview(null); } }} onLostPointerCapture={(event) => { if (lineDrag.current?.pointer === event.pointerId) { lineDrag.current = null; setPreview(null); } }}
+      onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; const rect = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]")?.getBoundingClientRect(); if (!move || !rect?.width || !rect.height) return; event.preventDefault(); onChange?.(moveSlideLineEndpoint(shape, endpoint, move[0] * rect.width / 100, move[1] * rect.height / 100, rect.width, rect.height)); }}><span className="size-2 rounded-full border border-[#3370ff] bg-white shadow-sm"/></button>)}
+    {editable && selected === item.id && !line && handles.map((handle) => <button key={handle.id} type="button" aria-label={`调整图形${handle.label}边界`} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: handle.left, top: handle.top, transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: handle.cursor }}
       onPointerDown={(event) => { const canvas = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]"); if (!canvas) return; const rect = canvas.getBoundingClientRect(); if (!rect.width || !rect.height) return; event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); resizing.current = { shape, handle: handle.id, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; }}
       onPointerMove={(event) => { const d = resizing.current; if (!d || d.shape.id !== shape.id || d.handle !== handle.id) return; setPreview(resizeSlideShape(d.shape, d.handle, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); }}
       onPointerUp={(event) => { const d = resizing.current; if (!d || d.shape.id !== shape.id || d.handle !== handle.id) return; if (event.clientX !== d.startX || event.clientY !== d.startY) onChange?.(resizeSlideShape(d.shape, d.handle, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); resizing.current = null; setPreview(null); }}
