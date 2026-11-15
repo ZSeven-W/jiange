@@ -52,4 +52,8 @@ describe("mind map rendering", () => {
       expect(markup).toContain('fill="#1f2329"');
     }
   });
+  it("renders text highlight and formatting in exported SVG", () => {
+    const markup = renderToStaticMarkup(<svg><MindMapSvg topics={[topics[0]]} textFormats={{ r: { bold: true, italic: true, underline: true, strike: true, highlight: "#fff5c7", align: "right" } }}/></svg>);
+    expect(markup).toContain('fill="#fff5c7"'); expect(markup).toContain('font-weight="700"'); expect(markup).toContain('font-style="italic"'); expect(markup).toContain('text-decoration="underline line-through"'); expect(markup).toContain('text-anchor="end"');
+  });
 });

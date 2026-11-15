@@ -7,10 +7,12 @@ export function createSessionQueryClient(authClient: QueryClient): QueryClient {
 }
 
 const AUTH_SIGNAL = "jiange:auth-session-changed";
+const AUTH_LOCAL_SIGNAL = "jiange:auth-session-changed-local";
 
 /** Notify other same-origin tabs without disclosing any account or draft data. */
 export function announceAuthChange(): void {
   if (typeof window === "undefined") return;
+  try { window.dispatchEvent?.(new Event(AUTH_LOCAL_SIGNAL)); } catch { /* Keep authentication independent of listeners. */ }
   try {
     if (typeof BroadcastChannel !== "undefined") {
       const channel = new BroadcastChannel(AUTH_SIGNAL);
@@ -21,6 +23,13 @@ export function announceAuthChange(): void {
   } catch { /* Fall back to the browser storage event. */ }
   try { window.localStorage.setItem(AUTH_SIGNAL, `${Date.now()}-${Math.random()}`); }
   catch { /* No inter-tab channel is available; do not block login. */ }
+}
+
+/** In-memory data may subscribe without triggering the app's cross-tab revalidation. */
+export function subscribeLocalAuthChanges(onChange: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
+  window.addEventListener(AUTH_LOCAL_SIGNAL, onChange);
+  return () => window.removeEventListener(AUTH_LOCAL_SIGNAL, onChange);
 }
 
 /** Subscribe only to an opaque signal; identity is revalidated with /api/me. */

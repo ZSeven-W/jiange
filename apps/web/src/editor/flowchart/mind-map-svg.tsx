@@ -1,10 +1,11 @@
-import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTopic } from "./mindmap";
+import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
 import type { MindDrop } from "./mindmap-move";
 
-export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   styles?: MindStyles;
   paints?: MindPaints;
+  textFormats?: MindTextFormats;
   collapsed?: ReadonlySet<string>;
   selected?: string | null;
   editing?: { id: string; value: string } | null;
@@ -31,15 +32,19 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new S
       return <g key={`edge-${node.topic.id}`}><path d={`M${startX},${startY} H${mid} V${endY}`} {...lineProps(paints[parent.topic.id])}/><path data-mind-branch={node.topic.id} d={`M${mid},${endY} H${node.x}`} {...lineProps(paints[node.topic.id])}/></g>;
     })}
     {nodes.map((node) => {
-      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), centered = root || shape !== "text";
+      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], format = textFormats[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), align = format?.align ?? (root || shape !== "text" ? "center" : "left");
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
+      const textX = align === "center" ? node.x + node.w / 2 : align === "right" ? node.x + node.w - 8 : node.x + 8, anchor = align === "center" ? "middle" : align === "right" ? "end" : "start";
+      const labelWidth = [...label].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? size : size * 0.58), 0), highlightX = align === "center" ? textX - labelWidth / 2 : align === "right" ? textX - labelWidth : textX;
+      const decoration = [format?.underline ? "underline" : "", format?.strike ? "line-through" : ""].filter(Boolean).join(" ");
       return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic, event); } : undefined} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); event.stopPropagation(); onContextMenu(node.topic, event); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
         <title>{node.topic.text}</title>
         <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
         <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={active ? "#3370ff" : "transparent"} strokeWidth={2}/>
-        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={centered ? node.x + node.w / 2 : node.x + 8} y={node.y + node.h / 2} dominantBaseline="central" textAnchor={centered ? "middle" : "start"} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : "#a3a8af"} fontSize={size}>{label || (onSelect ? "输入文本" : "")}</text>}
+        {!isEditing && !!label && format?.highlight && <rect x={highlightX - 2} y={node.y + node.h / 2 - size * 0.6} width={labelWidth + 4} height={size * 1.2} fill={format.highlight} pointerEvents="none"/>}
+        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={textX} y={node.y + node.h / 2} dominantBaseline="central" textAnchor={anchor} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : "#a3a8af"} fontSize={size} fontWeight={format?.bold ? 700 : undefined} fontStyle={format?.italic ? "italic" : undefined} textDecoration={decoration || undefined}>{label || (onSelect ? "输入文本" : "")}</text>}
         {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={node.h}>
-          <input autoFocus aria-label="思维导图节点文字" maxLength={500} value={editing.value} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onDraft?.(event.target.value)} onBlur={() => onFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); onFinish?.(); } if (event.key === "Escape") { event.preventDefault(); onCancel?.(); } }} style={{ width: "100%", height: "100%", boxSizing: "border-box", border: "2px solid #3370ff", outline: "none", padding: "0 6px", borderRadius: 3, fontSize: size, textAlign: centered ? "center" : "left", color: style?.color ?? "#1f2329", background: "#fff" }}/>
+          <input autoFocus aria-label="思维导图节点文字" maxLength={500} value={editing.value} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onDraft?.(event.target.value)} onBlur={() => onFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); onFinish?.(); } if (event.key === "Escape") { event.preventDefault(); onCancel?.(); } }} style={{ width: "100%", height: "100%", boxSizing: "border-box", border: "2px solid #3370ff", outline: "none", padding: "0 6px", borderRadius: 3, fontSize: size, fontWeight: format?.bold ? 700 : undefined, fontStyle: format?.italic ? "italic" : undefined, textDecoration: decoration || undefined, textAlign: align, color: style?.color ?? "#1f2329", background: format?.highlight ?? "#fff" }}/>
         </foreignObject>}
       </g>;
     })}

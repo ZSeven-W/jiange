@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Brush, ChevronDown, ChevronLeft, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, LayoutTemplate, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, Italic, LayoutTemplate, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Strikethrough, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, flowWrites, isContainer, moveFlowSelection, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, normalizeStroke, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowStroke, type FlowTheme, type Port, type Shape } from "./model";
@@ -11,11 +11,13 @@ import { fitInsertedImage, pinchViewport, placeSelectionToolbar, resizeViewportC
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
-import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTopic } from "./mindmap";
+import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
+import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
 import { inkHitByEraser, inkPointBounds, scaleInk } from "./inkGeometry";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
+import { subscribeAuthChanges, subscribeLocalAuthChanges } from "@/lib/sessionCache";
 import type { ClipBlock } from "../model";
 
 /* ---------------- rendering ---------------- */
@@ -178,7 +180,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -357,11 +359,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   // Scoped to this editor instance; do not retain a copied document across sessions.
   const recentMindClipboard = useRef<MindClip | null>(null);
   const [mindClipboardFallback, setMindClipboardFallback] = useState(false);
+  useEffect(() => { const clear = () => { recentMindClipboard.current = null; setMindClipboardFallback(false); }; const local = subscribeLocalAuthChanges(clear), remote = subscribeAuthChanges(clear); return () => { local(); remote(); }; }, []);
   const mindSelectedRef = useRef(mindSelected); mindSelectedRef.current = mindSelected;
   const canCopyRef = useRef(canCopy); canCopyRef.current = canCopy;
   const [mindMenu, setMindMenu] = useState<{ left: number; top: number } | null>(null);
   const [mindOffer, setMindOffer] = useState<string | null>(null);
-  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line"; left: number; top: number } | null>(null);
+  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat"; left: number; top: number } | null>(null);
   useEffect(() => { setMindOffer(null); setMindPaintMenu(null); }, [mindSelected]);
   useEffect(() => {
     if (!mindMenu) return;
@@ -442,7 +445,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const touchPlacement = useRef<{ shape: Shape; pointerId: number; x: number; y: number } | null>(null);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
-    const change = () => { setCompact(media.matches); if (media.matches) setLibrary(false); };
+    const change = () => { setCompact(media.matches); setMindPaintMenu(null); setMindMenu(null); if (media.matches) setLibrary(false); };
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
@@ -470,8 +473,10 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       recoveryRef.current = nextRecovery;
       setRecovery(nextRecovery);
     }
-    setGraph(result.graph); lastInitial.current = result.graph;
-    return result;
+    const { mindTextStyleIntent: _transient, ...cleanGraph } = result.graph;
+    const cleanResult = { ...result, graph: cleanGraph };
+    setGraph(cleanGraph); lastInitial.current = cleanGraph;
+    return cleanResult;
   };
   const commit = (next: FlowGraph) => {
     if (readOnly) return;
@@ -501,19 +506,25 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const mindPaints = { ...graph.mindPaints, [mindSelected]: { ...graph.mindPaints?.[mindSelected], ...change } };
     if (commitMind(graph, { ...graph, mindPaints }).applied) setMindOffer(mindSelected);
   };
+  const updateMindTextFormat = (change: Partial<MindTextFormat>) => {
+    if (readOnly || !mindSelected || !graph.mind?.some((topic) => topic.id === mindSelected)) return;
+    const mindTextFormats = { ...graph.mindTextFormats, [mindSelected]: { ...graph.mindTextFormats?.[mindSelected], ...change } };
+    if (commitMind(graph, { ...graph, mindTextFormats }).applied) setMindOffer(mindSelected);
+  };
   const applyMindStyleToSiblings = () => {
     const topic = graph.mind?.find((item) => item.id === mindSelected);
     if (!topic?.parent) return;
-    const styles = { ...graph.mindStyles }, paints = { ...graph.mindPaints };
+    const styles = { ...graph.mindStyles }, paints = { ...graph.mindPaints }, textFormats = { ...graph.mindTextFormats };
     for (const sibling of graph.mind ?? []) if (sibling.parent === topic.parent && sibling.id !== topic.id) {
       if (graph.mindStyles?.[topic.id]) styles[sibling.id] = { ...graph.mindStyles[topic.id] }; else delete styles[sibling.id];
       if (graph.mindPaints?.[topic.id]) paints[sibling.id] = { ...graph.mindPaints[topic.id] }; else delete paints[sibling.id];
+      if (graph.mindTextFormats?.[topic.id]) textFormats[sibling.id] = { ...graph.mindTextFormats[topic.id] }; else delete textFormats[sibling.id];
     }
-    commitMind(graph, { ...graph, mindStyles: styles, mindPaints: paints }); setMindOffer(null);
+    commitMind(graph, { ...graph, mindStyles: styles, mindPaints: paints, mindTextFormats: textFormats }); setMindOffer(null);
   };
-  const openMindPaintMenu = (kind: "fill" | "line", target: HTMLElement) => {
+  const openMindPaintMenu = (kind: "fill" | "line" | "shape" | "textColor" | "textFormat", target: HTMLElement) => {
     if (mindPaintMenu?.kind === kind) { setMindPaintMenu(null); return; }
-    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : 180, w = 244;
+    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : kind === "textColor" ? 250 : kind === "textFormat" ? 112 : kind === "shape" ? 86 : 180, w = kind === "shape" ? 144 : kind === "textFormat" ? 200 : 244;
     let left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.left));
     let top = rect.top >= h + 8 ? rect.top - h - 8 : Math.min(window.innerHeight - h - 8, rect.bottom + 8);
     // Keep the popup away from the visible tree when space permits.
@@ -590,6 +601,31 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (result.graph.mind?.some((topic) => topic.id === inserted.root)) { setNotice(null); setMindSelected(inserted.root); setSelected(new Set()); setTool("select"); setHand(false); }
   };
   const duplicateMind = () => { if (!mindSelected) return; const clip = copyMindBranch(graph, mindSelected); if (clip) insertMindClip(clip, true); };
+  const copyMindTextStyle = async () => {
+    if (!mindSelected || !canCopy) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    const clip = captureMindTextStyle(graph, mindSelected); if (!clip) return;
+    setMindTextStyleSession(clip);
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: true, text: "已复制文字样式（当前登录会话）" }); return; }
+    try { await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob(["Jiange 文字样式"], { type: "text/plain" }), "text/html": new Blob([mindTextStyleHtml(clip)], { type: "text/html" }) })]); setNotice({ ok: true, text: "已复制文字样式" }); }
+    catch { setNotice({ ok: true, text: "已复制文字样式（当前登录会话）" }); }
+  };
+  const pasteMindTextStyle = async () => {
+    if (readOnly || !mindSelected) return;
+    const target = mindSelected, base = graph, snapshot = JSON.stringify(graph), sessionRevision = getMindTextStyleSessionRevision();
+    let clip = getMindTextStyleSession();
+    if (!clip) {
+      if (!navigator.clipboard?.read) { setNotice({ ok: false, text: "请先复制节点文字样式。" }); return; }
+      try {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const items = await Promise.race([navigator.clipboard.read(), new Promise<ClipboardItems>((_, reject) => { timer = setTimeout(() => reject(new Error("clipboard timeout")), 2500); })]).finally(() => { if (timer) clearTimeout(timer); });
+        for (const item of items) if (item.types.includes("text/html")) { clip = mindTextStyleFromHtml(await (await item.getType("text/html")).text()); if (clip) break; }
+      } catch { setNotice({ ok: false, text: "无法读取文字样式，请先在本标签页复制。" }); return; }
+    }
+    if (!clip) { setNotice({ ok: false, text: "剪贴板中没有可用的节点文字样式。" }); return; }
+    if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== target || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或登录状态已变化，未粘贴样式；请重新选择节点。" }); return; }
+    const next = applyMindTextStyle(base, target, clip); if (!next) return;
+    const result = commitMind(base, next); if (result.applied) setNotice({ ok: true, text: "已粘贴文字样式" });
+  };
   const insertMindPlainText = (text: string) => {
     if (!text.trim()) return;
     if (text.length > 500 || /[\r\n]/.test(text)) { setNotice({ ok: false, text: "暂不支持将多行或超过 500 字的文本粘贴为节点。" }); return; }
@@ -600,31 +636,32 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const id = mindSelected, base = graph, clip = id ? copyMindBranch(base, id) : null;
     if (!clip || !id || !canCopy) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器无法完整复制分支，请使用键盘快捷键。" }); return; }
-    const snapshot = JSON.stringify(base);
+    const snapshot = JSON.stringify(base), sessionRevision = getMindTextStyleSessionRevision();
     try {
       await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([mindClipText(clip)], { type: "text/plain" }), "text/html": new Blob([mindClipHtml(clip)], { type: "text/html" }) })]);
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !canCopyRef.current) { setNotice({ ok: false, text: "登录状态或权限已变化，未保留本页副本，也未剪切。" }); return; }
       recentMindClipboard.current = parseMindClip(JSON.stringify(clip));
       if (!cut) { setNotice({ ok: true, text: "已复制分支" }); return; }
-      if (!editableRef.current || !canCopyRef.current || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或权限已变化，分支已复制但未剪切。" }); return; }
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || !canCopyRef.current || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或权限已变化，分支已复制但未剪切。" }); return; }
       const ids = new Set(clip.topics.map((topic) => topic.id)), result = commitMind(base, { ...base, mind: base.mind!.filter((topic) => !ids.has(topic.id)) });
       if (!result.graph.mind?.some((topic) => topic.id === id)) setMindSelected(null);
     } catch { setNotice({ ok: false, text: "无法访问剪贴板，未剪切节点。" }); }
   };
   const pasteMindFromClipboard = async () => {
     if (readOnly || !navigator.clipboard?.read) { setNotice({ ok: false, text: "当前浏览器无法读取剪贴板，请使用键盘快捷键。" }); return; }
-    const snapshot = JSON.stringify(graph), selected = mindSelected;
+    const snapshot = JSON.stringify(graph), selected = mindSelected, sessionRevision = getMindTextStyleSessionRevision();
     try {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const items = await Promise.race([navigator.clipboard.read(), new Promise<ClipboardItems>((_, reject) => { timer = setTimeout(() => reject(new Error("clipboard timeout")), 2500); })]).finally(() => { if (timer) clearTimeout(timer); }); let structured = "", html = "", text = "";
       for (const item of items) { if (!structured && item.types.includes(MIND_CLIP_MIME)) structured = await (await item.getType(MIND_CLIP_MIME)).text(); if (!html && item.types.includes("text/html")) html = await (await item.getType("text/html")).text(); if (!text && item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text(); }
-      if (!editableRef.current || mindSelectedRef.current !== selected || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布已变化，未粘贴；请重新选择节点。" }); return; }
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== selected || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或登录状态已变化，未粘贴；请重新选择节点。" }); return; }
       const clip = structured ? parseMindClip(structured) : mindClipFromHtml(html);
       if ((structured || html.includes("data-jiange-mindmap")) && !clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; }
       setMindClipboardFallback(false);
       if (clip) insertMindClip(clip); else insertMindPlainText(text);
     } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? "无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。" : "无法读取剪贴板，请使用键盘快捷键。" }); }
   };
-  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 358, y)) });
+  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 422, y)) });
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
   const commitRef = useRef(commit); commitRef.current = commit;
@@ -744,6 +781,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { if (e.shiftKey && !graph.mind?.find((topic) => topic.id === mindSelected)?.parent) return; e.preventDefault(); if (e.shiftKey) addMindParent(); else addMindTopic(false); }
       if (mindSelected && !readOnly && !onButton && e.key === "Enter") { e.preventDefault(); addMindTopic(true); }
       if (mindSelected && (e.metaKey || e.ctrlKey) && e.key === "." && graph.mind?.some((topic) => topic.parent === mindSelected)) { e.preventDefault(); toggleMindFold(mindSelected); }
+      const textStyleShortcut = mindTextStyleShortcut(e);
+      if (mindSelected && !readOnly && !onButton && textStyleShortcut) { e.preventDefault(); e.stopPropagation(); if (textStyleShortcut === "copy") void copyMindTextStyle(); else void pasteMindTextStyle(); return; }
+      if (mindSelected && !readOnly && !onButton && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && ["b", "i", "u"].includes(e.key.toLowerCase())) { e.preventDefault(); const key = ({ b: "bold", i: "italic", u: "underline" } as const)[e.key.toLowerCase() as "b" | "i" | "u"]; updateMindTextFormat({ [key]: graph.mindTextFormats?.[mindSelected]?.[key] ? undefined : true }); return; }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !readOnly) { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelected(new Set([...graph.nodes.map((n) => n.id), ...(graph.strokes ?? []).map((stroke) => stroke.id)])); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !readOnly) { e.preventDefault(); if (mindSelected) duplicateMind(); else { const c = clipOfSelection(); if (c) pasteClip(c, 20); } }
@@ -786,6 +826,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (pastedImage && upload) { e.preventDefault(); e.stopPropagation(); void insertImage(pastedImage); return; }
       const text = e.clipboardData?.getData("text/plain") ?? "";
       const mindData = e.clipboardData?.getData(MIND_CLIP_MIME) ?? "", html = e.clipboardData?.getData("text/html") ?? "";
+      if (html.includes("data-jiange-mind-text-style")) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: "请使用「粘贴样式」应用文字样式。" }); return; }
       if (mindData || html.includes("data-jiange-mindmap")) { e.preventDefault(); e.stopPropagation(); const clip = mindData ? parseMindClip(mindData) : mindClipFromHtml(html); if (!clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; } insertMindClip(clip); return; }
       if (mindSelected && text.trim() && !text.startsWith(CLIP_MARK)) {
         e.preventDefault(); e.stopPropagation();
@@ -1161,6 +1202,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const mindPositions = layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
   const mindDefaultColor = mindDefaultTextColor(mindAnchor?.topic.parent === null, graph.mindStyles?.[mindSelected!]?.shape ?? "rect", graph.mindPaints?.[mindSelected!]);
   const currentPaint = graph.mindPaints?.[mindSelected!] ?? {};
+  const currentTextFormat = graph.mindTextFormats?.[mindSelected!] ?? {};
   const selectedShape = graph.mindStyles?.[mindSelected!]?.shape ?? (mindAnchor?.topic.parent === null ? "rect" : "text");
   const hasMindSiblings = !!mindAnchor?.topic.parent && (graph.mind ?? []).filter((topic) => topic.parent === mindAnchor.topic.parent).length > 1;
   const mindViewport = svgWrap.current?.getBoundingClientRect();
@@ -1436,20 +1478,18 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </aside>}
 
     {!readOnly && mindSelected && !mindEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
-      <select aria-label="节点形状" title="节点形状" className="h-8 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.shape ?? (mindAnchor?.topic.parent === null ? "rect" : "text")} onChange={(event) => updateMindStyle({ shape: event.target.value as MindStyle["shape"] })}><option value="text">T</option><option value="oval">椭圆</option><option value="rect">矩形</option></select>
+      <button type="button" data-mind-paint-trigger aria-label="节点形状" aria-expanded={mindPaintMenu?.kind === "shape"} title="更改图形" className={barBtn} onClick={(event) => openMindPaintMenu("shape", event.currentTarget)}>{selectedShape === "text" ? <Type size={17}/> : selectedShape === "oval" ? <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="9" cy="9" rx="7" ry="5"/></svg> : <Square size={17}/>}<ChevronDown size={11}/></button>
       {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label="节点填充" aria-expanded={mindPaintMenu?.kind === "fill"} title="节点填充" className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
       <button type="button" data-mind-paint-trigger aria-label="节点连线样式" aria-expanded={mindPaintMenu?.kind === "line"} title="节点连线样式" className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
-      <label className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-hover" title="文字颜色"><span className="border-b-2 text-[15px] font-semibold" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor }}>A</span><input aria-label="文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label>
+      <button type="button" data-mind-paint-trigger aria-label="文字颜色和背景" aria-expanded={mindPaintMenu?.kind === "textColor"} title="文字颜色和背景" className={barBtn} onClick={(event) => openMindPaintMenu("textColor", event.currentTarget)}><span className="border-b-2 px-0.5 text-[15px]" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor, background: currentTextFormat.highlight ?? "transparent" }}>A</span><ChevronDown size={11}/></button>
       <select aria-label="文字大小" title="文字大小" className="h-8 w-14 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14)} onChange={(event) => updateMindStyle({ size: Number(event.target.value) })}>{[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => <option key={size} value={size}>{size}</option>)}</select>
+      <button type="button" data-mind-paint-trigger aria-label="文字格式" aria-expanded={mindPaintMenu?.kind === "textFormat"} title="文字格式" className={barBtn} onClick={(event) => openMindPaintMenu("textFormat", event.currentTarget)}><span className="text-[15px]">A</span><AlignLeft size={12}/><ChevronDown size={11}/></button>
       <span className="mx-1 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
       <button type="button" data-mind-menu-trigger className={cn(barBtn, !compact && "order-last")} aria-label="更多节点操作" aria-expanded={!!mindMenu} title="更多" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (mindMenu) setMindMenu(null); else openMindMenu(rect.left, compact ? 8 : rect.top - 288); }}><MoreHorizontal size={16}/></button>
-      <button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button>
-      <button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button>
-      <button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button>
-      <button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button>
+      {compact && <><button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button><button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button><button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button><button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button></>}
     </div>}
 
-    {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] w-[192px] rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
+    {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] max-h-[calc(100dvh-16px)] w-[192px] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
       {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>}
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>添加子节点 <span className="text-[#8f959e]">Tab</span></button>
       {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindParent(); }}>添加父节点 <span className="text-[#8f959e]">Shift + Tab</span></button>}
@@ -1461,14 +1501,22 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       {mindClipboardFallback && recentMindClipboard.current && <button type="button" role="menuitem" className="flex h-8 w-full items-center px-3 text-left hover:bg-hover" onClick={() => { const clip = recentMindClipboard.current; setMindMenu(null); if (clip) insertMindClip(clip); }}>粘贴本页最近复制的分支</button>}
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); duplicateMind(); }}>创建副本 <span className="text-[#8f959e]">⌘ D</span></button>
       <div className="my-1 border-t border-[#e5e6eb]"/>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindTextStyle(); }}>复制样式 <span className="text-[#8f959e]">⌘ ⌥ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindTextStyle(); }}>粘贴样式 <span className="text-[#8f959e]">⌘ ⌥ V</span></button>
+      <div className="my-1 border-t border-[#e5e6eb]"/>
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>删除 <span className="text-[#8f959e]">⌫</span></button>
     </div>}
 
-    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && <div role="dialog" aria-label={mindPaintMenu.kind === "fill" ? "节点填充" : "节点连线样式"} data-mind-paint-menu className="fixed z-[95] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: 244 }} onPointerDown={(event) => event.stopPropagation()}>
-      <div className="mb-2 flex items-center justify-between text-[#646A73]"><span>{mindPaintMenu.kind === "fill" ? "填充颜色" : "连线样式"}</span><button type="button" aria-label="关闭样式面板" onClick={() => setMindPaintMenu(null)}><X size={14}/></button></div>
+    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式" }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
+      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色" }[mindPaintMenu.kind]}</div>}
+      {mindPaintMenu.kind === "shape" && <div className="flex gap-1">{(["text", "oval", "rect"] as const).map((shape) => <button key={shape} type="button" aria-label={{ text: "文字形状", oval: "椭圆形状", rect: "矩形形状" }[shape]} aria-pressed={selectedShape === shape} className={cn("grid size-8 place-items-center rounded hover:bg-hover", selectedShape === shape && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => { updateMindStyle({ shape }); setMindPaintMenu(null); }}>{shape === "text" ? <Type size={17}/> : shape === "oval" ? <Circle size={17} className="scale-y-75"/> : <Square size={17}/>}</button>)}</div>}
+      {mindPaintMenu.kind === "textFormat" && <><div className="flex gap-1 border-b border-[#e5e6eb] pb-2">{([ ["bold", "加粗", Bold], ["strike", "删除线", Strikethrough], ["underline", "下划线", Underline], ["italic", "斜体", Italic] ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-label={label} aria-pressed={!!currentTextFormat[key]} className={cn("grid size-8 place-items-center rounded hover:bg-hover", currentTextFormat[key] && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ [key]: currentTextFormat[key] ? undefined : true })}><Icon size={16}/></button>)}</div><div className="mt-2 flex gap-1">{([ ["left", "左对齐", AlignLeft], ["center", "居中对齐", AlignCenter], ["right", "右对齐", AlignRight] ] as const).map(([align, label, Icon]) => <button key={align} type="button" aria-label={label} aria-pressed={(currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align} className={cn("grid h-8 flex-1 place-items-center rounded hover:bg-hover", (currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ align })}><Icon size={16}/></button>)}</div></>}
+      {mindPaintMenu.kind === "textColor" && <><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="自动文字颜色" className="size-6 rounded border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindStyle({ color: undefined })}>A</button>{MIND_PALETTE.slice(0, 7).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字`} aria-pressed={graph.mindStyles?.[mindSelected]?.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646A73]">背景颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无文字背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindTextFormat({ highlight: undefined })}/>{MIND_PALETTE.slice(4, 11).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字背景`} aria-pressed={currentTextFormat.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindTextFormat({ highlight: color })}/>)}</div><div className="mt-2 flex gap-3"><label className="relative cursor-pointer text-[#646A73]">自定义文字色<input aria-label="自定义文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646A73]">自定义背景色<input aria-label="自定义文字背景" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentTextFormat.highlight ?? "#fff5c7"} onChange={(event) => updateMindTextFormat({ highlight: event.target.value })}/></label></div></>}
+      {(mindPaintMenu.kind === "line" || mindPaintMenu.kind === "fill") && <>
       {mindPaintMenu.kind === "line" && <><div className="mb-2 flex gap-1">{(["solid", "dashed", "dotted"] as const).map((line) => <button key={line} type="button" aria-label={{ solid: "实线", dashed: "虚线", dotted: "点线" }[line]} aria-pressed={(currentPaint.line ?? "solid") === line} className={cn("h-7 flex-1 rounded text-[16px] hover:bg-hover", (currentPaint.line ?? "solid") === line && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindPaint({ line })}>{line === "solid" ? "—" : line === "dashed" ? "---" : "····"}</button>)}</div><div className="mb-2 flex gap-1">{[1, 2, 3, 4].map((width) => <button key={width} type="button" aria-label={`线宽 ${width}`} aria-pressed={(currentPaint.width ?? 2) === width} className={cn("grid h-7 flex-1 place-items-center rounded hover:bg-hover", (currentPaint.width ?? 2) === width && "bg-[#e1eaff]")} onClick={() => updateMindPaint({ width })}><span className="rounded-full bg-[#1f2329]" style={{ width: 3 + width * 2, height: 3 + width * 2 }}/></button>)}</div></>}
       <div className="grid grid-cols-8 gap-1.5">{mindPaintMenu.kind === "fill" && <button type="button" aria-label="无填充" title="无填充" className="size-6 rounded-full border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindPaint({ fill: "none" })}/>} {mindPaintMenu.kind === "line" && <button type="button" aria-label="自动线条颜色" title="自动线条颜色" className="size-6 rounded-full border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindPaint({ stroke: undefined })}>✦</button>}{MIND_PALETTE.map(([color, name]) => <button key={color} type="button" aria-label={`${name}${mindPaintMenu.kind === "fill" ? "填充" : "线条"}`} title={name} aria-pressed={(mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color} className={cn("size-6 rounded-full border border-[#d4d7dc]", (mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color && "ring-2 ring-[#3370ff] ring-offset-1")} style={{ background: color }} onClick={() => updateMindPaint(mindPaintMenu.kind === "fill" ? { fill: color } : { stroke: color })}/>)}</div>
       <label className="mt-3 block text-[#646A73]">不透明度 <span className="float-right">{mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100}%</span><input aria-label={mindPaintMenu.kind === "fill" ? "填充不透明度" : "线条不透明度"} type="range" min={0} max={100} className="mt-1 block w-full accent-[#3370ff]" value={mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100} onChange={(event) => updateMindPaint(mindPaintMenu.kind === "fill" ? { fillOpacity: Number(event.target.value) } : { opacity: Number(event.target.value) })}/></label>
+      </>}
     </div>}
     {mindOffer === mindSelected && hasMindSiblings && !mindEditing && !mindPaintMenu && <div className="fixed z-[90] flex items-center gap-2 rounded-lg border border-[#DEE0E3] bg-surface px-3 py-2 text-[12px] shadow-md" style={compact ? { left: 12, bottom: 170, maxWidth: "calc(100% - 24px)" } : { left: mindToolbarStyle?.left ?? 170, top: treeTop - 50 >= 64 ? Math.max(8, toolbarTop - 44) : Math.min(windowHeight - 44, toolbarTop + 48), transform: "translateX(-50%)" }} onPointerDown={(event) => event.stopPropagation()}><span>应用样式到所有同级节点</span><button type="button" aria-label="应用到同级节点" className="text-[#2ea121]" onClick={applyMindStyleToSiblings}>✓</button><button type="button" aria-label="关闭同级样式提示" className="text-[#d83931]" onClick={() => setMindOffer(null)}>×</button></div>}
 

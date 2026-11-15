@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import type { Me } from "./api";
-import { announceAuthChange, createSessionQueryClient, finishLogin, subscribeAuthChanges } from "./sessionCache";
+import { announceAuthChange, createSessionQueryClient, finishLogin, subscribeAuthChanges, subscribeLocalAuthChanges } from "./sessionCache";
 
 function user(id: number): Me {
   return { user: { id, email: `user${id}@example.test`, name: `用户${id}`, createdAt: "" }, workspaces: [] };
@@ -105,5 +105,11 @@ describe("authentication session cache", () => {
     expect(storage.clear).not.toHaveBeenCalled();
     unsubscribe();
     expect(listeners.has("storage")).toBe(false);
+  });
+  it("notifies same-tab in-memory data when the authentication session changes", () => {
+    const target = new EventTarget(); vi.stubGlobal("window", target); vi.stubGlobal("BroadcastChannel", undefined);
+    const changed = vi.fn(), unsubscribe = subscribeLocalAuthChanges(changed);
+    announceAuthChange(); expect(changed).toHaveBeenCalledTimes(1);
+    unsubscribe(); announceAuthChange(); expect(changed).toHaveBeenCalledTimes(1);
   });
 });

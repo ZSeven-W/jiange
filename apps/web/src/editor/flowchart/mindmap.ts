@@ -4,6 +4,8 @@ export type MindStyle = { shape?: "text" | "oval" | "rect"; size?: number; color
 export type MindStyles = Record<string, MindStyle>;
 export type MindPaint = { fill?: string; fillOpacity?: number; stroke?: string; line?: "solid" | "dashed" | "dotted"; width?: number; opacity?: number };
 export type MindPaints = Record<string, MindPaint>;
+export type MindTextFormat = { bold?: true; italic?: true; underline?: true; strike?: true; highlight?: string; align?: "left" | "center" | "right" };
+export type MindTextFormats = Record<string, MindTextFormat>;
 export function mindDefaultTextColor(root: boolean, shape: MindStyle["shape"], paint?: MindPaint): string {
   if (!root || shape === "text") return "#1f2329";
   const fill = paint?.fill ?? "#5b7ff1";
@@ -214,6 +216,40 @@ export function mindPaintIntent(props: Record<string, string>, before: MindPaint
     const key = mindPaintKey(id), raw = props[key] ?? "", was = canonicalMindPaint(before[id]), desired = canonicalMindPaint(after[id]);
     if (oldTopics.has(id) && was === desired) continue;
     let now: string | null = ""; if (raw) { try { now = canonicalMindPaint(JSON.parse(raw)); } catch { now = null; } }
+    if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (oldTopics.has(id) && now !== was && now !== desired)) { conflicts.push(key); continue; }
+    if (now !== desired) writes[key] = desired;
+  }
+  return { writes, conflicts };
+}
+
+// Text formatting is separate from shape styles so older clients do not erase it.
+export const mindTextFormatKey = (id: string) => `fc.mt.${id}`;
+export function normalizeMindTextFormat(input: unknown): MindTextFormat | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => !["bold", "italic", "underline", "strike", "highlight", "align"].includes(key))) return null;
+  for (const key of ["bold", "italic", "underline", "strike"]) if (raw[key] !== undefined && raw[key] !== true) return null;
+  if (raw.highlight !== undefined && (typeof raw.highlight !== "string" || !/^#[0-9a-fA-F]{6}$/.test(raw.highlight))) return null;
+  if (raw.align !== undefined && !["left", "center", "right"].includes(String(raw.align))) return null;
+  return { ...(raw.bold ? { bold: true as const } : {}), ...(raw.italic ? { italic: true as const } : {}), ...(raw.underline ? { underline: true as const } : {}), ...(raw.strike ? { strike: true as const } : {}), ...(raw.highlight !== undefined ? { highlight: String(raw.highlight).toLowerCase() } : {}), ...(raw.align !== undefined ? { align: raw.align as MindTextFormat["align"] } : {}) };
+}
+export function canonicalMindTextFormat(format: MindTextFormat | undefined): string | null {
+  if (!format) return "";
+  const value = normalizeMindTextFormat(format); return value ? (Object.keys(value).length ? JSON.stringify(value) : "") : null;
+}
+export function readMindTextFormats(props: Record<string, string>, topics: readonly MindTopic[]): MindTextFormats {
+  const entries: [string, MindTextFormat][] = [];
+  for (const topic of topics) { const raw = props[mindTextFormatKey(topic.id)]; if (!raw) continue; try { const value = normalizeMindTextFormat(JSON.parse(raw)); if (value) entries.push([topic.id, value]); } catch { /* preserve malformed data */ } }
+  return Object.fromEntries(entries);
+}
+export function mindTextFormatIntent(props: Record<string, string>, before: MindTextFormats, after: MindTextFormats, beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>): { writes: Record<string, string>; conflicts: string[] } {
+  const oldTopics = new Set(beforeTopics.map((topic) => topic.id)), nextTopics = new Set(afterTopics.map((topic) => topic.id));
+  const added = afterTopics.filter((topic) => !oldTopics.has(topic.id)).map((topic) => topic.id), writes: Record<string, string> = {}, conflicts: string[] = [];
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after), ...added])) {
+    if (!nextTopics.has(id) || (!oldTopics.has(id) && !topicWrites[mindKey(id)])) continue;
+    const key = mindTextFormatKey(id), raw = props[key] ?? "", was = canonicalMindTextFormat(before[id]), desired = canonicalMindTextFormat(after[id]);
+    if (oldTopics.has(id) && was === desired) continue;
+    let now: string | null = ""; if (raw) { try { now = canonicalMindTextFormat(JSON.parse(raw)); } catch { now = null; } }
     if (was === null || desired === null || now === null || (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) || (oldTopics.has(id) && now !== was && now !== desired)) { conflicts.push(key); continue; }
     if (now !== desired) writes[key] = desired;
   }

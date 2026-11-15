@@ -8,7 +8,7 @@ export type FlowHistory = { before: FlowGraph; after: FlowGraph };
  * become part of a later undo/redo operation.
  */
 export function appliedFlowHistory(before: FlowGraph, after: FlowGraph, keys: readonly string[]): FlowHistory | null {
-  const selected = new Set(keys.filter((key) => key === "fc.theme" || key.startsWith("fc.n.") || key.startsWith("fc.e.") || key.startsWith("fc.s.") || key.startsWith("fc.m.") || key.startsWith("fc.mc.") || key.startsWith("fc.ms.") || key.startsWith("fc.mp.")));
+  const selected = new Set(keys.filter((key) => key === "fc.theme" || key.startsWith("fc.n.") || key.startsWith("fc.e.") || key.startsWith("fc.s.") || key.startsWith("fc.m.") || key.startsWith("fc.mc.") || key.startsWith("fc.ms.") || key.startsWith("fc.mp.") || key.startsWith("fc.mt.")));
   if (!selected.size) return null;
   const restore = <T extends { id: string }>(current: T[], original: T[], prefix: string): T[] => {
     const old = new Map(original.map((item) => [item.id, item]));
@@ -20,6 +20,7 @@ export function appliedFlowHistory(before: FlowGraph, after: FlowGraph, keys: re
   const collapsed = new Set(after.mindCollapsed ?? []), oldCollapsed = new Set(before.mindCollapsed ?? []);
   const styles = { ...after.mindStyles };
   const paints = { ...after.mindPaints };
+  const textFormats = { ...after.mindTextFormats };
   for (const key of selected) {
     const id = key.startsWith("fc.mc.") ? key.slice(6) : key.startsWith("fc.m.") ? key.slice(5) : null;
     if (id !== null) { if (oldCollapsed.has(id)) collapsed.add(id); else collapsed.delete(id); }
@@ -27,9 +28,11 @@ export function appliedFlowHistory(before: FlowGraph, after: FlowGraph, keys: re
     if (styleId !== null) { if (before.mindStyles?.[styleId]) styles[styleId] = before.mindStyles[styleId]; else delete styles[styleId]; }
     const paintId = key.startsWith("fc.mp.") ? key.slice(6) : key.startsWith("fc.m.") ? key.slice(5) : null;
     if (paintId !== null) { if (before.mindPaints?.[paintId]) paints[paintId] = before.mindPaints[paintId]; else delete paints[paintId]; }
+    const textId = key.startsWith("fc.mt.") ? key.slice(6) : key.startsWith("fc.m.") ? key.slice(5) : null;
+    if (textId !== null) { if (before.mindTextFormats?.[textId]) textFormats[textId] = before.mindTextFormats[textId]; else delete textFormats[textId]; }
   }
   return {
-    before: { nodes: restore(after.nodes, before.nodes, "fc.n."), edges: restore(after.edges, before.edges, "fc.e."), ...(after.strokes || before.strokes ? { strokes: restore(after.strokes ?? [], before.strokes ?? [], "fc.s.") } : {}), ...(after.mind || before.mind ? { mind: restore(after.mind ?? [], before.mind ?? [], "fc.m.") } : {}), ...(after.mindCollapsed || before.mindCollapsed ? { mindCollapsed: [...collapsed].sort() } : {}), ...(after.mindStyles || before.mindStyles ? { mindStyles: styles } : {}), ...(after.mindPaints || before.mindPaints ? { mindPaints: paints } : {}), theme: selected.has("fc.theme") ? before.theme : after.theme },
+    before: { nodes: restore(after.nodes, before.nodes, "fc.n."), edges: restore(after.edges, before.edges, "fc.e."), ...(after.strokes || before.strokes ? { strokes: restore(after.strokes ?? [], before.strokes ?? [], "fc.s.") } : {}), ...(after.mind || before.mind ? { mind: restore(after.mind ?? [], before.mind ?? [], "fc.m.") } : {}), ...(after.mindCollapsed || before.mindCollapsed ? { mindCollapsed: [...collapsed].sort() } : {}), ...(after.mindStyles || before.mindStyles ? { mindStyles: styles } : {}), ...(after.mindPaints || before.mindPaints ? { mindPaints: paints } : {}), ...(after.mindTextFormats || before.mindTextFormats ? { mindTextFormats: textFormats } : {}), theme: selected.has("fc.theme") ? before.theme : after.theme },
     after,
   };
 }

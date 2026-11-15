@@ -1,15 +1,15 @@
-import { normalizeMindPaint, normalizeMindStyle, normalizeMindTopic, type MindPaint, type MindPaints, type MindStyle, type MindStyles, type MindTopic } from "./mindmap";
+import { normalizeMindPaint, normalizeMindStyle, normalizeMindTextFormat, normalizeMindTopic, type MindPaint, type MindPaints, type MindStyle, type MindStyles, type MindTextFormat, type MindTextFormats, type MindTopic } from "./mindmap";
 import { mindSubtree } from "./mindmap-move";
 import type { FlowGraph } from "./model";
 
 export const MIND_CLIP_MIME = "application/x-jiange-mindmap+json";
-export type MindClip = { version: 1; root: string; topics: MindTopic[]; styles: MindStyles; paints: MindPaints; collapsed: string[] };
+export type MindClip = { version: 1; root: string; topics: MindTopic[]; styles: MindStyles; paints: MindPaints; textFormats?: MindTextFormats; collapsed: string[] };
 
 /** Capture descendants even when folded; no unrelated canvas objects or metadata. */
 export function copyMindBranch(graph: FlowGraph, id: string): MindClip | null {
   if (!graph.mind?.some((topic) => topic.id === id)) return null;
   const ids = mindSubtree(graph.mind, id), topics = graph.mind.filter((topic) => ids.has(topic.id)).map((topic) => ({ ...topic }));
-  return { version: 1, root: id, topics, styles: Object.fromEntries(Object.entries(graph.mindStyles ?? {}).filter(([key]) => ids.has(key))), paints: Object.fromEntries(Object.entries(graph.mindPaints ?? {}).filter(([key]) => ids.has(key))), collapsed: (graph.mindCollapsed ?? []).filter((key) => ids.has(key)) };
+  return { version: 1, root: id, topics, styles: Object.fromEntries(Object.entries(graph.mindStyles ?? {}).filter(([key]) => ids.has(key))), paints: Object.fromEntries(Object.entries(graph.mindPaints ?? {}).filter(([key]) => ids.has(key))), ...(graph.mindTextFormats ? { textFormats: Object.fromEntries(Object.entries(graph.mindTextFormats).filter(([key]) => ids.has(key))) } : {}), collapsed: (graph.mindCollapsed ?? []).filter((key) => ids.has(key)) };
 }
 
 /** Treat clipboard contents as untrusted: bound size, topology and every style. */
@@ -19,6 +19,7 @@ export function parseMindClip(text: string): MindClip | null {
     const raw = JSON.parse(text) as Record<string, unknown>;
     if (!raw || raw.version !== 1 || typeof raw.root !== "string" || !Array.isArray(raw.topics) || !raw.topics.length || raw.topics.length > 500 || !Array.isArray(raw.collapsed)) return null;
     if (!raw.styles || typeof raw.styles !== "object" || Array.isArray(raw.styles) || !raw.paints || typeof raw.paints !== "object" || Array.isArray(raw.paints)) return null;
+    if (raw.textFormats !== undefined && (!raw.textFormats || typeof raw.textFormats !== "object" || Array.isArray(raw.textFormats))) return null;
     const topics = raw.topics.map((topic) => normalizeMindTopic(topic)); if (topics.some((topic) => !topic)) return null;
     const nodes = topics as MindTopic[], byId = new Map(nodes.map((topic) => [topic.id, topic]));
     if (byId.size !== nodes.length || !byId.has(raw.root)) return null;
@@ -31,8 +32,10 @@ export function parseMindClip(text: string): MindClip | null {
     for (const [key, value] of Object.entries(raw.styles)) { const style = normalizeMindStyle(value); if (!byId.has(key) || !style) return null; styleEntries.push([key, style]); }
     for (const [key, value] of Object.entries(raw.paints)) { const paint = normalizeMindPaint(value); if (!byId.has(key) || !paint) return null; paintEntries.push([key, paint]); }
     const styles: MindStyles = Object.fromEntries(styleEntries), paints: MindPaints = Object.fromEntries(paintEntries);
+    const formatEntries: [string, MindTextFormat][] = [];
+    for (const [key, value] of Object.entries(raw.textFormats ?? {})) { const format = normalizeMindTextFormat(value); if (!byId.has(key) || !format) return null; formatEntries.push([key, format]); }
     if (raw.collapsed.some((id) => typeof id !== "string" || !byId.has(id)) || new Set(raw.collapsed).size !== raw.collapsed.length) return null;
-    return { version: 1, root: raw.root, topics: nodes, styles, paints, collapsed: raw.collapsed as string[] };
+    return { version: 1, root: raw.root, topics: nodes, styles, paints, ...(raw.textFormats !== undefined ? { textFormats: Object.fromEntries(formatEntries) } : {}), collapsed: raw.collapsed as string[] };
   } catch { return null; }
 }
 
@@ -80,9 +83,10 @@ export function pasteMindBranch(graph: FlowGraph, clip: MindClip, parent: string
     if (topic.id === clip.root) result.push({ id: ids.get(topic.id)!, parent, order, text: topic.text, ...(parent === null ? { x, y } : {}) });
     else result.push({ id: ids.get(topic.id)!, parent: ids.get(topic.parent!)!, order: topic.order, text: topic.text });
   }
-  const styles = { ...graph.mindStyles }, paints = { ...graph.mindPaints };
+  const styles = { ...graph.mindStyles }, paints = { ...graph.mindPaints }, textFormats = { ...graph.mindTextFormats };
   for (const [id, value] of Object.entries(clip.styles)) styles[ids.get(id)!] = { ...value };
   for (const [id, value] of Object.entries(clip.paints)) paints[ids.get(id)!] = { ...value };
+  for (const [id, value] of Object.entries(clip.textFormats ?? {})) textFormats[ids.get(id)!] = { ...value };
   const collapsed = new Set(graph.mindCollapsed ?? []); if (parent) collapsed.delete(parent); for (const id of clip.collapsed) collapsed.add(ids.get(id)!);
-  return { graph: { ...graph, mind: result, mindStyles: styles, mindPaints: paints, mindCollapsed: [...collapsed] }, root: ids.get(clip.root)! };
+  return { graph: { ...graph, mind: result, mindStyles: styles, mindPaints: paints, mindTextFormats: textFormats, mindCollapsed: [...collapsed] }, root: ids.get(clip.root)! };
 }

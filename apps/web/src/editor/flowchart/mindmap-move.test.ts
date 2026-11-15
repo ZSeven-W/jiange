@@ -109,7 +109,7 @@ describe("insert parent topic", () => {
     const remote = flowWrites(props, { ...graph, mind: topics.map((topic) => topic.id === "a" ? { ...topic, text: "远端" } : topic) });
     const stale = flowIntentWrites({ ...props, ...remote }, graph, { ...graph, mind: proposed });
     expect(stale.conflicts).toContain("fc.m.a"); expect(stale.writes["fc.m.a"]).toBeUndefined(); expect(stale.writes["fc.m.wrapper"]).toBeUndefined();
-    for (const [key, value] of [["fc.ms.wrapper", '{"future":true}'], ["fc.mp.wrapper", '{"future":true}'], ["fc.mc.wrapper", "future"]]) {
+    for (const [key, value] of [["fc.ms.wrapper", '{"future":true}'], ["fc.mp.wrapper", '{"future":true}'], ["fc.mt.wrapper", '{"future":true}'], ["fc.mc.wrapper", "future"]]) {
       const collision = flowIntentWrites({ ...props, [key]: value }, graph, { ...graph, mind: proposed });
       expect(collision.conflicts).toContain(key); expect(collision.writes["fc.m.a"]).toBeUndefined(); expect(collision.writes["fc.m.wrapper"]).toBeUndefined();
     }
