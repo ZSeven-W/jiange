@@ -33,7 +33,7 @@ export function selectionOutline(selection: SheetSelection, point: SheetPoint): 
   return edges.length ? edges.join(", ") : undefined;
 }
 export type CellChange = { point: SheetPoint; value: string };
-export type CellEdit = { ok: true; cells: SheetCells } | { ok: false; reason: "bounds" | "formula" | "size" | "invalid" };
+export type CellEdit = { ok: true; cells: SheetCells } | { ok: false; reason: "bounds" | "size" | "invalid" };
 function validText(value: string) {
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i);
@@ -50,7 +50,6 @@ export function applyCellChanges(cells: SheetCells, changes: readonly CellChange
   const encoder = new TextEncoder();
   for (const change of changes) {
     if (!validPoint(change.point)) return { ok: false, reason: "bounds" };
-    if (change.value.startsWith("=")) return { ok: false, reason: "formula" };
     if (!validText(change.value)) return { ok: false, reason: "invalid" };
     const size = encoder.encode(change.value).length;
     if (size > MAX_CELL_BYTES || (bytes += size) > MAX_BATCH_BYTES) return { ok: false, reason: "size" };

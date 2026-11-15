@@ -13,7 +13,7 @@ describe("spreadsheet preview grid", () => {
     if (!result.ok) return;
     expect(selectionText(result.cells, { anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } })).toBe('甲\t"乙\n二"\n3\t4');
     expect(pasteCells(original, { row: 99, col: 25 }, "a\tb")).toEqual({ ok: false, reason: "bounds" });
-    expect(pasteCells(original, { row: 0, col: 0 }, "safe\t=1+1")).toEqual({ ok: false, reason: "formula" });
+    expect(pasteCells(original, { row: 0, col: 0 }, "safe\t=1+1")).toEqual({ ok: true, cells: { "0:0": "safe", "0:1": "=1+1" } });
     expect(original).toEqual({ "0:0": "旧" });
     expect(selectionOutline({ anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } }, { row: 0, col: 0 })).toContain("inset 2px 0");
   });
