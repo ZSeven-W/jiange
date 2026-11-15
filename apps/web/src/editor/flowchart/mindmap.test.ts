@@ -65,3 +65,54 @@ describe("mind map persistence", () => {
     expect(flowIntentWrites(created.writes, after, { ...blank, nodes: [], edges: [] }).writes["fc.m.r"]).toBeUndefined();
   });
 });
+
+describe("mind map folding", () => {
+  const grandchild: MindTopic = { id: "g", parent: "c", order: 0, text: "详情" };
+  const graph: FlowGraph = { ...blank, mind: [root, child, grandchild] };
+  it("hides descendants without discarding them, and preserves fold flags across old text writes", () => {
+    const props = flowWrites({}, graph);
+    const folded = flowIntentWrites(props, graph, { ...graph, mindCollapsed: ["c"] });
+    expect(folded.writes["fc.mc.c"]).toBe("1");
+    const saved = readFlow({ ...props, ...folded.writes });
+    expect(saved.mind).toHaveLength(3);
+    expect(layoutMindTopics(saved.mind!, new Set(saved.mindCollapsed)).map((item) => item.topic.id)).toEqual(["r", "c"]);
+    // A prior client edits only the topic JSON and leaves the separate fold flag intact.
+    const oldEdit = flowWrites({}, { ...blank, mind: [{ ...root }, { ...child, text: "修改" }, grandchild] });
+    const reopened = readFlow({ ...props, ...folded.writes, "fc.m.c": oldEdit["fc.m.c"] });
+    expect(reopened.mindCollapsed).toEqual(["c"]);
+    expect(reopened.mind?.find((item) => item.id === "c")?.text).toBe("修改");
+  });
+  it("supports undo of folds and deletion without reviving unrelated collapsed branches", () => {
+    const props = flowWrites({}, graph), foldedIntent = flowIntentWrites(props, graph, { ...graph, mindCollapsed: ["c"] });
+    const foldedProps = { ...props, ...foldedIntent.writes }, folded = readFlow(foldedProps);
+    const foldHistory = appliedFlowHistory(graph, folded, Object.keys(foldedIntent.writes))!;
+    expect(flowIntentWrites(foldedProps, folded, foldHistory.before).writes["fc.mc.c"]).toBe("");
+    const deletion = flowIntentWrites(foldedProps, folded, { ...folded, mind: [root] });
+    const deletedProps = { ...foldedProps, ...deletion.writes }, after = readFlow(deletedProps);
+    const history = appliedFlowHistory(folded, after, Object.keys(deletion.writes))!;
+    const undo = flowIntentWrites(deletedProps, after, history.before);
+    const restored = readFlow({ ...deletedProps, ...undo.writes });
+    expect(restored.mindCollapsed).toEqual(["c"]);
+    expect(restored.mind?.map((item) => item.id)).toEqual(["c", "g", "r"]);
+  });
+  it("protects unknown fold metadata and does not undo a remote fold during an unrelated edit", () => {
+    const props = flowWrites({}, graph);
+    const bad = { ...props, "fc.mc.c": "future" };
+    const attempt = flowIntentWrites(bad, graph, { ...graph, mindCollapsed: ["c"] });
+    expect(attempt.conflicts).toContain("fc.mc.c");
+    const remoteFold = { ...props, "fc.mc.c": "1" };
+    const textChange = flowIntentWrites(remoteFold, graph, { ...graph, mind: [root, { ...child, text: "新文字" }, grandchild] });
+    expect(textChange.conflicts).toEqual([]);
+    expect(textChange.writes["fc.mc.c"]).toBeUndefined();
+  });
+  it("does not change a colliding remote topic's fold marker and rejects unknown markers on new ids", () => {
+    const props = { ...flowWrites({}, graph), "fc.mc.c": "1" };
+    const before = { ...blank, mind: [root] };
+    const collision = flowIntentWrites(props, before, { ...before, mind: [root, { ...child, text: "不同的内容" }] });
+    expect(collision.conflicts).toContain("fc.m.c");
+    expect(collision.writes["fc.mc.c"]).toBeUndefined();
+    const addition = flowIntentWrites({ ...flowWrites({}, before), "fc.mc.new": "future" }, before, { ...before, mind: [root, { id: "new", parent: "r", order: 0, text: "新节点" }] });
+    expect(addition.conflicts).toContain("fc.mc.new");
+    expect(addition.writes["fc.m.new"]).toBeUndefined();
+  });
+});

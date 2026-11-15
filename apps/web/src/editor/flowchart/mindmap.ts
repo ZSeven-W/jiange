@@ -75,20 +75,49 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
 }
 
 /** A bounded, deterministic rightward tree layout. */
-export function layoutMindTopics(topics: readonly MindTopic[]): PositionedTopic[] {
+export function layoutMindTopics(topics: readonly MindTopic[], collapsed: ReadonlySet<string> = new Set()): PositionedTopic[] {
   const children = new Map<string, MindTopic[]>();
   for (const topic of topics) if (topic.parent) { const group = children.get(topic.parent) ?? []; group.push(topic); children.set(topic.parent, group); }
   for (const group of children.values()) group.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sizes = new Map<string, number>();
-  const subtree = (topic: MindTopic): number => { const group = children.get(topic.id) ?? []; const h = group.length ? Math.max(48, group.reduce((total, child) => total + subtree(child), 0) + (group.length - 1) * 12) : 40; sizes.set(topic.id, h); return h; };
+  const subtree = (topic: MindTopic): number => { const group = collapsed.has(topic.id) ? [] : children.get(topic.id) ?? []; const h = group.length ? Math.max(48, group.reduce((total, child) => total + subtree(child), 0) + (group.length - 1) * 12) : 40; sizes.set(topic.id, h); return h; };
   const out: PositionedTopic[] = [];
   const place = (topic: MindTopic, x: number, centerY: number, depth: number) => {
     const root = topic.parent === null, w = root ? Math.max(104, Math.min(280, [...topic.text].length * 16 + 32)) : Math.max(90, Math.min(240, [...topic.text].length * 14 + 24)), h = root ? 48 : 30;
     out.push({ topic, x, y: centerY - h / 2, w, h });
-    const group = children.get(topic.id) ?? [], height = group.reduce((total, child) => total + (sizes.get(child.id) ?? 40), 0) + Math.max(0, group.length - 1) * 12;
+    const group = collapsed.has(topic.id) ? [] : children.get(topic.id) ?? [], height = group.reduce((total, child) => total + (sizes.get(child.id) ?? 40), 0) + Math.max(0, group.length - 1) * 12;
     let y = centerY - height / 2;
     for (const child of group) { const childH = sizes.get(child.id) ?? 40; place(child, x + w + 60, y + childH / 2, depth + 1); y += childH + 12; }
   };
   for (const root of topics.filter((topic) => topic.parent === null)) { subtree(root); place(root, root.x ?? 0, (root.y ?? 0) + 24, 0); }
   return out;
+}
+
+const COLLAPSE_PREFIX = "fc.mc.";
+export const mindCollapseKey = (id: string) => `${COLLAPSE_PREFIX}${id}`;
+
+/** Fold flags are separate from topic data so older clients cannot erase them when editing text. */
+export function readMindCollapsed(props: Record<string, string>, topics: readonly MindTopic[]): string[] {
+  return topics.filter((topic) => props[mindCollapseKey(topic.id)] === "1").map((topic) => topic.id).sort();
+}
+
+export function mindCollapseIntent(props: Record<string, string>, before: readonly string[], after: readonly string[], beforeTopics: readonly MindTopic[], afterTopics: readonly MindTopic[], topicWrites: Record<string, string>): { writes: Record<string, string>; conflicts: string[] } {
+  const old = new Set(before), next = new Set(after), oldTopics = new Set(beforeTopics.map((topic) => topic.id)), nextTopics = new Set(afterTopics.map((topic) => topic.id));
+  const added = afterTopics.filter((topic) => !oldTopics.has(topic.id)).map((topic) => topic.id);
+  const writes: Record<string, string> = {}, conflicts: string[] = [];
+  for (const id of new Set([...old, ...next, ...added])) {
+    // Topic deletion deliberately retains its fold flag for undo and old clients.
+    if (!nextTopics.has(id)) continue;
+    // A rejected new topic already has a node conflict; don't add a spurious fold conflict.
+    if (!oldTopics.has(id) && !topicWrites[mindKey(id)]) continue;
+    const key = mindCollapseKey(id), raw = props[key] ?? "", desired = next.has(id) ? "1" : "", was = old.has(id) ? "1" : "";
+    if (oldTopics.has(id) && was === desired) continue;
+    if (raw !== "" && raw !== "1") { conflicts.push(key); continue; }
+    if (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) { conflicts.push(key); continue; }
+    // A newly created id may carry an old tombstone. Reset it to the intended state;
+    // an existing topic must still match the user's base or intended value.
+    if (oldTopics.has(id) && raw !== was && raw !== desired) { conflicts.push(key); continue; }
+    if (raw !== desired) writes[key] = desired;
+  }
+  return { writes, conflicts };
 }

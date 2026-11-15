@@ -11,4 +11,15 @@ describe("mind map rendering", () => {
     expect(exported).toContain("项目计划");
     expect(exported).not.toContain("输入文本");
   });
+  it("shows the hidden descendant count and exposes a fold control in read-only views", () => {
+    const tree: MindTopic[] = [topics[0], { ...topics[1], text: "子节点" }, { id: "g", parent: "c", order: 0, text: "隐藏内容" }, { id: "gg", parent: "g", order: 0, text: "更多内容" }];
+    const markup = renderToStaticMarkup(<svg><MindMapSvg topics={tree} collapsed={new Set(["c"])} onFold={() => {}}/></svg>);
+    expect(markup).toContain('aria-label="展开「子节点」"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain(">2</text>");
+    expect(markup).not.toContain("隐藏内容");
+    const exported = renderToStaticMarkup(<svg><MindMapSvg topics={tree} collapsed={new Set(["c"])}/></svg>);
+    expect(exported).toContain(">2</text>");
+    expect(exported).not.toContain('role="button"');
+  });
 });

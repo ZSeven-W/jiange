@@ -1,7 +1,8 @@
 import { layoutMindTopics, type MindTopic } from "./mindmap";
 
-export function MindMapSvg({ topics, selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel }: {
+export function MindMapSvg({ topics, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold }: {
   topics: readonly MindTopic[];
+  collapsed?: ReadonlySet<string>;
   selected?: string | null;
   editing?: { id: string; value: string } | null;
   onSelect?: (topic: MindTopic) => void;
@@ -9,8 +10,12 @@ export function MindMapSvg({ topics, selected, editing, onSelect, onEdit, onDraf
   onDraft?: (value: string) => void;
   onFinish?: () => void;
   onCancel?: () => void;
+  onFold?: (id: string) => void;
 }) {
-  const nodes = layoutMindTopics(topics), byId = new Map(nodes.map((node) => [node.topic.id, node]));
+  const nodes = layoutMindTopics(topics, collapsed), byId = new Map(nodes.map((node) => [node.topic.id, node]));
+  const children = new Map<string, string[]>();
+  for (const topic of topics) if (topic.parent) children.set(topic.parent, [...(children.get(topic.parent) ?? []), topic.id]);
+  const descendants = (id: string): number => { const pending = [...(children.get(id) ?? [])], seen = new Set<string>(); while (pending.length) { const next = pending.pop()!; if (seen.has(next)) continue; seen.add(next); pending.push(...(children.get(next) ?? [])); } return seen.size; };
   return <g data-mindmap>
     {nodes.map((node) => {
       const parent = node.topic.parent ? byId.get(node.topic.parent) : null;
@@ -28,6 +33,15 @@ export function MindMapSvg({ topics, selected, editing, onSelect, onEdit, onDraf
         {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={node.h}>
           <input autoFocus aria-label="思维导图节点文字" maxLength={500} value={editing.value} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onDraft?.(event.target.value)} onBlur={() => onFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); onFinish?.(); } if (event.key === "Escape") { event.preventDefault(); onCancel?.(); } }} style={{ width: "100%", height: "100%", boxSizing: "border-box", border: "2px solid #3370ff", outline: "none", padding: "0 6px", borderRadius: 3, fontSize: root ? 16 : 14, textAlign: root ? "center" : "left", color: "#1f2329", background: "#fff" }}/>
         </foreignObject>}
+      </g>;
+    })}
+    {nodes.map((node) => {
+      const count = descendants(node.topic.id), folded = collapsed.has(node.topic.id);
+      if (!count || (!onFold && !folded)) return null;
+      const x = node.x + node.w + 10, y = node.y + node.h / 2;
+      return <g key={`fold-${node.topic.id}`} data-mind-fold={node.topic.id} data-mind-fold-expanded={!folded ? "true" : undefined} role={onFold ? "button" : undefined} tabIndex={onFold ? 0 : undefined} aria-label={onFold ? `${folded ? "展开" : "折叠"}「${node.topic.text || "节点"}」` : undefined} aria-expanded={onFold ? !folded : undefined} pointerEvents={onFold ? undefined : "none"} style={{ cursor: onFold ? "pointer" : undefined }} onPointerDown={onFold ? (event) => event.stopPropagation() : undefined} onClick={onFold ? (event) => { event.stopPropagation(); onFold(node.topic.id); } : undefined} onKeyDown={onFold ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onFold(node.topic.id); } } : undefined}>
+        <circle cx={x} cy={y} r={folded && count > 9 ? 10 : 8} fill="#fff" stroke={folded ? "#3370ff" : "#a8abb2"}/>
+        <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={folded ? 10 : 13} fill={folded ? "#3370ff" : "#8f959e"}>{folded ? count > 99 ? "99+" : count : "−"}</text>
       </g>;
     })}
   </g>;

@@ -111,7 +111,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, mindCollapsed, onMindFold, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -122,6 +122,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   erasing?: ReadonlySet<string> | null;
   draftStroke?: FlowStroke | null;
   mindSelected?: string | null;
+  mindCollapsed?: ReadonlySet<string>;
+  onMindFold?: (id: string) => void;
   mindEditing?: { id: string; value: string } | null;
   onMindSelect?: (topic: MindTopic) => void;
   onMindEdit?: (topic: MindTopic) => void;
@@ -171,7 +173,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} onFold={onMindFold} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -345,6 +347,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mindSelected, setMindSelected] = useState<string | null>(null);
+  const [viewFoldOverrides, setViewFoldOverrides] = useState<Record<string, boolean>>({});
+  const effectiveCollapsed = new Set(graph.mindCollapsed ?? []);
+  if (readOnly) for (const [id, folded] of Object.entries(viewFoldOverrides)) { if (folded) effectiveCollapsed.add(id); else effectiveCollapsed.delete(id); }
   const [mindEditing, setMindEditing] = useState<{ id: string; value: string; base: FlowGraph } | null>(null);
   const mindEditingRef = useRef<typeof mindEditing>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
@@ -361,7 +366,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<"theme" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
   useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") setMindSelected(null); }, [tool, menu]);
-  useEffect(() => { if (mindSelected && !mindEditing && !graph.mind?.some((topic) => topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, mindSelected, mindEditing]);
+  useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopics(graph.mind ?? [], effectiveCollapsed).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
   const [hand, setHand] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
@@ -449,6 +454,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (result.applied && step) { setUndo((history) => [...history.slice(-99), step]); setRedo([]); }
     return result;
   };
+  const toggleMindFold = (id: string) => {
+    const folded = effectiveCollapsed.has(id);
+    if (readOnly) { setViewFoldOverrides((current) => ({ ...current, [id]: !folded })); return; }
+    const next = new Set(graph.mindCollapsed ?? []); if (folded) next.delete(id); else next.add(id);
+    commitMind(graph, { ...graph, mindCollapsed: [...next] });
+    setMindSelected(id); setSelected(new Set());
+  };
   const startMindEdit = (topic: MindTopic) => {
     if (readOnly) return;
     const edit = { id: topic.id, value: topic.text, base: graph };
@@ -482,7 +494,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const order = sibling && next ? (parentTopic.order + next.order) / 2 : Math.max(-1, ...siblings.map((topic) => topic.order)) + 1;
     if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: "节点顺序空间不足，请在末尾添加。" }); return; }
     const topic: MindTopic = { id: newFlowId("m"), parent, order, text: "" };
-    const result = commitMind(graph, { ...graph, mind: [...graph.mind!, topic] });
+    const result = commitMind(graph, { ...graph, mind: [...graph.mind!, topic], mindCollapsed: (graph.mindCollapsed ?? []).filter((id) => id !== parent) });
     if (result.applied && result.graph.mind?.some((item) => item.id === topic.id)) { setMindSelected(topic.id); setSelected(new Set()); }
   };
   const removeMindTopic = () => {
@@ -527,7 +539,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const fit = (g = graph, viewport = size) => {
     autoFit.current = true;
-    const b = flowBounds(g);
+    const b = flowBounds(readOnly && g === graph ? { ...g, mindCollapsed: [...effectiveCollapsed] } : g);
     // 左侧留出竖向工具条，上下留出浮动栏。
     const padL = compact ? 24 : readOnly ? 40 : 90, padR = compact ? 24 : 40, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
     const zoom = Math.min(mindBoard ? 1 : 1.5, Math.max(0.2, Math.min(usableW / Math.max(1, b.w), usableH / Math.max(1, b.h))));
@@ -908,7 +920,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (kind === "drawio" && graph.mind?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持思维导图，请使用 PNG 或 SVG。" }); return; }
     if (kind === "drawio" && graph.strokes?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持笔迹，请使用 PNG 或 SVG。" }); return; }
     if (kind === "drawio") return download("流程图.drawio", new Blob([toDrawio(graph)], { type: "application/xml" }));
-    const svg = await inlineImages(svgMarkup(graph));
+    const svg = await inlineImages(svgMarkup(readOnly ? { ...graph, mindCollapsed: [...effectiveCollapsed] } : graph));
     if (kind === "svg") return download(mindBoard ? "思维导图.svg" : "流程图.svg", new Blob([svg], { type: "image/svg+xml" }));
     const b = flowBounds(graph), scale = 2, w = (b.w + 80) * scale, h = (b.h + 80) * scale;
     const img = new Image();
@@ -984,7 +996,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const obstacles = [...graph.nodes.map((node) => ({ x: node.x, y: node.y, w: node.w, h: node.h })), ...(graph.strokes ?? []).map((stroke) => flowBounds({ nodes: [], edges: [], strokes: [stroke], theme: graph.theme }))].map((box) => ({ x: (box.x - view.x) * view.zoom - obstaclePadding, y: (box.y - view.y) * view.zoom - obstaclePadding, w: box.w * view.zoom + 2 * obstaclePadding, h: box.h * view.zoom + 2 * obstaclePadding }));
   const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x - 16) * view.zoom, y: (anchorBox.y - view.y - 16) * view.zoom, w: (anchorBox.w + 32) * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize, obstacles) : null;
   const reserveStyleBar = compact && !readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0 || selectedStrokes.length > 0);
-  const mindPositions = layoutMindTopics(graph.mind ?? []), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
+  const mindPositions = layoutMindTopics(graph.mind ?? [], effectiveCollapsed), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
   const mindViewport = svgWrap.current?.getBoundingClientRect();
   const mindRoot = (id: string) => { let topic = graph.mind?.find((item) => item.id === id), depth = 0; while (topic?.parent && depth++ < 32) topic = graph.mind?.find((item) => item.id === topic!.parent); return topic?.id; };
   const sameTree = mindAnchor ? mindPositions.filter((item) => mindRoot(item.topic.id) === mindRoot(mindAnchor.topic.id)) : [];
@@ -1023,7 +1035,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} onMindSelect={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { if (mindEditing) finishMindEdit(); setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : startMindEdit} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
+      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindCollapsed={effectiveCollapsed} onMindFold={!mindEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindSelect={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { if (mindEditing) finishMindEdit(); setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : startMindEdit} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
         onCanvasDown={(e) => {
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
@@ -1340,6 +1352,7 @@ export function svgMarkup(graph: FlowGraph): string {
   if (!live) return "";
   const clone = live.cloneNode(true) as SVGSVGElement;
   clone.querySelectorAll("[data-mind-placeholder]").forEach((element) => element.remove());
+  clone.querySelectorAll("[data-mind-fold-expanded]").forEach((element) => element.remove());
   clone.querySelectorAll("[data-mind-outline]").forEach((element) => element.setAttribute("stroke", "transparent"));
   const b = flowBounds(graph);
   clone.setAttribute("viewBox", `${b.x - 40} ${b.y - 40} ${b.w + 80} ${b.h + 80}`);
