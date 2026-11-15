@@ -25,6 +25,7 @@ import { validSlideDeleteReceipt } from "./slides-delete";
 import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
 import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout } from "./slides-create-layout";
 import { planSlideLayout, slidePresetContent } from "./slides-layout-preset";
+import { slidePageMenuPosition } from "./slides-page-menu";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
@@ -72,7 +73,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const slideListRef = useRef<HTMLDivElement>(null);
   const dragScrollFrame = useRef<number | null>(null);
   const suppressPageClick = useRef(false);
-  const [pageMenu, setPageMenu] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [pageMenu, setPageMenu] = useState<{ id: number; left: number; top: number; width: number; maxHeight: number } | null>(null);
   const [layoutPicker, setLayoutPicker] = useState<{ anchor: Page | null } | null>(null);
   const layoutPickerRef = useRef<HTMLDivElement>(null);
   const layoutTriggerRef = useRef<HTMLButtonElement>(null);
@@ -154,12 +155,18 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   }, [shapeMenu]);
   useEffect(() => {
     if (!pageMenu) return;
-    pageMenuRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    const preferred = pageMenuRef.current?.querySelector<HTMLButtonElement>("[data-page-menu-default]:not([disabled])");
+    (preferred ?? pageMenuRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])"))?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => { if (!pageMenuRef.current?.contains(event.target as Node)) setPageMenu(null); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setPageMenu(null); document.querySelector<HTMLButtonElement>(`[data-slide-options="${pageMenu.id}"]`)?.focus({ preventScroll: true }); } };
-    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+    const resize = () => setPageMenu(null);
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape); window.addEventListener("resize", resize);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); window.removeEventListener("resize", resize); };
   }, [pageMenu]);
+  useEffect(() => {
+    if (!pageMenu || document.activeElement !== document.body) return;
+    pageMenuRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+  }, [pageMenu, canEdit]);
   useEffect(() => {
     if (!playMenu) return;
     const outside = (event: PointerEvent) => { if (!playMenuRef.current?.contains(event.target as Node)) setPlayMenu(false); };
@@ -604,7 +611,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   };
   const openPageMenu = (page: Page, x: number, y: number) => {
     activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null);
-    setPageMenu({ id: page.id, x: Math.max(8, Math.min(x, window.innerWidth - 208)), y: Math.max(8, Math.min(y, window.innerHeight - 306)) });
+    setPageMenu({ id: page.id, ...slidePageMenuPosition(x, y, window.innerWidth, window.innerHeight) });
   };
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
@@ -694,18 +701,18 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           if (!buttons.length) return;
           event.preventDefault();
           const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
-          const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : event.key === "ArrowDown" ? (current + 1) % buttons.length : (current + buttons.length - 1) % buttons.length;
+          const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : event.key === "ArrowDown" ? (current + 1) % buttons.length : current < 0 ? buttons.length - 1 : (current + buttons.length - 1) % buttons.length;
           buttons[index].focus();
-        }} className="fixed z-[70] w-[196px] rounded-lg border border-[#dee0e3] bg-white p-1 py-1.5 text-[13px] text-[#1f2329] shadow-[0_6px_24px_rgba(31,35,41,0.16)]" style={{ left: pageMenu.x, top: pageMenu.y }}>
-          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || insertPageUnknown || create.isPending || pageActions > 0} onClick={() => { setPageMenu(null); doInsert(page); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><FilePlus2 size={15}/>新建幻灯片 <span className="ml-auto text-[11px] text-[#8f959e]">Ctrl M</span></button>
-          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || copyPageUnknown || visibilityUnknown || pageActions > 0} onClick={() => { setPageMenu(null); doCopy(page); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={15}/>复制幻灯片 <span className="ml-auto text-[11px] text-[#8f959e]">⌘/Ctrl D</span></button>
-          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || visibilityUnknown || pageActions > 0 || create.isPending} onClick={() => { setPageMenu(null); togglePageHidden(page); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><EyeOff size={15}/>{page.hidden ? "取消隐藏幻灯片" : "隐藏幻灯片"}</button>
-          <button type="button" role="menuitem" disabled={!canEdit || orderUnknown || queue.hasUnsaved() || list.findIndex((entry) => entry.id === page.id) <= 0} onClick={() => { const index = list.findIndex((entry) => entry.id === page.id); setPageMenu(null); doMove(page, index - 1); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><ArrowUp size={15}/>上移幻灯片</button>
-          <button type="button" role="menuitem" disabled={!canEdit || orderUnknown || queue.hasUnsaved() || list.findIndex((entry) => entry.id === page.id) >= list.length - 1} onClick={() => { const index = list.findIndex((entry) => entry.id === page.id); setPageMenu(null); doMove(page, index + 1); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><ArrowDown size={15}/>下移幻灯片</button>
+        }} className="fixed z-[70] overflow-y-auto rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-[0_6px_24px_rgba(31,35,41,0.16)]" style={{ left: pageMenu.left, top: pageMenu.top, width: pageMenu.width, maxHeight: pageMenu.maxHeight }}>
+          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || remove.isPending || pageActions > 0} onClick={() => { setPageMenu(null); void doRemove(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Trash2 size={14}/>删除</button>
           <div className="my-1 border-t border-[#e5e6eb]"/>
-          <button type="button" role="menuitem" onClick={() => { setPageMenu(null); setFormatOpen(true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Palette size={15}/>幻灯片背景</button>
+          <button type="button" role="menuitem" data-page-menu-default disabled={!canEdit || item.state !== "saved" || insertPageUnknown || create.isPending || pageActions > 0} onClick={() => { setPageMenu(null); doInsert(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><FilePlus2 size={14}/>新建幻灯片 <span className="ml-auto text-[11px] text-[#8f959e]">Ctrl M</span></button>
+          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || copyPageUnknown || visibilityUnknown || pageActions > 0} onClick={() => { setPageMenu(null); doCopy(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={14}/>复制幻灯片 <span className="ml-auto text-[11px] text-[#8f959e]">⌘/Ctrl D</span></button>
+          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || visibilityUnknown || pageActions > 0 || create.isPending} onClick={() => { setPageMenu(null); togglePageHidden(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><EyeOff size={14}/>{page.hidden ? "取消隐藏幻灯片" : "隐藏幻灯片"}</button>
+          <button type="button" role="menuitem" disabled={!canEdit || orderUnknown || queue.hasUnsaved() || list.findIndex((entry) => entry.id === page.id) <= 0} onClick={() => { const index = list.findIndex((entry) => entry.id === page.id); setPageMenu(null); doMove(page, index - 1); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><ArrowUp size={14}/>上移幻灯片</button>
+          <button type="button" role="menuitem" disabled={!canEdit || orderUnknown || queue.hasUnsaved() || list.findIndex((entry) => entry.id === page.id) >= list.length - 1} onClick={() => { const index = list.findIndex((entry) => entry.id === page.id); setPageMenu(null); doMove(page, index + 1); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><ArrowDown size={14}/>下移幻灯片</button>
           <div className="my-1 border-t border-[#e5e6eb]"/>
-          <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || remove.isPending || pageActions > 0} onClick={() => { setPageMenu(null); void doRemove(page); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Trash2 size={15}/>删除</button>
+          <button type="button" role="menuitem" onClick={() => { setPageMenu(null); setFormatOpen(true); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Palette size={14}/>幻灯片背景</button>
         </div>;
       })()}
       {sharing && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} anchorRef={shareRef}/>}
