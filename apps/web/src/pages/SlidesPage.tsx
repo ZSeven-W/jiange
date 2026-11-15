@@ -28,7 +28,7 @@ import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
 import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout } from "./slides-create-layout";
 import { planSlideLayout, slidePresetContent } from "./slides-layout-preset";
 import { slidePageMenuPosition } from "./slides-page-menu";
-import { encodeSlideClipboard, parseSlideClipboard } from "./slides-clipboard";
+import { encodeSlideClipboard, mayCopySlide, parseSlideClipboard, verifyCrossSlidePaste } from "./slides-clipboard";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Clipboard, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
@@ -90,6 +90,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [clipboardNotice, setClipboardNotice] = useState("");
   const mounted = useRef(true);
   const canPasteRef = useRef(false);
+  const canCopyRef = useRef(false);
   useEffect(() => { if (!clipboardNotice) return; const timer = window.setTimeout(() => setClipboardNotice(""), 3000); return () => window.clearTimeout(timer); }, [clipboardNotice]);
   const [insertPageUnknown, setInsertPageUnknown] = useState(false);
   const [visibilityUnknown, setVisibilityUnknown] = useState(false);
@@ -278,6 +279,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const draft = active ? queue.get(active) : null;
   const canInsert = canEdit && pages.isSuccess && !create.isPending && !remove.isPending && pageActions === 0 && !insertPageUnknown && (!active || draft?.state === "saved");
   canPasteRef.current = canEdit && pages.isSuccess && !pages.isError && !copyPageUnknown && !visibilityUnknown && !insertPageUnknown && !queue.hasUnsaved() && !create.isPending && !remove.isPending && pageActions === 0;
+  canCopyRef.current = !meta.isError && !meta.isFetching && mayCopySlide(meta.data) && pages.isSuccess && !pages.isError && !queue.hasUnsaved() && pageActions === 0;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (!layoutPicker) return;
@@ -601,39 +603,61 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   };
   const clipboardReference = (page: Page): string | null => {
     const source = queue.get(page);
-    if (!canPasteRef.current || pageActionCount.current || source.state !== "saved") return null;
+    if (!canCopyRef.current || pageActionCount.current || source.state !== "saved") return null;
     return encodeSlideClipboard({ origin: location.origin, userId, deckId, pageId: source.page.id, revision: source.page.revision });
   };
   const copyToClipboard = async (page: Page) => {
     const text = clipboardReference(page);
     if (!text || !navigator.clipboard?.writeText) { setOperationError("暂时无法复制页面，请确认权限和保存状态。"); return; }
-    try { await navigator.clipboard.writeText(text); if (mounted.current) { setOperationError(""); setClipboardNotice("已复制幻灯片，可在本演示文稿中粘贴。"); } }
+    try { await navigator.clipboard.writeText(text); if (mounted.current) { setOperationError(""); setClipboardNotice("已复制幻灯片，可粘贴到其他演示文稿。"); } }
     catch { if (mounted.current) setOperationError("无法访问剪贴板，请选中页面后使用复制快捷键。"); }
   };
-  const pasteReference = (text: string, anchorId: number) => {
+  const pasteReference = async (text: string, anchorId: number) => {
     if (!mounted.current || !canPasteRef.current || pageActionCount.current || insertingPage.current || activePageRef.current !== anchorId) return;
     const clip = parseSlideClipboard(text);
-    if (!clip || clip.origin !== location.origin || clip.userId !== userId || clip.deckId !== deckId) { setOperationError("请选择本账号、本演示文稿中复制的幻灯片。"); return; }
+    if (!clip || clip.origin !== location.origin || clip.userId !== userId) { setOperationError("请选择本账号在当前站点复制的幻灯片。"); return; }
     const current = qc.getQueryData<Page[]>(["slides", deckId, userId]);
-    const sourcePage = current?.find((page) => page.id === clip.pageId), anchorPage = current?.find((page) => page.id === anchorId);
-    if (!sourcePage || !anchorPage) { setOperationError("源页面或粘贴位置已不存在，请重新复制。"); return; }
-    const source = queue.get(sourcePage), anchor = queue.get(anchorPage);
-    if (source.state !== "saved" || anchor.state !== "saved" || source.page.revision !== clip.revision) { setOperationError("源页面已变化或尚未保存，请重新复制。"); return; }
+    const anchorPage = current?.find((page) => page.id === anchorId);
+    if (!anchorPage) { setOperationError("粘贴位置已不存在，请重新选择。"); return; }
+    const anchor = queue.get(anchorPage);
+    if (anchor.state !== "saved") { setOperationError("粘贴位置尚未保存，请稍后重试。"); return; }
     setOperationError(""); setClipboardNotice(""); beginPageAction();
-    void slidesApi.pastePage(deckId, userId, source.page.id, source.page.revision, anchor.page.id, anchor.page.revision).then((saved) => {
-      if (!saved || !Number.isSafeInteger(saved.id) || saved.id <= 0 || saved.id === source.page.id || saved.slidesId !== deckId || saved.revision !== 1 || saved.hidden !== source.page.hidden || !Number.isFinite(saved.pos) || !Array.isArray(saved.shapes) || !sameSlideContent(source.content, saved)) throw new Error("invalid paste response");
-      if (activePageRef.current === anchorId) setCurrent(saved.id);
-      void invalidate();
-    }).catch((error) => {
+    let sent = false;
+    try {
+      let source: Page | undefined;
+      if (clip.deckId === deckId) {
+        const sourcePage = current?.find((page) => page.id === clip.pageId);
+        if (sourcePage) { const sourceDraft = queue.get(sourcePage); if (sourceDraft.state === "saved") source = sourceDraft.page; }
+      } else {
+        source = (await slidesApi.pages(clip.deckId, userId)).find((page) => page.id === clip.pageId);
+      }
+      if (!source || source.slidesId !== clip.deckId || source.revision !== clip.revision) throw new ApiError(409, "conflict", "来源页面已变化，请重新复制。");
+      if (!mounted.current) return;
+      const latestAnchor = qc.getQueryData<Page[]>(["slides", deckId, userId])?.find((page) => page.id === anchorId);
+      if (!mayWrite.current || activePageRef.current !== anchorId || !latestAnchor || queue.get(latestAnchor).state !== "saved" || queue.get(latestAnchor).page.revision !== anchor.page.revision) throw new ApiError(409, "conflict", "粘贴位置或权限已变化，请重试。");
+      sent = true;
+      let saved: Page | null;
+      if (clip.deckId === deckId) {
+        const result = await slidesApi.pastePage(deckId, userId, source.id, source.revision, anchor.page.id, anchor.page.revision);
+        saved = result && Number.isSafeInteger(result.id) && result.id > 0 && result.id !== source.id && result.slidesId === deckId && result.revision === 1 && result.hidden === source.hidden && Number.isFinite(result.pos) && Array.isArray(result.shapes) && sameSlideContent(source, result) ? result : null;
+      } else {
+        const result = await slidesApi.pastePageFrom(deckId, userId, clip.deckId, source.id, source.revision, anchor.page.id, anchor.page.revision);
+        saved = verifyCrossSlidePaste(source, deckId, result);
+      }
+      if (!saved) throw new Error("invalid paste response");
+      if (mounted.current && activePageRef.current === anchorId) setCurrent(saved.id);
+      if (mounted.current) void invalidate();
+    } catch (error) {
+      if (!mounted.current) return;
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
-      if (!known) setCopyPageUnknown(true);
-      setOperationError(known ? error.status === 409 ? "页面已变化，请重新复制后粘贴。" : error.status === 404 || error.status === 405 || error.status === 426 ? "服务端不支持安全粘贴，请升级服务。" : error.message : "粘贴结果未确认，请重新打开并检查页面列表。");
+      if (sent && !known) setCopyPageUnknown(true);
+      setOperationError(known ? error.status === 409 ? error.message : error.status === 404 || error.status === 405 || error.status === 426 ? "来源页面不可用或服务端不支持跨文稿粘贴。" : error.message : sent ? "粘贴结果未确认，请重新打开并检查页面列表。" : "无法读取来源页面，未粘贴任何内容。");
       void invalidate();
-    }).finally(endPageAction);
+    } finally { endPageAction(); }
   };
   const pasteFromClipboard = async (page: Page) => {
     if (!navigator.clipboard?.readText) { setOperationError("无法读取剪贴板，请选中页面后使用粘贴快捷键。"); return; }
-    try { const text = await navigator.clipboard.readText(); pasteReference(text, page.id); }
+    try { const text = await navigator.clipboard.readText(); void pasteReference(text, page.id); }
     catch { if (mounted.current) setOperationError("无法读取剪贴板，请选中页面后使用粘贴快捷键。"); }
   };
   const doRemove = async (page: Page) => {
@@ -690,7 +714,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       </header>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <div className="flex min-h-0 min-w-0 flex-1">
-        {showSlideList ? <aside className="flex w-[104px] shrink-0 flex-col border-r border-[#dee0e3] bg-white sm:w-[196px]" data-slides-list onCopy={(event) => { const row = (event.target as HTMLElement).closest<HTMLElement>("[data-slides-page]"); const page = list.find((item) => item.id === Number(row?.dataset.slidesPage)); const text = page && clipboardReference(page); if (!text) return; event.preventDefault(); event.clipboardData.setData("text/plain", text); setOperationError(""); setClipboardNotice("已复制幻灯片，可在本演示文稿中粘贴。"); }} onPaste={(event) => { const row = (event.target as HTMLElement).closest<HTMLElement>("[data-slides-page]"); const page = list.find((item) => item.id === Number(row?.dataset.slidesPage)); if (!page) return; const text = event.clipboardData.getData("text/plain"); if (!parseSlideClipboard(text)) return; event.preventDefault(); pasteReference(text, page.id); }}>
+        {showSlideList ? <aside className="flex w-[104px] shrink-0 flex-col border-r border-[#dee0e3] bg-white sm:w-[196px]" data-slides-list onCopy={(event) => { const row = (event.target as HTMLElement).closest<HTMLElement>("[data-slides-page]"); const page = list.find((item) => item.id === Number(row?.dataset.slidesPage)); const text = page && clipboardReference(page); if (!text) return; event.preventDefault(); event.clipboardData.setData("text/plain", text); setOperationError(""); setClipboardNotice("已复制幻灯片，可粘贴到其他演示文稿。"); }} onPaste={(event) => { const row = (event.target as HTMLElement).closest<HTMLElement>("[data-slides-page]"); const page = list.find((item) => item.id === Number(row?.dataset.slidesPage)); if (!page) return; const text = event.clipboardData.getData("text/plain"); if (!parseSlideClipboard(text)) return; event.preventDefault(); pasteReference(text, page.id); }}>
           <div className="flex h-14 items-center gap-1 px-2 sm:px-3"><div className="flex h-8 min-w-0 flex-1 rounded-md border border-[#d0d3d6] bg-white"><button type="button" aria-label="新建幻灯片" title="新建幻灯片" disabled={!canInsert} onClick={() => doInsert(active)} className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-l-md text-[12px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><FilePlus2 size={14} className="shrink-0"/><span className="hidden whitespace-nowrap sm:inline">新建幻灯片</span></button><button ref={layoutTriggerRef} type="button" disabled={!canInsert} aria-label="选择布局新建幻灯片" aria-haspopup="dialog" aria-expanded={!!layoutPicker} onClick={() => setLayoutPicker((open) => open ? null : { anchor: active })} className="grid w-7 shrink-0 place-items-center rounded-r-md border-l border-[#d0d3d6] text-[#646a73] hover:bg-[#f5f6f7] disabled:opacity-40"><ChevronDown size={14}/></button></div><button type="button" aria-label="收起幻灯片列表" onClick={() => { setLayoutPicker(null); setShowSlideList(false); }} className="grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><ChevronsLeft size={15}/></button></div>
           {layoutPicker && layoutTriggerRef.current && createPortal(<div ref={layoutPickerRef} role="dialog" aria-label="选择布局新建" style={slideCreatePickerPosition(layoutTriggerRef.current.getBoundingClientRect(), window.innerWidth, window.innerHeight)} className="fixed z-[100] overflow-auto rounded-lg border border-[#dee0e3] bg-white shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><SlideCreateLayoutPicker onSelect={(layout) => { const anchor = layoutPicker.anchor; setLayoutPicker(null); if (!canInsert || (anchor?.id ?? null) !== (active?.id ?? null) || (anchor && (!active || queue.get(active).page.revision !== anchor.revision))) { setOperationError("当前页面已变化，请重新选择布局。"); return; } doInsert(anchor, layout); }}/></div>, document.body)}
           <div ref={slideListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
@@ -764,7 +788,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : event.key === "ArrowDown" ? (current + 1) % buttons.length : current < 0 ? buttons.length - 1 : (current + buttons.length - 1) % buttons.length;
           buttons[index].focus();
         }} className="fixed z-[70] overflow-y-auto rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-[0_6px_24px_rgba(31,35,41,0.16)]" style={{ left: pageMenu.left, top: pageMenu.top, width: pageMenu.width, maxHeight: pageMenu.maxHeight }}>
-          <button type="button" role="menuitem" disabled={!canPasteRef.current || item.state !== "saved"} onClick={() => { setPageMenu(null); void copyToClipboard(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={14}/>复制<span className="ml-auto text-[11px] text-[#8f959e]">⌘/Ctrl C</span></button>
+          <button type="button" role="menuitem" disabled={!canCopyRef.current || item.state !== "saved"} onClick={() => { setPageMenu(null); void copyToClipboard(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={14}/>复制<span className="ml-auto text-[11px] text-[#8f959e]">⌘/Ctrl C</span></button>
           <button type="button" role="menuitem" disabled={!canPasteRef.current || item.state !== "saved"} onClick={() => { setPageMenu(null); void pasteFromClipboard(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Clipboard size={14}/>粘贴<span className="ml-auto text-[11px] text-[#8f959e]">⌘/Ctrl V</span></button>
           <div className="my-1 border-t border-[#e5e6eb]"/>
           <button type="button" role="menuitem" disabled={!canEdit || item.state !== "saved" || remove.isPending || pageActions > 0} onClick={() => { setPageMenu(null); void doRemove(page); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Trash2 size={14}/>删除</button>
