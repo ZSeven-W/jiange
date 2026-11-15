@@ -17,6 +17,7 @@ import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAc
 import { playableSlides, presentationStart, presentationKeyTarget } from "./slidesVisibility";
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
+import { SlideNotesPanel } from "./SlideNotesPanel";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { validSlideDeleteReceipt } from "./slides-delete";
 import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
@@ -558,7 +559,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
               </div> : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
             </div>
           </div>
-          {active && draft && <div className="border-t border-[#e5e6eb] bg-white px-4 py-2"><textarea aria-label="演示者备注" value={draft.content.notes} readOnly={!canEdit} onChange={(event) => queue.edit(active, { notes: event.target.value }, "notes")} onBlur={() => queue.endGroup(active.id)} placeholder="点击添加演示者备注" className="h-14 w-full resize-y bg-transparent text-[13px] text-[#646a73] outline-none placeholder:text-[#a3aab3]" data-slide-history /></div>}
+          {active && draft && <SlideNotesPanel value={draft.content.notes} readOnly={!canEdit} onChange={(notes) => queue.edit(active, { notes }, "notes")} onBlur={() => queue.endGroup(active.id)}/>}
           <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
         </section>
       </div>
