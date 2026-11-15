@@ -202,21 +202,27 @@ func (p *Postgres) ListSlidesPages(ctx context.Context, userID, slidesID int64) 
 }
 
 func (p *Postgres) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
-	return p.updateSlidesPage(ctx, g, 0, pageID, title, body, background, nil, notes, shapes, expectedRevision, false)
+	return p.updateSlidesPage(ctx, g, 0, pageID, title, body, background, nil, notes, shapes, expectedRevision, 3)
 }
 func (p *Postgres) UpdateSlidesPageV3(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
 	if slidesID <= 0 || !ValidSlideLayout(layout) {
 		return SlidesPage{}, ErrConflict
 	}
-	return p.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, false)
+	return p.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, 3)
 }
 func (p *Postgres) UpdateSlidesPageV4(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
 	if slidesID <= 0 || !ValidSlideLayout(layout) {
 		return SlidesPage{}, ErrConflict
 	}
-	return p.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, true)
+	return p.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, 4)
 }
-func (p *Postgres) updateSlidesPage(ctx context.Context, g RestoreGuard, expectedDeck, pageID int64, title, body, background string, layout *string, notes *string, shapes *json.RawMessage, expectedRevision int64, modern bool) (page SlidesPage, err error) {
+func (p *Postgres) UpdateSlidesPageV5(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
+	if slidesID <= 0 || !ValidSlideLayout(layout) {
+		return SlidesPage{}, ErrConflict
+	}
+	return p.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, 5)
+}
+func (p *Postgres) updateSlidesPage(ctx context.Context, g RestoreGuard, expectedDeck, pageID int64, title, body, background string, layout *string, notes *string, shapes *json.RawMessage, expectedRevision int64, protocol int) (page SlidesPage, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var slidesID int64
 		var currentLayout string
@@ -233,7 +239,10 @@ func (p *Postgres) updateSlidesPage(ctx context.Context, g RestoreGuard, expecte
 		if e := p.slidesAccessGuarded(ctx, tx, g, slidesID); e != nil {
 			return e
 		}
-		if !modern && (HasModernSlideShapes(currentShapes) || (shapes != nil && HasModernSlideShapes(*shapes))) {
+		if protocol < 4 && (HasModernSlideShapes(currentShapes) || (shapes != nil && HasModernSlideShapes(*shapes))) {
+			return ErrSlideClientOutdated
+		}
+		if protocol < 5 && (HasSlidesV5Shapes(currentShapes) || (shapes != nil && HasSlidesV5Shapes(*shapes))) {
 			return ErrSlideClientOutdated
 		}
 		if layout == nil && currentLayout != "" {

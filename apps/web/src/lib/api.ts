@@ -452,7 +452,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "rounded-rectangle" | "right-triangle" | "diamond" | "pentagon" | "hexagon" | "star" | "parallelogram" | "trapezoid" | "arrow-right" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
+export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "rounded-rectangle" | "right-triangle" | "diamond" | "pentagon" | "hexagon" | "star" | "parallelogram" | "trapezoid" | "arrow-right" | "line" | "line-arrow" | "line-arrow-filled" | "line-dot" | "line-double-arrow" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
 export type SlideLayout = "" | "title" | "blank" | "blank-title";
 export type SlideCreationLayout = SlideLayout | "two-column";
 export interface SlidesPage {
@@ -469,11 +469,11 @@ export interface SlidesPage {
   revision: number;
   updatedAt: string;
 }
-const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "text", "image"]);
+const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image"]);
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
-  pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "4", "X-Jiange-User-Id": String(userId) }).then((r) => {
-    if (r?.presentationProtocol !== 4 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean" || !Array.isArray(page.shapes) || page.shapes.some((shape) => !shape || typeof shape !== "object" || !slideShapeKinds.has(shape.kind)) || (page.layout !== "" && page.layout !== "title" && page.layout !== "blank" && page.layout !== "blank-title"))) throw new ApiError(426, "slide_server_outdated", "服务端不支持当前幻灯片布局，请升级后重试。");
+  pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "5", "X-Jiange-User-Id": String(userId) }).then((r) => {
+    if (r?.presentationProtocol !== 5 || !Array.isArray(r.pages) || r.pages.some((page) => !page || typeof page !== "object" || Array.isArray(page) || typeof page.hidden !== "boolean" || !Array.isArray(page.shapes) || page.shapes.some((shape) => !shape || typeof shape !== "object" || !slideShapeKinds.has(shape.kind)) || (page.layout !== "" && page.layout !== "title" && page.layout !== "blank" && page.layout !== "blank-title"))) throw new ApiError(426, "slide_server_outdated", "服务端不支持当前幻灯片布局，请升级后重试。");
     return r.pages;
   }),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
@@ -485,7 +485,7 @@ export const slidesApi = {
   applyBackground: (deckId: number, userId: number, background: string, expected: { id: number; revision: number }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-all`, { background, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   changeBackgrounds: (deckId: number, userId: number, changes: { id: number; revision: number; background: string }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-changes`, { changes }, undefined, { "X-Jiange-User-Id": String(userId) }),
   update: (deckId: number, pid: number, userId: number, title: string, body: string, background: string, layout: SlideLayout, expectedRevision: number, notes?: string, shapes?: SlideShape[]) =>
-    request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pid}/content`, { title, body, background, layout, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }, undefined, { "X-Jiange-User-Id": String(userId), "X-Jiange-Slides-Version": "4" }),
+    request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pid}/content`, { title, body, background, layout, expectedRevision, ...(notes === undefined ? {} : { notes }), ...(shapes === undefined ? {} : { shapes }) }, undefined, { "X-Jiange-User-Id": String(userId), "X-Jiange-Slides-Version": "5" }),
   removeVersion: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<{ deletedId: number; slidesId: number; revision: number }>("POST", `/api/slides/${deckId}/pages/${pageId}/delete`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   reorder: (deckId: number, userId: number, expected: { id: number; pos: number }[], pageId: number, to: number) => request<{ positions: unknown }>("POST", `/api/slides/${deckId}/pages/reorder`, { expected, pageId, to }, undefined, { "X-Jiange-User-Id": String(userId) }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {

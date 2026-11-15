@@ -21,6 +21,7 @@ import { SlideNotesPanel } from "./SlideNotesPanel";
 import { SlideDeckTitle, type SlideTitleDraft } from "./SlideDeckTitle";
 import { readSlideTitleDraft, writeSlideTitleDraft } from "./slides-title-recovery";
 import { SlideShapePicker, slideShapePickerPosition } from "./SlideShapePicker";
+import { isLineSlideShape, type BasicSlideShape } from "./slide-shape-catalog";
 import { samePositions, slideDropIndex, slideEdgeScrollSpeed, slidePositions, verifySlideOrder, type SlidePosition } from "./slides-order";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { validSlideDeleteReceipt } from "./slides-delete";
@@ -322,7 +323,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     next[index] = alignSlideShape(shapes[index], alignment);
     queue.edit(active, { shapes: next });
   };
-  const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const shape: SlideShape = kind === "text" ? { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 12, y: 55, width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 } : { id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
+  const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const id = `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; const shape: SlideShape = kind === "text" ? { id, kind, x: 12, y: 55, width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 } : kind !== "image" && isLineSlideShape(kind as BasicSlideShape) ? { id, kind, x: 35, y: 48, width: 30, height: 5, color: "#1f2329" } : { id, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
   const insertImage = async (file: File) => {
     if (!active || !canEdit || imageUpload.current) return;
     const page = active;

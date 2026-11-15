@@ -12,4 +12,13 @@ describe("slide shapes", () => {
     const html = renderToStaticMarkup(<SlideSurface content={{ title: "", body: "", background: "", layout: "", shapes: [{ id: "s", kind: "star", x: 10, y: 10, color: "#3370ff" }] }}/>);
     expect(html).toContain('d="M50 3L61 35');
   });
+  it("renders all five line styles on the slide surface", () => {
+    const lines = SLIDE_SHAPES.filter((shape) => shape.group === "线条");
+    expect(lines).toHaveLength(5);
+    for (const [index, item] of lines.entries()) {
+      const html = renderToStaticMarkup(<SlideSurface content={{ title: "", body: "", background: "", layout: "", shapes: [{ id: `line-${index}`, kind: item.kind, x: 10, y: 10, width: 30, height: 5, color: "#1f2329" }] }}/>);
+      expect(html).toContain('d="M5 50H95"');
+      expect(html).toContain('#1f2329');
+    }
+  });
 });

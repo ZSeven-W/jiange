@@ -9,7 +9,8 @@ describe("slide shape picker", () => {
     expect(html).toContain('aria-label="箭头图形"');
     expect(html).toContain('aria-label="矩形"');
     expect(html).toContain('aria-label="向右箭头"');
-    expect(html).not.toContain('aria-label="线条图形"');
+    expect(html).toContain('aria-label="线条图形"');
+    expect(html).toContain('aria-label="直线"');
   });
   it("fits the entire picker within desktop and short mobile viewports", () => {
     for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 360 }]) {

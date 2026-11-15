@@ -77,6 +77,28 @@ type SlidesShapesV4Store interface {
 	UpdateSlidesPageV4(context.Context, RestoreGuard, int64, int64, string, string, string, string, *string, *json.RawMessage, int64) (SlidesPage, error)
 }
 
+// SlidesShapesV5Store fences line shapes from clients that only know V4.
+type SlidesShapesV5Store interface {
+	UpdateSlidesPageV5(context.Context, RestoreGuard, int64, int64, string, string, string, string, *string, *json.RawMessage, int64) (SlidesPage, error)
+}
+
+func HasSlidesV5Shapes(raw json.RawMessage) bool {
+	var shapes []struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(raw, &shapes) != nil {
+		return true
+	}
+	for _, shape := range shapes {
+		switch shape.Kind {
+		case "rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "text", "image":
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 func HasModernSlideShapes(raw json.RawMessage) bool {
 	var shapes []struct {
 		Kind string `json:"kind"`

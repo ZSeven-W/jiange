@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SLIDE_SHAPES, SlideShapeGraphic, type BasicSlideShape } from "./slide-shape-catalog";
 
-const groups = ["基础", "箭头"] as const;
+const groups = ["基础", "线条", "箭头"] as const;
 type ShapeGroup = typeof groups[number];
 
 /** Keep the popover within the viewport, including short landscape screens. */
@@ -20,11 +20,15 @@ export function SlideShapePicker({ onSelect }: { onSelect: (kind: BasicSlideShap
   const [active, setActive] = useState<ShapeGroup>("基础");
   const pane = useRef<HTMLDivElement>(null);
   const sections = useRef<Partial<Record<ShapeGroup, HTMLElement>>>({});
+  const navigating = useRef<ShapeGroup | null>(null);
   const navigate = (group: ShapeGroup) => {
     const container = pane.current, section = sections.current[group];
     if (!container || !section) return;
     setActive(group);
-    container.scrollTo({ top: container.scrollTop + section.getBoundingClientRect().top - container.getBoundingClientRect().top, behavior: "instant" });
+    const top = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, container.scrollTop + section.getBoundingClientRect().top - container.getBoundingClientRect().top));
+    if (Math.abs(top - container.scrollTop) < 1) return;
+    navigating.current = group;
+    container.scrollTo({ top, behavior: "instant" });
   };
   return <div className="flex h-full min-h-0 flex-col text-[13px] text-[#1f2329]" data-slide-shape-picker>
     <div className="flex h-12 shrink-0 items-end border-b border-[#e5e6eb] px-3"><span className="flex h-12 items-center border-b-2 border-[#3370ff] px-1 font-medium text-[#3370ff]">形状</span></div>
@@ -33,9 +37,9 @@ export function SlideShapePicker({ onSelect }: { onSelect: (kind: BasicSlideShap
       <div ref={pane} aria-label="图形列表" className="min-w-0 flex-1 overflow-y-auto px-3" onScroll={() => {
         const container = pane.current;
         if (!container) return;
-        if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 1) { setActive(groups[groups.length - 1]); return; }
-        const top = container.getBoundingClientRect().top;
-        const lastVisible = [...groups].reverse().find((group) => (sections.current[group]?.getBoundingClientRect().top ?? Infinity) <= top + 16);
+        if (navigating.current) { setActive(navigating.current); navigating.current = null; return; }
+        const top = container.getBoundingClientRect().top + container.clientHeight / 2;
+        const lastVisible = [...groups].reverse().find((group) => (sections.current[group]?.getBoundingClientRect().top ?? Infinity) <= top);
         if (lastVisible) setActive(lastVisible);
       }}>
         {groups.map((group) => <section key={group} ref={(element) => { if (element) sections.current[group] = element; else delete sections.current[group]; }} aria-label={`${group}图形`} className="pb-5">

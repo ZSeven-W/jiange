@@ -45,7 +45,7 @@ func (s *Server) postSlidesPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 	version := r.Header.Get("X-Jiange-Slides-Version")
-	if version == "2" || version == "3" || version == "4" {
+	if version == "2" || version == "3" || version == "4" || version == "5" {
 		if r.Header.Get("X-Jiange-User-Id") == "" {
 			httpx.Error(w, http.StatusBadRequest, "missing_account", "查看账号未确认")
 			return
@@ -64,7 +64,7 @@ func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, page := range pages {
-		if (version != "2" && version != "3" && version != "4" && page.Hidden) || (version != "3" && version != "4" && page.Layout != "") || (version != "4" && store.HasModernSlideShapes(page.Shapes)) {
+		if (version != "2" && version != "3" && version != "4" && version != "5" && page.Hidden) || (version != "3" && version != "4" && version != "5" && page.Layout != "") || (version != "4" && version != "5" && store.HasModernSlideShapes(page.Shapes)) || (version != "5" && store.HasSlidesV5Shapes(page.Shapes)) {
 			httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持当前页面的幻灯片编辑器")
 			return
 		}
@@ -74,6 +74,8 @@ func (s *Server) listSlidesPages(w http.ResponseWriter, r *http.Request) {
 		protocol = 3
 	} else if version == "4" {
 		protocol = 4
+	} else if version == "5" {
+		protocol = 5
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"pages": pages, "presentationProtocol": protocol})
@@ -146,7 +148,14 @@ func (s *Server) patchSlidesContent(w http.ResponseWriter, r *http.Request, v3 b
 			httpx.Error(w, http.StatusBadRequest, "invalid_layout", "页面布局无效")
 			return
 		}
-		if r.Header.Get("X-Jiange-Slides-Version") == "4" {
+		if r.Header.Get("X-Jiange-Slides-Version") == "5" {
+			modern, ok := s.Store.(store.SlidesShapesV5Store)
+			if !ok {
+				httpx.Error(w, http.StatusUpgradeRequired, "slide_server_outdated", "请升级幻灯片服务")
+				return
+			}
+			page, err = modern.UpdateSlidesPageV5(r.Context(), g, deck, pid, in.Title, in.Body, in.Background, *in.Layout, in.Notes, in.Shapes, in.ExpectedRevision)
+		} else if r.Header.Get("X-Jiange-Slides-Version") == "4" {
 			modern, ok := s.Store.(store.SlidesShapesV4Store)
 			if !ok {
 				httpx.Error(w, http.StatusUpgradeRequired, "slide_server_outdated", "请升级幻灯片服务")
@@ -245,7 +254,7 @@ func validSlideShapes(raw json.RawMessage) bool {
 		if s.Rotation != nil {
 			rotation = *s.Rotation
 		}
-		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "rounded-rectangle" && s.Kind != "right-triangle" && s.Kind != "diamond" && s.Kind != "pentagon" && s.Kind != "hexagon" && s.Kind != "star" && s.Kind != "parallelogram" && s.Kind != "trapezoid" && s.Kind != "arrow-right" && s.Kind != "text" && s.Kind != "image") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "rounded-rectangle" && s.Kind != "right-triangle" && s.Kind != "diamond" && s.Kind != "pentagon" && s.Kind != "hexagon" && s.Kind != "star" && s.Kind != "parallelogram" && s.Kind != "trapezoid" && s.Kind != "arrow-right" && s.Kind != "line" && s.Kind != "line-arrow" && s.Kind != "line-arrow-filled" && s.Kind != "line-dot" && s.Kind != "line-double-arrow" && s.Kind != "text" && s.Kind != "image") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
 			return false
 		}
 		if s.Kind == "text" && (s.Text == nil || utf8.RuneCountInString(*s.Text) > 1000 || (s.FontSize != nil && (*s.FontSize < 12 || *s.FontSize > 96)) || (s.Align != nil && *s.Align != "left" && *s.Align != "center" && *s.Align != "right")) {
