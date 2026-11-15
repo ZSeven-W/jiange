@@ -122,3 +122,83 @@ func exerciseInsertSlide(t *testing.T, st store.Store) {
 
 func TestMemoryInsertSlidePage(t *testing.T)   { exerciseInsertSlide(t, store.NewMemory()) }
 func TestPostgresInsertSlidePage(t *testing.T) { exerciseInsertSlide(t, atomicPostgres(t)) }
+
+func exerciseInsertSlideLayout(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	owner, ws, err := st.CreateUser(ctx, "insert-layout-owner@example.test", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := store.RestoreGuard{UserID: owner.ID, SessionHash: []byte("insert-layout-owner")}
+	if err = st.CreateSession(ctx, g.SessionHash, owner.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	deck, err := st.CreateDriveNode(ctx, g, ws.ID, nil, "slides", "Deck", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := st.ListSlidesPages(ctx, owner.ID, deck.ID)
+	if err != nil || len(pages) != 1 {
+		t.Fatalf("initial pages: %+v %v", pages, err)
+	}
+	anchor := pages[0]
+	if _, err = st.InsertSlidesPageWithLayout(ctx, g, deck.ID, anchor.ID, anchor.Revision+1, "title"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale anchor: %v", err)
+	}
+	if _, err = st.InsertSlidesPageWithLayout(ctx, g, deck.ID, anchor.ID, anchor.Revision, "unknown"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("invalid layout: %v", err)
+	}
+	page, err := st.InsertSlidesPageWithLayout(ctx, g, deck.ID, anchor.ID, anchor.Revision, "title")
+	if err != nil || page.Layout != "title" || page.Revision != 1 || page.Title != "" || page.Hidden {
+		t.Fatalf("insert title: %+v %v", page, err)
+	}
+	second, err := st.InsertSlidesPageWithLayout(ctx, g, deck.ID, page.ID, page.Revision, "blank")
+	if err != nil || second.Layout != "blank" || second.Revision != 1 {
+		t.Fatalf("insert blank: %+v %v", second, err)
+	}
+	pages, err = st.ListSlidesPages(ctx, owner.ID, deck.ID)
+	if err != nil || len(pages) != 3 || pages[0].ID != anchor.ID || pages[1].ID != page.ID || pages[2].ID != second.ID {
+		t.Fatalf("order: %+v %v", pages, err)
+	}
+	viewer, _, err := st.CreateUser(ctx, "insert-layout-viewer@example.test", "Viewer", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerGuard := store.RestoreGuard{UserID: viewer.ID, SessionHash: []byte("insert-layout-viewer")}
+	if err = st.CreateSession(ctx, viewerGuard.SessionHash, viewer.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.SetShare(ctx, deck.ID, viewer.ID, store.RoleView); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.InsertSlidesPageWithLayout(ctx, viewerGuard, deck.ID, anchor.ID, anchor.Revision, "title"); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("viewer: %v", err)
+	}
+	deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	type result struct {
+		page store.SlidesPage
+		err  error
+	}
+	results := make(chan result, 2)
+	for _, layout := range []string{"blank", "title"} {
+		go func(layout string) {
+			p, e := st.InsertSlidesPageWithLayout(deadline, g, deck.ID, anchor.ID, anchor.Revision, layout)
+			results <- result{p, e}
+		}(layout)
+	}
+	firstConcurrent, secondConcurrent := <-results, <-results
+	if firstConcurrent.err != nil || secondConcurrent.err != nil || firstConcurrent.page.ID == secondConcurrent.page.ID || firstConcurrent.page.Pos == secondConcurrent.page.Pos {
+		t.Fatalf("concurrent insert: %+v %+v", firstConcurrent, secondConcurrent)
+	}
+	if err = st.DeleteSession(ctx, g.SessionHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.InsertSlidesPageWithLayout(ctx, g, deck.ID, second.ID, second.Revision, "title"); !errors.Is(err, store.ErrUnauthenticated) {
+		t.Fatalf("revoked: %v", err)
+	}
+}
+
+func TestMemoryInsertSlideLayout(t *testing.T)   { exerciseInsertSlideLayout(t, store.NewMemory()) }
+func TestPostgresInsertSlideLayout(t *testing.T) { exerciseInsertSlideLayout(t, atomicPostgres(t)) }

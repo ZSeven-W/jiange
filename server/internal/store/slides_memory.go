@@ -47,14 +47,21 @@ func (m *Memory) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesID 
 }
 
 func (m *Memory) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
-	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true)
+	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true, "")
 }
 
 func (m *Memory) InsertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
-	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false)
+	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, "")
 }
 
-func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool) (SlidesPage, error) {
+func (m *Memory) InsertSlidesPageWithLayout(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, layout string) (SlidesPage, error) {
+	if !ValidSlideLayout(layout) {
+		return SlidesPage{}, ErrConflict
+	}
+	return m.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, layout)
+}
+
+func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool, layout string) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, err := m.slidesAccessLocked(ctx, g, slidesID, false)
@@ -71,7 +78,7 @@ func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID,
 			}
 		}
 		m.slidesSequence++
-		page := SlidesPage{ID: m.slidesSequence, SlidesID: slidesID, Pos: 1, Shapes: json.RawMessage(`[]`), Revision: 1, UpdatedAt: time.Now()}
+		page := SlidesPage{ID: m.slidesSequence, SlidesID: slidesID, Pos: 1, Shapes: json.RawMessage(`[]`), Layout: layout, Revision: 1, UpdatedAt: time.Now()}
 		m.slides = append(m.slides, page)
 		page.Shapes = slices.Clone(page.Shapes)
 		return page, nil
@@ -95,7 +102,7 @@ func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID,
 		return SlidesPage{}, err
 	}
 	m.slidesSequence++
-	page := SlidesPage{SlidesID: slidesID, Shapes: json.RawMessage(`[]`)}
+	page := SlidesPage{SlidesID: slidesID, Shapes: json.RawMessage(`[]`), Layout: layout}
 	if copySource {
 		page = *src
 		page.Shapes = slices.Clone(src.Shapes)

@@ -101,3 +101,66 @@ func TestInsertSlidePageAccountAndAnchor(t *testing.T) {
 		t.Fatalf("reject duplicate first: %d", status)
 	}
 }
+
+func TestInsertSlidePageWithLayoutRequiresModernClient(t *testing.T) {
+	ts, owner := newTestServer(t, store.NewMemory(), nil)
+	post(t, owner, ts.URL+"/api/auth/register", map[string]string{"email": "insert-layout-api@example.test", "name": "Owner", "password": "password123"}).Body.Close()
+	var deck store.DriveEntry
+	r := post(t, owner, ts.URL+"/api/drive/nodes", map[string]any{"kind": "slides", "title": "Deck", "scope": "personal"})
+	if r.StatusCode != http.StatusCreated || json.NewDecoder(r.Body).Decode(&deck) != nil {
+		t.Fatalf("create deck: %d", r.StatusCode)
+	}
+	r.Body.Close()
+	url := fmt.Sprintf("%s/api/slides/%d/pages", ts.URL, deck.ID)
+	r, err := owner.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Pages []store.SlidesPage `json:"pages"`
+	}
+	if json.NewDecoder(r.Body).Decode(&list) != nil || len(list.Pages) != 1 {
+		t.Fatal("missing initial page")
+	}
+	r.Body.Close()
+	anchor := list.Pages[0]
+	call := func(layout, protocol string) *http.Response {
+		body := fmt.Sprintf(`{"afterPageId":%d,"expectedRevision":%d,"layout":%q}`, anchor.ID, anchor.Revision, layout)
+		req, e := http.NewRequest("POST", url+"/insert", bytes.NewBufferString(body))
+		if e != nil {
+			t.Fatal(e)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Jiange-User-Id", fmt.Sprint(deck.CreatorID))
+		req.Header.Set("X-Jiange-Slides-Version", protocol)
+		res, e := owner.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return res
+	}
+	r = call("unknown", "4")
+	if r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid layout: %d", r.StatusCode)
+	}
+	r.Body.Close()
+	r = call("title", "3")
+	if r.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("old protocol: %d", r.StatusCode)
+	}
+	r.Body.Close()
+	r = call("title", "4")
+	var inserted store.SlidesPage
+	if r.StatusCode != http.StatusCreated || json.NewDecoder(r.Body).Decode(&inserted) != nil || inserted.Layout != "title" || inserted.Revision != 1 {
+		t.Fatalf("insert: %d %+v", r.StatusCode, inserted)
+	}
+	r.Body.Close()
+	r, err = owner.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("legacy read: %d", r.StatusCode)
+	}
+}

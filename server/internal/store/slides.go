@@ -40,6 +40,8 @@ type SlidesStore interface {
 	// Insert after the verified anchor; pageID=0 creates the first page only
 	// when the deck is still empty.
 	InsertSlidesPage(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error)
+	// Insert a page and its initial layout under the same authorization and anchor lock.
+	InsertSlidesPageWithLayout(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64, layout string) (SlidesPage, error)
 	DuplicateSlidesPage(ctx context.Context, guard RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error)
 	ListSlidesPages(ctx context.Context, userID, slidesID int64) ([]SlidesPage, error)
 	UpdateSlidesPage(ctx context.Context, guard RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error)

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
+	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
 func (s *Server) insertSlidesPage(w http.ResponseWriter, r *http.Request) {
@@ -26,8 +27,9 @@ func (s *Server) insertSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		AfterPageID      *int64 `json:"afterPageId"`
-		ExpectedRevision *int64 `json:"expectedRevision"`
+		AfterPageID      *int64  `json:"afterPageId"`
+		ExpectedRevision *int64  `json:"expectedRevision"`
+		Layout           *string `json:"layout"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -36,11 +38,26 @@ func (s *Server) insertSlidesPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_anchor", "页面位置或版本无效")
 		return
 	}
+	if in.Layout != nil {
+		if !store.ValidSlideLayout(*in.Layout) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_layout", "幻灯片布局无效")
+			return
+		}
+		if r.Header.Get("X-Jiange-Slides-Version") != "4" {
+			httpx.Error(w, http.StatusUpgradeRequired, "slide_client_outdated", "请刷新以使用支持布局的幻灯片编辑器")
+			return
+		}
+	}
 	g, ok := s.driveGuard(w, r)
 	if !ok {
 		return
 	}
-	page, err := s.Store.InsertSlidesPage(r.Context(), g, deck, *in.AfterPageID, *in.ExpectedRevision)
+	var page store.SlidesPage
+	if in.Layout == nil {
+		page, err = s.Store.InsertSlidesPage(r.Context(), g, deck, *in.AfterPageID, *in.ExpectedRevision)
+	} else {
+		page, err = s.Store.InsertSlidesPageWithLayout(r.Context(), g, deck, *in.AfterPageID, *in.ExpectedRevision, *in.Layout)
+	}
 	if driveWriteErr(w, err, "insert slide page") {
 		return
 	}

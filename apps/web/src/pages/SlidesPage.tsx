@@ -23,6 +23,7 @@ import { samePositions, slideDropIndex, slideEdgeScrollSpeed, slidePositions, ve
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { validSlideDeleteReceipt } from "./slides-delete";
 import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
+import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout } from "./slides-create-layout";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
@@ -65,6 +66,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const dragScrollFrame = useRef<number | null>(null);
   const suppressPageClick = useRef(false);
   const [pageMenu, setPageMenu] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [layoutPicker, setLayoutPicker] = useState<{ anchor: Page | null } | null>(null);
+  const layoutPickerRef = useRef<HTMLDivElement>(null);
+  const layoutTriggerRef = useRef<HTMLButtonElement>(null);
   const [copyPageUnknown, setCopyPageUnknown] = useState(false);
   const [insertPageUnknown, setInsertPageUnknown] = useState(false);
   const [visibilityUnknown, setVisibilityUnknown] = useState(false);
@@ -183,18 +187,18 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     }
   };
   const create = useMutation({
-    mutationFn: async (anchor: Page | null) => {
+    mutationFn: async ({ anchor, layout }: { anchor: Page | null; layout: NewSlideLayout }) => {
       const source = anchor ? queue.get(anchor) : null;
       if (source && source.state !== "saved") throw new ApiError(409, "conflict", "请等待当前页面保存完成。 ");
-      const page = await slidesApi.insertPage(deckId, userId, anchor?.id ?? 0, source?.page.revision ?? 0);
-      if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 || page.id === anchor?.id || page.slidesId !== deckId || page.revision !== 1 || page.hidden !== false || page.layout !== "" || page.title !== "" || page.body !== "" || page.notes !== "" || !Array.isArray(page.shapes) || page.shapes.length !== 0) throw new Error("invalid new page response");
+      const page = await slidesApi.insertPage(deckId, userId, anchor?.id ?? 0, source?.page.revision ?? 0, layout);
+      if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 || page.id === anchor?.id || page.slidesId !== deckId || page.revision !== 1 || page.hidden !== false || page.layout !== layout || page.title !== "" || page.body !== "" || page.notes !== "" || !Array.isArray(page.shapes) || page.shapes.length !== 0) throw new Error("invalid new page response");
       return { page, anchorId: anchor?.id ?? null };
     },
     onSuccess: ({ page, anchorId }) => { if (activePageRef.current === anchorId) { setCurrent(page.id); setSelectedShape(null); } void invalidate(); },
-    onError: (error) => {
+    onError: (error, variables) => {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
       if (!known) setInsertPageUnknown(true);
-      setOperationError(known ? error.status === 409 ? "页面已变化或页面顺序空间不足，请刷新后重试。" : error.message : "新建结果未能确认，请重新打开并检查页面列表后再操作。");
+      setOperationError(known ? error.status === 409 ? "页面已变化或页面顺序空间不足，请刷新后重试。" : variables.layout && (error.status === 426 || (error.status === 400 && error.code === "bad_request")) ? "所选布局需要新版服务，请升级后重试。" : error.message : "新建结果未能确认，请重新打开并检查页面列表后再操作。");
       void invalidate();
     },
     onSettled: () => { insertingPage.current = false; },
@@ -231,6 +235,16 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   activePageRef.current = active?.id ?? null;
   canEditRef.current = canEdit;
   const draft = active ? queue.get(active) : null;
+  const canInsert = canEdit && pages.isSuccess && !create.isPending && !remove.isPending && pageActions === 0 && !insertPageUnknown && (!active || draft?.state === "saved");
+  useEffect(() => {
+    if (!layoutPicker) return;
+    const focus = requestAnimationFrame(() => { if (document.activeElement === layoutTriggerRef.current) layoutPickerRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); });
+    const outside = (event: PointerEvent) => { if (!layoutPickerRef.current?.contains(event.target as Node) && !layoutTriggerRef.current?.contains(event.target as Node)) setLayoutPicker(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setLayoutPicker(null); layoutTriggerRef.current?.focus(); } };
+    const close = () => setLayoutPicker(null);
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape); window.addEventListener("resize", close);
+    return () => { cancelAnimationFrame(focus); document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); window.removeEventListener("resize", close); };
+  }, [layoutPicker]);
   const chosenShape = draft?.content.shapes.find((shape) => shape.id === selectedShape);
   const zoom = manualZoom ?? fitZoom;
   useEffect(() => { if (!zoomEditing.current) setZoomText(String(zoom)); }, [zoom]);
@@ -519,12 +533,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       void invalidate();
     }).finally(endPageAction);
   };
-  const doInsert = (anchor: Page | null) => {
+  const doInsert = (anchor: Page | null, layout: NewSlideLayout = "") => {
     if (!canEdit || !pages.isSuccess || pages.isError || insertPageUnknown || insertingPage.current || create.isPending || remove.isPending || pageActionCount.current || (anchor && queue.get(anchor).state !== "saved")) return;
     setOperationError("");
     if (anchor && activePageRef.current !== anchor.id) { activePageRef.current = anchor.id; setCurrent(anchor.id); setSelectedShape(null); }
     insertingPage.current = true;
-    create.mutate(anchor);
+    create.mutate({ anchor, layout });
   };
   const doCopy = (page: Page) => {
     const source = queue.get(page);
@@ -597,7 +611,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <div className="flex min-h-0 min-w-0 flex-1">
         {showSlideList ? <aside className="flex w-[104px] shrink-0 flex-col border-r border-[#dee0e3] bg-white sm:w-[196px]" data-slides-list>
-          <div className="flex h-14 items-center gap-1 px-2 sm:px-3"><button type="button" disabled={!canEdit || !pages.isSuccess || create.isPending || remove.isPending || pageActions > 0 || insertPageUnknown || !!active && draft?.state !== "saved"} onClick={() => doInsert(active)} className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-[#d0d3d6] bg-white text-[12px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><FilePlus2 size={14}/><span className="hidden sm:inline">新建幻灯片</span><span className="sm:hidden">新建</span></button><button type="button" aria-label="收起幻灯片列表" onClick={() => setShowSlideList(false)} className="grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><ChevronsLeft size={15}/></button></div>
+          <div className="flex h-14 items-center gap-1 px-2 sm:px-3"><div className="flex h-8 min-w-0 flex-1 rounded-md border border-[#d0d3d6] bg-white"><button type="button" aria-label="新建幻灯片" title="新建幻灯片" disabled={!canInsert} onClick={() => doInsert(active)} className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-l-md text-[12px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><FilePlus2 size={14} className="shrink-0"/><span className="hidden whitespace-nowrap sm:inline">新建幻灯片</span></button><button ref={layoutTriggerRef} type="button" disabled={!canInsert} aria-label="选择布局新建幻灯片" aria-haspopup="dialog" aria-expanded={!!layoutPicker} onClick={() => setLayoutPicker((open) => open ? null : { anchor: active })} className="grid w-7 shrink-0 place-items-center rounded-r-md border-l border-[#d0d3d6] text-[#646a73] hover:bg-[#f5f6f7] disabled:opacity-40"><ChevronDown size={14}/></button></div><button type="button" aria-label="收起幻灯片列表" onClick={() => { setLayoutPicker(null); setShowSlideList(false); }} className="grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><ChevronsLeft size={15}/></button></div>
+          {layoutPicker && layoutTriggerRef.current && createPortal(<div ref={layoutPickerRef} role="dialog" aria-label="选择布局新建" style={slideCreatePickerPosition(layoutTriggerRef.current.getBoundingClientRect(), window.innerWidth, window.innerHeight)} className="fixed z-[100] overflow-auto rounded-lg border border-[#dee0e3] bg-white shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><SlideCreateLayoutPicker onSelect={(layout) => { const anchor = layoutPicker.anchor; setLayoutPicker(null); if (!canInsert || (anchor?.id ?? null) !== (active?.id ?? null) || (anchor && (!active || queue.get(active).page.revision !== anchor.revision))) { setOperationError("当前页面已变化，请重新选择布局。"); return; } doInsert(anchor, layout); }}/></div>, document.body)}
           <div ref={slideListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
             {list.map((page, index) => {
               const item = queue.get(page);
