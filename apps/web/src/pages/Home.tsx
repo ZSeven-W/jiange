@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
+import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { DocumentGlyph } from "@/components/DocumentGlyph";
 import { go } from "@/lib/route";
 import { docTitle, hrefOf } from "@/components/Sidebar";
@@ -11,6 +11,7 @@ import { NewDocGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { HomeUpload } from "@/components/HomeUpload";
 import { ShareDialog } from "@/components/ShareDialog";
 import { HomeDocumentActions } from "./HomeDocumentActions";
+import { canDuplicateHomeDocument, sameTrashSnapshot } from "./home-file-actions";
 import type { DriveUploadManager } from "./drive-upload";
 import { DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stagePendingWord } from "./pendingWord";
@@ -49,9 +50,15 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const [importError, setImportError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const [sharingDoc, setSharingDoc] = useState<DocMeta | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [copyResult, setCopyResult] = useState<DocMeta | null>(null);
+  const [uncertainCopies, setUncertainCopies] = useState<Set<number>>(() => new Set());
+  const [uncertainTrash, setUncertainTrash] = useState<Set<number>>(() => new Set());
   const [actionBusy, setActionBusy] = useState(false);
   useEffect(() => { if (!actionNotice) return; const timer = window.setTimeout(() => setActionNotice(""), 4000); return () => window.clearTimeout(timer); }, [actionNotice]);
   const actionLock = useRef(false);
+  const actionGeneration = useRef(0);
+  useEffect(() => { actionGeneration.current++; return () => { actionGeneration.current++; }; }, [me.user.id]);
   const [importing, setImporting] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
   const contentLock = useRef(false);
@@ -82,7 +89,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
   const currentUser = useRef(me.user.id); currentUser.current = me.user.id;
-  useEffect(() => { setSharingDoc(null); setActionNotice(""); setActionBusy(false); }, [me.user.id]);
+  useEffect(() => { setSharingDoc(null); setActionNotice(""); setActionBusy(false); setActionError(""); setCopyResult(null); setUncertainCopies(new Set()); setUncertainTrash(new Set()); }, [me.user.id]);
   const toggleShortcut = async (doc: DocMeta, type: "favorite" | "pin") => {
     if (actionLock.current || favs.isFetching || pins.isFetching || favs.isError || pins.isError || !favs.data || !pins.data) return;
     const owner = me.user.id;
@@ -109,7 +116,60 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
       setActionNotice(t("链接已复制，访问者仍需具备权限。"));
     } catch { setActionNotice(t("复制失败，请检查浏览器剪贴板权限。")); }
   };
-  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)}/>;
+  const refreshHome = () => { for (const key of ["docs", "recent", "shared", "drive", "drive-nav", "trash", "favorites", "pins", "home-favorites", "home-pins"]) void qc.invalidateQueries({ queryKey: [key] }); };
+  const duplicateHomeDocument = async (doc: DocMeta) => {
+    if (actionLock.current || uncertainCopies.has(doc.id)) return;
+    const owner = me.user.id, generation = actionGeneration.current;
+    const stillHere = () => currentUser.current === owner && actionGeneration.current === generation;
+    actionLock.current = true; setActionBusy(true); setActionError(""); setActionNotice(""); setCopyResult(null);
+    let submitted = false;
+    try {
+      const latest = await docsApi.getForAccount(doc.id, owner);
+      if (!stillHere()) return;
+      if (latest.id !== doc.id || !canDuplicateHomeDocument(latest)) throw new Error(t("当前文档无法创建副本。"));
+      submitted = true;
+      const copy = await docsApi.duplicateForAccount(doc.id, owner);
+      if (!copy || !Number.isSafeInteger(copy.id) || copy.id <= 0 || copy.id === doc.id || copy.kind !== latest.kind || copy.creatorId !== owner) throw new Error("invalid copy receipt");
+      refreshHome();
+      if (stillHere()) setCopyResult(copy);
+    } catch (error) {
+      const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+      if (stillHere()) {
+        if (submitted && !known) { setUncertainCopies((old) => new Set(old).add(doc.id)); setActionError(t("创建结果未确认，请刷新并检查云盘中的副本。")); }
+        else setActionError(error instanceof Error ? error.message : t("创建副本失败，请检查网络后重试。"));
+      }
+      refreshHome();
+    } finally { actionLock.current = false; if (stillHere()) setActionBusy(false); }
+  };
+  const trashHomeDocument = async (doc: DocMeta) => {
+    if (actionLock.current || uncertainTrash.has(doc.id)) return;
+    const owner = me.user.id, generation = actionGeneration.current;
+    const stillHere = () => currentUser.current === owner && actionGeneration.current === generation;
+    actionLock.current = true; setActionBusy(true); setActionError(""); setActionNotice(""); setCopyResult(null);
+    let submitted = false;
+    try {
+      const before = await docsApi.getForAccount(doc.id, owner);
+      if (!stillHere()) return;
+      if (before.id !== doc.id || !sameTrashSnapshot(before, before)) throw new Error(t("无法确认删除权限或文档版本。"));
+      if (!await ask(t("删除「{title}」？", { title: docTitle(before) }), t("可在回收站还原。"))) return;
+      if (!stillHere()) return;
+      const after = await docsApi.getForAccount(doc.id, owner);
+      if (!stillHere()) return;
+      if (!sameTrashSnapshot(before, after)) throw new Error(t("文档已发生变化，请重新确认后删除。"));
+      submitted = true;
+      await driveApi.trashForAccount(doc.id, owner, before.driveRevision as number);
+      refreshHome();
+      if (stillHere()) setActionNotice(t("已移到回收站"));
+    } catch (error) {
+      const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+      if (stillHere()) {
+        if (submitted && !known) { setUncertainTrash((old) => new Set(old).add(doc.id)); setActionError(t("删除结果未确认，请刷新并检查回收站。")); }
+        else setActionError(error instanceof Error ? error.message : t("删除失败，请检查网络后重试。"));
+      }
+      refreshHome();
+    } finally { actionLock.current = false; if (stillHere()) setActionBusy(false); }
+  };
+  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)} onDuplicate={() => void duplicateHomeDocument(doc)} onTrash={() => void trashHomeDocument(doc)} copyEnabled={(doc.kind === "doc" || doc.kind === "slides") && !uncertainCopies.has(doc.id)} trashEnabled={doc.role === "manage" && ["doc", "base", "slides", "file"].includes(doc.kind ?? "") && !uncertainTrash.has(doc.id)}/>;
   const createBoard = useMutation({
     mutationFn: async (kind: BoardStarterKind) => {
       const owner = me.user.id;
@@ -218,6 +278,8 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
           {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
           {importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}
+          {actionError && <p role="alert" className="mt-3 flex items-center gap-2 text-[13px] text-destructive"><span>{actionError}</span><button type="button" aria-label={t("关闭")} onClick={() => setActionError("")}>×</button></p>}
+          {copyResult && <div role="status" className="fixed bottom-5 left-1/2 z-[110] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg"><span>{t("副本已创建")}</span><button type="button" className="whitespace-nowrap text-[#9ab8ff] underline" onClick={() => go(hrefOf(copyResult))}>{t("打开副本")}</button><button type="button" aria-label={t("关闭")} onClick={() => setCopyResult(null)} className="text-white/70 hover:text-white">×</button></div>}
           {actionNotice && <p role="status" className="fixed bottom-5 left-1/2 z-[110] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg">{actionNotice}</p>}
           {(createWithContent.isPending || importing) && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">

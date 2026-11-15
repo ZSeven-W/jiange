@@ -437,6 +437,13 @@ export const driveApi = {
   ancestors: (id: number) =>
     request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
+  trashForAccount: async (id: number, userId: number, expected: number) => {
+    const response = await fetch(`/api/drive/account-trash/${id}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Jiange-User-Id": String(userId) }, body: JSON.stringify({ expected }) });
+    if (response.status === 204) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiError(response.status, data.error ?? "error", data.message ?? response.statusText);
+    throw new ApiError(502, "invalid_receipt", "删除结果未确认，请刷新并检查回收站。");
+  },
   restore: (id: number, expected: number) => request<void>("POST", `/api/drive/restore/${id}`, { expected }),
   purge: (id: number, expected: number) => request<void>("POST", `/api/drive/purge/${id}`, { expected }),
   // 回收站列表走既有 /api/trash（条目已带 driveRevision/trashBatchId，供乐观并发还原）
@@ -554,6 +561,8 @@ export const docsApi = {
   setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
   setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
+  duplicateForAccount: (id: number, userId: number) => request<DocMeta>("POST", `/api/docs/${id}/account-duplicate`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  getForAccount: (id: number, userId: number) => request<DocMeta>("GET", `/api/docs/${id}/account-metadata`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 
 /** 带进度的上传（fetch 无上传进度事件）。错误格式与 request 一致。 */

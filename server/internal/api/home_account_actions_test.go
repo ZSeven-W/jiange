@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/ZSeven-W/jiange/server/internal/store"
@@ -90,5 +91,57 @@ func checkHomeAccountActions(t *testing.T, st store.Store) {
 	}
 	if status, _ := call("DELETE", pin, account); status != 204 {
 		t.Fatalf("unpin %d", status)
+	}
+	copyPath := fmt.Sprintf("/api/docs/%d/account-duplicate", doc.ID)
+	if status, _ := call("POST", copyPath, ""); status != 400 {
+		t.Fatalf("copy missing account %d", status)
+	}
+	if status, _ := call("POST", copyPath, "99999"); status != 401 {
+		t.Fatalf("copy wrong account %d", status)
+	}
+	if status, _ := call("POST", copyPath, account); status != 201 {
+		t.Fatalf("copy %d", status)
+	}
+	if status, _ := call("GET", fmt.Sprintf("/api/docs/%d/account-metadata", doc.ID), "99999"); status != 401 {
+		t.Fatalf("metadata wrong account %d", status)
+	}
+	metadataReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/docs/%d/account-metadata", ts.URL, doc.ID), nil)
+	metadataReq.Header.Set("X-Jiange-User-Id", account)
+	metadataRes, err := c.Do(metadataReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta store.DocMeta
+	if err = json.NewDecoder(metadataRes.Body).Decode(&meta); err != nil {
+		t.Fatal(err)
+	}
+	metadataRes.Body.Close()
+	trash := func(account string, revision int64) int {
+		req, e := http.NewRequest("POST", fmt.Sprintf("%s/api/drive/account-trash/%d", ts.URL, doc.ID), bytes.NewBufferString(fmt.Sprintf(`{"expected":%d}`, revision)))
+		if e != nil {
+			t.Fatal(e)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if account != "" {
+			req.Header.Set("X-Jiange-User-Id", account)
+		}
+		response, e := c.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	if status := trash("", meta.DriveRevision); status != 400 {
+		t.Fatalf("trash missing account %d", status)
+	}
+	if status := trash("99999", meta.DriveRevision); status != 401 {
+		t.Fatalf("trash wrong account %d", status)
+	}
+	if status := trash(account, meta.DriveRevision+1); status != 409 {
+		t.Fatalf("trash stale %d", status)
+	}
+	if status := trash(account, meta.DriveRevision); status != 204 {
+		t.Fatalf("trash %d", status)
 	}
 }

@@ -51,3 +51,19 @@ func (s *Server) accountPins(w http.ResponseWriter, r *http.Request) {
 		s.listPins(w, r)
 	}
 }
+
+func (s *Server) accountDoc(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.getDoc(w, r)
+	}
+}
+func (s *Server) accountDuplicate(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.duplicateDoc(w, r)
+	}
+}
+func (s *Server) accountTrash(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.postDriveTrash(w, r)
+	}
+}

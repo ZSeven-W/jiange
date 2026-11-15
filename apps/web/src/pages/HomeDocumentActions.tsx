@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, MoreHorizontal, Pin, Share2, Star } from "lucide-react";
+import { Copy, Link, MoreHorizontal, Pin, Share2, Star, Trash2 } from "lucide-react";
 import type { DocMeta } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { docTitle } from "@/components/Sidebar";
 
-export function HomeDocumentActions({ doc, starred, pinned, ready, busy, onFavorite, onPin, onCopy, onShare }: {
+export function HomeDocumentActions({ doc, starred, pinned, ready, busy, onFavorite, onPin, onCopy, onShare, onDuplicate, onTrash, copyEnabled, trashEnabled }: {
   doc: DocMeta; starred: boolean; pinned: boolean; ready: boolean; busy: boolean;
-  onFavorite: () => void; onPin: () => void; onCopy: () => void; onShare: () => void;
+  onFavorite: () => void; onPin: () => void; onCopy: () => void; onShare: () => void; onDuplicate: () => void; onTrash: () => void; copyEnabled: boolean; trashEnabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 8, top: 8 });
@@ -25,7 +25,7 @@ export function HomeDocumentActions({ doc, starred, pinned, ready, busy, onFavor
   const show = () => {
     if (open) { setOpen(false); return; }
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const width = Math.min(208, window.innerWidth - 16), height = 168;
+    const width = Math.min(208, window.innerWidth - 16), height = 248;
     setPosition({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8)) }); setOpen(true);
   };
   const item = "flex h-9 w-full items-center gap-2 rounded px-3 text-left text-[13px] text-[#1f2329] hover:bg-[#f2f3f5] focus:bg-[#f2f3f5] focus:outline-none disabled:opacity-40";
@@ -34,8 +34,11 @@ export function HomeDocumentActions({ doc, starred, pinned, ready, busy, onFavor
       <button role="menuitem" type="button" onClick={() => { setOpen(false); onShare(); }} className={item}><Share2 size={15}/>{t("分享")}</button>
       <button role="menuitem" type="button" onClick={() => { setOpen(false); onCopy(); }} className={item}><Link size={15}/>{t("复制链接")}</button>
       <div className="my-1 border-t border-[#e5e6eb]"/>
+      <button role="menuitem" type="button" disabled={!copyEnabled || busy} title={!copyEnabled ? t("当前文档无法创建副本。") : undefined} onClick={() => { setOpen(false); onDuplicate(); }} className={item}><Copy size={15}/>{t("创建副本")}</button>
       <button role="menuitem" type="button" disabled={!ready || busy} onClick={() => { setOpen(false); onPin(); }} className={item}><Pin size={15}/>{pinned ? t("取消置顶") : t("置顶")}</button>
       <button role="menuitem" type="button" disabled={!ready || busy} onClick={() => { setOpen(false); onFavorite(); }} className={item}><Star size={15}/>{starred ? t("取消收藏") : t("收藏")}</button>
+      <div className="my-1 border-t border-[#e5e6eb]"/>
+      <button role="menuitem" type="button" disabled={!trashEnabled || busy} onClick={() => { setOpen(false); onTrash(); }} className={item}><Trash2 size={15}/>{t("删除")}</button>
     </div>, document.body)}
   </>;
 }
