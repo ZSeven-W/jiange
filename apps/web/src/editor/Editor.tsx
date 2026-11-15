@@ -54,7 +54,7 @@ import { ApiError, linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import { parseMerges, type CellRange, type Merge, type Widths } from "./tableOps";
-import { planTableCut, planTablePaste } from "./tableClipboard";
+import { planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
@@ -1963,13 +1963,13 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             const info = doc.blockInfo(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
             const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), type: version("type") } : null;
-            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut"; range: CellRange }): string | null => {
+            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut" | "clear"; range: CellRange }): string | null => {
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b);
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
               const beforeRows = tableRowsOf(current.props);
               const merges = parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0);
-              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : planTableCut(beforeRows, merges, operation.range);
+              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : planTableClear(beforeRows, merges, operation.range);
               if (!result.ok) return result.message;
               if (!result.changed) return null;
               const aliases = findBatchHistory.capture(doc, [b]);
@@ -2083,6 +2083,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                 }}
                 onTablePaste={readOnly ? undefined : (row, col, text) => tableClipboard({ kind: "paste", row, col, text })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
+                onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={readOnly ? undefined : () => toggleTodo(b)}
                 onDragStart={readOnly ? undefined : () => {
@@ -2379,6 +2380,7 @@ interface BlockProps {
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   onTablePaste?: (r: number, c: number, text: string) => string | null;
   onTableCut?: (range: CellRange) => string | null;
+  onTableClear?: (range: CellRange) => string | null;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   /** The insertion affordance is visible on an otherwise blank document. */
@@ -2413,7 +2415,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2592,6 +2594,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
           onPasteCells={onTablePaste}
           onCutCells={onTableCut}
+          onClearCells={onTableClear}
           onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}

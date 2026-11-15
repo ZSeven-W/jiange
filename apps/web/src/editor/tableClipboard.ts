@@ -71,14 +71,22 @@ export function planTablePaste(rows: string[][], merges: Merge[], startRow: numb
 }
 
 /** Clear visible anchors in a complete selection, retaining hidden cell data. */
-export function planTableCut(rows: string[][], merges: Merge[], selection: CellRange): TablePasteResult {
+function planTableRemoval(rows: string[][], merges: Merge[], selection: CellRange, action: "剪切" | "清空"): TablePasteResult {
   const range = normRange(selection);
   if (![range.r0, range.r1, range.c0, range.c1].every(Number.isInteger) || range.r0 < 0 || range.c0 < 0 || range.r1 >= rows.length || range.c1 >= (rows[0]?.length ?? 0)) return { ok: false, message: "表格位置已变化，请重新选择单元格。" };
   const expanded = expandRange(range, merges);
   if (expanded.r0 !== range.r0 || expanded.r1 !== range.r1 || expanded.c0 !== range.c0 || expanded.c1 !== range.c1) return { ok: false, message: "选区未完整包含合并单元格，请重新选择。" };
-  if ((range.r1 - range.r0 + 1) * (range.c1 - range.c0 + 1) > MAX_PASTE_CELLS) return { ok: false, message: "剪切范围过大，表格未修改。" };
+  if ((range.r1 - range.r0 + 1) * (range.c1 - range.c0 + 1) > MAX_PASTE_CELLS) return { ok: false, message: `${action}范围过大，表格未修改。` };
   const covered = coverMap(merges);
   const next = rows.map((row, r) => row.map((value, c) => r >= range.r0 && r <= range.r1 && c >= range.c0 && c <= range.c1 && covered.get(`${r}:${c}`) !== "hidden" ? "" : value));
-  if (new TextEncoder().encode(JSON.stringify(next)).length > 1024 * 1024) return { ok: false, message: "表格过大，无法安全剪切。" };
+  if (new TextEncoder().encode(JSON.stringify(next)).length > 1024 * 1024) return { ok: false, message: `表格过大，无法安全${action}。` };
   return { ok: true, rows: next, changed: JSON.stringify(rows) !== JSON.stringify(next) };
+}
+
+export function planTableCut(rows: string[][], merges: Merge[], selection: CellRange): TablePasteResult {
+  return planTableRemoval(rows, merges, selection, "剪切");
+}
+
+export function planTableClear(rows: string[][], merges: Merge[], selection: CellRange): TablePasteResult {
+  return planTableRemoval(rows, merges, selection, "清空");
 }

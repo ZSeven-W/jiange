@@ -49,7 +49,7 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -57,6 +57,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
   onPasteCells?: (r: number, c: number, text: string) => string | null;
   onCutCells?: (range: CellRange) => string | null;
+  onClearCells?: (range: CellRange) => string | null;
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
   initialGrip?: GripSel | null;
@@ -214,6 +215,11 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                           }
                         }}
                         onKeyDown={(e) => {
+                          if (multi && selected && !e.nativeEvent.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
+                            e.preventDefault(); e.stopPropagation();
+                            setClipboardNotice(onClearCells?.(selected) ?? (onClearCells ? "" : "当前无法清空选区，表格未修改。"));
+                            return;
+                          }
                           if (e.key !== "Tab" || e.nativeEvent.isComposing) return;
                           const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
                           const next = cells[cells.indexOf(e.currentTarget) + (e.shiftKey ? -1 : 1)];

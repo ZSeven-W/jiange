@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTableTSV, parseTableTSV, planTableCut, planTablePaste } from "./tableClipboard";
+import { formatTableTSV, parseTableTSV, planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
 
 describe("document table clipboard", () => {
   it("round-trips tabs, quotes, empty cells and multiline text", () => {
@@ -27,6 +27,18 @@ describe("document table clipboard", () => {
     expect(planTableCut(before, merges, range)).toEqual({ ok: true, changed: true, rows: [["", "隐藏数据"], ["", ""]] });
     expect(planTableCut(before, merges, { r0: 0, r1: 0, c0: 0, c1: 0 })).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
     expect(before).toEqual([["合并内容", "隐藏数据"], ["甲", "乙"]]);
+  });
+  it("clears the selected visible anchors without modifying hidden or unselected data", () => {
+    const before = [["合并内容", "隐藏数据", "保留"], ["甲", "乙", "丙"]];
+    const merges: [number, number, number, number][] = [[0, 0, 1, 2]];
+    expect(planTableClear(before, merges, { r0: 1, r1: 0, c0: 1, c1: 0 })).toEqual({ ok: true, changed: true, rows: [["", "隐藏数据", "保留"], ["", "", "丙"]] });
+    expect(planTableClear(before, merges, { r0: 0, r1: 0, c0: 0, c1: 0 })).toMatchObject({ ok: false, message: expect.stringContaining("合并") });
+    expect(before).toEqual([["合并内容", "隐藏数据", "保留"], ["甲", "乙", "丙"]]);
+  });
+  it("rejects an oversized clear without modifying any cells", () => {
+    const before = Array.from({ length: 21 }, () => Array(50).fill("保留"));
+    expect(planTableClear(before, [], { r0: 0, r1: 20, c0: 0, c1: 49 })).toMatchObject({ ok: false, message: expect.stringContaining("清空") });
+    expect(before.every((row) => row.every((cell) => cell === "保留"))).toBe(true);
   });
   it("pastes compatible rectangles into merged anchors without overwriting hidden cells", () => {
     const before = [["旧", "隐藏数据"], ["甲", "乙"]];
