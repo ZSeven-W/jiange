@@ -17,4 +17,13 @@ describe("flowchart unapplied content", () => {
     expect(describeUnappliedFlows([{ before, proposed, conflicts: ["fc.n.a"] }])).toContain("删除矩形");
     expect(describeUnappliedFlows([{ before, proposed, conflicts: ["permission"] }])).toContain("删除矩形");
   });
+  it("preserves the intended node style in conflict and permission recovery", () => {
+    const original: FlowGraph = { ...before, mind: [{ id: "m", parent: null, order: 0, text: "主题", x: 0, y: 0 }] };
+    const proposed: FlowGraph = { ...original, mindStyles: { m: { shape: "oval", size: 24 } } };
+    for (const conflict of ["fc.ms.m", "permission"]) {
+      const text = describeUnappliedFlows([{ before: original, proposed, conflicts: [conflict] }]);
+      expect(text).toContain("修改思维导图节点样式：主题");
+      expect(text).toContain('"size":24');
+    }
+  });
 });

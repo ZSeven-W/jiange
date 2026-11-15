@@ -116,3 +116,39 @@ describe("mind map folding", () => {
     expect(addition.writes["fc.m.new"]).toBeUndefined();
   });
 });
+
+describe("mind map styles", () => {
+  const graph: FlowGraph = { ...blank, mind: [root, child] };
+  it("saves node shape, font size and color separately from text and supports undo", () => {
+    const props = flowWrites({}, graph), proposed = { ...graph, mindStyles: { c: { shape: "oval" as const, size: 24, color: "#EE1122" } } };
+    const intent = flowIntentWrites(props, graph, proposed), styledProps = { ...props, ...intent.writes }, styled = readFlow(styledProps);
+    expect(styled.mindStyles?.c).toEqual({ shape: "oval", size: 24, color: "#ee1122" });
+    expect(intent.writes["fc.m.c"]).toBeUndefined();
+    const history = appliedFlowHistory(graph, styled, Object.keys(intent.writes))!;
+    expect(flowIntentWrites(styledProps, styled, history.before).writes["fc.ms.c"]).toBe("");
+    const oldClientEdit = flowWrites(styledProps, { ...graph, mind: [root, { ...child, text: "旧客户端" }] });
+    expect(readFlow({ ...styledProps, ...oldClientEdit }).mindStyles?.c).toEqual(styled.mindStyles?.c);
+  });
+  it("preserves remote styles, rejects unknown metadata and restores deleted styled nodes", () => {
+    const graphWithStyle = { ...graph, mindStyles: { c: { size: 24 } } }, props = flowWrites({}, graphWithStyle);
+    const remoteProps = { ...props, "fc.ms.c": '{"size":36}' };
+    const localText = { ...graphWithStyle, mind: [root, { ...child, text: "本地" }] };
+    expect(flowIntentWrites(remoteProps, graphWithStyle, localText).writes["fc.ms.c"]).toBeUndefined();
+    const localStyle = { ...graphWithStyle, mindStyles: { c: { size: 18 } } };
+    expect(flowIntentWrites(remoteProps, graphWithStyle, localStyle).conflicts).toContain("fc.ms.c");
+    expect(flowIntentWrites({ ...props, "fc.ms.c": '{"future":true}' }, graphWithStyle, localStyle).conflicts).toContain("fc.ms.c");
+    const deleted = flowIntentWrites(props, graphWithStyle, { ...graphWithStyle, mind: [root] });
+    const deletedProps = { ...props, ...deleted.writes }, after = readFlow(deletedProps), history = appliedFlowHistory(graphWithStyle, after, Object.keys(deleted.writes))!;
+    const undo = flowIntentWrites(deletedProps, after, history.before);
+    expect(readFlow({ ...deletedProps, ...undo.writes }).mindStyles?.c).toEqual({ size: 24 });
+  });
+  it("reserves room for large text and rejects a new id with unknown style metadata", () => {
+    const sibling: MindTopic = { id: "s", parent: "r", order: 1, text: "其他" };
+    const positions = layoutMindTopics([root, child, sibling], new Set(), { c: { size: 96 } });
+    const big = positions.find((item) => item.topic.id === "c")!, other = positions.find((item) => item.topic.id === "s")!;
+    expect(big.h).toBeGreaterThanOrEqual(96);
+    expect(big.y + big.h).toBeLessThan(other.y);
+    const addition = flowIntentWrites({ ...flowWrites({}, graph), "fc.ms.s": '{"unknown":true}' }, graph, { ...graph, mind: [root, child, sibling] });
+    expect(addition.conflicts).toContain("fc.ms.s"); expect(addition.writes["fc.m.s"]).toBeUndefined();
+  });
+});

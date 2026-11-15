@@ -32,4 +32,11 @@ describe("mind map rendering", () => {
     const readOnly = renderToStaticMarkup(<svg><MindMapSvg topics={topics} selected="c"/></svg>);
     expect(readOnly).not.toContain("data-mind-add");
   });
+  it("renders a styled node without putting its outline in the selection layer", () => {
+    const styled = renderToStaticMarkup(<svg><MindMapSvg topics={[topics[0], { ...topics[1], text: "示例" }]} styles={{ c: { shape: "oval", size: 24, color: "#ee1122" } }}/></svg>);
+    expect(styled).toContain('font-size="24"');
+    expect(styled).toContain('fill="#ee1122"');
+    expect(styled).toContain('rx="20"');
+    expect(styled).toContain('stroke="#5b7ff1"');
+  });
 });
