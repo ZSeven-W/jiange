@@ -10,3 +10,11 @@ export function verifySlideOrder(expected: readonly SlidePosition[], id: number,
   ids.splice(from, 1); ids.splice(to, 0, id);
   return raw.every((item, i) => item && typeof item === "object" && item.id === ids[i] && item.pos === i + 1) ? raw as SlidePosition[] : null;
 }
+
+/** Speed for a drag near the scroll viewport edge; ignore pointers outside it. */
+export function slideEdgeScrollSpeed(rect: { left: number; right: number; top: number; bottom: number }, x: number, y: number): number {
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return 0;
+  if (y < rect.top + 32) return -Math.ceil((rect.top + 32 - y) / 3);
+  if (y > rect.bottom - 32) return Math.ceil((y - rect.bottom + 32) / 3);
+  return 0;
+}

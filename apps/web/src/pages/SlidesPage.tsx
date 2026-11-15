@@ -18,11 +18,11 @@ import { playableSlides, presentationStart, presentationKeyTarget } from "./slid
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
 import { SlideNotesPanel } from "./SlideNotesPanel";
-import { samePositions, slideDropIndex, slidePositions, verifySlideOrder, type SlidePosition } from "./slides-order";
+import { samePositions, slideDropIndex, slideEdgeScrollSpeed, slidePositions, verifySlideOrder, type SlidePosition } from "./slides-order";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { validSlideDeleteReceipt } from "./slides-delete";
 import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
 type BackgroundHistory = { undo: BackgroundAction[]; redo: BackgroundAction[] };
@@ -56,7 +56,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [pageActions, setPageActions] = useState(0);
   const [orderUnknown, setOrderUnknown] = useState(false);
   const [dropMarker, setDropMarker] = useState<{ id: number; after: boolean } | null>(null);
-  const dragPage = useRef<{ id: number; positions: SlidePosition[]; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const dragPage = useRef<{ id: number; positions: SlidePosition[]; pointerId: number; x: number; y: number; currentX: number; currentY: number; moved: boolean } | null>(null);
+  const slideListRef = useRef<HTMLDivElement>(null);
+  const dragScrollFrame = useRef<number | null>(null);
   const suppressPageClick = useRef(false);
   const [pageMenu, setPageMenu] = useState<{ id: number; x: number; y: number } | null>(null);
   const [copyPageUnknown, setCopyPageUnknown] = useState(false);
@@ -108,6 +110,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     () => setBackgroundHistory((history) => history.redo.length ? { ...history, redo: [] } : history),
   ), [deckId, userId, qc]);
   useEffect(() => () => queue.dispose(), [queue]);
+  useEffect(() => () => { if (dragScrollFrame.current !== null) cancelAnimationFrame(dragScrollFrame.current); }, []);
   useEffect(() => () => { audienceRef.current?.close(); audienceRef.current = null; }, []);
   useEffect(() => {
     if (!audienceWindow) return;
@@ -438,6 +441,54 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       void invalidate();
     }).finally(endPageAction);
   };
+  const stopPageDrag = () => {
+    dragPage.current = null;
+    setDropMarker(null);
+    if (dragScrollFrame.current !== null) cancelAnimationFrame(dragScrollFrame.current);
+    dragScrollFrame.current = null;
+  };
+  const pageAtPointer = (x: number, y: number, positions: readonly SlidePosition[]) => {
+    const target = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-slides-page]");
+    const id = Number(target?.dataset.slidesPage);
+    if (!target || !slideListRef.current?.contains(target) || !positions.some((item) => item.id === id)) return null;
+    const rect = target.getBoundingClientRect();
+    return { id, after: y >= rect.top + rect.height / 2 };
+  };
+  const beginPageDrag = (event: React.PointerEvent<HTMLButtonElement>, page: Page, handle: boolean) => {
+    if ((!handle && event.pointerType !== "mouse") || event.button !== 0 || dragPage.current || !canEdit || orderUnknown || queue.hasUnsaved()) return;
+    if (handle) event.preventDefault();
+    dragPage.current = { id: page.id, positions: slidePositions(list), pointerId: event.pointerId, x: event.clientX, y: event.clientY, currentX: event.clientX, currentY: event.clientY, moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePageDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragPage.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.currentX = event.clientX; drag.currentY = event.clientY;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    setDropMarker(pageAtPointer(event.clientX, event.clientY, drag.positions));
+    if (dragScrollFrame.current !== null) return;
+    const scroll = () => {
+      const activeDrag = dragPage.current, container = slideListRef.current;
+      if (!activeDrag?.moved || !container) { dragScrollFrame.current = null; return; }
+      const rect = container.getBoundingClientRect(), y = activeDrag.currentY;
+      const speed = slideEdgeScrollSpeed(rect, activeDrag.currentX, y);
+      if (speed) { container.scrollTop += speed; setDropMarker(pageAtPointer(activeDrag.currentX, y, activeDrag.positions)); }
+      dragScrollFrame.current = requestAnimationFrame(scroll);
+    };
+    dragScrollFrame.current = requestAnimationFrame(scroll);
+  };
+  const endPageDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragPage.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const target = drag.moved ? pageAtPointer(event.clientX, event.clientY, drag.positions) : null;
+    stopPageDrag();
+    if (!drag.moved) return;
+    suppressPageClick.current = true;
+    window.setTimeout(() => { suppressPageClick.current = false; }, 0);
+    const from = drag.positions.findIndex((item) => item.id === drag.id), index = drag.positions.findIndex((item) => item.id === target?.id), sourcePage = list.find((item) => item.id === drag.id);
+    if (target && from >= 0 && index >= 0 && sourcePage) doMove(sourcePage, slideDropIndex(from, index, target.after), drag.positions);
+  };
   const togglePageHidden = (page: Page) => {
     const source = queue.get(page);
     if (!canEdit || source.state !== "saved" || visibilityUnknown || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
@@ -534,12 +585,13 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       <div className="flex min-h-0 min-w-0 flex-1">
         {showSlideList ? <aside className="flex w-[104px] shrink-0 flex-col border-r border-[#dee0e3] bg-white sm:w-[196px]" data-slides-list>
           <div className="flex h-14 items-center gap-1 px-2 sm:px-3"><button type="button" disabled={!canEdit || !pages.isSuccess || create.isPending || remove.isPending || pageActions > 0 || insertPageUnknown || !!active && draft?.state !== "saved"} onClick={() => doInsert(active)} className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-[#d0d3d6] bg-white text-[12px] text-[#1f2329] hover:bg-[#f5f6f7] disabled:opacity-40"><FilePlus2 size={14}/><span className="hidden sm:inline">新建幻灯片</span><span className="sm:hidden">新建</span></button><button type="button" aria-label="收起幻灯片列表" onClick={() => setShowSlideList(false)} className="grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><ChevronsLeft size={15}/></button></div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
+          <div ref={slideListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
             {list.map((page, index) => {
               const item = queue.get(page);
-              return <div key={page.id} className={cn("group relative flex gap-1", dropMarker?.id === page.id && (dropMarker.after ? "after:absolute after:-bottom-1 after:left-5 after:right-0 after:h-0.5 after:bg-[#3370ff]" : "before:absolute before:-top-1 before:left-5 before:right-0 before:h-0.5 before:bg-[#3370ff]"))} data-slides-page={page.id} onContextMenu={(event) => { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, event.clientX || rect.left, event.clientY || rect.bottom); }}>
+              return <div key={page.id} className={cn("group relative mb-6 flex gap-1 sm:mb-0 [@media(pointer:coarse)]:mb-6", dropMarker?.id === page.id && (dropMarker.after ? "after:absolute after:-bottom-1 after:left-5 after:right-0 after:h-0.5 after:bg-[#3370ff]" : "before:absolute before:-top-1 before:left-5 before:right-0 before:h-0.5 before:bg-[#3370ff]"))} data-slides-page={page.id} onContextMenu={(event) => { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, event.clientX || rect.left, event.clientY || rect.bottom); }}>
                 <span className={cn("w-4 pt-1 text-right text-[11px] text-[#8f959e]", page.hidden && "line-through")}>{index + 1}</span>
-                <button type="button" draggable={false} onPointerDown={(event) => { if (event.pointerType !== "mouse" || event.button !== 0 || !canEdit || orderUnknown || queue.hasUnsaved()) return; dragPage.current = { id: page.id, positions: slidePositions(list), pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { const drag = dragPage.current; if (!drag || drag.pointerId !== event.pointerId) return; if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return; drag.moved = true; const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-slides-page]"); const id = Number(target?.dataset.slidesPage); if (!target || !drag.positions.some((item) => item.id === id)) { setDropMarker(null); return; } const rect = target.getBoundingClientRect(); setDropMarker({ id, after: event.clientY >= rect.top + rect.height / 2 }); }} onPointerUp={(event) => { const drag = dragPage.current; if (!drag || drag.pointerId !== event.pointerId) return; dragPage.current = null; setDropMarker(null); if (!drag.moved) return; suppressPageClick.current = true; window.setTimeout(() => { suppressPageClick.current = false; }, 0); const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-slides-page]"); const id = Number(target?.dataset.slidesPage), from = drag.positions.findIndex((item) => item.id === drag.id), index = drag.positions.findIndex((item) => item.id === id), sourcePage = list.find((item) => item.id === drag.id); if (target && from >= 0 && index >= 0 && sourcePage) { const rect = target.getBoundingClientRect(); doMove(sourcePage, slideDropIndex(from, index, event.clientY >= rect.top + rect.height / 2), drag.positions); } }} onPointerCancel={() => { dragPage.current = null; setDropMarker(null); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content}/>{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
+                <button type="button" draggable={false} onPointerDown={(event) => beginPageDrag(event, page, false)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content}/>{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
+                <button type="button" aria-label={`拖动第 ${index + 1} 页排序`} title="拖动排序" disabled={!canEdit || orderUnknown || queue.hasUnsaved()} onPointerDown={(event) => beginPageDrag(event, page, true)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} className="absolute -bottom-6 left-5 right-0 grid h-6 touch-none select-none place-items-center rounded text-[#8f959e] active:bg-[#e8efff] active:text-[#3370ff] disabled:opacity-40 sm:hidden [@media(pointer:coarse)]:grid"><GripHorizontal size={16}/></button>
                 <button type="button" aria-label={`第 ${index + 1} 页更多操作`} aria-haspopup="menu" aria-expanded={pageMenu?.id === page.id} data-slide-options={page.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, rect.right, rect.bottom); }} className={cn("absolute right-1 top-1 grid size-7 place-items-center rounded bg-white/90 text-[#646a73] shadow-sm hover:bg-[#f2f3f5] focus:pointer-events-auto focus:opacity-100 sm:pointer-events-auto sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100", active?.id === page.id ? "opacity-100" : "pointer-events-none opacity-0")}><MoreHorizontal size={16}/></button>
               </div>;
             })}
