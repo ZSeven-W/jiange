@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
 import { parseHash } from "@/lib/route";
-import { formCells, publicFormPendingKey, publicFormResponseIsDefinite, supportsPublicFormField } from "./PublicForm";
+import { formCells, PublicFormField, publicFormPendingKey, publicFormResponseIsDefinite, supportsPublicFormField } from "./PublicForm";
 import { closeForm, formLink, isFormToken, publishForm, readFormPublication, saveFormConfig } from "./base/publicFormApi";
 import { ApiError } from "@/lib/api";
 
@@ -26,6 +27,22 @@ describe("published forms", () => {
     expect(() => formCells(fields, {1:" ",2:"0",3:false})).toThrow("名称");
     expect(() => formCells(fields, {1:"已填",2:"0"})).toThrow("确认");
     expect(formCells(fields, {1:"已填",2:"0",3:false})).toEqual({"1":"已填","2":0,"3":false});
+  });
+  it("renders selectable questions as labelled native choice controls", () => {
+    const choice = renderToStaticMarkup(<PublicFormField field={{id:1,name:"优先级",type:"select",required:true,options:["高","低"]}} value="高" onChange={() => {}} />);
+    expect(choice).toContain("<fieldset");
+    expect(choice).toContain("<legend");
+    expect(choice.match(/type="radio"/g)).toHaveLength(2);
+    expect(choice).toMatch(/<input[^>]*checked=""[^>]*value="高"/);
+    expect(choice).toContain("清除选择");
+    const multi = renderToStaticMarkup(<PublicFormField field={{id:2,name:"关注点",type:"multi_select",options:["设计","研发"]}} value={["研发"]} onChange={() => {}} />);
+    expect(multi.match(/type="checkbox"/g)).toHaveLength(2);
+    expect(multi).toMatch(/<input[^>]*checked=""[^>]*value="研发"/);
+    expect(multi).not.toContain("<select");
+    const rating = renderToStaticMarkup(<PublicFormField field={{id:3,name:"评分",type:"rating"}} value="4" onChange={() => {}} />);
+    expect(rating.match(/type="radio"/g)).toHaveLength(5);
+    expect(rating).toContain('aria-label="4 星"');
+    expect(formCells([{id:3,name:"评分",type:"rating"}], {3:"4"})).toEqual({"3":4});
   });
   it("uses a SHA-256 digest, never the raw bearer token, for the pending marker", async () => {
     const digest = vi.fn().mockResolvedValue(new Uint8Array(32).fill(0xab).buffer);
