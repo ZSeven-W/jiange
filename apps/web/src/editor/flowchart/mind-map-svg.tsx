@@ -1,6 +1,6 @@
 import { layoutMindTopics, type MindTopic } from "./mindmap";
 
-export function MindMapSvg({ topics, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold }: {
+export function MindMapSvg({ topics, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   collapsed?: ReadonlySet<string>;
   selected?: string | null;
@@ -11,6 +11,7 @@ export function MindMapSvg({ topics, collapsed = new Set(), selected, editing, o
   onFinish?: () => void;
   onCancel?: () => void;
   onFold?: (id: string) => void;
+  onAddChild?: (id: string) => void;
 }) {
   const nodes = layoutMindTopics(topics, collapsed), byId = new Map(nodes.map((node) => [node.topic.id, node]));
   const children = new Map<string, string[]>();
@@ -37,11 +38,17 @@ export function MindMapSvg({ topics, collapsed = new Set(), selected, editing, o
     })}
     {nodes.map((node) => {
       const count = descendants(node.topic.id), folded = collapsed.has(node.topic.id);
-      if (!count || (!onFold && !folded)) return null;
+      if (!count || (!folded && (!onFold || (onSelect && selected !== node.topic.id)))) return null;
       const x = node.x + node.w + 10, y = node.y + node.h / 2;
       return <g key={`fold-${node.topic.id}`} data-mind-fold={node.topic.id} data-mind-fold-expanded={!folded ? "true" : undefined} role={onFold ? "button" : undefined} tabIndex={onFold ? 0 : undefined} aria-label={onFold ? `${folded ? "展开" : "折叠"}「${node.topic.text || "节点"}」` : undefined} aria-expanded={onFold ? !folded : undefined} pointerEvents={onFold ? undefined : "none"} style={{ cursor: onFold ? "pointer" : undefined }} onPointerDown={onFold ? (event) => event.stopPropagation() : undefined} onClick={onFold ? (event) => { event.stopPropagation(); onFold(node.topic.id); } : undefined} onKeyDown={onFold ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onFold(node.topic.id); } } : undefined}>
-        <circle cx={x} cy={y} r={folded && count > 9 ? 10 : 8} fill="#fff" stroke={folded ? "#3370ff" : "#a8abb2"}/>
-        <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={folded ? 10 : 13} fill={folded ? "#3370ff" : "#8f959e"}>{folded ? count > 99 ? "99+" : count : "−"}</text>
+        <circle cx={x} cy={y} r={folded && count > 9 ? 10 : 8} fill="#fff" stroke="#3370ff"/>
+        <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={folded ? 10 : 16} fill="#3370ff">{folded ? count > 99 ? "99+" : count : "‹"}</text>
+      </g>;
+    })}
+    {onAddChild && !editing && nodes.filter((node) => node.topic.id === selected).map((node) => {
+      const x = node.x + node.w + (descendants(node.topic.id) ? 38 : 18), y = node.y + node.h / 2;
+      return <g key={`add-${node.topic.id}`} data-mind-add={node.topic.id} role="button" tabIndex={0} aria-label={`为「${node.topic.text || "节点"}」添加子节点`} style={{ cursor: "pointer" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddChild(node.topic.id); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onAddChild(node.topic.id); } }}>
+        <circle cx={x} cy={y} r={10} fill="#3370ff"/><path d={`M${x - 4},${y}h8 M${x},${y - 4}v8`} fill="none" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" pointerEvents="none"/>
       </g>;
     })}
   </g>;

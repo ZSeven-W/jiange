@@ -22,4 +22,14 @@ describe("mind map rendering", () => {
     expect(exported).toContain(">2</text>");
     expect(exported).not.toContain('role="button"');
   });
+  it("shows the add control only for the selected editable node", () => {
+    const editor = renderToStaticMarkup(<svg><MindMapSvg topics={topics} selected="c" onSelect={() => {}} onAddChild={() => {}}/></svg>);
+    expect(editor).toContain('aria-label="为「节点」添加子节点"');
+    expect(editor).toContain('data-mind-add="c"');
+    expect(editor).not.toContain('data-mind-add="r"');
+    const editing = renderToStaticMarkup(<svg><MindMapSvg topics={topics} selected="c" editing={{ id: "c", value: "" }} onAddChild={() => {}}/></svg>);
+    expect(editing).not.toContain("data-mind-add");
+    const readOnly = renderToStaticMarkup(<svg><MindMapSvg topics={topics} selected="c"/></svg>);
+    expect(readOnly).not.toContain("data-mind-add");
+  });
 });
