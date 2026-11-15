@@ -23,6 +23,13 @@ describe("two-column creation preset", () => {
     expect(audience).not.toContain("点击添加标题");
     expect(audience).not.toContain("点击添加内容");
   });
+  it("keeps only the active text editor mounted and read-only while editing is disabled", () => {
+    const selected = renderToStaticMarkup(<SlideShapes shapes={TWO_COLUMN_SHAPES} editable={false} selected="preset-two-left"/>);
+    expect(selected).toMatch(/<textarea[^>]*readonly=""[^>]*aria-label="文本框内容"/i);
+    expect(selected).not.toContain("调整图形左上边界");
+    const unselected = renderToStaticMarkup(<SlideShapes shapes={TWO_COLUMN_SHAPES} editable={false} selected={null}/>);
+    expect(unselected).not.toContain("<textarea");
+  });
   it("moves existing title and body into editable columns without losing other objects", () => {
     const extra = { id: "existing", kind: "rectangle" as const, x: 2, y: 2, color: "#3370ff" };
     const before = { ...slidePresetContent(""), title: "项目进展", body: "现有正文", notes: "备注", background: "#abcdef", shapes: [extra] };
