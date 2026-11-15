@@ -161,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/drive/restore/{id}":                        s.postDriveRestore,
 		"POST /api/drive/purge/{id}":                          s.postDrivePurge,
 		"POST /api/drive/rename/{id}":                         s.postDriveRename,
+		"POST /api/slides/{id}/account-title":                 s.postAccountSlidesTitle,
 		"POST /api/slides/{id}/pages":                         s.postSlidesPage,
 		"POST /api/slides/{id}/pages/insert":                  s.insertSlidesPage,
 		"POST /api/slides/{id}/pages/reorder":                 s.reorderSlides,

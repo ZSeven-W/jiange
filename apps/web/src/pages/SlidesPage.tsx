@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
+import { ApiError, docsApi, slidesApi, type DocMeta, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,8 @@ import { playableSlides, presentationStart, presentationKeyTarget } from "./slid
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
 import { SlideNotesPanel } from "./SlideNotesPanel";
+import { SlideDeckTitle, type SlideTitleDraft } from "./SlideDeckTitle";
+import { readSlideTitleDraft, writeSlideTitleDraft } from "./slides-title-recovery";
 import { SLIDE_SHAPES, SlideShapeGraphic } from "./slide-shape-catalog";
 import { samePositions, slideDropIndex, slideEdgeScrollSpeed, slidePositions, verifySlideOrder, type SlidePosition } from "./slides-order";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
@@ -37,10 +39,16 @@ function SlidesDraftRecovery({ queue }: { queue: SlidesDraftQueue }) {
   return <details className="w-full max-w-2xl text-left"><summary className="cursor-pointer text-[13px] text-[#3370ff]">查看并复制未保存内容</summary>{drafts.map(({ page, content }) => <label key={page.id} className="mt-2 block text-[12px] text-[#646a73]">第 {page.pos} 页<textarea readOnly aria-label={`第 ${page.pos} 页未保存内容`} value={JSON.stringify(content, null, 2)} className="mt-1 block h-40 w-full rounded border border-[#dee0e3] bg-white p-2 font-mono text-[12px] text-[#1f2329]"/></label>)}</details>;
 }
 
+function SlideTitleRecovery({ draft }: { draft: SlideTitleDraft | null }) {
+  return draft && <label className="block w-full text-left text-[12px] text-[#646a73]">未保存的名称（可复制）<input readOnly aria-label="未保存的幻灯片名称" value={draft.value} className="mt-1 block h-8 w-full rounded border border-[#dee0e3] bg-white px-2 text-[#1f2329]"/></label>;
+}
+
 /** Presentation editor. Drafts are kept locally while page writes are serialised. */
 export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number }) {
   const qc = useQueryClient();
   const [current, setCurrent] = useState<number | null>(null);
+  const [titleDraft, setTitleDraft] = useState<SlideTitleDraft | null>(() => typeof sessionStorage === "undefined" ? null : readSlideTitleDraft(sessionStorage, userId, deckId));
+  const titleSaving = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [audienceWindow, setAudienceWindow] = useState<Window | null>(null);
   const audienceRef = useRef<Window | null>(null);
@@ -107,6 +115,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const canEditRef = useRef(false);
   const backgroundHistoryAction = useRef<(redo: boolean) => boolean>(() => false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId, userId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
+  useEffect(() => { if (meta.data?.kind === "slides") document.title = `${meta.data.title.trim() || "未命名幻灯片"} - Jiange`; }, [meta.data?.kind, meta.data?.title]);
   const visitRecorder = useMemo(() => createVisitRecorder(
     () => docsApi.recordVisit(deckId),
     () => { void qc.invalidateQueries({ queryKey: ["recent"] }); },
@@ -186,6 +195,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [queue]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (titleDraft && (titleDraft.phase !== "editing" || titleDraft.value !== titleDraft.base.title)) { event.preventDefault(); event.returnValue = ""; } };
+    if (typeof sessionStorage !== "undefined") writeSlideTitleDraft(sessionStorage, userId, deckId, titleDraft);
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [titleDraft, userId, deckId]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["slides", deckId, userId] });
   // 整份复制只携带已保存内容；未保存草稿先行保存完成后才可点击。
   const duplicateDeck = async () => {
@@ -358,8 +373,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   }, [playing, playbackPage, list, audienceWindow]);
 
   if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
-  if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<SlidesDraftRecovery queue={queue}/><button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
-  if (meta.data.kind !== "slides") return <ResourceTypeNotice id={deckId} kind={meta.data.kind} verified={!meta.isFetching} blockNavigation={queue.hasUnsaved()}>{queue.hasUnsaved() && <><p role="alert" className="mt-3 text-[13px] text-red-600">当前演示文稿有未保存内容，请勿刷新或关闭；恢复文件类型和权限后重试。</p><SlidesDraftRecovery queue={queue}/></>}</ResourceTypeNotice>;
+  if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<SlidesDraftRecovery queue={queue}/><SlideTitleRecovery draft={titleDraft}/><button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
+  if (meta.data.kind !== "slides") return <ResourceTypeNotice id={deckId} kind={meta.data.kind} verified={!meta.isFetching} blockNavigation={queue.hasUnsaved() || !!titleDraft}>{queue.hasUnsaved() && <><p role="alert" className="mt-3 text-[13px] text-red-600">当前演示文稿有未保存内容，请勿刷新或关闭；恢复文件类型和权限后重试。</p><SlidesDraftRecovery queue={queue}/></>}<SlideTitleRecovery draft={titleDraft}/></ResourceTypeNotice>;
 
   if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={stopPresentation} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
   if (playing && playbackPage && playbackDraft) return (
@@ -618,8 +633,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-white pl-14 pr-3 md:px-5">
         <button type="button" onClick={() => { location.hash = "#/drive/mine"; }} aria-label="返回云盘" className="grid size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]"><ChevronLeft size={17}/></button>
         <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white"><Presentation size={15}/></span>
-        <div className="min-w-0"><div className="truncate text-[14px] font-semibold text-[#1f2329]">{meta.data.title || "未命名幻灯片"}</div><div className="text-[11px] text-[#8f959e]">{draft?.state === "saving" ? "正在保存…" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="min-w-0"><SlideDeckTitle meta={meta.data} userId={userId} verified={!meta.isFetching && !meta.isError} draft={titleDraft} setDraft={setTitleDraft} busy={titleSaving} onSaved={(base, entry) => { qc.setQueryData<DocMeta>(["slides-meta", deckId, userId], (current) => current && current.id === entry.id && current.driveRevision === base.revision && current.title === base.title ? { ...current, title: entry.title, driveRevision: entry.revision, updatedAt: entry.updatedAt } : current); void qc.invalidateQueries({ queryKey: ["slides-meta", deckId, userId] }); void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["recent"] }); }}/><div className="text-[11px] text-[#8f959e]">{titleDraft?.phase === "saving" || draft?.state === "saving" ? "正在保存…" : titleDraft?.phase === "unknown" ? "名称保存未确认" : titleDraft && titleDraft.value !== titleDraft.base.title ? "名称未保存" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
+        <div className={cn("ml-auto flex shrink-0 items-center gap-2", titleDraft && "hidden sm:flex")}>
           <button type="button" aria-label="创建整份幻灯片副本" title={backgroundBatchUnknown || deletePageUnknown ? "请先重新打开并核对页面" : queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={backgroundBatchUnknown || deletePageUnknown || copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">

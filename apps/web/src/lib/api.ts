@@ -434,6 +434,8 @@ export const driveApi = {
     request<void>("POST", `/api/drive/account-move/${id}`, { parentId, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   rename: (id: number, title: string, expected: number) =>
     request<DriveEntry>("POST", `/api/drive/rename/${id}`, { title, expected }),
+  renameSlidesForAccount: (id: number, title: string, expectedTitle: string, expected: number, userId: number) =>
+    request<DriveEntry>("POST", `/api/slides/${id}/account-title`, { title, expectedTitle, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
   ancestors: (id: number) =>
     request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
   trash: (id: number, expected: number) => request<void>("POST", `/api/drive/trash/${id}`, { expected }),
