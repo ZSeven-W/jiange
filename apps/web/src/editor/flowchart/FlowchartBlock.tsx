@@ -7,10 +7,11 @@ import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, fl
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";
 import { FLOW_TEMPLATES, type FlowTemplate } from "./templates";
-import { fitInsertedImage, pinchViewport, placeSelectionToolbar, resizeViewportCenter, type FlowPoint, type FlowViewport } from "./viewport";
+import { fitInsertedImage, pinchViewport, placeMindMenu, placeSelectionToolbar, resizeViewportCenter, type FlowPoint, type FlowViewport } from "./viewport";
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
+import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
@@ -362,7 +363,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   useEffect(() => { const clear = () => { recentMindClipboard.current = null; setMindClipboardFallback(false); }; const local = subscribeLocalAuthChanges(clear), remote = subscribeAuthChanges(clear); return () => { local(); remote(); }; }, []);
   const mindSelectedRef = useRef(mindSelected); mindSelectedRef.current = mindSelected;
   const canCopyRef = useRef(canCopy); canCopyRef.current = canCopy;
-  const [mindMenu, setMindMenu] = useState<{ left: number; top: number } | null>(null);
+  const imageCopyMounted = useRef(true);
+  useEffect(() => { imageCopyMounted.current = true; return () => { imageCopyMounted.current = false; }; }, []);
+  const [mindMenu, setMindMenu] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const [mindOffer, setMindOffer] = useState<string | null>(null);
   const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat"; left: number; top: number } | null>(null);
   useEffect(() => { setMindOffer(null); setMindPaintMenu(null); }, [mindSelected]);
@@ -661,11 +664,39 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (clip) insertMindClip(clip); else insertMindPlainText(text);
     } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? "无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。" : "无法读取剪贴板，请使用键盘快捷键。" }); }
   };
-  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 422, y)) });
+  const openMindMenu = (x: number, y: number) => {
+    const rect = svgWrap.current?.getBoundingClientRect();
+    const obstacles = rect ? layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles).map((node) => ({ x: rect.left + (node.x - view.x) * view.zoom, y: rect.top + (node.y - view.y) * view.zoom, w: node.w * view.zoom, h: node.h * view.zoom })).filter((box) => box.x + box.w > 0 && box.y + box.h > 0 && box.x < window.innerWidth && box.y < window.innerHeight) : [];
+    const toolbar = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-mind-toolbar]")?.getBoundingClientRect();
+    if (toolbar) obstacles.push({ x: toolbar.left, y: toolbar.top, w: toolbar.width, h: toolbar.height });
+    const globalTools = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-flow-global-tools]")?.getBoundingClientRect();
+    if (globalTools) obstacles.push({ x: globalTools.left, y: globalTools.top, w: globalTools.width, h: globalTools.height });
+    const done = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-flow-done]")?.getBoundingClientRect();
+    if (done) obstacles.push({ x: done.left, y: done.top, w: done.width, h: done.height });
+    setMindMenu(placeMindMenu({ x, y }, { w: window.innerWidth, h: window.innerHeight }, obstacles));
+  };
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
   const commitRef = useRef(commit); commitRef.current = commit;
   const editableRef = useRef(!readOnly); editableRef.current = !readOnly;
+  const copyMindNodeImage = async () => {
+    const id = mindSelected, svg = svgWrap.current?.querySelector<SVGSVGElement>("[data-flow-svg]");
+    if (!id || !canCopy || !svg || mindEditingRef.current) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器不支持复制图片。" }); return; }
+    const bounds = mindNodeImageBounds(graph.mind ?? [], effectiveCollapsed, graph.mindStyles ?? {}, id);
+    const markup = bounds && mindNodeImageSvg(svg, id, bounds);
+    if (!bounds || !markup) { setNotice({ ok: false, text: "节点已变化，请重新选择后复制。" }); return; }
+    const snapshot = JSON.stringify(graph), sessionRevision = getMindTextStyleSessionRevision();
+    const png = rasterizeMindNode(markup, bounds.pixels).then((blob) => {
+      if (!imageCopyMounted.current || !canCopyRef.current || getMindTextStyleSessionRevision() !== sessionRevision || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) throw new Error("copy context changed");
+      return blob;
+    });
+    // ClipboardItem accepts a promise, allowing the write to start within the
+    // user's gesture while rendering and permission checks complete.
+    void png.catch(() => {});
+    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]); if (imageCopyMounted.current) setNotice({ ok: true, text: "已复制图片到剪贴板" }); }
+    catch { if (imageCopyMounted.current) setNotice({ ok: false, text: "无法复制图片，请检查剪贴板权限并重试。" }); }
+  };
   const toWorld = (clientX: number, clientY: number) => {
     const r = svgWrap.current!.getBoundingClientRect();
     return { x: view.x + (clientX - r.left) / view.zoom, y: view.y + (clientY - r.top) / view.zoom };
@@ -781,6 +812,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { if (e.shiftKey && !graph.mind?.find((topic) => topic.id === mindSelected)?.parent) return; e.preventDefault(); if (e.shiftKey) addMindParent(); else addMindTopic(false); }
       if (mindSelected && !readOnly && !onButton && e.key === "Enter") { e.preventDefault(); addMindTopic(true); }
       if (mindSelected && (e.metaKey || e.ctrlKey) && e.key === "." && graph.mind?.some((topic) => topic.parent === mindSelected)) { e.preventDefault(); toggleMindFold(mindSelected); }
+      if (mindSelected && !onButton && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.code === "KeyC" || e.key.toLowerCase() === "c")) { e.preventDefault(); e.stopPropagation(); void copyMindNodeImage(); return; }
       const textStyleShortcut = mindTextStyleShortcut(e);
       if (mindSelected && !readOnly && !onButton && textStyleShortcut) { e.preventDefault(); e.stopPropagation(); if (textStyleShortcut === "copy") void copyMindTextStyle(); else void pasteMindTextStyle(); return; }
       if (mindSelected && !readOnly && !onButton && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && ["b", "i", "u"].includes(e.key.toLowerCase())) { e.preventDefault(); const key = ({ b: "bold", i: "italic", u: "underline" } as const)[e.key.toLowerCase() as "b" | "i" | "u"]; updateMindTextFormat({ [key]: graph.mindTextFormats?.[mindSelected]?.[key] ? undefined : true }); return; }
@@ -1489,13 +1521,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       {compact && <><button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button><button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button><button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button><button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button></>}
     </div>}
 
-    {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] max-h-[calc(100dvh-16px)] w-[192px] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
+    {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top, width: Math.max(1, Math.min(192, window.innerWidth - 16)), maxHeight: mindMenu.maxHeight }} onPointerDown={(event) => event.stopPropagation()}>
       {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>}
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>添加子节点 <span className="text-[#8f959e]">Tab</span></button>
       {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindParent(); }}>添加父节点 <span className="text-[#8f959e]">Shift + Tab</span></button>}
       {!!graph.mind?.some((topic) => topic.parent === mindSelected) && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); toggleMindFold(mindSelected); }}>{effectiveCollapsed.has(mindSelected) ? "展开子节点" : "收起子节点"}<span className="text-[#8f959e]">⌘ .</span></button>}
       <div className="my-1 border-t border-[#e5e6eb]"/>
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(false); }}>复制 <span className="text-[#8f959e]">⌘ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindNodeImage(); }}>复制为图片 <span className="text-[#8f959e]">⌘ ⇧ C</span></button>
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(true); }}>剪切 <span className="text-[#8f959e]">⌘ X</span></button>
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindFromClipboard(); }}>粘贴 <span className="text-[#8f959e]">⌘ V</span></button>
       {mindClipboardFallback && recentMindClipboard.current && <button type="button" role="menuitem" className="flex h-8 w-full items-center px-3 text-left hover:bg-hover" onClick={() => { const clip = recentMindClipboard.current; setMindMenu(null); if (clip) insertMindClip(clip); }}>粘贴本页最近复制的分支</button>}
@@ -1534,7 +1567,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />{mindBoard ? "思维导图" : "流程图"}</button>
 
     {/* 右上：风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
-    <div className={cn(floatBar, "absolute right-3 top-3 z-20")}>
+    <div className={cn(floatBar, "absolute right-3 top-3 z-20")} data-flow-global-tools>
       {!readOnly && <>
         <div className="relative"><button type="button" aria-label="模板" title="模板" className={barBtn} onClick={() => setMenu(menu === "template" ? null : "template")} data-flow-template-btn><LayoutTemplate size={15} /><span className="hidden md:inline">模板</span></button>
           {menu === "template" && <div className={cn(pop, "right-0 w-60")}>{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" className="flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-hover" onClick={() => applyTemplate(t)}><span>{t.label}</span><span className="text-[12px] text-subtle">{t.desc}{graph.nodes.length ? "（追加到右侧）" : ""}</span></button>)}</div>}

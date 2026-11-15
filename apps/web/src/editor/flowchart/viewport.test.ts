@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitInsertedImage, pinchViewport, placeSelectionToolbar, resizeViewportCenter } from "./viewport";
+import { fitInsertedImage, pinchViewport, placeMindMenu, placeSelectionToolbar, resizeViewportCenter } from "./viewport";
 
 describe("flowchart pinch", () => {
   it("keeps the same canvas centre as the viewport narrows", () => {
@@ -20,6 +20,29 @@ describe("flowchart pinch", () => {
     expect(pinchViewport(initial, { x: 0, y: 0 }, { x: 0, y: 0 }, 100, 1000).zoom).toBe(3);
     expect(pinchViewport(initial, { x: 0, y: 0 }, { x: 0, y: 0 }, 100, 1).zoom).toBe(0.2);
     expect(pinchViewport(initial, { x: 0, y: 0 }, { x: 0, y: 0 }, 0, 10)).toBe(initial);
+  });
+});
+
+describe("mind map menu", () => {
+  it("avoids the tree and floating toolbar when room exists", () => {
+    const obstacles = [{ x: 460, y: 290, w: 110, h: 50 }, { x: 625, y: 292, w: 90, h: 30 }, { x: 850, y: 292, w: 90, h: 30 }, { x: 508, y: 242, w: 320, h: 42 }];
+    const pos = placeMindMenu({ x: 800, y: 8 }, { w: 1280, h: 720 }, obstacles);
+    expect(pos.left).toBeGreaterThanOrEqual(940);
+    expect(pos.left + 192).toBeLessThanOrEqual(1272);
+    expect(pos.top).toBeGreaterThanOrEqual(8);
+  });
+  it("stays within a narrow viewport when no position can avoid every node", () => {
+    const pos = placeMindMenu({ x: 200, y: 600 }, { w: 320, h: 400 }, [{ x: 40, y: 120, w: 240, h: 160 }]);
+    expect(pos.left).toBeGreaterThanOrEqual(8);
+    expect(pos.left + 192).toBeLessThanOrEqual(312);
+    expect(pos.top).toBeGreaterThanOrEqual(8);
+    expect(pos.top + pos.maxHeight).toBeLessThanOrEqual(392);
+  });
+  it("uses a scrollable shorter menu to leave a mobile tree uncovered", () => {
+    const obstacles = [{ x: 12, y: 12, w: 100, h: 40 }, { x: 172, y: 12, w: 205, h: 40 }, { x: 24, y: 334, w: 90, h: 48 }, { x: 160, y: 334, w: 80, h: 30 }, { x: 295, y: 334, w: 75, h: 30 }, { x: 12, y: 683, w: 365, h: 42 }];
+    const pos = placeMindMenu({ x: 190, y: 8 }, { w: 390, h: 844 }, obstacles);
+    expect(pos.maxHeight).toBeLessThan(454);
+    expect(obstacles.every((box) => pos.left + 192 <= box.x || pos.left >= box.x + box.w || pos.top + pos.maxHeight <= box.y || pos.top >= box.y + box.h)).toBe(true);
   });
 });
 

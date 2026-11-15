@@ -47,3 +47,24 @@ export function placeSelectionToolbar(anchor: { x: number; y: number; w: number;
   }, 0);
   return candidates.reduce((best, candidate) => overlap(candidate) < overlap(best) ? candidate : best);
 }
+
+/** Prefer a visible menu position that does not cover nodes or their toolbar. */
+export function placeMindMenu(anchor: FlowPoint, viewport: { w: number; h: number }, obstacles: { x: number; y: number; w: number; h: number }[]) {
+  const margin = 8, width = Math.max(1, Math.min(192, viewport.w - 2 * margin)), availableHeight = Math.max(1, viewport.h - 2 * margin);
+  const clampX = (x: number) => Math.max(margin, Math.min(viewport.w - margin - width, x));
+  const left = obstacles.length ? Math.min(...obstacles.map((box) => box.x)) : anchor.x;
+  const right = obstacles.length ? Math.max(...obstacles.map((box) => box.x + box.w)) : anchor.x;
+  const xs = [...new Set([anchor.x, right + 12, left - width - 12, margin, viewport.w - margin - width].map(clampX))];
+  const heights = [...new Set([454, 288, 224].map((height) => Math.min(height, availableHeight)))];
+  let best: { left: number; top: number; maxHeight: number; overlap: number; distance: number } | null = null;
+  for (const height of heights) {
+    const clampY = (y: number) => Math.max(margin, Math.min(viewport.h - margin - height, y));
+    const ys = [...new Set([anchor.y, margin, viewport.h - margin - height, ...obstacles.flatMap((box) => [box.y - height - 12, box.y + box.h + 12])].map(clampY))];
+    for (const x of xs) for (const y of ys) {
+      const overlap = obstacles.reduce((sum, box) => sum + Math.max(0, Math.min(x + width, box.x + box.w) - Math.max(x, box.x)) * Math.max(0, Math.min(y + height, box.y + box.h) - Math.max(y, box.y)), 0);
+      const distance = Math.abs(x - anchor.x) + Math.abs(y - anchor.y);
+      if (!best || overlap < best.overlap || (overlap === best.overlap && (height > best.maxHeight || (height === best.maxHeight && distance < best.distance)))) best = { left: x, top: y, maxHeight: height, overlap, distance };
+    }
+  }
+  return { left: best!.left, top: best!.top, maxHeight: best!.maxHeight };
+}
