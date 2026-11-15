@@ -41,6 +41,16 @@ export function formatTableTSV(rows: string[][], range: CellRange, merges: Merge
 
 export type TablePasteResult = { ok: true; rows: string[][]; changed: boolean } | { ok: false; message: string };
 
+/** Append one blank row within the same limits used by table paste. */
+export function planTableAppendRow(rows: string[][]): TablePasteResult {
+  const cols = rows[0]?.length ?? 0;
+  if (!rows.length || !cols || rows.some((row) => row.length !== cols)) return { ok: false, message: "表格结构无效，未添加新行。" };
+  if (rows.length + 1 > MAX_ROWS || cols > MAX_COLS || (rows.length + 1) * cols > MAX_TABLE_CELLS) return { ok: false, message: "表格已达到大小限制，未添加新行。" };
+  const next = [...rows, Array.from({ length: cols }, () => "")];
+  if (new TextEncoder().encode(JSON.stringify(next)).length > 1024 * 1024) return { ok: false, message: "表格过大，未添加新行。" };
+  return { ok: true, rows: next, changed: true };
+}
+
 /** Compute all changes first; merged cells accept only a compatible source shape. */
 export function planTablePaste(rows: string[][], merges: Merge[], startRow: number, startCol: number, text: string): TablePasteResult {
   const grid = parseTableTSV(text);

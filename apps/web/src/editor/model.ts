@@ -405,5 +405,7 @@ export function parseTableData(data: string | undefined): string[][] {
   return EMPTY_TABLE.map((r) => [...r]);
 }
 
-/** 飞书新建表格：空白 3×3、无标题行。 */
+/** Legacy fallback for invalid table data. */
 export const EMPTY_TABLE: readonly (readonly string[])[] = [["", "", ""], ["", "", ""], ["", "", ""]];
+/** The current Feishu slash command inserts two blank rows and three columns. */
+export const NEW_TABLE: readonly (readonly string[])[] = [["", "", ""], ["", "", ""]];

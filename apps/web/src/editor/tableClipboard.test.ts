@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { formatTableTSV, parseTableTSV, planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
+import { formatTableTSV, parseTableTSV, planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
 
 describe("document table clipboard", () => {
+  it("appends a blank row while preserving all existing cells", () => {
+    const before = [["甲", "乙"], ["丙", "丁"]];
+    expect(planTableAppendRow(before)).toEqual({ ok: true, changed: true, rows: [["甲", "乙"], ["丙", "丁"], ["", ""]] });
+    expect(before).toEqual([["甲", "乙"], ["丙", "丁"]]);
+    expect(planTableAppendRow(Array.from({ length: 200 }, () => ["x"]))).toMatchObject({ ok: false });
+    expect(planTableAppendRow([["x"], ["x", "y"]])).toMatchObject({ ok: false });
+  });
   it("round-trips tabs, quotes, empty cells and multiline text", () => {
     const rows = [["甲", "含\t制表符", ""], ["多\n行", '引号"内', "尾"]];
     const text = formatTableTSV(rows, { r0: 0, r1: 1, c0: 0, c1: 2 });

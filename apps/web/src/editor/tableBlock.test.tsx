@@ -33,10 +33,10 @@ describe("Feishu table block", () => {
     expect(gripMenu({ kind: "col", index: 0 }, 2, 1).find((i) => i.op.kind === "deleteCol")?.disabled).toBe(true);
     expect(gripMenu({ kind: "col", index: 1 }, 2, 3).map((i) => i.op)).toContainEqual({ kind: "insertCol", at: 2 });
   });
-  it("new Feishu tables are a blank 3×3 without a header row, toggled from the toolbar", async () => {
-    const { EMPTY_TABLE } = await import("./model");
-    expect(EMPTY_TABLE).toEqual([["", "", ""], ["", "", ""], ["", "", ""]]);
-    const plain = renderToStaticMarkup(<TableBlock data={JSON.stringify(EMPTY_TABLE)} header={false} onHeader={noop} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
+  it("new Feishu tables have two blank rows and three columns without a header", async () => {
+    const { NEW_TABLE } = await import("./model");
+    expect(NEW_TABLE).toEqual([["", "", ""], ["", "", ""]]);
+    const plain = renderToStaticMarkup(<TableBlock data={JSON.stringify(NEW_TABLE)} header={false} onHeader={noop} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
     expect(plain).not.toContain("bg-[#F5F6F7]");
     expect(plain).toContain('data-table-header');
     expect(plain).toContain('aria-pressed="false"');

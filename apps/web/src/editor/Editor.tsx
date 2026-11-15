@@ -37,7 +37,7 @@ import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
 import { SlashLinkPopover } from "./SlashLinkPopover";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slashLink";
 import { captureLinkRange, resolveLinkRange, sameLinkRange, type LinkRange } from "./linkRange";
-import { applyTableEdit, CLIPPABLE_BLOCKS, EMPTY_TABLE, parseTableData, type ClipBlock } from "./model";
+import { applyTableEdit, CLIPPABLE_BLOCKS, NEW_TABLE, parseTableData, type ClipBlock } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
@@ -54,7 +54,7 @@ import { ApiError, linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./tableOps";
-import { planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
+import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
 import { TableStructureHistory } from "./tableStructureHistory";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
@@ -1436,12 +1436,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         const info = tx.doc.blockInfo(b);
         if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
           tx.setProp(b, "type", "table");
-          tx.setProp(b, "tableData", JSON.stringify(EMPTY_TABLE));
+          tx.setProp(b, "tableData", JSON.stringify(NEW_TABLE));
           tx.setProp(b, "tableHeader", "none");
           const nb = tx.create("paragraph", b, info.parent);
           return { b: nb, o: 0 };
         }
-        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify(EMPTY_TABLE), tableHeader: "none" });
+        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify(NEW_TABLE), tableHeader: "none" });
         const nb = tx.create("paragraph", tb, info.parent);
         return { b: nb, o: 0 };
       }
@@ -1978,13 +1978,13 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             const info = doc.blockInfo(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
             const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), widths: version("tableWidths"), type: version("type") } : null;
-            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut" | "clear"; range: CellRange }): string | null => {
+            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut" | "clear"; range: CellRange } | { kind: "append" }): string | null => {
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b);
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
               const beforeRows = tableRowsOf(current.props);
               const merges = parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0);
-              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : planTableClear(beforeRows, merges, operation.range);
+              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : operation.kind === "clear" ? planTableClear(beforeRows, merges, operation.range) : planTableAppendRow(beforeRows);
               if (!result.ok) return result.message;
               if (!result.changed) return null;
               const aliases = findBatchHistory.capture(doc, [b]);
@@ -2099,6 +2099,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                 onTablePaste={readOnly ? undefined : (row, col, text) => tableClipboard({ kind: "paste", row, col, text })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
+                onTableAppendRow={readOnly ? undefined : () => tableClipboard({ kind: "append" })}
                 onTableDeleteSelection={readOnly ? undefined : (range) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
                   const current = doc.blockInfo(b);
@@ -2426,6 +2427,7 @@ interface BlockProps {
   onTablePaste?: (r: number, c: number, text: string) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;
+  onTableAppendRow?: () => string | null;
   onTableDeleteSelection?: (range: CellRange) => string | null;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
@@ -2461,7 +2463,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2641,6 +2643,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onPasteCells={onTablePaste}
           onCutCells={onTableCut}
           onClearCells={onTableClear}
+          onAppendRow={onTableAppendRow}
           onDeleteSelection={onTableDeleteSelection}
           onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./tableOps";
 import { formatTableTSV } from "./tableClipboard";
+import { tableTabIntent } from "./tableKeyboard";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
@@ -49,7 +50,7 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -58,6 +59,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onPasteCells?: (r: number, c: number, text: string) => string | null;
   onCutCells?: (range: CellRange) => string | null;
   onClearCells?: (range: CellRange) => string | null;
+  onAppendRow?: () => string | null;
   onDeleteSelection?: (range: CellRange) => string | null;
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
@@ -77,8 +79,17 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const [clipboardNotice, setClipboardNotice] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
   const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean } | null>(null);
   const lastFindNavigation = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const pending = pendingTab.current;
+    if (!pending) return;
+    pendingTab.current = null;
+    if (readOnly || rows.length !== pending.row + 1 || nCols !== pending.cols || document.activeElement !== pending.source) return;
+    const next = root.current?.querySelector<HTMLTextAreaElement>(`[data-table-cell="${pending.row}:0"]`);
+    if (next) { next.focus(); next.setSelectionRange(0, 0); }
+  }, [data, readOnly]);
   useEffect(() => {
     const move = (event: PointerEvent) => {
       const drag = dragSelection.current;
@@ -232,10 +243,23 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                             setClipboardNotice(onClearCells?.(selected) ?? (onClearCells ? "" : "当前无法清空选区，表格未修改。"));
                             return;
                           }
-                          if (e.key !== "Tab" || e.nativeEvent.isComposing) return;
+                          if (e.key !== "Tab" || e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
                           const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
-                          const next = cells[cells.indexOf(e.currentTarget) + (e.shiftKey ? -1 : 1)];
-                          if (next) { e.preventDefault(); next.focus(); next.select(); }
+                          const intent = tableTabIntent(cells.indexOf(e.currentTarget), cells.length, e.shiftKey);
+                          e.preventDefault(); e.stopPropagation();
+                          if (intent.kind === "focus") {
+                            setRange(null); setGrip(null); setMoreOpen(false);
+                            const next = cells[intent.index]; next.focus();
+                            const at = intent.caret === "start" ? 0 : next.value.length;
+                            next.setSelectionRange(at, at);
+                          } else if (intent.kind === "append") {
+                            if (!onAppendRow) { setClipboardNotice("当前无法添加新行，表格未修改。"); return; }
+                            pendingTab.current = { source: e.currentTarget, row: rows.length, cols: nCols };
+                            const error = onAppendRow();
+                            if (error) pendingTab.current = null;
+                            else { setRange(null); setGrip(null); setMoreOpen(false); }
+                            setClipboardNotice(error ?? "");
+                          }
                         }}
                         onPaste={(e) => {
                           const text = e.clipboardData.getData("text/plain");
