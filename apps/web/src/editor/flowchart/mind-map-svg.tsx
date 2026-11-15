@@ -1,14 +1,16 @@
-import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
+import { layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindTitleHeight, type MindDescriptions, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
 import type { MindDrop } from "./mindmap-move";
 
-export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {}, descriptions = {}, collapsed = new Set(), selected, editing, descriptionEditing, dragPreview, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onEditDescription, onDescriptionDraft, onDescriptionFinish, onDescriptionCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   styles?: MindStyles;
   paints?: MindPaints;
   textFormats?: MindTextFormats;
+  descriptions?: MindDescriptions;
   collapsed?: ReadonlySet<string>;
   selected?: string | null;
   editing?: { id: string; value: string } | null;
+  descriptionEditing?: { id: string; value: string } | null;
   dragPreview?: { id: string; x: number; y: number; drop: MindDrop | null } | null;
   onSelect?: (topic: MindTopic, event: React.PointerEvent<SVGGElement>) => void;
   onContextMenu?: (topic: MindTopic, event: React.MouseEvent<SVGGElement>) => void;
@@ -16,10 +18,15 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
   onDraft?: (value: string) => void;
   onFinish?: () => void;
   onCancel?: () => void;
+  onEditDescription?: (topic: MindTopic) => void;
+  onDescriptionDraft?: (value: string) => void;
+  onDescriptionFinish?: () => void;
+  onDescriptionCancel?: () => void;
   onFold?: (id: string) => void;
   onAddChild?: (id: string) => void;
 }) {
-  const nodes = layoutMindTopics(topics, collapsed, styles), byId = new Map(nodes.map((node) => [node.topic.id, node]));
+  const displayDescriptions = descriptionEditing ? { ...descriptions, [descriptionEditing.id]: descriptionEditing.value || " " } : descriptions;
+  const nodes = layoutMindTopics(topics, collapsed, styles, displayDescriptions), byId = new Map(nodes.map((node) => [node.topic.id, node]));
   const children = new Map<string, string[]>();
   for (const topic of topics) if (topic.parent) children.set(topic.parent, [...(children.get(topic.parent) ?? []), topic.id]);
   const descendants = (id: string): number => { const pending = [...(children.get(id) ?? [])], seen = new Set<string>(); while (pending.length) { const next = pending.pop()!; if (seen.has(next)) continue; seen.add(next); pending.push(...(children.get(next) ?? [])); } return seen.size; };
@@ -32,7 +39,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
       return <g key={`edge-${node.topic.id}`}><path d={`M${startX},${startY} H${mid} V${endY}`} {...lineProps(paints[parent.topic.id])}/><path data-mind-branch={node.topic.id} d={`M${mid},${endY} H${node.x}`} {...lineProps(paints[node.topic.id])}/></g>;
     })}
     {nodes.map((node) => {
-      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], format = textFormats[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), align = format?.align ?? (root || shape !== "text" ? "center" : "left");
+      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, isEditingDescription = descriptionEditing?.id === node.topic.id, description = mindDescriptionAt(descriptions, node.topic.id), style = styles[node.topic.id], paint = paints[node.topic.id], format = textFormats[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), align = format?.align ?? (root || shape !== "text" ? "center" : "left"), titleHeight = mindTitleHeight(node.topic, styles), titleCenter = node.y + titleHeight / 2;
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
       const textX = align === "center" ? node.x + node.w / 2 : align === "right" ? node.x + node.w - 8 : node.x + 8, anchor = align === "center" ? "middle" : align === "right" ? "end" : "start";
       const labelWidth = [...label].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? size : size * 0.58), 0), highlightX = align === "center" ? textX - labelWidth / 2 : align === "right" ? textX - labelWidth : textX;
@@ -41,10 +48,14 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
         <title>{node.topic.text}</title>
         <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
         <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={active ? "#3370ff" : "transparent"} strokeWidth={2}/>
-        {!isEditing && !!label && format?.highlight && <rect x={highlightX - 2} y={node.y + node.h / 2 - size * 0.6} width={labelWidth + 4} height={size * 1.2} fill={format.highlight} pointerEvents="none"/>}
-        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={textX} y={node.y + node.h / 2} dominantBaseline="central" textAnchor={anchor} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : "#a3a8af"} fontSize={size} fontWeight={format?.bold ? 700 : undefined} fontStyle={format?.italic ? "italic" : undefined} textDecoration={decoration || undefined}>{label || (onSelect ? "输入文本" : "")}</text>}
-        {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={node.h}>
+        {!isEditing && !!label && format?.highlight && <rect x={highlightX - 2} y={titleCenter - size * 0.6} width={labelWidth + 4} height={size * 1.2} fill={format.highlight} pointerEvents="none"/>}
+        {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={textX} y={titleCenter} dominantBaseline="central" textAnchor={anchor} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : "#a3a8af"} fontSize={size} fontWeight={format?.bold ? 700 : undefined} fontStyle={format?.italic ? "italic" : undefined} textDecoration={decoration || undefined}>{label || (onSelect ? "输入文本" : "")}</text>}
+        {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={titleHeight}>
           <input autoFocus aria-label="思维导图节点文字" maxLength={500} value={editing.value} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onDraft?.(event.target.value)} onBlur={() => onFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); onFinish?.(); } if (event.key === "Escape") { event.preventDefault(); onCancel?.(); } }} style={{ width: "100%", height: "100%", boxSizing: "border-box", border: "2px solid #3370ff", outline: "none", padding: "0 6px", borderRadius: 3, fontSize: size, fontWeight: format?.bold ? 700 : undefined, fontStyle: format?.italic ? "italic" : undefined, textDecoration: decoration || undefined, textAlign: align, color: style?.color ?? "#1f2329", background: format?.highlight ?? "#fff" }}/>
+        </foreignObject>}
+        {!isEditingDescription && description && <text data-mind-description x={node.x + 8} y={node.y + titleHeight + 12} fontSize={12} fill="#8f959e" onDoubleClick={onEditDescription ? (event) => { event.stopPropagation(); onEditDescription(node.topic); } : undefined}>{mindDescriptionLines(description).map((line, index) => <tspan key={index} x={node.x + 8} dy={index ? 16 : 0}>{line || "\u00a0"}</tspan>)}</text>}
+        {isEditingDescription && <foreignObject x={node.x + 4} y={node.y + titleHeight} width={node.w - 8} height={node.h - titleHeight}>
+          <textarea autoFocus aria-label="思维导图节点描述" maxLength={2000} value={descriptionEditing.value} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => onDescriptionDraft?.(event.target.value)} onBlur={() => onDescriptionFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); onDescriptionCancel?.(); } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onDescriptionFinish?.(); } }} placeholder="输入描述" style={{ width: "100%", height: "100%", boxSizing: "border-box", resize: "none", border: "1px solid #3370ff", outline: "none", padding: "2px 4px", fontSize: 12, lineHeight: "16px", color: "#646a73", background: "#fff" }}/>
         </foreignObject>}
       </g>;
     })}
@@ -57,7 +68,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
         <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={folded ? 10 : 16} fill="#3370ff">{folded ? count > 99 ? "99+" : count : "‹"}</text>
       </g>;
     })}
-    {onAddChild && !editing && nodes.filter((node) => node.topic.id === selected).map((node) => {
+    {onAddChild && !editing && !descriptionEditing && nodes.filter((node) => node.topic.id === selected).map((node) => {
       const x = node.x + node.w + (descendants(node.topic.id) ? 38 : 18), y = node.y + node.h / 2;
       return <g key={`add-${node.topic.id}`} data-mind-add={node.topic.id} role="button" tabIndex={0} aria-label={`为「${node.topic.text || "节点"}」添加子节点`} style={{ cursor: "pointer" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddChild(node.topic.id); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onAddChild(node.topic.id); } }}>
         <circle cx={x} cy={y} r={10} fill="#3370ff"/><path d={`M${x - 4},${y}h8 M${x},${y - 4}v8`} fill="none" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" pointerEvents="none"/>

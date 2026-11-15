@@ -1,4 +1,4 @@
-import { canonicalMindPaint, canonicalMindStyle, canonicalMindTextFormat, canonicalMindTopic, layoutMindTopics, mindCollapseIntent, mindCollapseKey, mindIntentWrites, mindKey, mindPaintIntent, mindPaintKey, mindStyleIntent, mindStyleKey, mindTextFormatIntent, mindTextFormatKey, readMindCollapsed, readMindPaints, readMindStyles, readMindTextFormats, readMindTopics, storedMindTopic, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
+import { canonicalMindDescription, canonicalMindPaint, canonicalMindStyle, canonicalMindTextFormat, canonicalMindTopic, layoutMindTopics, mindCollapseIntent, mindCollapseKey, mindDescriptionAt, mindDescriptionIntent, mindDescriptionKey, mindIntentWrites, mindKey, mindPaintIntent, mindPaintKey, mindStyleIntent, mindStyleKey, mindTextFormatIntent, mindTextFormatKey, readMindCollapsed, readMindDescriptions, readMindPaints, readMindStyles, readMindTextFormats, readMindTopics, storedMindTopic, type MindDescriptions, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
 /**
  * 可编辑流程图（文档中的 flowchart 块）。
  *
@@ -17,7 +17,7 @@ export type EdgeKind = "orthogonal" | "straight" | "curve";
 export interface FlowNode { id: string; x: number; y: number; w: number; h: number; shape: Shape; text: string; fill?: string; stroke?: string; color?: string; size?: number; align?: TextAlign; rot?: number; fileId?: number; z?: number }
 export interface FlowEdge { id: string; from: string; to: string; fromPort?: Port; toPort?: Port; label?: string; kind?: EdgeKind; dashed?: boolean; color?: string; arrow?: "end" | "both" | "none"; mid?: number; pts?: { x: number; y: number }[] }
 export interface FlowStroke { id: string; points: { x: number; y: number }[]; color: string; width: number; marker?: true }
-export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; strokes?: FlowStroke[]; mind?: MindTopic[]; mindCollapsed?: string[]; mindStyles?: MindStyles; mindPaints?: MindPaints; mindTextFormats?: MindTextFormats; /** Client-only guard for a complete text-style replacement. */ mindTextStyleIntent?: string[]; theme: string }
+export interface FlowGraph { nodes: FlowNode[]; edges: FlowEdge[]; strokes?: FlowStroke[]; mind?: MindTopic[]; mindCollapsed?: string[]; mindStyles?: MindStyles; mindPaints?: MindPaints; mindTextFormats?: MindTextFormats; mindDescriptions?: MindDescriptions; /** Client-only guard for a complete text-style replacement. */ mindTextStyleIntent?: string[]; theme: string }
 export type FlowChangeOutcome = { graph: FlowGraph; conflicts: string[]; applied: boolean; appliedKeys: string[] };
 
 export const FC_VERSION = "fc.v";
@@ -161,8 +161,8 @@ export function readFlow(props: Record<string, string>): FlowGraph {
   }
   const ids = new Set(nodes.map((n) => n.id));
   nodes.sort((a, b) => (a.z ?? 0) - (b.z ?? 0) || a.id.localeCompare(b.id));
-  const mind = readMindTopics(props), mindCollapsed = readMindCollapsed(props, mind), mindStyles = readMindStyles(props, mind), mindPaints = readMindPaints(props, mind), mindTextFormats = readMindTextFormats(props, mind);
-  return { nodes, edges: edges.filter((e) => ids.has(e.from) && ids.has(e.to)).sort((a, b) => a.id.localeCompare(b.id)), ...(strokes.length ? { strokes: strokes.sort((a, b) => a.id.localeCompare(b.id)) } : {}), ...(mind.length ? { mind } : {}), ...(mindCollapsed.length ? { mindCollapsed } : {}), ...(Object.keys(mindStyles).length ? { mindStyles } : {}), ...(Object.keys(mindPaints).length ? { mindPaints } : {}), ...(Object.keys(mindTextFormats).length ? { mindTextFormats } : {}), theme: themeOf(props[FC_THEME]).id };
+  const mind = readMindTopics(props), mindCollapsed = readMindCollapsed(props, mind), mindStyles = readMindStyles(props, mind), mindPaints = readMindPaints(props, mind), mindTextFormats = readMindTextFormats(props, mind), mindDescriptions = readMindDescriptions(props, mind);
+  return { nodes, edges: edges.filter((e) => ids.has(e.from) && ids.has(e.to)).sort((a, b) => a.id.localeCompare(b.id)), ...(strokes.length ? { strokes: strokes.sort((a, b) => a.id.localeCompare(b.id)) } : {}), ...(mind.length ? { mind } : {}), ...(mindCollapsed.length ? { mindCollapsed } : {}), ...(Object.keys(mindStyles).length ? { mindStyles } : {}), ...(Object.keys(mindPaints).length ? { mindPaints } : {}), ...(Object.keys(mindTextFormats).length ? { mindTextFormats } : {}), ...(Object.keys(mindDescriptions).length ? { mindDescriptions } : {}), theme: themeOf(props[FC_THEME]).id };
 }
 
 function canonicalStroke(stroke: FlowStroke): string | null {
@@ -220,6 +220,7 @@ export function flowWrites(props: Record<string, string>, next: FlowGraph): Reco
   if (next.mindStyles !== undefined) for (const topic of next.mind ?? []) { const key = mindStyleKey(topic.id), wanted = canonicalMindStyle(next.mindStyles[topic.id]); if (wanted !== null && (props[key] ?? "") !== wanted) writes[key] = wanted; }
   if (next.mindPaints !== undefined) for (const topic of next.mind ?? []) { const key = mindPaintKey(topic.id), wanted = canonicalMindPaint(next.mindPaints[topic.id]); if (wanted !== null && (props[key] ?? "") !== wanted) writes[key] = wanted; }
   if (next.mindTextFormats !== undefined) for (const topic of next.mind ?? []) { const key = mindTextFormatKey(topic.id), wanted = canonicalMindTextFormat(next.mindTextFormats[topic.id]); if (wanted !== null && (props[key] ?? "") !== wanted) writes[key] = wanted; }
+  if (next.mindDescriptions !== undefined) for (const topic of next.mind ?? []) { const key = mindDescriptionKey(topic.id), wanted = canonicalMindDescription(mindDescriptionAt(next.mindDescriptions, topic.id)); if (wanted !== null && (props[key] ?? "") !== wanted) writes[key] = wanted; }
   for (const [key, value] of Object.entries(props)) {
     if (!value) continue;
     if (key.startsWith("fc.n.") && !seenN.has(key.slice(5))) writes[key] = "";
@@ -332,17 +333,19 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
   }
 
   if (next.mind !== undefined) {
-    const mindResult = mindIntentWrites(props, base.mind ?? [], next.mind);
+    const mindResult = mindIntentWrites(props, base.mind ?? [], next.mind, base.mindDescriptions ?? {});
     Object.assign(writes, mindResult.writes); mindResult.conflicts.forEach((key) => conflicts.add(key));
     {
       const foldResult = mindCollapseIntent(props, base.mindCollapsed ?? [], next.mindCollapsed ?? base.mindCollapsed ?? [], base.mind ?? [], next.mind, mindResult.writes);
       const styleResult = mindStyleIntent(props, base.mindStyles ?? {}, next.mindStyles ?? base.mindStyles ?? {}, base.mind ?? [], next.mind, mindResult.writes);
       const paintResult = mindPaintIntent(props, base.mindPaints ?? {}, next.mindPaints ?? base.mindPaints ?? {}, base.mind ?? [], next.mind, mindResult.writes);
       const textResult = mindTextFormatIntent(props, base.mindTextFormats ?? {}, next.mindTextFormats ?? base.mindTextFormats ?? {}, base.mind ?? [], next.mind, mindResult.writes);
+      const descriptionResult = mindDescriptionIntent(props, base.mindDescriptions ?? {}, next.mindDescriptions ?? base.mindDescriptions ?? {}, base.mind ?? [], next.mind, mindResult.writes);
       Object.assign(writes, foldResult.writes); foldResult.conflicts.forEach((key) => conflicts.add(key));
       Object.assign(writes, styleResult.writes); styleResult.conflicts.forEach((key) => conflicts.add(key));
       Object.assign(writes, paintResult.writes); paintResult.conflicts.forEach((key) => conflicts.add(key));
       Object.assign(writes, textResult.writes); textResult.conflicts.forEach((key) => conflicts.add(key));
+      Object.assign(writes, descriptionResult.writes); descriptionResult.conflicts.forEach((key) => conflicts.add(key));
       // Replacing text style must also check unchanged-looking fields: a newer
       // format or an unseen remote edit must not be silently left behind.
       for (const id of next.mindTextStyleIntent ?? []) {
@@ -362,7 +365,7 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
       // A style copied to one topic is not half-applied when its other style key conflicts.
       for (const key of [...styleResult.conflicts, ...paintResult.conflicts, ...textResult.conflicts]) { const id = key.slice(6); delete writes[mindStyleKey(id)]; delete writes[mindPaintKey(id)]; delete writes[mindTextFormatKey(id)]; }
       const oldIds = new Set((base.mind ?? []).map((topic) => topic.id));
-      const blocked = new Set([...mindResult.conflicts, ...foldResult.conflicts, ...styleResult.conflicts, ...paintResult.conflicts, ...textResult.conflicts].map((key) => key.slice(key.startsWith("fc.m.") ? 5 : 6)).filter((id) => !oldIds.has(id)));
+      const blocked = new Set([...mindResult.conflicts, ...foldResult.conflicts, ...styleResult.conflicts, ...paintResult.conflicts, ...textResult.conflicts, ...descriptionResult.conflicts].map((key) => key.slice(key.startsWith("fc.m.") ? 5 : 6)).filter((id) => !oldIds.has(id)));
       const addedRoot = (id: string) => { let topic = next.mind!.find((item) => item.id === id); const seen = new Set<string>(); while (topic?.parent && !oldIds.has(topic.parent) && !seen.has(topic.id)) { seen.add(topic.id); topic = next.mind!.find((item) => item.id === topic!.parent); } return topic?.id; };
       const blockedRoots = new Set([...blocked].map(addedRoot).filter((id): id is string => !!id));
       for (const topic of next.mind) if (!oldIds.has(topic.id) && blockedRoots.has(addedRoot(topic.id)!)) blocked.add(topic.id);
@@ -375,7 +378,7 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
       }
       let count = -1;
       while (count !== blocked.size) { count = blocked.size; for (const topic of next.mind) if (!oldIds.has(topic.id) && topic.parent && blocked.has(topic.parent)) blocked.add(topic.id); }
-      for (const id of blocked) { delete writes[mindKey(id)]; delete writes[mindCollapseKey(id)]; delete writes[mindStyleKey(id)]; delete writes[mindPaintKey(id)]; delete writes[mindTextFormatKey(id)]; conflicts.add(mindKey(id)); }
+      for (const id of blocked) { delete writes[mindKey(id)]; delete writes[mindCollapseKey(id)]; delete writes[mindStyleKey(id)]; delete writes[mindPaintKey(id)]; delete writes[mindTextFormatKey(id)]; delete writes[mindDescriptionKey(id)]; conflicts.add(mindKey(id)); }
     }
   }
 
@@ -402,7 +405,7 @@ export function flowBounds(graph: FlowGraph): { x: number; y: number; w: number;
     const x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
     boxes.push({ x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y });
   }
-  for (const item of layoutMindTopics(graph.mind ?? [], new Set(graph.mindCollapsed ?? []), graph.mindStyles)) boxes.push({ x: item.x, y: item.y, w: item.w, h: item.h });
+  for (const item of layoutMindTopics(graph.mind ?? [], new Set(graph.mindCollapsed ?? []), graph.mindStyles, graph.mindDescriptions)) boxes.push({ x: item.x, y: item.y, w: item.w, h: item.h });
   if (!boxes.length) return { x: 0, y: 0, w: 400, h: 240 };
   const x = Math.min(...boxes.map((b) => b.x)), y = Math.min(...boxes.map((b) => b.y));
   return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };

@@ -1,8 +1,8 @@
-import { layoutMindTopics, type MindStyles, type MindTopic } from "./mindmap";
+import { layoutMindTopics, type MindDescriptions, type MindStyles, type MindTopic } from "./mindmap";
 
 /** Feishu copies the selected node alone, centred on an opaque square. */
-export function mindNodeImageBounds(topics: readonly MindTopic[], collapsed: ReadonlySet<string>, styles: MindStyles, id: string) {
-  const node = layoutMindTopics(topics, collapsed, styles).find((item) => item.topic.id === id);
+export function mindNodeImageBounds(topics: readonly MindTopic[], collapsed: ReadonlySet<string>, styles: MindStyles, id: string, descriptions: MindDescriptions = {}) {
+  const node = layoutMindTopics(topics, collapsed, styles, descriptions).find((item) => item.topic.id === id);
   if (!node) return null;
   const side = Math.ceil(Math.max(92, node.w + 12, node.h + 12));
   return { x: node.x + (node.w - side) / 2, y: node.y + (node.h - side) / 2, side, pixels: side * 2 };
