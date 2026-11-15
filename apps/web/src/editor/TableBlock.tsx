@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { Columns3, Combine, LayoutGrid, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./tableOps";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./tableOps";
 import { formatTableTSV } from "./tableClipboard";
 
 type GripSel = { kind: "row" | "col"; index: number };
@@ -49,7 +49,7 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, onHeader, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; onHeader?: (on: boolean) => void;
   onWidths?: (w: number[]) => void;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -58,6 +58,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onPasteCells?: (r: number, c: number, text: string) => string | null;
   onCutCells?: (range: CellRange) => string | null;
   onClearCells?: (range: CellRange) => string | null;
+  onDeleteSelection?: (range: CellRange) => string | null;
   onDelete: () => void; readOnly: boolean;
   canCopy?: boolean;
   initialGrip?: GripSel | null;
@@ -150,6 +151,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
+  const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
   const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols)); setGrip(null); setRange(null); };
   const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); };
@@ -188,6 +190,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
         {onHeader && <button type="button" title="标题行" aria-pressed={header} className={cn("flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header>标题行</button>}
         {!multi && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button></>}
+        {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
+        <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
       <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")}>
       <table className="border-collapse text-[14px] leading-[22px]">

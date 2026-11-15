@@ -53,8 +53,9 @@ import { FileCard, fmtSize } from "./FileCard";
 import { ApiError, linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
-import { parseMerges, type CellRange, type Merge, type Widths } from "./tableOps";
+import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./tableOps";
 import { planTableClear, planTableCut, planTablePaste } from "./tableClipboard";
+import { TableStructureHistory } from "./tableStructureHistory";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
@@ -167,9 +168,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
+  const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
+  const tableStructureHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
   const findBatchActionRef = useRef<FindBatchReplacer>(() => ({ status: "unavailable", count: 0 }));
   const findBatchHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
@@ -813,7 +816,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -1762,6 +1765,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     force((x) => x + 1);
     publish();
   };
+  tableStructureHistoryActionRef.current = (key, redo) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current) return;
+    const result = tableStructureHistory.step(d, um, key, redo);
+    if (result.status !== "ready") {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
+      return;
+    }
+    setTableHistoryConflict(null); sync.client.push(result.ops); force((x) => x + 1); publish();
+  };
   findBatchHistoryActionRef.current = (key, redo) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
@@ -1784,6 +1797,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     const key = `table:${block.dataset.block}:${cell[1]}:${cell[2]}`;
     const tableKey = `table:${block.dataset.block}:-1:-1`;
     if (um.peekMarker(redo)?.startsWith("find-batch:")) findBatchHistoryActionRef.current(um.peekMarker(redo)!, redo);
+    else if (um.peekMarker(redo)?.startsWith(`table-structure:${block.dataset.block}:`)) tableStructureHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
     else if (um.peekMarker(redo) === tableKey) tableHistoryActionRef.current(tableKey, redo);
     else if (redo ? um.canRedo : um.canUndo) setColumnNotice("最近的操作不在当前单元格，请先从文档中撤销或重做该操作。");
@@ -1911,6 +1925,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
+            else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
             else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
           }
           else setColumnNotice("撤销记录已变化，未跳过任何记录，请重新操作。");
@@ -1962,7 +1977,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             const k = idKey(b);
             const info = doc.blockInfo(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
-            const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), type: version("type") } : null;
+            const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), widths: version("tableWidths"), type: version("type") } : null;
             const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string } | { kind: "cut" | "clear"; range: CellRange }): string | null => {
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b);
@@ -2084,6 +2099,36 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
                 onTablePaste={readOnly ? undefined : (row, col, text) => tableClipboard({ kind: "paste", row, col, text })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
+                onTableDeleteSelection={readOnly ? undefined : (range) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
+                  const current = doc.blockInfo(b);
+                  if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("tableWidths") !== tableSnapshot.widths || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
+                  const rows = tableRowsOf(current.props);
+                  const merges = parseMerges(current.props.tableMerges, rows.length, rows[0]?.length ?? 0);
+                  let widths: Widths | undefined;
+                  try { widths = current.props.tableWidths ? JSON.parse(current.props.tableWidths) : undefined; } catch { return "列宽数据无效，表格未修改。"; }
+                  if (widths !== undefined && (!Array.isArray(widths) || !widths.every((width) => width === null || typeof width === "number" && Number.isFinite(width) && width > 0))) return "列宽数据无效，表格未修改。";
+                  const plan = planSelectionDelete(rows, merges, widths, range);
+                  if (!plan) return "选区已变化，请重新选择完整的行或列。";
+                  const hadEditorFocus = root.current?.contains(document.activeElement) ?? false;
+                  const tx = new Tx(doc);
+                  if (plan.kind === "table") tx.setProp(b, "type", "paragraph");
+                  else {
+                    writeTable(tx, b, current.props, plan.rows, doc.client);
+                    tx.setProp(b, "tableMerges", JSON.stringify(plan.merges));
+                    if (plan.widths) tx.setProp(b, "tableWidths", JSON.stringify(plan.widths));
+                  }
+                  if (tx.ops.length) {
+                    um.seal();
+                    const marker = tableStructureHistory.record(doc, b, tx, um);
+                    if (marker) um.recordMarker(marker);
+                    sync.client.push(tx.ops); um.seal(); force((x) => x + 1); publish();
+                    if (plan.kind === "table" && hadEditorFocus) requestAnimationFrame(() => {
+                      if (sync.client.doc === doc && doc.hasBlock(b) && doc.blockInfo(b).type === "paragraph" && document.activeElement === document.body) root.current?.focus();
+                    });
+                  }
+                  return null;
+                }}
                 dropLine={drag && drag.over && eqId(drag.over, b) ? (drag.after ? "after" : "before") : null}
                 onToggle={readOnly ? undefined : () => toggleTodo(b)}
                 onDragStart={readOnly ? undefined : () => {
@@ -2381,6 +2426,7 @@ interface BlockProps {
   onTablePaste?: (r: number, c: number, text: string) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;
+  onTableDeleteSelection?: (range: CellRange) => string | null;
   /** 悬停 + 按钮：在当前块后插入空段落并聚焦 */
   onInsertAfter?: () => void;
   /** The insertion affordance is visible on an otherwise blank document. */
@@ -2415,7 +2461,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const checked = props.checked === "true";
@@ -2595,6 +2641,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onPasteCells={onTablePaste}
           onCutCells={onTableCut}
           onClearCells={onTableClear}
+          onDeleteSelection={onTableDeleteSelection}
           onChange={onTableChange}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}

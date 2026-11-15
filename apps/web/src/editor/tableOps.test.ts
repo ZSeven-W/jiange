@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, remapWidths, splitCell, type Merge } from "./tableOps";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, planSelectionDelete, remapWidths, splitCell, type Merge } from "./tableOps";
 
 const grid = () => [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]];
 
@@ -64,5 +64,24 @@ describe("table column widths and moves", () => {
     expect(applyTableOp(rows, merged, { kind: "moveCol", index: 0, to: 1 }).rows).toBe(rows);
     expect(applyTableOp(rows, merged, { kind: "moveRow", index: 0, to: 1 }).merges).toEqual([[1, 1, 1, 2]]);
     expect(canMove(rows, [], { kind: "moveCol", index: 2, to: 3 })).toBe(false);
+  });
+});
+
+describe("selection toolbar deletion", () => {
+  it("deletes whole selected rows or columns and preserves remaining data and widths", () => {
+    const rows = grid();
+    expect(planSelectionDelete(rows, [], [100, 150, 200], { r0: 0, r1: 1, c0: 0, c1: 2 })).toEqual({ kind: "rows", rows: [["g", "h", "i"]], merges: [], widths: undefined });
+    expect(planSelectionDelete(rows, [], [100, 150, 200], { r0: 0, r1: 2, c0: 0, c1: 1 })).toEqual({ kind: "cols", rows: [["c"], ["f"], ["i"]], merges: [], widths: [200] });
+    expect(rows).toEqual(grid());
+  });
+  it("only offers table deletion for the entire table and rejects partial rectangles", () => {
+    expect(planSelectionDelete(grid(), [], undefined, { r0: 0, r1: 2, c0: 0, c1: 2 })).toEqual({ kind: "table" });
+    expect(planSelectionDelete(grid(), [], undefined, { r0: 0, r1: 1, c0: 0, c1: 1 })).toBeNull();
+    expect(planSelectionDelete(grid(), [], undefined, { r0: -1, r1: 1, c0: 0, c1: 2 })).toBeNull();
+  });
+  it("refuses to split a merge and remaps unrelated merges", () => {
+    const merges: Merge[] = [[0, 0, 2, 1], [1, 1, 2, 2]];
+    expect(planSelectionDelete(grid(), merges, undefined, { r0: 0, r1: 0, c0: 0, c1: 2 })).toBeNull();
+    expect(planSelectionDelete(grid(), merges, undefined, { r0: 0, r1: 2, c0: 0, c1: 0 })).toEqual({ kind: "cols", rows: [["b", "c"], ["e", "f"], ["h", "i"]], merges: [[1, 0, 2, 2]], widths: undefined });
   });
 });

@@ -154,3 +154,31 @@ export function remapWidths(widths: Widths | undefined, op: TableOp, cols: numbe
     default: return undefined;
   }
 }
+
+/** The selection toolbar can delete full rows, full columns, or the whole table. */
+export function planSelectionDelete(rows: string[][], merges: Merge[], widths: Widths | undefined, selection: CellRange):
+  | { kind: "table" }
+  | { kind: "rows" | "cols"; rows: string[][]; merges: Merge[]; widths?: Widths }
+  | null {
+  const nrows = rows.length, ncols = rows[0]?.length ?? 0;
+  const range = normRange(selection);
+  if (!nrows || !ncols || rows.some((row) => row.length !== ncols) ||
+      ![range.r0, range.r1, range.c0, range.c1].every(Number.isInteger) ||
+      range.r0 < 0 || range.c0 < 0 || range.r1 >= nrows || range.c1 >= ncols) return null;
+  const expanded = expandRange(range, merges);
+  if (expanded.r0 !== range.r0 || expanded.r1 !== range.r1 || expanded.c0 !== range.c0 || expanded.c1 !== range.c1) return null;
+  const fullRows = range.c0 === 0 && range.c1 === ncols - 1;
+  const fullCols = range.r0 === 0 && range.r1 === nrows - 1;
+  if (fullRows && fullCols) return { kind: "table" };
+  if (!fullRows && !fullCols) return null;
+  let nextRows = rows, nextMerges = merges, nextWidths = widths;
+  const kind = fullRows ? "rows" : "cols";
+  const start = fullRows ? range.r0 : range.c0, end = fullRows ? range.r1 : range.c1;
+  for (let index = end; index >= start; index--) {
+    const op: TableOp = { kind: fullRows ? "deleteRow" : "deleteCol", index };
+    const result = applyTableOp(nextRows, nextMerges, op);
+    nextWidths = remapWidths(nextWidths, op, nextRows[0].length) ?? nextWidths;
+    nextRows = result.rows; nextMerges = result.merges;
+  }
+  return { kind, rows: nextRows, merges: nextMerges, widths: kind === "cols" ? nextWidths : undefined };
+}

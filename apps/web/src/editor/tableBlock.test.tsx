@@ -13,11 +13,12 @@ describe("Feishu table block", () => {
     expect(html.match(/<textarea/g)).toHaveLength(6);
   });
   it("opens a row menu and highlights the selected row", () => {
-    const html = renderToStaticMarkup(<TableBlock data={data} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} initialGrip={{ kind: "row", index: 1 }} />);
+    const html = renderToStaticMarkup(<TableBlock data={data} onEdit={noop} onChange={noop} onDeleteSelection={() => null} onDelete={noop} readOnly={false} initialGrip={{ kind: "row", index: 1 }} />);
     expect(html).toContain('data-table-grip-menu="row"');
     expect(html.match(/data-cell-selected="true"/g)).toHaveLength(3);
     expect(html).toContain('aria-label="更多表格操作"');
     expect(html).not.toContain('data-table-del=');
+    expect(html).toContain('aria-label="删除选中行"');
     for (const label of ["在上方插入行", "在下方插入行", "清空本行", "删除本行"]) expect(html).toContain(label);
   });
   it("renders merged cells with spans and hides covered cells", () => {
