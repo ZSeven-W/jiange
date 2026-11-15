@@ -12,7 +12,7 @@ import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTopic } from "./mindmap";
-import { mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
+import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
 import { inkHitByEraser, inkPointBounds, scaleInk } from "./inkGeometry";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
@@ -561,6 +561,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       mindEditingRef.current = edit; setMindEditing(edit);
     }
   };
+  const addMindParent = () => {
+    if (readOnly || !mindSelected || !graph.mind) return;
+    const id = newFlowId("m"), mind = insertMindParent(graph.mind, mindSelected, id);
+    if (!mind) { setNotice({ ok: false, text: "无法添加父节点：根节点、节点数量或层级超出限制。" }); return; }
+    const result = commitMind(graph, { ...graph, mind });
+    if (result.applied && result.graph.mind?.some((topic) => topic.id === id) && result.graph.mind.some((topic) => topic.id === mindSelected && topic.parent === id)) {
+      setMindSelected(id); setSelected(new Set());
+      const edit = { id, value: "", base: result.graph }; mindEditingRef.current = edit; setMindEditing(edit);
+    }
+  };
   const removeMindTopic = () => {
     if (readOnly || !mindSelected || !graph.mind) return;
     const ids = new Set([mindSelected]); let previous = 0;
@@ -614,7 +624,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (clip) insertMindClip(clip); else insertMindPlainText(text);
     } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? "无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。" : "无法读取剪贴板，请使用键盘快捷键。" }); }
   };
-  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 326, y)) });
+  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 358, y)) });
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
   const commitRef = useRef(commit); commitRef.current = commit;
@@ -731,7 +741,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); if (mindSelected) removeMindTopic(); else removeSelected(); }
       const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
-      if (mindSelected && !readOnly && !onButton && e.key === "Tab") { e.preventDefault(); addMindTopic(false); }
+      if (mindSelected && !readOnly && !onButton && e.key === "Tab") { if (e.shiftKey && !graph.mind?.find((topic) => topic.id === mindSelected)?.parent) return; e.preventDefault(); if (e.shiftKey) addMindParent(); else addMindTopic(false); }
       if (mindSelected && !readOnly && !onButton && e.key === "Enter") { e.preventDefault(); addMindTopic(true); }
       if (mindSelected && (e.metaKey || e.ctrlKey) && e.key === "." && graph.mind?.some((topic) => topic.parent === mindSelected)) { e.preventDefault(); toggleMindFold(mindSelected); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !readOnly) { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
@@ -1440,8 +1450,9 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </div>}
 
     {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] w-[192px] rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!mindAnchor?.topic.parent} onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>
+      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>}
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>添加子节点 <span className="text-[#8f959e]">Tab</span></button>
+      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindParent(); }}>添加父节点 <span className="text-[#8f959e]">Shift + Tab</span></button>}
       {!!graph.mind?.some((topic) => topic.parent === mindSelected) && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); toggleMindFold(mindSelected); }}>{effectiveCollapsed.has(mindSelected) ? "展开子节点" : "收起子节点"}<span className="text-[#8f959e]">⌘ .</span></button>}
       <div className="my-1 border-t border-[#e5e6eb]"/>
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(false); }}>复制 <span className="text-[#8f959e]">⌘ C</span></button>

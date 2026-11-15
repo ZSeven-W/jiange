@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { appliedFlowHistory } from "./history";
 import { flowIntentWrites, flowWrites, readFlow, type FlowGraph } from "./model";
 import { layoutMindTopics, type MindTopic } from "./mindmap";
-import { mindDropAt, moveMindTopic } from "./mindmap-move";
+import { insertMindParent, mindDropAt, moveMindTopic } from "./mindmap-move";
 
 const topics: MindTopic[] = [{ id: "root", parent: null, order: 0, text: "根", x: 0, y: 0 }, { id: "a", parent: "root", order: 0, text: "甲" }, { id: "b", parent: "root", order: 1, text: "乙" }, { id: "c", parent: "root", order: 2, text: "丙" }, { id: "sub", parent: "a", order: 0, text: "子" }];
 const graph: FlowGraph = { nodes: [], edges: [], theme: "feishu", mind: topics };
@@ -73,5 +73,62 @@ describe("mind map moves", () => {
     const remote = flowWrites(props, { ...base, mind: destinationMoved });
     const proposed = moveMindTopic(extended, "c", { kind: "child", target: "d" })!;
     expect(flowIntentWrites({ ...props, ...remote }, base, { ...base, mind: proposed }).conflicts).toContain("fc.m.c");
+  });
+});
+
+describe("insert parent topic", () => {
+  it("inserts a parent at the same position while preserving the subtree, styles and undo/redo", () => {
+    const before: FlowGraph = { ...graph, mindStyles: { a: { shape: "oval" } }, mindPaints: { a: { fill: "#e1e9ff" } }, mindCollapsed: ["a"] };
+    const proposed = insertMindParent(topics, "a", "wrapper")!, props = flowWrites({}, before);
+    const applied = flowIntentWrites(props, before, { ...before, mind: proposed });
+    expect(applied.conflicts).toEqual([]);
+    const savedProps = { ...props, ...applied.writes }, saved = readFlow(savedProps);
+    expect(children(saved.mind!, "root")).toEqual(["wrapper", "b", "c"]);
+    expect(saved.mind?.find((topic) => topic.id === "a")?.parent).toBe("wrapper");
+    expect(saved.mind?.find((topic) => topic.id === "sub")?.parent).toBe("a");
+    expect(saved.mindStyles?.a).toEqual({ shape: "oval" }); expect(saved.mindPaints?.a).toEqual({ fill: "#e1e9ff" }); expect(saved.mindCollapsed).toContain("a");
+    const history = appliedFlowHistory(before, saved, Object.keys(applied.writes))!;
+    const undo = flowIntentWrites(savedProps, saved, history.before);
+    expect(undo.conflicts).toEqual([]);
+    const undoneProps = { ...savedProps, ...undo.writes }, undone = readFlow(undoneProps);
+    expect(children(undone.mind!, "root")).toEqual(["a", "b", "c"]); expect(undone.mind?.some((topic) => topic.id === "wrapper")).toBe(false);
+    const redo = flowIntentWrites(undoneProps, undone, history.after);
+    expect(redo.conflicts).toEqual([]); expect(readFlow({ ...undoneProps, ...redo.writes }).mind?.find((topic) => topic.id === "a")?.parent).toBe("wrapper");
+  });
+  it("rejects root insertion, duplicate ids and a subtree that would exceed depth 32", () => {
+    expect(insertMindParent(topics, "root", "x")).toBeNull(); expect(insertMindParent(topics, "a", "b")).toBeNull();
+    const full: MindTopic[] = [...topics, ...Array.from({ length: 495 }, (_, i) => ({ id: `extra${i}`, parent: "root", order: i + 3, text: "" }))];
+    expect(insertMindParent(full, "a", "wrapper")).toBeNull();
+    const chain: MindTopic[] = [{ id: "r", parent: null, order: 0, text: "", x: 0, y: 0 }];
+    for (let i = 1; i <= 32; i++) chain.push({ id: `d${i}`, parent: i === 1 ? "r" : `d${i - 1}`, order: 0, text: "" });
+    expect(insertMindParent(chain, "d1", "wrapper")).toBeNull();
+    expect(insertMindParent(chain.slice(0, -1), "d1", "wrapper")).not.toBeNull();
+  });
+  it("does not partially insert when the selected node or new parent metadata conflicts", () => {
+    const proposed = insertMindParent(topics, "a", "wrapper")!, props = flowWrites({}, graph);
+    const remote = flowWrites(props, { ...graph, mind: topics.map((topic) => topic.id === "a" ? { ...topic, text: "远端" } : topic) });
+    const stale = flowIntentWrites({ ...props, ...remote }, graph, { ...graph, mind: proposed });
+    expect(stale.conflicts).toContain("fc.m.a"); expect(stale.writes["fc.m.a"]).toBeUndefined(); expect(stale.writes["fc.m.wrapper"]).toBeUndefined();
+    for (const [key, value] of [["fc.ms.wrapper", '{"future":true}'], ["fc.mp.wrapper", '{"future":true}'], ["fc.mc.wrapper", "future"]]) {
+      const collision = flowIntentWrites({ ...props, [key]: value }, graph, { ...graph, mind: proposed });
+      expect(collision.conflicts).toContain(key); expect(collision.writes["fc.m.a"]).toBeUndefined(); expect(collision.writes["fc.m.wrapper"]).toBeUndefined();
+    }
+  });
+  it("keeps a concurrently received descendant inside the moved subtree", () => {
+    const proposed = insertMindParent(topics, "a", "wrapper")!, props = flowWrites({}, graph);
+    const remote = flowWrites(props, { ...graph, mind: [...topics, { id: "remote", parent: "a", order: 3, text: "协作者" }] });
+    const applied = flowIntentWrites({ ...props, ...remote }, graph, { ...graph, mind: proposed });
+    expect(applied.conflicts).toEqual([]);
+    const result = readFlow({ ...props, ...remote, ...applied.writes });
+    expect(result.mind?.find((topic) => topic.id === "a")?.parent).toBe("wrapper");
+    expect(result.mind?.find((topic) => topic.id === "remote")?.parent).toBe("a");
+  });
+  it("does not partially undo when a collaborator added a child to the new parent", () => {
+    const proposed = insertMindParent(topics, "a", "wrapper")!, props = flowWrites({}, graph), applied = flowIntentWrites(props, graph, { ...graph, mind: proposed });
+    const savedProps = { ...props, ...applied.writes }, saved = readFlow(savedProps), history = appliedFlowHistory(graph, saved, Object.keys(applied.writes))!;
+    const remote = flowWrites(savedProps, { ...saved, mind: [...saved.mind!, { id: "remote", parent: "wrapper", order: 2, text: "协作者" }] });
+    const undo = flowIntentWrites({ ...savedProps, ...remote }, saved, history.before);
+    expect(undo.conflicts).toContain("fc.m.wrapper"); expect(undo.conflicts).toContain("fc.m.a");
+    expect(undo.writes["fc.m.wrapper"]).toBeUndefined(); expect(undo.writes["fc.m.a"]).toBeUndefined();
   });
 });

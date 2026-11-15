@@ -347,6 +347,8 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
       const addedRoot = (id: string) => { let topic = next.mind!.find((item) => item.id === id); const seen = new Set<string>(); while (topic?.parent && !oldIds.has(topic.parent) && !seen.has(topic.id)) { seen.add(topic.id); topic = next.mind!.find((item) => item.id === topic!.parent); } return topic?.id; };
       const blockedRoots = new Set([...blocked].map(addedRoot).filter((id): id is string => !!id));
       for (const topic of next.mind) if (!oldIds.has(topic.id) && blockedRoots.has(addedRoot(topic.id)!)) blocked.add(topic.id);
+      // Existing nodes reparented underneath a rejected new node must stay put.
+      for (const topic of next.mind) { const before = base.mind?.find((item) => item.id === topic.id); if (before && topic.parent && blocked.has(topic.parent) && before.parent !== topic.parent) { delete writes[mindKey(topic.id)]; conflicts.add(mindKey(topic.id)); } }
       for (const root of blockedRoots) {
         const parent = next.mind.find((topic) => topic.id === root)?.parent; if (!parent) continue;
         delete writes[mindCollapseKey(parent)];

@@ -9,6 +9,18 @@ export function mindSubtree(topics: readonly MindTopic[], id: string): Set<strin
   return ids;
 }
 
+/** Insert a new topic between a non-root topic and its parent without moving its descendants. */
+export function insertMindParent(topics: readonly MindTopic[], id: string, newId: string): MindTopic[] | null {
+  const topic = topics.find((item) => item.id === id);
+  if (!topic?.parent || topics.length >= 500 || !/^[A-Za-z0-9_-]{1,64}$/.test(newId) || topics.some((item) => item.id === newId)) return null;
+  const byId = new Map(topics.map((item) => [item.id, item]));
+  for (const childId of mindSubtree(topics, id)) {
+    let cursor = byId.get(childId), depth = 0; const seen = new Set<string>();
+    while (cursor?.parent) { if (seen.has(cursor.id) || ++depth >= 32) return null; seen.add(cursor.id); cursor = byId.get(cursor.parent); if (!cursor) return null; }
+  }
+  return [...topics.map((item) => item.id === id ? { ...item, parent: newId, order: 0 } : item), { id: newId, parent: topic.parent, order: topic.order, text: "" }];
+}
+
 /** Pick a nearby visible topic; its right edge accepts a child, its top/bottom reorders. */
 export function mindDropAt(topics: readonly MindTopic[], nodes: readonly PositionedTopic[], moving: string, point: { x: number; y: number }): MindDrop | null {
   const excluded = mindSubtree(topics, moving);

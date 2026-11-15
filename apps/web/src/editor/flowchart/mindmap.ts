@@ -63,7 +63,7 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
   const structural = [...new Set([...old.keys(), ...next.keys()])].filter((id) => { const a = old.get(id), b = next.get(id); return !!a && !!b && (a.parent !== b.parent || a.order !== b.order); });
   const affectedParents = (id: string) => [old.get(id)?.parent, next.get(id)?.parent].filter((parent): parent is string => !!parent);
   const siblings = (nodes: readonly MindTopic[], parent: string) => nodes.filter((node) => node.parent === parent).map((node) => `${node.id}:${node.order}`).sort().join("|");
-  const sameAncestry = (parent: string) => { const seen = new Set<string>(); let id: string | null = parent; while (id) { if (seen.has(id)) return false; seen.add(id); const was = old.get(id), now = liveMap.get(id); if (!was || !now || was.parent !== now.parent) return false; id = was.parent; } return true; };
+  const sameAncestry = (parent: string) => { const seen = new Set<string>(); let id: string | null = parent; while (id) { if (seen.has(id)) return false; seen.add(id); const was = old.get(id), now = liveMap.get(id); if (!was) { const planned = next.get(id); if (!planned || now) return false; id = planned.parent; continue; } if (!now || was.parent !== now.parent) return false; id = was.parent; } return true; };
   for (const id of new Set([...old.keys(), ...next.keys()])) {
     const prior = old.get(id), target = next.get(id), key = mindKey(id);
     const was = prior ? canonicalMindTopic(prior) : null, desired = target ? canonicalMindTopic(target) : null;
@@ -86,6 +86,7 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
     // Reindexing may touch multiple siblings. If any one conflicts, keep the
     // whole structural group unchanged rather than applying a partial reorder.
     const blockedParents = new Set(structural.filter((id) => conflicts.has(mindKey(id))).flatMap(affectedParents));
+    for (const group of deletionGroups) if ([...group].some((id) => conflicts.has(mindKey(id)))) for (const id of group) { blockedParents.add(id); const parent = old.get(id)?.parent; if (parent) blockedParents.add(parent); }
     for (const { root, group } of additionGroups) if ([...group].some((id) => conflicts.has(mindKey(id)))) {
       const parent = next.get(root)?.parent; if (parent) blockedParents.add(parent);
       for (const id of group) if (candidates.has(id)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; }
@@ -96,7 +97,7 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
     for (const [id, value] of candidates) { const target = next.get(id); if (value && !old.has(id) && target?.parent && blockedParents.has(target.parent)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; } }
     for (const [id, value] of candidates) {
       const target = next.get(id);
-      const unsafeDelete = !value && (malformed || allStored.some((child) => child.parent === id && candidates.get(child.id) !== ""));
+      const unsafeDelete = !value && (malformed || allStored.some((child) => child.parent === id && candidates.get(child.id) !== "" && !(candidates.get(child.id) && next.get(child.id)?.parent !== id)));
       const unsafeCreate = !!target?.parent && !live.some((node) => node.id === target.parent) && !candidates.get(target.parent);
       let invalidTree = false;
       if (target) {
