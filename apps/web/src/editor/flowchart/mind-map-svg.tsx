@@ -1,7 +1,7 @@
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTopic } from "./mindmap";
 import type { MindDrop } from "./mindmap-move";
 
-export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   styles?: MindStyles;
   paints?: MindPaints;
@@ -10,6 +10,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new S
   editing?: { id: string; value: string } | null;
   dragPreview?: { id: string; x: number; y: number; drop: MindDrop | null } | null;
   onSelect?: (topic: MindTopic, event: React.PointerEvent<SVGGElement>) => void;
+  onContextMenu?: (topic: MindTopic, event: React.MouseEvent<SVGGElement>) => void;
   onEdit?: (topic: MindTopic) => void;
   onDraft?: (value: string) => void;
   onFinish?: () => void;
@@ -32,7 +33,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new S
     {nodes.map((node) => {
       const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), centered = root || shape !== "text";
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
-      return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic, event); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
+      return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic, event); } : undefined} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); event.stopPropagation(); onContextMenu(node.topic, event); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
         <title>{node.topic.text}</title>
         <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
         <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={active ? "#3370ff" : "transparent"} strokeWidth={2}/>

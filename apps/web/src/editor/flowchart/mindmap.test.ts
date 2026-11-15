@@ -35,7 +35,8 @@ describe("mind map persistence", () => {
     const removingRoot = flowIntentWrites(props, before, { ...blank, mind: [] });
     expect(removingRoot.conflicts).toContain("fc.m.r");
     expect(removingRoot.writes["fc.m.r"]).toBeUndefined();
-    expect(removingRoot.writes["fc.m.c"]).toBe("");
+    expect(removingRoot.conflicts).toContain("fc.m.c");
+    expect(removingRoot.writes["fc.m.c"]).toBeUndefined();
     const edit = flowIntentWrites(props, before, { ...blank, mind: [root, { ...child, text: "本地" }] });
     expect(edit.conflicts).toEqual([]);
     expect(readFlow({ ...props, ...edit.writes }).mind?.find((x) => x.id === "remote")?.text).toBe("远端");

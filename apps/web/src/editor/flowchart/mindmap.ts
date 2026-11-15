@@ -48,6 +48,18 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
   const old = new Map(before.map((n) => [n.id, n])), next = new Map(after.map((n) => [n.id, n]));
   const candidates = new Map<string, string>(), conflicts = new Set<string>();
   const live = readMindTopics(props), liveMap = new Map(live.map((node) => [node.id, node]));
+  const deleted = new Set([...old.keys()].filter((id) => !next.has(id)));
+  const deletionGroups = [...deleted].filter((id) => !old.get(id)?.parent || !deleted.has(old.get(id)!.parent!)).map((root) => {
+    const group = new Set([root]); let size = -1;
+    while (size !== group.size) { size = group.size; for (const id of deleted) if (old.get(id)?.parent && group.has(old.get(id)!.parent!)) group.add(id); }
+    return group;
+  });
+  const added = new Set([...next.keys()].filter((id) => !old.has(id)));
+  const additionGroups = [...added].filter((id) => !next.get(id)?.parent || !added.has(next.get(id)!.parent!)).map((root) => {
+    const group = new Set([root]); let size = -1;
+    while (size !== group.size) { size = group.size; for (const id of added) if (next.get(id)?.parent && group.has(next.get(id)!.parent!)) group.add(id); }
+    return { root, group };
+  });
   const structural = [...new Set([...old.keys(), ...next.keys()])].filter((id) => { const a = old.get(id), b = next.get(id); return !!a && !!b && (a.parent !== b.parent || a.order !== b.order); });
   const affectedParents = (id: string) => [old.get(id)?.parent, next.get(id)?.parent].filter((parent): parent is string => !!parent);
   const siblings = (nodes: readonly MindTopic[], parent: string) => nodes.filter((node) => node.parent === parent).map((node) => `${node.id}:${node.order}`).sort().join("|");
@@ -68,12 +80,20 @@ export function mindIntentWrites(props: Record<string, string>, before: readonly
   let changed = true;
   while (changed) {
     changed = false;
+    // A failed descendant or newly added remote child must not leave a cut
+    // branch half deleted. Each connected deletion is treated as one intent.
+    for (const group of deletionGroups) if ([...group].some((id) => conflicts.has(mindKey(id)))) for (const id of group) if (candidates.has(id)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; }
     // Reindexing may touch multiple siblings. If any one conflicts, keep the
     // whole structural group unchanged rather than applying a partial reorder.
     const blockedParents = new Set(structural.filter((id) => conflicts.has(mindKey(id))).flatMap(affectedParents));
+    for (const { root, group } of additionGroups) if ([...group].some((id) => conflicts.has(mindKey(id)))) {
+      const parent = next.get(root)?.parent; if (parent) blockedParents.add(parent);
+      for (const id of group) if (candidates.has(id)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; }
+    }
     let expanded = true;
     while (expanded) { expanded = false; for (const id of structural) if (affectedParents(id).some((parent) => blockedParents.has(parent))) for (const parent of affectedParents(id)) if (!blockedParents.has(parent)) { blockedParents.add(parent); expanded = true; } }
     for (const id of structural) if (affectedParents(id).some((parent) => blockedParents.has(parent)) && candidates.has(id)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; }
+    for (const [id, value] of candidates) { const target = next.get(id); if (value && !old.has(id) && target?.parent && blockedParents.has(target.parent)) { candidates.delete(id); conflicts.add(mindKey(id)); changed = true; } }
     for (const [id, value] of candidates) {
       const target = next.get(id);
       const unsafeDelete = !value && (malformed || allStored.some((child) => child.parent === id && candidates.get(child.id) !== ""));

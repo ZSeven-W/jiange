@@ -343,7 +343,15 @@ export function flowIntentWrites(props: Record<string, string>, base: FlowGraph,
       // A style copied to one topic is not half-applied when its other style key conflicts.
       for (const key of [...styleResult.conflicts, ...paintResult.conflicts]) { const id = key.slice(6); delete writes[mindStyleKey(id)]; delete writes[mindPaintKey(id)]; }
       const oldIds = new Set((base.mind ?? []).map((topic) => topic.id));
-      const blocked = new Set([...foldResult.conflicts, ...styleResult.conflicts, ...paintResult.conflicts].map((key) => key.slice("fc.mc.".length)).filter((id) => !oldIds.has(id)));
+      const blocked = new Set([...mindResult.conflicts, ...foldResult.conflicts, ...styleResult.conflicts, ...paintResult.conflicts].map((key) => key.slice(key.startsWith("fc.m.") ? 5 : 6)).filter((id) => !oldIds.has(id)));
+      const addedRoot = (id: string) => { let topic = next.mind!.find((item) => item.id === id); const seen = new Set<string>(); while (topic?.parent && !oldIds.has(topic.parent) && !seen.has(topic.id)) { seen.add(topic.id); topic = next.mind!.find((item) => item.id === topic!.parent); } return topic?.id; };
+      const blockedRoots = new Set([...blocked].map(addedRoot).filter((id): id is string => !!id));
+      for (const topic of next.mind) if (!oldIds.has(topic.id) && blockedRoots.has(addedRoot(topic.id)!)) blocked.add(topic.id);
+      for (const root of blockedRoots) {
+        const parent = next.mind.find((topic) => topic.id === root)?.parent; if (!parent) continue;
+        delete writes[mindCollapseKey(parent)];
+        for (const topic of next.mind) { const before = base.mind?.find((item) => item.id === topic.id); if (before && before.parent === parent && topic.parent === parent && before.order !== topic.order) { delete writes[mindKey(topic.id)]; conflicts.add(mindKey(topic.id)); } }
+      }
       let count = -1;
       while (count !== blocked.size) { count = blocked.size; for (const topic of next.mind) if (!oldIds.has(topic.id) && topic.parent && blocked.has(topic.parent)) blocked.add(topic.id); }
       for (const id of blocked) { delete writes[mindKey(id)]; delete writes[mindCollapseKey(id)]; delete writes[mindStyleKey(id)]; delete writes[mindPaintKey(id)]; conflicts.add(mindKey(id)); }

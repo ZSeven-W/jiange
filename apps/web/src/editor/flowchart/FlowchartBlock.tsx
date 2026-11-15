@@ -13,6 +13,7 @@ import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTopic } from "./mindmap";
 import { mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
+import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
 import { inkHitByEraser, inkPointBounds, scaleInk } from "./inkGeometry";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
 import type { ClipBlock } from "../model";
@@ -112,7 +113,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -129,6 +130,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   onMindAddChild?: (id: string) => void;
   mindEditing?: { id: string; value: string } | null;
   onMindSelect?: (topic: MindTopic, event: React.PointerEvent<SVGGElement>) => void;
+  onMindContextMenu?: (topic: MindTopic, event: React.MouseEvent<SVGGElement>) => void;
   onMindEdit?: (topic: MindTopic) => void;
   onMindDraft?: (value: string) => void;
   onMindFinish?: () => void;
@@ -176,7 +178,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -352,9 +354,22 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mindSelected, setMindSelected] = useState<string | null>(null);
+  // Scoped to this editor instance; do not retain a copied document across sessions.
+  const recentMindClipboard = useRef<MindClip | null>(null);
+  const [mindClipboardFallback, setMindClipboardFallback] = useState(false);
+  const mindSelectedRef = useRef(mindSelected); mindSelectedRef.current = mindSelected;
+  const canCopyRef = useRef(canCopy); canCopyRef.current = canCopy;
+  const [mindMenu, setMindMenu] = useState<{ left: number; top: number } | null>(null);
   const [mindOffer, setMindOffer] = useState<string | null>(null);
   const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line"; left: number; top: number } | null>(null);
   useEffect(() => { setMindOffer(null); setMindPaintMenu(null); }, [mindSelected]);
+  useEffect(() => {
+    if (!mindMenu) return;
+    const outside = (event: PointerEvent) => { if (!(event.target as Element)?.closest?.("[data-mind-context],[data-mind-menu-trigger]")) setMindMenu(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMindMenu(null); } };
+    document.addEventListener("pointerdown", outside, true); document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
+  }, [mindMenu]);
   useEffect(() => {
     if (!mindPaintMenu) return;
     const outside = (event: PointerEvent) => { if (!(event.target as Element)?.closest?.("[data-mind-paint-menu],[data-mind-paint-trigger]")) setMindPaintMenu(null); };
@@ -553,6 +568,53 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const result = commitMind(graph, { ...graph, mind: graph.mind.filter((topic) => !ids.has(topic.id)) });
     if (!result.graph.mind?.some((topic) => topic.id === mindSelected)) setMindSelected(null);
   };
+  const insertMindClip = (clip: MindClip, duplicate = false) => {
+    if (readOnly) return;
+    const selectedTopic = graph.mind?.find((topic) => topic.id === mindSelected);
+    if (duplicate && (!selectedTopic || !canCopy)) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    const parent = duplicate ? selectedTopic!.parent : selectedTopic?.id ?? null;
+    const at = duplicate && selectedTopic?.parent === null ? { x: selectedTopic.x! + 48, y: selectedTopic.y! + 48 } : { x: view.x + size.w / view.zoom / 2 - 52, y: view.y + size.h / view.zoom / 2 - 24 };
+    const inserted = pasteMindBranch(graph, clip, parent, duplicate && parent ? selectedTopic!.id : null, at, () => newFlowId("m"));
+    if (!inserted) { setNotice({ ok: false, text: "无法粘贴：节点数量、层级或剪贴板内容超出限制。" }); return; }
+    const result = commitMind(graph, inserted.graph);
+    if (result.graph.mind?.some((topic) => topic.id === inserted.root)) { setNotice(null); setMindSelected(inserted.root); setSelected(new Set()); setTool("select"); setHand(false); }
+  };
+  const duplicateMind = () => { if (!mindSelected) return; const clip = copyMindBranch(graph, mindSelected); if (clip) insertMindClip(clip, true); };
+  const insertMindPlainText = (text: string) => {
+    if (!text.trim()) return;
+    if (text.length > 500 || /[\r\n]/.test(text)) { setNotice({ ok: false, text: "暂不支持将多行或超过 500 字的文本粘贴为节点。" }); return; }
+    const clip: MindClip = { version: 1, root: "plain", topics: [{ id: "plain", parent: null, order: 0, text, x: 0, y: 0 }], styles: {}, paints: {}, collapsed: [] };
+    insertMindClip(clip);
+  };
+  const copyMindToClipboard = async (cut: boolean) => {
+    const id = mindSelected, base = graph, clip = id ? copyMindBranch(base, id) : null;
+    if (!clip || !id || !canCopy) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器无法完整复制分支，请使用键盘快捷键。" }); return; }
+    const snapshot = JSON.stringify(base);
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([mindClipText(clip)], { type: "text/plain" }), "text/html": new Blob([mindClipHtml(clip)], { type: "text/html" }) })]);
+      recentMindClipboard.current = parseMindClip(JSON.stringify(clip));
+      if (!cut) { setNotice({ ok: true, text: "已复制分支" }); return; }
+      if (!editableRef.current || !canCopyRef.current || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或权限已变化，分支已复制但未剪切。" }); return; }
+      const ids = new Set(clip.topics.map((topic) => topic.id)), result = commitMind(base, { ...base, mind: base.mind!.filter((topic) => !ids.has(topic.id)) });
+      if (!result.graph.mind?.some((topic) => topic.id === id)) setMindSelected(null);
+    } catch { setNotice({ ok: false, text: "无法访问剪贴板，未剪切节点。" }); }
+  };
+  const pasteMindFromClipboard = async () => {
+    if (readOnly || !navigator.clipboard?.read) { setNotice({ ok: false, text: "当前浏览器无法读取剪贴板，请使用键盘快捷键。" }); return; }
+    const snapshot = JSON.stringify(graph), selected = mindSelected;
+    try {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const items = await Promise.race([navigator.clipboard.read(), new Promise<ClipboardItems>((_, reject) => { timer = setTimeout(() => reject(new Error("clipboard timeout")), 2500); })]).finally(() => { if (timer) clearTimeout(timer); }); let structured = "", html = "", text = "";
+      for (const item of items) { if (!structured && item.types.includes(MIND_CLIP_MIME)) structured = await (await item.getType(MIND_CLIP_MIME)).text(); if (!html && item.types.includes("text/html")) html = await (await item.getType("text/html")).text(); if (!text && item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text(); }
+      if (!editableRef.current || mindSelectedRef.current !== selected || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布已变化，未粘贴；请重新选择节点。" }); return; }
+      const clip = structured ? parseMindClip(structured) : mindClipFromHtml(html);
+      if ((structured || html.includes("data-jiange-mindmap")) && !clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; }
+      setMindClipboardFallback(false);
+      if (clip) insertMindClip(clip); else insertMindPlainText(text);
+    } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? "无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。" : "无法读取剪贴板，请使用键盘快捷键。" }); }
+  };
+  const openMindMenu = (x: number, y: number) => setMindMenu({ left: Math.max(8, Math.min(window.innerWidth - 200, x)), top: Math.max(8, Math.min(window.innerHeight - 326, y)) });
   // Latest graph/commit for async work (image upload) that finishes after re-renders.
   const graphRef = useRef(graph); graphRef.current = graph;
   const commitRef = useRef(commit); commitRef.current = commit;
@@ -671,9 +733,10 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { e.preventDefault(); addMindTopic(false); }
       if (mindSelected && !readOnly && !onButton && e.key === "Enter") { e.preventDefault(); addMindTopic(true); }
+      if (mindSelected && (e.metaKey || e.ctrlKey) && e.key === "." && graph.mind?.some((topic) => topic.parent === mindSelected)) { e.preventDefault(); toggleMindFold(mindSelected); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !readOnly) { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelected(new Set([...graph.nodes.map((n) => n.id), ...(graph.strokes ?? []).map((stroke) => stroke.id)])); }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !readOnly) { e.preventDefault(); const c = clipOfSelection(); if (c) pasteClip(c, 20); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !readOnly) { e.preventDefault(); if (mindSelected) duplicateMind(); else { const c = clipOfSelection(); if (c) pasteClip(c, 20); } }
       if (e.key.startsWith("Arrow") && selected.size && !readOnly) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
@@ -685,6 +748,20 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const inField = (t: EventTarget | null) => editing || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
     const onCopy = (e: ClipboardEvent) => {
       if (inField(e.target)) return;
+      if (mindSelected) {
+        e.preventDefault(); e.stopPropagation();
+        if (!canCopy) { setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+        const clip = copyMindBranch(graph, mindSelected); if (!clip || !e.clipboardData) { setNotice({ ok: false, text: "无法访问剪贴板，未剪切节点。" }); return; }
+        const json = JSON.stringify(clip), plain = mindClipText(clip);
+        try {
+          e.clipboardData.setData("text/plain", plain);
+          try { e.clipboardData.setData(MIND_CLIP_MIME, json); } catch { /* HTML is a second structured representation. */ }
+          try { e.clipboardData.setData("text/html", mindClipHtml(clip)); } catch { /* Plain text is still available. */ }
+        } catch { setNotice({ ok: false, text: "复制失败，未剪切节点。" }); return; }
+        recentMindClipboard.current = parseMindClip(json);
+        if (e.type === "cut" && !readOnly) removeMindTopic();
+        return;
+      }
       const c = clipOfSelection();
       if (!c) return;
       if (!canCopy) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
@@ -698,6 +775,12 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       const pastedImage = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
       if (pastedImage && upload) { e.preventDefault(); e.stopPropagation(); void insertImage(pastedImage); return; }
       const text = e.clipboardData?.getData("text/plain") ?? "";
+      const mindData = e.clipboardData?.getData(MIND_CLIP_MIME) ?? "", html = e.clipboardData?.getData("text/html") ?? "";
+      if (mindData || html.includes("data-jiange-mindmap")) { e.preventDefault(); e.stopPropagation(); const clip = mindData ? parseMindClip(mindData) : mindClipFromHtml(html); if (!clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; } insertMindClip(clip); return; }
+      if (mindSelected && text.trim() && !text.startsWith(CLIP_MARK)) {
+        e.preventDefault(); e.stopPropagation();
+        insertMindPlainText(text); return;
+      }
       e.preventDefault(); e.stopPropagation();
       pasteCount.current += 1;
       if (text.startsWith(CLIP_MARK) || (!text && flowClipboard)) {
@@ -1118,14 +1201,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
         if (hand || space.current || event.button === 1) { setDrag({ kind: "pan", startX: event.clientX, startY: event.clientY, vx: view.x, vy: view.y }); return; }
         if (event.button !== 0) return;
-        const wasEditing = !!mindEditing; if (wasEditing) finishMindEdit();
+        const wasEditing = !!mindEditing; if (wasEditing) finishMindEdit(); setMindMenu(null);
         setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false);
         if (!wasEditing) { try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer may have ended */ } setDrag({ kind: "mind", id: topic.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY, base: graph }); }
-      }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { setDrag(null); startMindEdit(topic); }} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
+      }} onMindContextMenu={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic, event) => { if (mindEditing) finishMindEdit(); setMindSelected(topic.id); setSelected(new Set()); setDrag(null); setMindPaintMenu(null); openMindMenu(event.clientX, event.clientY); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { setMindMenu(null); setDrag(null); startMindEdit(topic); }} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
         onCanvasDown={(e) => {
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
-          setMenu(null); setMindSelected(null);
+          setMenu(null); setMindMenu(null); setMindSelected(null);
           if (tool === "pen") { startInk(e); return; }
           if (tool === "eraser") { startErase(e); return; }
           if (tool !== "select" && !readOnly) {
@@ -1349,10 +1432,25 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <label className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-hover" title="文字颜色"><span className="border-b-2 text-[15px] font-semibold" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor }}>A</span><input aria-label="文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label>
       <select aria-label="文字大小" title="文字大小" className="h-8 w-14 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14)} onChange={(event) => updateMindStyle({ size: Number(event.target.value) })}>{[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => <option key={size} value={size}>{size}</option>)}</select>
       <span className="mx-1 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
+      <button type="button" data-mind-menu-trigger className={cn(barBtn, !compact && "order-last")} aria-label="更多节点操作" aria-expanded={!!mindMenu} title="更多" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (mindMenu) setMindMenu(null); else openMindMenu(rect.left, compact ? 8 : rect.top - 288); }}><MoreHorizontal size={16}/></button>
       <button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button>
       <button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button>
       <button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button>
       <button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button>
+    </div>}
+
+    {mindMenu && mindSelected && !readOnly && !mindEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] w-[192px] rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!mindAnchor?.topic.parent} onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>添加子节点 <span className="text-[#8f959e]">Tab</span></button>
+      {!!graph.mind?.some((topic) => topic.parent === mindSelected) && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); toggleMindFold(mindSelected); }}>{effectiveCollapsed.has(mindSelected) ? "展开子节点" : "收起子节点"}<span className="text-[#8f959e]">⌘ .</span></button>}
+      <div className="my-1 border-t border-[#e5e6eb]"/>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(false); }}>复制 <span className="text-[#8f959e]">⌘ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(true); }}>剪切 <span className="text-[#8f959e]">⌘ X</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindFromClipboard(); }}>粘贴 <span className="text-[#8f959e]">⌘ V</span></button>
+      {mindClipboardFallback && recentMindClipboard.current && <button type="button" role="menuitem" className="flex h-8 w-full items-center px-3 text-left hover:bg-hover" onClick={() => { const clip = recentMindClipboard.current; setMindMenu(null); if (clip) insertMindClip(clip); }}>粘贴本页最近复制的分支</button>}
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); duplicateMind(); }}>创建副本 <span className="text-[#8f959e]">⌘ D</span></button>
+      <div className="my-1 border-t border-[#e5e6eb]"/>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>删除 <span className="text-[#8f959e]">⌫</span></button>
     </div>}
 
     {mindPaintMenu && mindSelected && !readOnly && !mindEditing && <div role="dialog" aria-label={mindPaintMenu.kind === "fill" ? "节点填充" : "节点连线样式"} data-mind-paint-menu className="fixed z-[95] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: 244 }} onPointerDown={(event) => event.stopPropagation()}>
