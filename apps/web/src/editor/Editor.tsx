@@ -35,7 +35,8 @@ import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./SlashMenu";
 import { SlashLinkPopover } from "./SlashLinkPopover";
-import { captureInlineLink, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slashLink";
+import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slashLink";
+import { captureLinkRange, resolveLinkRange, sameLinkRange, type LinkRange } from "./linkRange";
 import { applyTableEdit, CLIPPABLE_BLOCKS, EMPTY_TABLE, parseTableData, type ClipBlock } from "./model";
 import { FormatToolbar } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
@@ -200,7 +201,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
-  const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number } | null>(null);
+  const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number; initialText?: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
   const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
   const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" } | null>(null);
@@ -271,10 +272,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   /** 正在上传的附件：在插入位置的块下方显示占位与进度（不写入文档）。 */
   const [uploading, setUploading] = useState<{ anchor: string; name: string; percent: number; index: number; total: number } | null>(null);
   const [memberCard, setMemberCard] = useState<{ id: number; name: string; x: number; y: number } | null>(null);
-  const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; from: Pos; to: Pos; docTitle?: string } | null>(null);
+  const [linkCard, setLinkCard] = useState<{ href: string; x: number; y: number; range: LinkRange; docTitle?: string } | null>(null);
+  const editingLinkCard = useRef(false);
   const linkHide = useRef<number | null>(null);
   const keepLinkCard = () => { if (linkHide.current) { window.clearTimeout(linkHide.current); linkHide.current = null; } };
-  const hideLinkCard = () => { keepLinkCard(); linkHide.current = window.setTimeout(() => { setLinkCard(null); setMemberCard(null); }, 250); };
+  const hideLinkCard = () => { if (editingLinkCard.current) return; keepLinkCard(); linkHide.current = window.setTimeout(() => { setLinkCard(null); setMemberCard(null); }, 250); };
   useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(t); }, [toast]);
   const [drag, setDrag] = useState<{
     b: OpId;
@@ -1512,6 +1514,16 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       if (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1) setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。");
       return;
     }
+    if (mod && !e.shiftKey && !e.altKey && k === "k") {
+      e.preventDefault();
+      if (!eqId(s.a.b, s.f.b) || isSourceBlock(d, s.a.b)) { setColumnNotice("请选择同一段中的文字后插入链接。"); return; }
+      const captured = captureInlineLinkSelection(d, s);
+      if (!captured) { setColumnNotice("无法在当前位置插入链接，请重新选择文字。"); return; }
+      const at = { b: s.a.b, o: Math.min(s.a.o, s.f.o) }, rect = root.current ? caretRect(root.current, at) : null;
+      changeSlash(null); setToolbar(null); um.seal();
+      setSlashLink({ captured, client: sync.client, initialText: captured.text, x: rect?.left ?? window.innerWidth / 2, y: rect?.bottom ?? 80 });
+      return;
+    }
     const markKeys: Record<string, string> = {
       b: "bold",
       i: "italic",
@@ -1812,6 +1824,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   return (
     <div ref={wrap} className="relative" onDragOver={(e) => drag && e.preventDefault()} onDrop={onDrop} onMouseOver={(e) => {
       const r = root.current, w = wrap.current;
+      if (editingLinkCard.current && !(e.target as HTMLElement).closest?.("[data-link-card]")) return;
       const person = (e.target as HTMLElement).closest?.<HTMLElement>("[data-member]");
       if (person && r && w && r.contains(person)) {
         keepLinkCard();
@@ -1827,11 +1840,14 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       if (!a || !r || !w || !r.contains(a)) { if (linkCard && !(e.target as HTMLElement).closest?.("[data-link-card]")) hideLinkCard(); return; }
       keepLinkCard();
       const href = a.getAttribute("href") ?? "";
-      if (linkCard?.href === href) return;
-      const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length);
-      if (!from || !to) return;
+      const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length), current = sync.client.doc;
+      if (!from || !to || !current) return;
+      const range = captureLinkRange(current, from, to, href);
+      if (!range) return;
+      if (linkCard && sameLinkRange(linkCard.range, range)) return;
+      if (editingLinkCard.current) return;
       const ar = a.getBoundingClientRect(), wr = w.getBoundingClientRect();
-      setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, from, to, docTitle: a.hasAttribute("data-mention") ? (a.textContent ?? "").replace(/^@/, "") : undefined });
+      setLinkCard({ href, x: ar.left - wr.left, y: ar.bottom - wr.top + 6, range, docTitle: a.hasAttribute("data-mention") ? (a.textContent ?? "").replace(/^@/, "") : undefined });
     }} onMouseLeave={hideLinkCard}>
       {memberCard && <MemberCard
         key={`${memberCard.id}@${memberCard.x},${memberCard.y}`}
@@ -1852,24 +1868,30 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         y={linkCard.y}
         onEnter={keepLinkCard}
         onLeave={hideLinkCard}
-        onOpen={() => { if (linkCard.docTitle !== undefined) { setLinkCard(null); location.hash = linkCard.href; } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
-        onCopy={() => { const url = linkCard.docTitle !== undefined ? new URL(linkCard.href, location.href).href : linkCard.href; void navigator.clipboard?.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
+        onEditingChange={(editing) => { editingLinkCard.current = editing; if (editing) keepLinkCard(); }}
+        onOpen={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } if (linkCard.docTitle !== undefined) { setLinkCard(null); location.hash = linkCard.href; } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
+        onCopy={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } const url = linkCard.docTitle !== undefined ? new URL(linkCard.href, location.href).href : linkCard.href; void navigator.clipboard?.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
         onEdit={readOnly ? undefined : (url) => {
-          const { from, to } = linkCard;
-          setLinkCard(null);
-          sel.current = { a: from, f: to };
-          run((tx) => { if (eqId(from.b, to.b) && to.o > from.o) tx.format(from.b, from.o, to.o, "link", url); return to; });
-          um.seal();
+          const range = linkCard.range, current = sync.client.doc, resolved = current && resolveLinkRange(current, range);
+          editingLinkCard.current = false; setLinkCard(null);
+          if (!resolved || !safeURL(url)) { setConflictDraft({ text: url, message: "链接或编辑位置已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
+          sel.current = { a: resolved.from, f: resolved.to };
+          let applied = false;
+          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", url); applied = true; return valid.to; });
+          if (!applied) setConflictDraft({ text: url, message: "链接或编辑位置已变化，本次操作没有应用。请复制草稿后重试。" });
+          else um.seal();
         }}
         onUnlink={readOnly ? undefined : () => {
-          const { from, to } = linkCard;
-          setLinkCard(null);
-          sel.current = { a: from, f: to };
-          run((tx) => { if (eqId(from.b, to.b) && to.o > from.o) tx.format(from.b, from.o, to.o, "link", null); return to; });
-          um.seal();
+          const range = linkCard.range, current = sync.client.doc, resolved = current && resolveLinkRange(current, range);
+          editingLinkCard.current = false; setLinkCard(null);
+          if (!resolved) { setToast("链接已变化，请重新选择。"); return; }
+          sel.current = { a: resolved.from, f: resolved.to };
+          let applied = false;
+          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", null); applied = true; return valid.to; });
+          if (!applied) setToast("链接已变化，请重新选择。"); else um.seal();
         }}
       />}
-      {slashLink && <SlashLinkPopover x={slashLink.x} y={slashLink.y} onCancel={() => { const position = resolveInlineLink(slashLink.captured.doc, slashLink.captured); setSlashLink(null); if (position) focusEditorPosition(slashLink.captured.doc, position); }} onConfirm={(text, url) => {
+      {slashLink && <SlashLinkPopover x={slashLink.x} y={slashLink.y} initialText={slashLink.initialText} onCancel={() => { const position = resolveInlineLink(slashLink.captured.doc, slashLink.captured); setSlashLink(null); if (position) focusEditorPosition(slashLink.captured.doc, position); }} onConfirm={(text, url) => {
         const captured = slashLink.captured, position = resolveInlineLink(captured.doc, captured);
         if (currentClient.current !== slashLink.client || sync.client !== slashLink.client || readOnlyRef.current || sync.client.doc !== captured.doc || !position) {
           setSlashLink(null); setConflictDraft({ text: `${text}\n${url}`, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return;
