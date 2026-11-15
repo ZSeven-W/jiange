@@ -1,13 +1,15 @@
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindPaints, type MindStyles, type MindTopic } from "./mindmap";
+import type { MindDrop } from "./mindmap-move";
 
-export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new Set(), selected, editing, dragPreview, onSelect, onEdit, onDraft, onFinish, onCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   styles?: MindStyles;
   paints?: MindPaints;
   collapsed?: ReadonlySet<string>;
   selected?: string | null;
   editing?: { id: string; value: string } | null;
-  onSelect?: (topic: MindTopic) => void;
+  dragPreview?: { id: string; x: number; y: number; drop: MindDrop | null } | null;
+  onSelect?: (topic: MindTopic, event: React.PointerEvent<SVGGElement>) => void;
   onEdit?: (topic: MindTopic) => void;
   onDraft?: (value: string) => void;
   onFinish?: () => void;
@@ -30,7 +32,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new S
     {nodes.map((node) => {
       const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, style = styles[node.topic.id], paint = paints[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), centered = root || shape !== "text";
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
-      return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
+      return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic, event); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
         <title>{node.topic.text}</title>
         <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
         <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={active ? "#3370ff" : "transparent"} strokeWidth={2}/>
@@ -55,5 +57,15 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, collapsed = new S
         <circle cx={x} cy={y} r={10} fill="#3370ff"/><path d={`M${x - 4},${y}h8 M${x},${y - 4}v8`} fill="none" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" pointerEvents="none"/>
       </g>;
     })}
+    {dragPreview && (() => {
+      const source = byId.get(dragPreview.id), target = dragPreview.drop ? byId.get(dragPreview.drop.target) : undefined;
+      if (!source) return null;
+      const y = target && dragPreview.drop?.kind === "before" ? target.y - 5 : target ? target.y + target.h + 5 : 0;
+      return <g data-mind-drag-preview pointerEvents="none">
+        {target && (dragPreview.drop?.kind === "child" ? <rect x={target.x - 4} y={target.y - 4} width={target.w + 8} height={target.h + 8} rx={5} fill="#3370ff" fillOpacity={0.08} stroke="#3370ff" strokeWidth={2}/> : <path d={`M${target.x - 5},${y} H${target.x + target.w + 5}`} stroke="#3370ff" strokeWidth={3}/>)}
+        <rect x={dragPreview.x - source.w / 2} y={dragPreview.y - source.h / 2} width={source.w} height={source.h} rx={4} fill="#fff" fillOpacity={0.9} stroke="#3370ff" strokeDasharray="4 3"/>
+        <text x={dragPreview.x} y={dragPreview.y} textAnchor="middle" dominantBaseline="central" fontSize={14} fill="#1f2329">{source.topic.text || "输入文本"}</text>
+      </g>;
+    })()}
   </g>;
 }

@@ -12,6 +12,7 @@ import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
 import { layoutMindTopics, mindDefaultTextColor, type MindPaint, type MindStyle, type MindTopic } from "./mindmap";
+import { mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { inkHitByEraser, inkPointBounds, scaleInk } from "./inkGeometry";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboardAssets";
 import type { ClipBlock } from "../model";
@@ -111,7 +112,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, mindCollapsed, onMindFold, onMindAddChild, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, erasing, draftStroke, mindSelected, mindEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -123,10 +124,11 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   draftStroke?: FlowStroke | null;
   mindSelected?: string | null;
   mindCollapsed?: ReadonlySet<string>;
+  mindDragPreview?: { id: string; x: number; y: number; drop: MindDrop | null } | null;
   onMindFold?: (id: string) => void;
   onMindAddChild?: (id: string) => void;
   mindEditing?: { id: string; value: string } | null;
-  onMindSelect?: (topic: MindTopic) => void;
+  onMindSelect?: (topic: MindTopic, event: React.PointerEvent<SVGGElement>) => void;
   onMindEdit?: (topic: MindTopic) => void;
   onMindDraft?: (value: string) => void;
   onMindFinish?: () => void;
@@ -174,7 +176,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} onSelect={onMindSelect} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -275,6 +277,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
 /* ---------------- full-screen editor ---------------- */
 
 type Drag =
+  | { kind: "mind"; id: string; pointerId: number; startX: number; startY: number; currentX: number; currentY: number; base: FlowGraph }
   | { kind: "move"; ids: string[]; startX: number; startY: number; origin: Map<string, { x: number; y: number }>; strokeOrigin: Map<string, FlowStroke> }
   | { kind: "resize"; id: string; startX: number; startY: number; w: number; h: number }
   | { kind: "ink-resize"; id: string; startX: number; startY: number; stroke: FlowStroke }
@@ -663,7 +666,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (recoveryOpen || editing || mindEditing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
-      if (e.key === "Escape") { e.preventDefault(); if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
+      if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); if (mindSelected) removeMindTopic(); else removeSelected(); }
       const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { e.preventDefault(); addMindTopic(false); }
@@ -780,6 +783,11 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
     if (erase.current?.pointerId === e.pointerId) { markErased(erase.current, toWorld(e.clientX, e.clientY)); return; }
     if (!drag) return;
+    if (drag.kind === "mind") {
+      if (drag.pointerId !== e.pointerId) return;
+      if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 6) autoFit.current = false;
+      setDrag({ ...drag, currentX: e.clientX, currentY: e.clientY }); return;
+    }
     if (drag.kind === "pan") { autoFit.current = false; setView((v) => ({ ...v, x: drag.vx - (e.clientX - drag.startX) / v.zoom, y: drag.vy - (e.clientY - drag.startY) / v.zoom })); return; }
     const p = toWorld(e.clientX, e.clientY);
     if (drag.kind === "connect") { setDrag({ ...drag, x: p.x, y: p.y }); return; }
@@ -859,8 +867,23 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       return;
     }
     if (!drag) return;
+    if (drag.kind === "mind" && drag.pointerId !== e.pointerId) return;
     const d = drag;
     setDrag(null); setGuides([]);
+    if (d.kind === "mind") {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) <= 6) return;
+      const topic = d.base.mind?.find((item) => item.id === d.id); if (!topic || !d.base.mind) return;
+      if (topic.parent === null) {
+        const x = Math.round(Math.max(-20000, Math.min(20000, topic.x! + (e.clientX - d.startX) / view.zoom)));
+        const y = Math.round(Math.max(-20000, Math.min(20000, topic.y! + (e.clientY - d.startY) / view.zoom)));
+        commitMind(d.base, { ...d.base, mind: d.base.mind.map((item) => item.id === d.id ? { ...item, x, y } : item) });
+        return;
+      }
+      const drop = mindDropAt(d.base.mind, layoutMindTopics(d.base.mind, new Set(d.base.mindCollapsed ?? []), d.base.mindStyles), d.id, toWorld(e.clientX, e.clientY));
+      const moved = drop && moveMindTopic(d.base.mind, d.id, drop); if (!moved || !drop) return;
+      commitMind(d.base, { ...d.base, mind: moved, ...(drop.kind === "child" ? { mindCollapsed: (d.base.mindCollapsed ?? []).filter((id) => id !== drop.target) } : {}) });
+      return;
+    }
     if (d.kind === "marquee") {
       const x0 = Math.min(d.x0, d.x1), x1 = Math.max(d.x0, d.x1), y0 = Math.min(d.y0, d.y1), y1 = Math.max(d.y0, d.y1);
       if (x1 - x0 < 3 && y1 - y0 < 3) return;
@@ -1055,8 +1078,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const windowHeight = typeof window === "undefined" ? 720 : window.innerHeight;
   const toolbarTop = treeTop - 50 >= 64 ? treeTop - 50 : treeBottom + 8 <= windowHeight - 52 ? treeBottom + 8 : 64;
   const mindToolbarStyle = !compact && mindAnchor && mindViewport ? { left: Math.max(165, Math.min(window.innerWidth - 165, mindViewport.left + (mindAnchor.x + mindAnchor.w / 2 - view.x) * view.zoom)), top: toolbarTop } : undefined;
+  const movingMind = drag?.kind === "mind" && Math.hypot(drag.currentX - drag.startX, drag.currentY - drag.startY) > 6 ? drag : null;
+  const movingTopic = movingMind?.base.mind?.find((topic) => topic.id === movingMind.id);
+  const rootPreview = movingMind && movingTopic?.parent === null ? { x: Math.round(Math.max(-20000, Math.min(20000, movingTopic.x! + (movingMind.currentX - movingMind.startX) / view.zoom))), y: Math.round(Math.max(-20000, Math.min(20000, movingTopic.y! + (movingMind.currentY - movingMind.startY) / view.zoom))) } : null;
+  const renderedGraph = rootPreview && movingMind ? { ...graph, mind: graph.mind?.map((topic) => topic.id === movingMind.id ? { ...topic, ...rootPreview } : topic) } : graph;
+  const dragPoint = movingMind && !rootPreview && svgWrap.current ? toWorld(movingMind.currentX, movingMind.currentY) : null;
+  const mindDragPreview = dragPoint && movingMind?.base.mind ? { id: movingMind.id, ...dragPoint, drop: mindDropAt(movingMind.base.mind, layoutMindTopics(movingMind.base.mind, new Set(movingMind.base.mindCollapsed ?? []), movingMind.base.mindStyles), movingMind.id, dragPoint) } : null;
 
-  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag && !["pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
+  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag && !["mind", "pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
     <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: mindBoard ? "none" : `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
       onTouchStart={(e) => {
@@ -1070,7 +1099,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null);
         touchPlacement.current = null;
         pinch.current = { view, center: { x: (a.clientX + b.clientX) / 2 - rect.left, y: (a.clientY + b.clientY) / 2 - rect.top }, distance };
-        if (drag && !["pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current);
+        if (drag && !["mind", "pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current);
         setDrag(null); setGuides([]);
       }}
       onTouchMove={(e) => {
@@ -1085,7 +1114,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-      <FlowSvg graph={graph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindCollapsed={effectiveCollapsed} onMindFold={!mindEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!readOnly && tool === "select" && !mindEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { if (mindEditing) finishMindEdit(); setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : startMindEdit} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
+      <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
+        if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
+        if (hand || space.current || event.button === 1) { setDrag({ kind: "pan", startX: event.clientX, startY: event.clientY, vx: view.x, vy: view.y }); return; }
+        if (event.button !== 0) return;
+        const wasEditing = !!mindEditing; if (wasEditing) finishMindEdit();
+        setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false);
+        if (!wasEditing) { try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer may have ended */ } setDrag({ kind: "mind", id: topic.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY, base: graph }); }
+      }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" ? undefined : (topic) => { setDrag(null); startMindEdit(topic); }} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} editing={editing?.kind === "node" ? editing.id : null} idPrefix="fce" transparent touchZoom={compact ? view.zoom : undefined}
         onCanvasDown={(e) => {
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
@@ -1306,7 +1342,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
 
-    {!readOnly && mindSelected && !mindEditing && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
+    {!readOnly && mindSelected && !mindEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
       <select aria-label="节点形状" title="节点形状" className="h-8 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.shape ?? (mindAnchor?.topic.parent === null ? "rect" : "text")} onChange={(event) => updateMindStyle({ shape: event.target.value as MindStyle["shape"] })}><option value="text">T</option><option value="oval">椭圆</option><option value="rect">矩形</option></select>
       {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label="节点填充" aria-expanded={mindPaintMenu?.kind === "fill"} title="节点填充" className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
       <button type="button" data-mind-paint-trigger aria-label="节点连线样式" aria-expanded={mindPaintMenu?.kind === "line"} title="节点连线样式" className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
@@ -1418,6 +1454,7 @@ export function svgMarkup(graph: FlowGraph): string {
   clone.querySelectorAll("[data-mind-placeholder]").forEach((element) => element.remove());
   clone.querySelectorAll("[data-mind-fold-expanded]").forEach((element) => element.remove());
   clone.querySelectorAll("[data-mind-add]").forEach((element) => element.remove());
+  clone.querySelectorAll("[data-mind-drag-preview]").forEach((element) => element.remove());
   clone.querySelectorAll("[data-mind-outline]").forEach((element) => element.setAttribute("stroke", "transparent"));
   const b = flowBounds(graph);
   clone.setAttribute("viewBox", `${b.x - 40} ${b.y - 40} ${b.w + 80} ${b.h + 80}`);

@@ -48,6 +48,8 @@ export function describeUnappliedFlows(attempts: UnappliedFlow[]): string {
       } else if (key.startsWith("fc.m.")) {
         const id = key.slice(5), previous = attempt.before.mind?.find((topic) => topic.id === id), next = attempt.proposed.mind?.find((topic) => topic.id === id);
         if (previous || next) lines.push(`${next ? previous ? "修改" : "新增或恢复" : "删除"}思维导图节点：${(next ?? previous)!.text || "（空）"}`);
+        if (previous && next && (previous.parent !== next.parent || previous.order !== next.order)) { const parent = attempt.proposed.mind?.find((topic) => topic.id === next.parent); lines.push(`目标父节点：${parent?.text || (next.parent ? "（空）" : "根节点")}；顺序：${next.order}`); }
+        if (previous && next && next.parent === null && (previous.x !== next.x || previous.y !== next.y)) lines.push(`目标位置：${next.x}, ${next.y}`);
       } else if (key === "fc.theme") lines.push(`切换风格：${themeOf(attempt.proposed.theme).label}`);
     }
     if (lines.length === 1) lines.push("文档状态或权限发生变化，操作未应用。");

@@ -34,4 +34,10 @@ describe("flowchart unapplied content", () => {
       expect(text).toContain("修改思维导图节点配色：主题"); expect(text).toContain('"line":"dashed"');
     }
   });
+  it("shows the intended parent and root position for unapplied moves", () => {
+    const original: FlowGraph = { ...before, mind: [{ id: "r", parent: null, order: 0, text: "根", x: 0, y: 0 }, { id: "a", parent: "r", order: 0, text: "需求" }, { id: "b", parent: "r", order: 1, text: "交付" }] };
+    const proposed: FlowGraph = { ...original, mind: [{ ...original.mind![0], x: 50, y: 30 }, original.mind![1], { ...original.mind![2], parent: "a" }] };
+    const text = describeUnappliedFlows([{ before: original, proposed, conflicts: ["fc.m.r", "fc.m.b"] }]);
+    expect(text).toContain("目标父节点：需求"); expect(text).toContain("目标位置：50, 30");
+  });
 });
