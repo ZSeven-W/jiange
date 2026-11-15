@@ -1,4 +1,4 @@
-import { pointKey, PREVIEW_COLS, PREVIEW_ROWS, type SheetCells, type SheetPoint } from "./gridModel";
+import { columnName, pointKey, PREVIEW_COLS, PREVIEW_ROWS, type SheetCells, type SheetPoint } from "./gridModel";
 
 /** A deliberately small, bounded formula subset for the transient grid preview. */
 export type FormulaValue = number | string;
@@ -36,6 +36,37 @@ function tokenize(input: string): Token[] | null {
     if (result.length > MAX_TOKENS) return null;
   }
   return result;
+}
+
+/** Translate the supported formula syntax without interpreting it as JavaScript. */
+export function translateSheetFormula(raw: string, rowDelta: number, colDelta: number): string | null {
+  if (!raw.startsWith("=")) return raw;
+  if (!Number.isSafeInteger(rowDelta) || !Number.isSafeInteger(colDelta) || raw.length > 32768) return null;
+  let index = 1, count = 0, output = "=";
+  while (index < raw.length) {
+    if (/\s/.test(raw[index])) { output += raw[index++]; continue; }
+    const rest = raw.slice(index);
+    const number = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(rest);
+    const word = number ? null : /^(?:\$?[A-Za-z]+\$?[1-9]\d*|[A-Za-z_][A-Za-z_0-9]*)(?![A-Za-z_0-9])/.exec(rest);
+    if (++count > MAX_TOKENS) return null;
+    if (number) { output += number[0]; index += number[0].length; continue; }
+    if (word) {
+      const value = word[0], ref = reference(value);
+      if (ref) {
+        if (/^\s*\(/.test(rest.slice(value.length))) return null;
+        const row = ref.rowAbsolute ? ref.row : ref.row + rowDelta, col = ref.colAbsolute ? ref.col : ref.col + colDelta;
+        output += !inBounds(ref) || row < 0 || row >= PREVIEW_ROWS || col < 0 || col >= PREVIEW_COLS ? "#REF!" : `${ref.colAbsolute ? "$" : ""}${columnName(col)}${ref.rowAbsolute ? "$" : ""}${row + 1}`;
+      } else {
+        if (!["SUM", "AVERAGE", "MIN", "MAX", "COUNT"].includes(value.toUpperCase()) || !/^\s*\(/.test(rest.slice(value.length))) return null;
+        output += value;
+      }
+      index += value.length; continue;
+    }
+    if (rest.startsWith("#REF!")) { output += "#REF!"; index += 5; continue; }
+    if ("+-*/^(),:".includes(raw[index])) { output += raw[index++]; continue; }
+    return null;
+  }
+  return output;
 }
 
 /** Recalculate dependent cells from raw contents without evaluating JavaScript. */
