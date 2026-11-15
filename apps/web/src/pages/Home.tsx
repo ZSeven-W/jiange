@@ -19,8 +19,10 @@ import { stageStarter } from "./pendingStarter";
 import { BOARD_TITLE, MINDMAP_TITLE, stageBoard, type BoardStarterKind } from "./boardStarter";
 import { hasUnsupportedImportBlocks } from "./starterTemplateOps";
 import { ask, askText } from "@/components/ui/ask";
-import { ChevronDown, FileText, Folder, FolderOpen, ListTree, Plus, Star } from "lucide-react";
+import { ChevronDown, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
+import { formatDriveTime } from "./drive-sort";
+import { browserHomeViewStorage, homeViewKey, readHomeView, writeHomeView, type HomeView } from "./home-view";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
 const LIST_GRID = "grid grid-cols-[minmax(0,1fr)_100px] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
@@ -31,6 +33,15 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   useEffect(() => { document.title = `${favorites ? t("收藏") : recent ? t("最近访问") : t("主页")} - Jiange`; }, [favorites, recent, locale]);
   const [tab, setTab] = useState<HomeTab>("recent");
   const [kind, setKind] = useState("all");
+  const [viewPreference, setViewPreference] = useState(() => ({ userId: me.user.id, view: readHomeView(browserHomeViewStorage(), me.user.id) }));
+  const view = viewPreference.userId === me.user.id ? viewPreference.view : readHomeView(browserHomeViewStorage(), me.user.id);
+  const setView = (next: HomeView) => { writeHomeView(browserHomeViewStorage(), me.user.id, next); setViewPreference({ userId: me.user.id, view: next }); };
+  useEffect(() => {
+    setViewPreference({ userId: me.user.id, view: readHomeView(browserHomeViewStorage(), me.user.id) });
+    const sync = (event: StorageEvent) => { if (event.key === homeViewKey(me.user.id) || event.key === null) setViewPreference({ userId: me.user.id, view: readHomeView(browserHomeViewStorage(), me.user.id) }); };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, [me.user.id]);
   const [newMenu, setNewMenu] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [importError, setImportError] = useState("");
@@ -162,11 +173,11 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
             <div ref={newMenuRef} className="relative">
               <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary">
                 <span className="grid size-8 shrink-0 place-items-center"><NewDocGlyph /></span>
-                <span className="min-w-0 flex-1 text-[14px] font-medium">{t("新建")}</span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
+                <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{t("新建")}</span><span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{t("新建文档开始协作")}</span></span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
               </button>{menu}
             </div>
             <HomeUpload uploads={uploads} importing={importing || createWithContent.isPending} onImport={(file) => { void importFile(file); }} />
-            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
+            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} subtitle={t("选择模板快速新建")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
           </div>}
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
           {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
@@ -176,12 +187,12 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
             <nav aria-label={t("文档分类")} className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
               {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{t(label)}</button>)}
             </nav>
-            <TypeFilter kind={kind} onChange={setKind} />
-          </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><TypeFilter kind={kind} onChange={setKind} /></div>}
-          <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 text-[12px] text-subtle`}>
+            <div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div>
+          </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div></div>}
+          {view === "list" && <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 text-[12px] text-subtle`}>
             <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="truncate">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
-          </div>
-          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
+          </div>}
+          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
             <span className="grid size-14 place-items-center rounded-full bg-sidebar text-subtle">{selected === "favorites" ? <Star size={23} strokeWidth={1.4} /> : <FolderOpen size={24} strokeWidth={1.4} />}</span>
             <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? t("没有此类型的文档") : selected === "favorites" ? t("还没有收藏的文档") : selected === "shared" ? t("还没有与我共享的文档") : selected === "mine" ? t("暂无我创建的文档") : selected === "recent" ? t("还没有最近访问的文档") : t("暂无文档")}</p>
             {selected === "recent" && kind === "all" && <button onClick={() => create.mutate("doc")} disabled={create.isPending} className="mt-3 text-[13px] text-primary hover:underline">{t("新建文档")}</button>}
@@ -192,6 +203,9 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     </main>
   );
 }
+function HomeViewToggle({ view, onChange }: { view: HomeView; onChange: (view: HomeView) => void }) {
+  return <div role="group" aria-label={t("展示方式")} className="mb-2 flex h-8 items-center rounded-md bg-[#f5f6f7] p-0.5"><button type="button" title={t("列表视图")} aria-label={t("列表视图")} aria-pressed={view === "list"} onClick={() => onChange("list")} className={`grid size-7 place-items-center rounded ${view === "list" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><List size={16}/></button><button type="button" title={t("卡片视图")} aria-label={t("卡片视图")} aria-pressed={view === "grid"} onClick={() => onChange("grid")} className={`grid size-7 place-items-center rounded ${view === "grid" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><Grid2X2 size={15}/></button></div>;
+}
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
   return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
@@ -199,18 +213,18 @@ function BoardBadge() {
   return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;
 }
 
-function FileBadge({ kind, icon }: { kind: "doc" | "base" | "slides" | "folder" | "file"; icon?: string }) {
-  if (kind === "folder") return <Folder size={20} fill="#ffcc4d" stroke="#f5a623" />;
-  if (kind === "slides") return <SlidesColorIcon className="size-5 shrink-0" />;
-  if (kind === "file") return <span className="grid size-5 shrink-0 place-items-center rounded bg-[#e8efff] text-[#3370ff]"><FileText size={15}/></span>;
-  return kind === "doc" ? <DocumentGlyph icon={icon} className="size-5 text-[18px]" fallback={<DocColorIcon className="size-5 shrink-0" />} /> : <BaseColorIcon className="size-5 shrink-0" />;
+function FileBadge({ kind, icon, large = false }: { kind: "doc" | "base" | "slides" | "folder" | "file"; icon?: string; large?: boolean }) {
+  const sizeClass = large ? "size-14" : "size-5";
+  if (kind === "folder") return <Folder size={large ? 56 : 20} fill="#ffcc4d" stroke="#f5a623" />;
+  if (kind === "slides") return <SlidesColorIcon className={`${sizeClass} shrink-0`} />;
+  if (kind === "file") return <span className={`grid ${sizeClass} shrink-0 place-items-center rounded bg-[#e8efff] text-[#3370ff]`}><FileText size={large ? 36 : 15}/></span>;
+  return kind === "doc" ? <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<DocColorIcon className={`${sizeClass} shrink-0`} />} /> : <BaseColorIcon className={`${sizeClass} shrink-0`} />;
 }
-function ActionCard({ icon, title, disabled, onClick }: { icon: React.ReactNode; title: string; disabled?: boolean; onClick: () => void }) {
-  return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1 text-[14px] font-medium">{title}</span></button>;
+function ActionCard({ icon, title, subtitle, disabled, onClick }: { icon: React.ReactNode; title: string; subtitle?: string; disabled?: boolean; onClick: () => void }) {
+  return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{title}</span>{subtitle && <span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{subtitle}</span>}</span></button>;
 }
 function dateLabel(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
+  return formatDriveTime(value) || "—";
 }
 function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?: string; workspaceName?: string }) {
   return <button onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} group h-14 w-full items-center gap-3 border-b px-2 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
@@ -219,5 +233,12 @@ function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
     <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
+  </button>;
+}
+
+function DocumentCard({ doc }: { doc: DocMeta }) {
+  return <button type="button" onClick={() => go(hrefOf(doc))} className="group min-w-0 overflow-hidden rounded-md border border-[#dee0e3] bg-white text-left transition-shadow hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-home-card>
+    <span className="grid h-36 place-items-center bg-[#f5f6f7]"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} large/></span>
+    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] px-3"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
   </button>;
 }
