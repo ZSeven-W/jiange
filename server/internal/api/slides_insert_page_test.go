@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/server/internal/store"
@@ -153,6 +154,47 @@ func TestInsertSlidePageWithLayoutRequiresModernClient(t *testing.T) {
 	var inserted store.SlidesPage
 	if r.StatusCode != http.StatusCreated || json.NewDecoder(r.Body).Decode(&inserted) != nil || inserted.Layout != "title" || inserted.Revision != 1 {
 		t.Fatalf("insert: %d %+v", r.StatusCode, inserted)
+	}
+	r.Body.Close()
+	r = call("two-column", "4")
+	var columns store.SlidesPage
+	if r.StatusCode != http.StatusCreated || json.NewDecoder(r.Body).Decode(&columns) != nil || columns.Layout != "blank" || !validSlideShapes(columns.Shapes) || store.HasModernSlideShapes(columns.Shapes) {
+		t.Fatalf("insert two-column: %d %+v", r.StatusCode, columns)
+	}
+	r.Body.Close()
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Jiange-User-Id", fmt.Sprint(deck.CreatorID))
+	req.Header.Set("X-Jiange-Slides-Version", "3")
+	r, err = owner.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("v3 read: %d", r.StatusCode)
+	}
+	r.Body.Close()
+	update, err := json.Marshal(map[string]any{"title": "", "body": "", "background": "", "layout": "blank", "shapes": columns.Shapes, "expectedRevision": columns.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err = http.NewRequest("PATCH", fmt.Sprintf("%s/api/slides/%d/pages/%d/content", ts.URL, deck.ID, columns.ID), bytes.NewReader(update))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Jiange-User-Id", fmt.Sprint(deck.CreatorID))
+	req.Header.Set("X-Jiange-Slides-Version", "3")
+	r, err = owner.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved store.SlidesPage
+	var beforeShapes, afterShapes []map[string]any
+	if r.StatusCode != http.StatusOK || json.NewDecoder(r.Body).Decode(&saved) != nil || json.Unmarshal(columns.Shapes, &beforeShapes) != nil || json.Unmarshal(saved.Shapes, &afterShapes) != nil || !reflect.DeepEqual(beforeShapes, afterShapes) {
+		t.Fatalf("v3 round trip: %d %+v", r.StatusCode, saved)
 	}
 	r.Body.Close()
 	r, err = owner.Get(url)

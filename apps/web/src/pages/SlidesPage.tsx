@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, slidesApi, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -24,6 +24,7 @@ import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides
 import { validSlideDeleteReceipt } from "./slides-delete";
 import { hasLargeSlideTitle, isBlankSlideLayout } from "./slides-layout";
 import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout } from "./slides-create-layout";
+import { slidePresetContent } from "./slides-layout-preset";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
@@ -191,14 +192,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       const source = anchor ? queue.get(anchor) : null;
       if (source && source.state !== "saved") throw new ApiError(409, "conflict", "请等待当前页面保存完成。 ");
       const page = await slidesApi.insertPage(deckId, userId, anchor?.id ?? 0, source?.page.revision ?? 0, layout);
-      if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 || page.id === anchor?.id || page.slidesId !== deckId || page.revision !== 1 || page.hidden !== false || page.layout !== layout || page.title !== "" || page.body !== "" || page.notes !== "" || !Array.isArray(page.shapes) || page.shapes.length !== 0) throw new Error("invalid new page response");
+      if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 || page.id === anchor?.id || page.slidesId !== deckId || page.revision !== 1 || page.hidden !== false || !Array.isArray(page.shapes) || !sameSlideContent(slidePresetContent(layout), page)) throw new Error("invalid new page response");
       return { page, anchorId: anchor?.id ?? null };
     },
     onSuccess: ({ page, anchorId }) => { if (activePageRef.current === anchorId) { setCurrent(page.id); setSelectedShape(null); } void invalidate(); },
     onError: (error, variables) => {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
       if (!known) setInsertPageUnknown(true);
-      setOperationError(known ? error.status === 409 ? "页面已变化或页面顺序空间不足，请刷新后重试。" : variables.layout && (error.status === 426 || (error.status === 400 && error.code === "bad_request")) ? "所选布局需要新版服务，请升级后重试。" : error.message : "新建结果未能确认，请重新打开并检查页面列表后再操作。");
+      setOperationError(known ? error.status === 409 ? "页面已变化或页面顺序空间不足，请刷新后重试。" : variables.layout && (error.status === 426 || (error.status === 400 && (error.code === "bad_request" || variables.layout === "two-column" && error.code === "invalid_layout"))) ? "所选布局需要新版服务，请升级后重试。" : error.message : "新建结果未能确认，请重新打开并检查页面列表后再操作。");
       void invalidate();
     },
     onSettled: () => { insertingPage.current = false; },
@@ -657,7 +658,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
                   {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canEdit} onFocus={() => setTitleFocusPage(active.id)} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={() => { setTitleFocusPage(null); queue.endGroup(active.id); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight text-[#1f2329] outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px] placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
                   {draft.content.layout === "blank" && !draft.content.title && titleFocusPage !== active.id && !!draft.content.body && <div aria-hidden="true" className="h-[55px]"/>}
                   {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canEdit} onFocus={() => setBodyFocusPage(active.id)} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={() => { setBodyFocusPage(null); queue.endGroup(active.id); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
-                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} scale={zoom / 100} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height })} onTextChange={(id, text) => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }} onTextBlur={() => queue.endGroup(active.id)}/>
+                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} selected={selectedShape} scale={zoom / 100} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height })} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
                 </div>
                 <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => { if (backgroundTarget.current === active.id && activePageRef.current === active.id && canEditRef.current && !pageActionCount.current) queue.edit(active, { background: event.target.value }); }} className="sr-only" aria-label="幻灯片背景颜色" />
               </div> : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}

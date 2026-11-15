@@ -8,7 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("new slide layout", () => {
   it("shows only layouts that the editor can actually create", () => {
     const html = renderToStaticMarkup(<SlideCreateLayoutPicker onSelect={() => {}} />);
-    for (const name of ["空白", "标题", "标题与正文"]) expect(html).toContain(`使用${name}布局新建`);
+    for (const name of ["空白", "标题", "标题与正文", "标题与两栏内容"]) expect(html).toContain(`使用${name}布局新建`);
     expect(html).not.toContain("标题与三栏内容");
   });
   it("keeps the picker inside short and narrow viewports", () => {

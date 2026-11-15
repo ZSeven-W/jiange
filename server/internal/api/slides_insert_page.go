@@ -39,7 +39,7 @@ func (s *Server) insertSlidesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Layout != nil {
-		if !store.ValidSlideLayout(*in.Layout) {
+		if _, _, valid := store.SlideCreationLayout(*in.Layout); !valid {
 			httpx.Error(w, http.StatusBadRequest, "invalid_layout", "幻灯片布局无效")
 			return
 		}

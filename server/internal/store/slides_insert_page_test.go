@@ -157,8 +157,17 @@ func exerciseInsertSlideLayout(t *testing.T, st store.Store) {
 	if err != nil || second.Layout != "blank" || second.Revision != 1 {
 		t.Fatalf("insert blank: %+v %v", second, err)
 	}
+	columns, err := st.InsertSlidesPageWithLayout(ctx, g, deck.ID, second.ID, second.Revision, "two-column")
+	var shapes []struct {
+		ID   string  `json:"id"`
+		Kind string  `json:"kind"`
+		Text *string `json:"text"`
+	}
+	if err != nil || columns.Layout != "blank" || columns.Revision != 1 || json.Unmarshal(columns.Shapes, &shapes) != nil || len(shapes) != 3 || shapes[0].ID != "preset-two-title" || shapes[1].ID != "preset-two-left" || shapes[2].ID != "preset-two-right" || shapes[0].Kind != "text" || shapes[1].Kind != "text" || shapes[2].Kind != "text" || shapes[0].Text == nil || *shapes[0].Text != "" {
+		t.Fatalf("insert two-column preset: %+v %s %v", columns, columns.Shapes, err)
+	}
 	pages, err = st.ListSlidesPages(ctx, owner.ID, deck.ID)
-	if err != nil || len(pages) != 3 || pages[0].ID != anchor.ID || pages[1].ID != page.ID || pages[2].ID != second.ID {
+	if err != nil || len(pages) != 4 || pages[0].ID != anchor.ID || pages[1].ID != page.ID || pages[2].ID != second.ID || pages[3].ID != columns.ID {
 		t.Fatalf("order: %+v %v", pages, err)
 	}
 	viewer, _, err := st.CreateUser(ctx, "insert-layout-viewer@example.test", "Viewer", "hash")

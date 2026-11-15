@@ -53,21 +53,25 @@ func (p *Postgres) CreateSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 }
 
 func (p *Postgres) DuplicateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
-	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true, "")
+	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, true, "", nil)
 }
 
 func (p *Postgres) InsertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64) (SlidesPage, error) {
-	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, "")
+	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, "", nil)
 }
 
 func (p *Postgres) InsertSlidesPageWithLayout(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, layout string) (SlidesPage, error) {
-	if !ValidSlideLayout(layout) {
+	initialLayout, shapes, ok := SlideCreationLayout(layout)
+	if !ok {
 		return SlidesPage{}, ErrConflict
 	}
-	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, layout)
+	return p.insertSlidesPage(ctx, g, slidesID, pageID, expectedRevision, false, initialLayout, shapes)
 }
 
-func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool, layout string) (page SlidesPage, err error) {
+func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID, expectedRevision int64, copySource bool, layout string, shapes json.RawMessage) (page SlidesPage, err error) {
+	if shapes == nil {
+		shapes = json.RawMessage(`[]`)
+	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var src SlidesPage
 		if pageID > 0 {
@@ -137,7 +141,7 @@ func (p *Postgres) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesI
 			}
 		}
 		if !copySource {
-			src.Title, src.Body, src.Background, src.Notes, src.Shapes, src.Layout = "", "", "", "", json.RawMessage(`[]`), layout
+			src.Title, src.Body, src.Background, src.Notes, src.Shapes, src.Layout = "", "", "", "", shapes, layout
 			src.Hidden = false
 		}
 		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes,hidden,layout) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING id,slides_id,pos,title,body,background,notes,shapes,hidden,layout,revision,updated_at`, slidesID, pos, src.Title, src.Body, src.Background, src.Notes, src.Shapes, src.Hidden, src.Layout).

@@ -1,18 +1,19 @@
 import type { SlideLayout } from "@/lib/api";
 import { Columns3 } from "lucide-react";
 
-export type NewSlideLayout = Extract<SlideLayout, "" | "title" | "blank">;
+export type NewSlideLayout = Extract<SlideLayout, "" | "title" | "blank"> | "two-column";
 export function slideCreatePickerPosition(trigger: Pick<DOMRect, "left" | "top" | "bottom">, width: number, height: number) {
   const panelWidth = Math.max(1, Math.min(468, width - 24));
   const left = Math.max(12, Math.min(trigger.left - 120, width - panelWidth - 12));
-  const below = trigger.bottom + 8, above = trigger.top - 8 - 190;
-  const top = below + 190 <= height - 12 ? below : above >= 12 ? above : Math.max(12, Math.min(below, height - 152));
+  const below = trigger.bottom + 8, above = trigger.top - 8 - 300;
+  const top = below + 300 <= height - 12 ? below : above >= 12 ? above : Math.max(12, Math.min(below, height - 152));
   return { left, top, width: panelWidth, maxHeight: Math.max(1, height - top - 12) };
 }
 const LAYOUTS: { value: NewSlideLayout; name: string }[] = [
   { value: "blank", name: "空白" },
   { value: "title", name: "标题" },
   { value: "", name: "标题与正文" },
+  { value: "two-column", name: "标题与两栏内容" },
 ];
 
 export function SlideCreateLayoutPicker({ onSelect }: { onSelect: (layout: NewSlideLayout) => void }) {
@@ -24,6 +25,7 @@ export function SlideCreateLayoutPicker({ onSelect }: { onSelect: (layout: NewSl
         <span className="relative block aspect-video overflow-hidden rounded-md border border-[#dee0e3] bg-white hover:border-[#3370ff] hover:bg-[#f9fbff]">
           {value === "title" && <span className="absolute left-[24%] top-[46%] h-[5%] w-[52%] rounded-full bg-[#646a73]"/>}
           {value === "" && <><span className="absolute left-[10%] top-[15%] h-[5%] w-[60%] rounded-full bg-[#8f959e]"/><span className="absolute left-[10%] top-[37%] h-[3%] w-[72%] rounded-full bg-[#c4c8ce]"/><span className="absolute left-[10%] top-[48%] h-[3%] w-[55%] rounded-full bg-[#c4c8ce]"/></>}
+          {value === "two-column" && <><span className="absolute left-[8%] top-[12%] h-[5%] w-[55%] rounded-full bg-[#8f959e]"/><span className="absolute left-[8%] top-[30%] h-[55%] w-[38%] rounded-sm bg-[#e5e6eb]"/><span className="absolute right-[8%] top-[30%] h-[55%] w-[38%] rounded-sm bg-[#e5e6eb]"/></>}
         </span>
         <span className="mt-1 block truncate text-[12px] text-[#646a73]">{name}</span>
       </button>)}

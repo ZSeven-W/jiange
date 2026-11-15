@@ -17,6 +17,19 @@ func ValidSlideLayout(layout string) bool {
 	return layout == "" || layout == "title" || layout == "blank" || layout == "blank-title"
 }
 
+// SlideCreationLayout maps a creation preset to existing persisted primitives.
+// Two columns are ordinary editable text shapes on a blank page; the preset
+// name itself is never stored as a new layout protocol value.
+func SlideCreationLayout(preset string) (string, json.RawMessage, bool) {
+	if preset == "two-column" {
+		return "blank", json.RawMessage(`[{"id":"preset-two-title","kind":"text","x":7,"y":8,"width":86,"height":12,"color":"#1f2329","text":"","fontSize":36,"bold":true},{"id":"preset-two-left","kind":"text","x":7,"y":27,"width":40,"height":57,"color":"#1f2329","text":"","fontSize":24},{"id":"preset-two-right","kind":"text","x":53,"y":27,"width":40,"height":57,"color":"#1f2329","text":"","fontSize":24}]`), true
+	}
+	if !ValidSlideLayout(preset) {
+		return "", nil, false
+	}
+	return preset, json.RawMessage(`[]`), true
+}
+
 type SlidesPage struct {
 	ID         int64           `json:"id"`
 	SlidesID   int64           `json:"slidesId"`

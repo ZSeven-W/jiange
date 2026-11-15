@@ -452,6 +452,7 @@ export const driveApi = {
 
 export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "rounded-rectangle" | "right-triangle" | "diamond" | "pentagon" | "hexagon" | "star" | "parallelogram" | "trapezoid" | "arrow-right" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
 export type SlideLayout = "" | "title" | "blank" | "blank-title";
+export type SlideCreationLayout = SlideLayout | "two-column";
 export interface SlidesPage {
   id: number;
   slidesId: number;
@@ -474,7 +475,7 @@ export const slidesApi = {
     return r.pages;
   }),
   create: (deckId: number, title: string) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages`, { title }),
-  insertPage: (deckId: number, userId: number, afterPageId: number, expectedRevision: number, layout: SlideLayout = "") => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/insert`, { afterPageId, expectedRevision, ...(layout ? { layout } : {}) }, undefined, { "X-Jiange-User-Id": String(userId), ...(layout ? { "X-Jiange-Slides-Version": "4" } : {}) }),
+  insertPage: (deckId: number, userId: number, afterPageId: number, expectedRevision: number, layout: SlideCreationLayout = "") => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/insert`, { afterPageId, expectedRevision, ...(layout ? { layout } : {}) }, undefined, { "X-Jiange-User-Id": String(userId), ...(layout ? { "X-Jiange-Slides-Version": "4" } : {}) }),
   duplicatePage: (deckId: number, pageId: number, userId: number, expectedRevision: number) => request<SlidesPage>("POST", `/api/slides/${deckId}/pages/${pageId}/duplicate`, { expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   setPageHidden: (deckId: number, pageId: number, userId: number, expectedRevision: number, hidden: boolean) => request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pageId}/visibility`, { hidden, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }),
   applyBackground: (deckId: number, userId: number, background: string, expected: { id: number; revision: number }[]) => request<{ pages: unknown }>("POST", `/api/slides/${deckId}/background-all`, { background, expected }, undefined, { "X-Jiange-User-Id": String(userId) }),
