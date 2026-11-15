@@ -52,8 +52,8 @@ export function planTableAppendRow(rows: string[][]): TablePasteResult {
 }
 
 /** Compute all changes first; merged cells accept only a compatible source shape. */
-export function planTablePaste(rows: string[][], merges: Merge[], startRow: number, startCol: number, text: string): TablePasteResult {
-  const grid = parseTableTSV(text);
+export function planTablePaste(rows: string[][], merges: Merge[], startRow: number, startCol: number, text: string, literal = false): TablePasteResult {
+  const grid = literal ? (text.length && text.length <= MAX_TEXT ? [[text]] : null) : parseTableTSV(text);
   if (!grid?.length) return { ok: false, message: "粘贴内容格式无效或过大，表格未修改。" };
   if (!Number.isInteger(startRow) || !Number.isInteger(startCol) || startRow < 0 || startCol < 0 || startRow >= rows.length || startCol >= (rows[0]?.length ?? 0)) return { ok: false, message: "表格位置已变化，请重新选择单元格。" };
   const width = Math.max(...grid.map((r) => r.length));

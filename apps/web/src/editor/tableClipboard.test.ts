@@ -20,6 +20,12 @@ describe("document table clipboard", () => {
     expect(result).toEqual({ ok: true, changed: true, rows: [["原", "保留", ""], ["下", "甲", "乙"], ["", "丙", "丁"]] });
     expect(before).toEqual([["原", "保留"], ["下", "旧"]]);
   });
+  it("treats a plain single-cell paste literally, including quotes", () => {
+    const before = [["甲", "乙"], ["丙", "丁"]];
+    expect(planTablePaste(before, [], 0, 0, '"原样"', true)).toEqual({ ok: true, changed: true, rows: [['"原样"', "乙"], ["丙", "丁"]] });
+    expect(planTablePaste(before, [], 0, 0, "", true)).toMatchObject({ ok: false });
+    expect(before).toEqual([["甲", "乙"], ["丙", "丁"]]);
+  });
   it("rejects incompatible merged-cell or invalid quoted paste as one operation", () => {
     const before = [["保留", ""], ["下", "右"]];
     expect(planTablePaste(before, [[0, 0, 1, 2]], 0, 0, "甲\t乙")).toMatchObject({ ok: false, message: expect.stringContaining("合并") });

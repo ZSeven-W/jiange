@@ -56,7 +56,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
-  onPasteCells?: (r: number, c: number, text: string) => string | null;
+  onPasteCells?: (r: number, c: number, text: string, literal?: boolean) => string | null;
   onCutCells?: (range: CellRange) => string | null;
   onClearCells?: (range: CellRange) => string | null;
   onAppendRow?: () => string | null;
@@ -228,7 +228,11 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                       <textarea
                         value={cell}
                         rows={Math.min(10, Math.max(1, cell.split("\n").length))}
-                        onChange={(e) => onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType)}
+                        onChange={(e) => {
+                          if (multi) { e.currentTarget.value = cell; return; }
+                          onEdit(ri, ci, e.target.value, (e.nativeEvent as InputEvent).inputType);
+                        }}
+                        onBeforeInput={(e) => { if (multi) e.preventDefault(); }}
                         onFocus={() => { setFocus({ r: ri, c: ci }); setEditing({ r: ri, c: ci }); }}
                         onBlur={(event) => { syncFindOverlay(event.currentTarget); setEditing(null); }}
                         onScroll={(event) => syncFindOverlay(event.currentTarget)}
@@ -243,6 +247,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                             setClipboardNotice(onClearCells?.(selected) ?? (onClearCells ? "" : "当前无法清空选区，表格未修改。"));
                             return;
                           }
+                          if (multi && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); return; }
                           if (e.key !== "Tab" || e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
                           const cells = [...(root.current?.querySelectorAll<HTMLTextAreaElement>("[data-table-cell]") ?? [])];
                           const intent = tableTabIntent(cells.indexOf(e.currentTarget), cells.length, e.shiftKey);
@@ -263,12 +268,21 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                         }}
                         onPaste={(e) => {
                           const text = e.clipboardData.getData("text/plain");
-                          if (!onPasteCells || !/[\t\r\n]/.test(text)) return;
+                          const structured = /[\t\r\n]/.test(text);
+                          if (!multi && (!onPasteCells || !structured)) return;
                           e.preventDefault(); e.stopPropagation();
+                          if (!e.clipboardData.types.includes("text/plain") || !text) return;
+                          if (!onPasteCells) { setClipboardNotice("当前无法粘贴到选区，表格未修改。"); return; }
                           const start = multi && selected ? { r: selected.r0, c: selected.c0 } : { r: ri, c: ci };
-                          const error = onPasteCells(start.r, start.c, text);
+                          const error = onPasteCells(start.r, start.c, text, !structured);
                           setClipboardNotice(error ?? "");
-                          if (!error) { setRange(null); setGrip(null); }
+                          if (!error) {
+                            setRange(null); setGrip(null); setMoreOpen(false);
+                            if (multi) {
+                              const target = root.current?.querySelector<HTMLTextAreaElement>(`[data-table-cell="${start.r}:${start.c}"]`);
+                              if (target) { target.focus(); requestAnimationFrame(() => { if (document.activeElement === target) target.setSelectionRange(target.value.length, target.value.length); }); }
+                            }
+                          }
                         }}
                         onMouseDown={(e) => {
                           setMoreOpen(false);
