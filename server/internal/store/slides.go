@@ -57,6 +57,28 @@ type SlidesStore interface {
 	CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta, []SlidesPage, error)
 }
 
+// SlidesShapesV4Store fences clients that cannot render expanded shape kinds.
+type SlidesShapesV4Store interface {
+	UpdateSlidesPageV4(context.Context, RestoreGuard, int64, int64, string, string, string, string, *string, *json.RawMessage, int64) (SlidesPage, error)
+}
+
+func HasModernSlideShapes(raw json.RawMessage) bool {
+	var shapes []struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(raw, &shapes) != nil {
+		return true
+	}
+	for _, shape := range shapes {
+		switch shape.Kind {
+		case "rectangle", "ellipse", "triangle", "text", "image":
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // SlidesDeckCopy carries the caller-verified destination for a full deck copy.
 // Guard is required by authenticated request handlers; a nil guard is reserved
 // for trusted internal callers.

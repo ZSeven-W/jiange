@@ -18,6 +18,7 @@ import { playableSlides, presentationStart, presentationKeyTarget } from "./slid
 import { ResourceTypeNotice } from "./ResourceTypeNotice";
 import { SlideFormatPanel } from "./SlideFormatPanel";
 import { SlideNotesPanel } from "./SlideNotesPanel";
+import { SLIDE_SHAPES, SlideShapeGraphic } from "./slide-shape-catalog";
 import { samePositions, slideDropIndex, slideEdgeScrollSpeed, slidePositions, verifySlideOrder, type SlidePosition } from "./slides-order";
 import { applyBackgroundChangeReceipts, applyBackgroundReceipts } from "./slides-background";
 import { validSlideDeleteReceipt } from "./slides-delete";
@@ -43,6 +44,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const playbackCheck = useRef(false);
   const [sharing, setSharing] = useState(false);
   const [shapeMenu, setShapeMenu] = useState(false);
+  const [shapeGroup, setShapeGroup] = useState<"基础" | "箭头">("基础");
+  const shapeButtonRef = useRef<HTMLButtonElement>(null);
+  const shapeMenuRef = useRef<HTMLDivElement>(null);
   const [formatOpen, setFormatOpen] = useState(false);
   const [backgroundApplying, setBackgroundApplying] = useState(false);
   const [backgroundBatchUnknown, setBackgroundBatchUnknown] = useState(false);
@@ -121,6 +125,15 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   }, [audienceWindow]);
   useEffect(() => () => { imageUpload.current?.abort(); imageUpload.current = null; }, []);
   useEffect(() => () => { copyRequest.current?.abort(); copyRequest.current = null; }, []);
+  useEffect(() => {
+    if (!shapeMenu) return;
+    const outside = (event: PointerEvent) => { if (!shapeMenuRef.current?.contains(event.target as Node) && !shapeButtonRef.current?.contains(event.target as Node)) setShapeMenu(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setShapeMenu(false); shapeButtonRef.current?.focus(); } };
+    const close = () => setShapeMenu(false);
+    const scroll = (event: Event) => { if (!shapeMenuRef.current?.contains(event.target as Node)) close(); };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape); window.addEventListener("resize", close); window.addEventListener("scroll", scroll, true);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); window.removeEventListener("resize", close); window.removeEventListener("scroll", scroll, true); };
+  }, [shapeMenu]);
   useEffect(() => {
     if (!pageMenu) return;
     pageMenuRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
@@ -606,7 +619,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             </div>
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("text")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
-            <div className="relative shrink-0"><button type="button" disabled={!canEdit || !active} aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
+            <div className="relative shrink-0"><button ref={shapeButtonRef} type="button" disabled={!canEdit || !active} aria-haspopup="dialog" aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
             <button type="button" disabled={!canEdit || !active || uploadingImage || draft?.content.shapes.length === 100} onClick={() => imageInputRef.current?.click()} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><ImageIcon size={16}/>{uploadingImage ? "上传中" : "图片"}</button>
             <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" aria-label="选择幻灯片图片" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void insertImage(file); }}/>
             <button ref={backgroundButtonRef} type="button" disabled={!active} aria-expanded={formatOpen} onClick={() => setFormatOpen((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Palette size={16}/>格式</button>
@@ -618,7 +631,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-0.5 pl-3" role="group" aria-label="幻灯片缩放"><button type="button" aria-label="缩小幻灯片" onClick={() => setManualZoom(clampSlideZoom(zoom - 10))} className="grid size-7 place-items-center rounded-l border border-[#d0d3d6] hover:bg-[#f2f3f5]"><Minus size={14}/></button><label className="flex h-7 items-center border-y border-[#d0d3d6] text-[#646a73]"><input aria-label="幻灯片缩放比例" inputMode="decimal" value={zoomText} onFocus={(event) => { zoomEditing.current = true; event.currentTarget.select(); }} onChange={(event) => setZoomText(event.target.value)} onBlur={() => { if (!zoomEditing.current) return; zoomEditing.current = false; const value = parseSlideZoom(zoomText); if (value !== null) { setManualZoom(value); setZoomText(String(value)); } else setZoomText(String(zoom)); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { zoomEditing.current = false; setZoomText(String(zoom)); event.currentTarget.blur(); } }} className="w-9 bg-transparent text-right text-[12px] outline-none"/><span className="pr-1">%</span></label><button type="button" aria-label="放大幻灯片" onClick={() => setManualZoom(clampSlideZoom(zoom + 10))} className="grid size-7 place-items-center rounded-r border border-[#d0d3d6] hover:bg-[#f2f3f5]"><Plus size={14}/></button><button type="button" aria-label="适合屏幕" title="适合屏幕" onClick={() => setManualZoom(null)} className="ml-1 grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Maximize2 size={14}/></button></div>
           </div>
-          {shapeMenu && <div className="flex shrink-0 items-center gap-1 border-b bg-white px-4 py-2 text-[13px]" role="group" aria-label="选择图形">{([["rectangle", "矩形"], ["ellipse", "圆形"], ["triangle", "三角形"]] as const).map(([kind, label]) => <button key={kind} type="button" onClick={() => addShape(kind)} className="rounded-md px-3 py-2 hover:bg-[#f2f3f5]">{label}</button>)}<button type="button" onClick={() => setShapeMenu(false)} className="ml-auto rounded-md px-3 py-2 hover:bg-[#f2f3f5]">关闭</button></div>}
+          {shapeMenu && shapeButtonRef.current && createPortal(<div ref={shapeMenuRef} role="dialog" aria-label="选择图形" style={{ left: Math.max(12, Math.min(shapeButtonRef.current.getBoundingClientRect().left, window.innerWidth - Math.min(516, window.innerWidth - 24) - 12)), top: Math.min(shapeButtonRef.current.getBoundingClientRect().bottom + 4, window.innerHeight - 250), width: "min(516px, calc(100vw - 24px))" }} className="fixed z-[100] overflow-hidden rounded-lg border border-[#dee0e3] bg-white text-[13px] text-[#1f2329] shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><div className="flex h-12 items-end border-b border-[#e5e6eb] px-4"><span className="flex h-12 items-center border-b-2 border-[#3370ff] px-1 font-medium text-[#3370ff]">形状</span></div><div className="flex h-[280px]"><div className="w-[112px] shrink-0 border-r border-[#e5e6eb] p-2 sm:w-[160px]">{(["基础", "箭头"] as const).map((group) => <button key={group} type="button" aria-pressed={shapeGroup === group} onClick={() => setShapeGroup(group)} className={cn("flex h-9 w-full items-center rounded px-3 text-left", shapeGroup === group ? "bg-[#e8efff] text-[#245bdb]" : "hover:bg-[#f2f3f5]")}>{group}</button>)}</div><div className="min-w-0 flex-1 overflow-y-auto p-4"><div className="mb-3 text-[12px] text-[#8f959e]">{shapeGroup}</div><div className="grid grid-cols-3 gap-2 sm:grid-cols-5">{SLIDE_SHAPES.filter((shape) => shape.group === shapeGroup).map((shape) => <button type="button" key={shape.kind} aria-label={shape.label} title={shape.label} onClick={() => addShape(shape.kind)} className="grid size-12 place-items-center rounded-md p-2 hover:bg-[#f2f3f5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3370ff]"><SlideShapeGraphic kind={shape.kind} color="#4b5058" outline/></button>)}</div></div></div></div>, document.body)}
           {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
           {(operationError || visibilityUnknown || create.isError || remove.isError) && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{operationError || (visibilityUnknown ? "隐藏状态未能确认，请重新打开并检查后再放映。" : "操作未完成，请刷新后检查。")}{createdCopyId && <a className="ml-2 underline" href={`#/slides/${createdCopyId}`}>打开已创建的副本</a>}</p>}
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}

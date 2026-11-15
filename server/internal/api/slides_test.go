@@ -13,6 +13,8 @@ func TestSlideShapeGeometryValidation(t *testing.T) {
 		name, raw string
 		valid     bool
 	}{
+		{"modern star", `[{"id":"s","kind":"star","x":0,"y":0,"color":"#3370ff"}]`, true},
+		{"unknown shape", `[{"id":"s","kind":"future","x":0,"y":0,"color":"#3370ff"}]`, false},
 		{"legacy defaults", `[{"id":"a","kind":"ellipse","x":84,"y":80,"color":"#3370ff"}]`, true},
 		{"resized and rotated", `[{"id":"a","kind":"rectangle","x":40,"y":50,"width":60,"height":50,"rotation":90,"color":"#3370ff"}]`, true},
 		{"overflow", `[{"id":"a","kind":"rectangle","x":41,"y":50,"width":60,"height":50,"rotation":90,"color":"#3370ff"}]`, false},

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { GripHorizontal } from "lucide-react";
 import type { SlideShape } from "@/lib/api";
+import { SlideShapeGraphic } from "./slide-shape-catalog";
 import { resizeSlideShape, type ResizeHandle } from "./slides-shape-resize";
 
 const clamp = (value: number, max: number) => Math.round(Math.min(max, Math.max(0, value)) * 10) / 10;
@@ -32,7 +33,7 @@ export function SlideShapes({ shapes, editable, selected, onSelect, onChange, on
   return <>{shapes.map((shape) => {
     const item = preview?.id === shape.id ? preview : shape;
     const textStyle = { color: item.color, fontSize: `${(item.fontSize ?? 24) / 9.6}cqw`, fontWeight: item.bold ? 700 : 400, textAlign: item.align ?? "left" } as const;
-    const graphic = item.kind === "text" ? <div className="h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3]" style={textStyle}>{item.text}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">{item.kind === "rectangle" ? <rect x="2" y="2" width="96" height="96" fill={item.color}/> : item.kind === "ellipse" ? <ellipse cx="50" cy="50" rx="48" ry="48" fill={item.color}/> : <polygon points="50,2 98,98 2,98" fill={item.color}/>}</svg>;
+    const graphic = item.kind === "text" ? <div className="h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3]" style={textStyle}>{item.text}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
     const style = { left: `${item.x}%`, top: `${item.y}%`, width: `${item.width ?? 16}%`, height: `${item.height ?? 20}%`, transform: `rotate(${item.rotation ?? 0}deg)` };
     if (!editable) return <div key={item.id} className="pointer-events-none absolute" style={style}>{graphic}</div>;
     const editingText = item.kind === "text" && selected === item.id;

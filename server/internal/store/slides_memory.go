@@ -154,15 +154,21 @@ func (m *Memory) findSlidesPageLocked(pageID int64) (int, *SlidesPage) {
 }
 
 func (m *Memory) UpdateSlidesPage(ctx context.Context, g RestoreGuard, pageID int64, title, body, background string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
-	return m.updateSlidesPage(ctx, g, 0, pageID, title, body, background, nil, notes, shapes, expectedRevision)
+	return m.updateSlidesPage(ctx, g, 0, pageID, title, body, background, nil, notes, shapes, expectedRevision, false)
 }
 func (m *Memory) UpdateSlidesPageV3(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
 	if slidesID <= 0 || !ValidSlideLayout(layout) {
 		return SlidesPage{}, ErrConflict
 	}
-	return m.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision)
+	return m.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, false)
 }
-func (m *Memory) updateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background string, layout *string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
+func (m *Memory) UpdateSlidesPageV4(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background, layout string, notes *string, shapes *json.RawMessage, expectedRevision int64) (SlidesPage, error) {
+	if slidesID <= 0 || !ValidSlideLayout(layout) {
+		return SlidesPage{}, ErrConflict
+	}
+	return m.updateSlidesPage(ctx, g, slidesID, pageID, title, body, background, &layout, notes, shapes, expectedRevision, true)
+}
+func (m *Memory) updateSlidesPage(ctx context.Context, g RestoreGuard, slidesID, pageID int64, title, body, background string, layout *string, notes *string, shapes *json.RawMessage, expectedRevision int64, modern bool) (SlidesPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	i, p := m.findSlidesPageLocked(pageID)
@@ -171,6 +177,9 @@ func (m *Memory) updateSlidesPage(ctx context.Context, g RestoreGuard, slidesID,
 	}
 	if _, err := m.slidesAccessLocked(ctx, g, p.SlidesID, false); err != nil {
 		return SlidesPage{}, err
+	}
+	if !modern && (HasModernSlideShapes(p.Shapes) || (shapes != nil && HasModernSlideShapes(*shapes))) {
+		return SlidesPage{}, ErrSlideClientOutdated
 	}
 	if layout == nil && p.Layout != "" {
 		return SlidesPage{}, ErrSlideClientOutdated
