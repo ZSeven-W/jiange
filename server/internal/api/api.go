@@ -172,6 +172,8 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/search":                                     s.searchDocs,
 		"GET /api/favorites":                                  s.listFavorites,
 		"GET /api/pins":                                       s.listPins,
+		"GET /api/account-pins":                               s.accountPins,
+		"GET /api/account-favorites":                          s.accountFavorites,
 		"PUT /api/docs/{id}/pin":                              s.putPin,
 		"DELETE /api/docs/{id}/pin":                           s.putPin,
 		"PUT /api/docs/{id}/account-pin":                      s.accountPin,
@@ -179,6 +181,8 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/recent":                                     s.listRecent,
 		"POST /api/docs/{id}/visit":                           s.recordVisit,
 		"PUT /api/docs/{id}/star":                             s.putFavorite,
+		"PUT /api/docs/{id}/account-star":                     s.accountFavorite,
+		"DELETE /api/docs/{id}/account-star":                  s.accountFavorite,
 		"DELETE /api/docs/{id}/star":                          s.putFavorite,
 		"GET /api/docs/{id}/ancestors":                        s.getAncestors,
 

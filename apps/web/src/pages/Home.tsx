@@ -9,6 +9,8 @@ import { colorFor } from "@/lib/presence";
 import { BaseColorIcon, DocColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/FeishuIcons";
 import { NewDocGlyph, TemplateGlyph } from "@/components/DriveActionIcons";
 import { HomeUpload } from "@/components/HomeUpload";
+import { ShareDialog } from "@/components/ShareDialog";
+import { HomeDocumentActions } from "./HomeDocumentActions";
 import type { DriveUploadManager } from "./drive-upload";
 import { DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stagePendingWord } from "./pendingWord";
@@ -45,6 +47,11 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const [newMenu, setNewMenu] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [importError, setImportError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
+  const [sharingDoc, setSharingDoc] = useState<DocMeta | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  useEffect(() => { if (!actionNotice) return; const timer = window.setTimeout(() => setActionNotice(""), 4000); return () => window.clearTimeout(timer); }, [actionNotice]);
+  const actionLock = useRef(false);
   const [importing, setImporting] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
   const contentLock = useRef(false);
@@ -68,12 +75,41 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const docs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const recentDocs = useQuery({ queryKey: ["recent", me.user.id], queryFn: docsApi.recent, enabled: selected === "recent", refetchInterval: 15000, refetchIntervalInBackground: false });
   const shared = useQuery({ queryKey: ["shared"], queryFn: docsApi.shared, enabled: selected === "shared" });
-  const favs = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, enabled: selected === "favorites" });
+  const favs = useQuery({ queryKey: ["home-favorites", me.user.id], queryFn: () => extrasApi.favoritesForAccount(me.user.id), refetchOnWindowFocus: true, retry: false });
+  const pins = useQuery({ queryKey: ["home-pins", me.user.id], queryFn: () => extrasApi.pinsForAccount(me.user.id), refetchOnWindowFocus: true, retry: false });
   const create = useMutation({
     mutationFn: (type: "doc" | "base") => type === "base" ? baseApi.create() : docsApi.create(""),
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
   const currentUser = useRef(me.user.id); currentUser.current = me.user.id;
+  useEffect(() => { setSharingDoc(null); setActionNotice(""); setActionBusy(false); }, [me.user.id]);
+  const toggleShortcut = async (doc: DocMeta, type: "favorite" | "pin") => {
+    if (actionLock.current || favs.isFetching || pins.isFetching || favs.isError || pins.isError || !favs.data || !pins.data) return;
+    const owner = me.user.id;
+    const old = type === "favorite" ? favs.data.some((item) => item.id === doc.id) : pins.data.some((item) => item.id === doc.id);
+    actionLock.current = true; setActionBusy(true); setActionNotice("");
+    try {
+      if (type === "favorite") await extrasApi.favoriteForAccount(doc.id, owner, !old); else await extrasApi.pinForAccount(doc.id, owner, !old);
+      const key = [type === "favorite" ? "home-favorites" : "home-pins", owner];
+      await qc.cancelQueries({ queryKey: key });
+      const verified = type === "favorite" ? await extrasApi.favoritesForAccount(owner) : await extrasApi.pinsForAccount(owner);
+      if (verified.some((item) => item.id === doc.id) !== !old) throw new Error("shortcut state not confirmed");
+      qc.setQueryData(key, verified);
+      void qc.invalidateQueries({ queryKey: [type === "favorite" ? "favorites" : "pins"] });
+      if (currentUser.current === owner) setActionNotice(t("操作已完成"));
+    } catch {
+      void qc.invalidateQueries({ queryKey: [type === "favorite" ? "home-favorites" : "home-pins", owner] });
+      if (currentUser.current === owner) setActionNotice(t("操作结果未确认，请刷新后检查。"));
+    } finally { actionLock.current = false; if (currentUser.current === owner) setActionBusy(false); }
+  };
+  const copyDocumentLink = async (doc: DocMeta) => {
+    try {
+      if (!navigator.clipboard || !Number.isSafeInteger(doc.id) || doc.id <= 0) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(`${location.origin}${location.pathname}${hrefOf(doc)}`);
+      setActionNotice(t("链接已复制，访问者仍需具备权限。"));
+    } catch { setActionNotice(t("复制失败，请检查浏览器剪贴板权限。")); }
+  };
+  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)}/>;
   const createBoard = useMutation({
     mutationFn: async (kind: BoardStarterKind) => {
       const owner = me.user.id;
@@ -182,6 +218,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
           {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
           {importError && <p role="alert" className="mt-3 text-[13px] text-destructive">{importError}</p>}
+          {actionNotice && <p role="status" className="fixed bottom-5 left-1/2 z-[110] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg">{actionNotice}</p>}
           {(createWithContent.isPending || importing) && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
             <nav aria-label={t("文档分类")} className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
@@ -189,16 +226,17 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
             </nav>
             <div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div>
           </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div></div>}
-          {view === "list" && <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 text-[12px] text-subtle`}>
+          {view === "list" && <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 pr-10 text-[12px] text-subtle`}>
             <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="truncate">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
           </div>}
-          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
+          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d} actions={documentActions(d)}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} actions={documentActions(d)} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
             <span className="grid size-14 place-items-center rounded-full bg-sidebar text-subtle">{selected === "favorites" ? <Star size={23} strokeWidth={1.4} /> : <FolderOpen size={24} strokeWidth={1.4} />}</span>
             <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? t("没有此类型的文档") : selected === "favorites" ? t("还没有收藏的文档") : selected === "shared" ? t("还没有与我共享的文档") : selected === "mine" ? t("暂无我创建的文档") : selected === "recent" ? t("还没有最近访问的文档") : t("暂无文档")}</p>
             {selected === "recent" && kind === "all" && <button onClick={() => create.mutate("doc")} disabled={create.isPending} className="mt-3 text-[13px] text-primary hover:underline">{t("新建文档")}</button>}
           </div>}
         </div>
       </div>
+      {sharingDoc && <ShareDialog key={`${me.user.id}:${sharingDoc.id}`} meta={sharingDoc} onClose={() => setSharingDoc(null)}/>}
       {libraryOpen && <TemplateLibrary disabled={createWithContent.isPending} onChoose={chooseTemplate} onClose={() => setLibraryOpen(false)} />}
     </main>
   );
@@ -226,19 +264,19 @@ function ActionCard({ icon, title, subtitle, disabled, onClick }: { icon: React.
 function dateLabel(value: string) {
   return formatDriveTime(value) || "—";
 }
-function DocumentRow({ doc, viewedAt, workspaceName }: { doc: DocMeta; viewedAt?: string; workspaceName?: string }) {
-  return <button onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} group h-14 w-full items-center gap-3 border-b px-2 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
+function DocumentRow({ doc, viewedAt, workspaceName, actions }: { doc: DocMeta; viewedAt?: string; workspaceName?: string; actions: React.ReactNode }) {
+  return <div className="group relative border-b" data-home-row><button type="button" onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} h-14 w-full items-center gap-3 px-2 pr-10 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
     <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
     <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
     <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
-  </button>;
+  </button><span className="absolute right-1 top-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">{actions}</span></div>;
 }
 
-function DocumentCard({ doc }: { doc: DocMeta }) {
-  return <button type="button" onClick={() => go(hrefOf(doc))} className="group min-w-0 overflow-hidden rounded-md border border-[#dee0e3] bg-white text-left transition-shadow hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-home-card>
+function DocumentCard({ doc, actions }: { doc: DocMeta; actions: React.ReactNode }) {
+  return <div className="group relative min-w-0 overflow-hidden rounded-md border border-[#dee0e3] bg-white transition-shadow hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)]" data-home-card><button type="button" onClick={() => go(hrefOf(doc))} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-primary">
     <span className="grid h-36 place-items-center bg-[#f5f6f7]"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} large/></span>
-    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] px-3"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
-  </button>;
+    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] pl-3 pr-10"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
+  </button><span className="absolute bottom-[11px] right-1">{actions}</span></div>;
 }

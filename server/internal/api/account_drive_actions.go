@@ -35,3 +35,19 @@ func (s *Server) accountPin(w http.ResponseWriter, r *http.Request) {
 		s.putPin(w, r)
 	}
 }
+
+func (s *Server) accountFavorite(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.putFavorite(w, r)
+	}
+}
+func (s *Server) accountFavorites(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.listFavorites(w, r)
+	}
+}
+func (s *Server) accountPins(w http.ResponseWriter, r *http.Request) {
+	if requireActionAccount(w, r) {
+		s.listPins(w, r)
+	}
+}

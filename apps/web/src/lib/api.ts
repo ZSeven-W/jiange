@@ -496,6 +496,9 @@ export const extrasApi = {
   pins: () => request<{ docs: DocMeta[] }>("GET", "/api/pins").then((r) => r.docs),
   pin: (id: number) => request<void>("PUT", `/api/docs/${id}/pin`),
   unpin: (id: number) => request<void>("DELETE", `/api/docs/${id}/pin`),
+  favoritesForAccount: (userId: number) => request<{ docs: DocMeta[] }>("GET", "/api/account-favorites", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => { if (!Array.isArray(r?.docs)) throw new ApiError(502, "invalid_response", "收藏列表不可用"); return r.docs; }),
+  pinsForAccount: (userId: number) => request<{ docs: DocMeta[] }>("GET", "/api/account-pins", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => { if (!Array.isArray(r?.docs)) throw new ApiError(502, "invalid_response", "置顶列表不可用"); return r.docs; }),
+  favoriteForAccount: (id: number, userId: number, starred: boolean) => request<void>(starred ? "PUT" : "DELETE", `/api/docs/${id}/account-star`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   pinForAccount: (id: number, userId: number, pinned: boolean) => request<void>(pinned ? "PUT" : "DELETE", `/api/docs/${id}/account-pin`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   ancestors: (id: number) => request<{ ancestors: DocMeta[] }>("GET", `/api/docs/${id}/ancestors`).then((r) => r.ancestors),
 };
