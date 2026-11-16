@@ -63,7 +63,7 @@ import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./doc-ai-panel";
 import { archivePendingDraft, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, removeRecoveryDraft } from "@/lib/pending-ops-storage";
 import { createVisitRecorder } from "@/lib/recent-visit";
-import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./doc-meta-state";
+import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, removeDeniedDocumentReferences, shouldRetryDocMeta } from "./doc-meta-state";
 import { ResourceTypeNotice } from "./resource-type-notice";
 import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage, mayUseDownloadRecheck, pendingDocumentBackup } from "./document-copy";
 import { markdownExportLosses } from "./markdown-export";
@@ -93,6 +93,10 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     refetchOnWindowFocus: true,
   });
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
+  useEffect(() => {
+    if (metadataState !== "denied") return;
+    void removeDeniedDocumentReferences(qc, id, () => isDocAccessDenied(qc.getQueryState(docMetaKey(id, me.user.id))?.error));
+  }, [qc, id, me.user.id, metadataState]);
   const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState), metadataState === "ready" && meta.data?.kind === "doc" ? meta.data.role : undefined);
   const [recoveryState, setRecoveryState] = useState<{ user: number; doc: number; keys: string[]; selected: string } | null>(null);
   const [draftPreview, setDraftPreview] = useState<{ user: number; doc: number; ops: Op[]; archived: boolean; archiveKey?: string } | null>(null);

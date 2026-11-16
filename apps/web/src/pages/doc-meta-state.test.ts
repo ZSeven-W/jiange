@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, type DocMeta } from "@/lib/api";
-import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./doc-meta-state";
+import { QueryClient } from "@tanstack/react-query";
+import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, removeDeniedDocumentReferences, shouldRetryDocMeta } from "./doc-meta-state";
 
 const cached = { id: 7, role: "edit" } as DocMeta;
 
@@ -35,5 +36,26 @@ describe("document metadata access", () => {
     expect(docMetaKey(7, 1).slice(0, 2)).toEqual(["doc", 7]);
     expect(docMetaState(undefined, false, null)).toBe("loading");
     expect(docMetaState(cached, false, null)).toBe("ready");
+  });
+
+  it("removes a denied document from cached lists without letting an older request restore it", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const denied = { id: 7, title: "已撤权" }, allowed = { id: 8, title: "仍可访问" };
+    for (const key of [["docs"], ["shared"], ["favorites"], ["pins"], ["recent", 1], ["search", "项目"]]) qc.setQueryData(key, [denied, allowed]);
+    let finish!: (value: unknown[]) => void;
+    const stale = qc.fetchQuery({ queryKey: ["shared"], queryFn: () => new Promise<unknown[]>((resolve) => { finish = resolve; }) }).catch(() => undefined);
+    await Promise.resolve();
+    await removeDeniedDocumentReferences(qc, 7, () => true);
+    finish([denied, allowed]); await stale;
+    for (const key of [["docs"], ["shared"], ["favorites"], ["pins"], ["recent", 1], ["search", "项目"]]) expect(qc.getQueryData(key)).toEqual([allowed]);
+    qc.clear();
+  });
+
+  it("does not remove an entry after access has already been restored", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["shared"], [{ id: 7, title: "已恢复" }]);
+    await removeDeniedDocumentReferences(qc, 7, () => false);
+    expect(qc.getQueryData(["shared"])).toEqual([{ id: 7, title: "已恢复" }]);
+    qc.clear();
   });
 });

@@ -1,4 +1,5 @@
 import { ApiError, type DocMeta } from "@/lib/api";
+import type { QueryClient } from "@tanstack/react-query";
 
 export type DocMetaState = "loading" | "ready" | "offline" | "retry" | "denied";
 
@@ -27,4 +28,19 @@ export function mayConnectDocument(data: DocMeta | undefined, state: DocMetaStat
 
 export function shouldRetryDocMeta(failureCount: number, error: unknown): boolean {
   return !isDocAccessDenied(error) && failureCount < 2;
+}
+
+/** Remove a definitively denied document from session-scoped lists, then
+ * refresh them. Cancel older requests first so a stale response cannot put
+ * the inaccessible title back; a later successful metadata read wins. */
+export async function removeDeniedDocumentReferences(qc: QueryClient, docId: number, stillDenied: () => boolean): Promise<void> {
+  const roots = ["docs", "shared", "favorites", "pins", "recent", "search"] as const;
+  await Promise.all(roots.map((root) => qc.cancelQueries({ queryKey: [root] })));
+  if (!stillDenied()) return;
+  for (const root of roots) {
+    qc.setQueriesData<unknown>({ queryKey: [root] }, (previous: unknown) => Array.isArray(previous) ? previous.filter((entry) => !entry || typeof entry !== "object" || !("id" in entry) || entry.id !== docId) : previous);
+    void qc.invalidateQueries({ queryKey: [root] });
+  }
+  void qc.invalidateQueries({ queryKey: ["drive"] });
+  void qc.invalidateQueries({ queryKey: ["drive-nav"] });
 }
