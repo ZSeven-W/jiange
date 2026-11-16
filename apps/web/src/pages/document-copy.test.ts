@@ -44,6 +44,7 @@ describe("document copy access", () => {
   it("preserves pending edits without exporting a replica when access is unverified", () => {
     const ops = [{ id: 4, text: "我的未同步修改" }];
     expect(pendingDocumentBackup(1, 2, 3, ops)).toEqual({ version: 1, userId: 1, docId: 2, clientId: 3, state: null, ops });
+    expect(pendingDocumentBackup(1, 2, 3, ops, 4)).toEqual({ version: 1, userId: 1, docId: 2, clientId: 3, state: null, ops, historyEpoch: 4 });
   });
 
   it("requires a fresh download permission for the same document and unchanged cache", () => {

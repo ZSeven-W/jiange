@@ -46,6 +46,8 @@ export class SyncClient {
   /** History generation of the log this replica last synced with; a change
    * means the server rewound (restore/PITR) and every cached seq is void. */
   private historyEpoch: number | null = null;
+  /** Generation in which the pending local operations were authored. */
+  private draftEpoch: number | null = null;
   private welcomeHead: number | null = null;
   private sequenceGap = false;
   private _caughtUp = false;
@@ -93,7 +95,9 @@ export class SyncClient {
     const pending = this.doc.pendingIds();
     let next: "missing_dependency" | "invalid_history" | null = null;
     if (pending.length) {
-      const local = new Set(this.pendingOps().map((op) => idKey(op.id)));
+      // Quarantined ops were never applied to this replica; unresolved ops in
+      // the replayed server history cannot be attributed to the local draft.
+      const local = new Set(this._blocked === "history_changed" ? [] : this.pendingOps().map((op) => idKey(op.id)));
       next = pending.some((id) => !local.has(idKey(id))) ? "invalid_history" : "missing_dependency";
     }
     const before = this.blocked;
@@ -137,6 +141,8 @@ export class SyncClient {
 
   /** History epoch this replica last synced with (null = v1 server / first contact). */
   get epoch(): number | null { return this.historyEpoch; }
+  /** Null means the draft predates epoch tracking or came from a v1 server. */
+  get pendingHistoryEpoch(): number | null { return this.draftEpoch; }
 
   /** Attach a freshly opened transport. */
   open(send: (b: Uint8Array) => void) {
@@ -176,6 +182,7 @@ export class SyncClient {
 
   /** Records locally generated ops (already applied to `doc`) and sends them when possible. */
   push(ops: (Op | null)[]) {
+    if (!this.unacked && ops.some((op) => op !== null)) this.draftEpoch = this.historyEpoch;
     for (const op of ops) if (op) this.queued.push(op);
     this.h.change?.(false);
     if (ops.some((op) => op?.t === "ttable")) { this.blockUnsupportedTable(); return; }
@@ -199,7 +206,7 @@ export class SyncClient {
 
   /** Retry retained writes after the caller has checked access/connection state. */
   retryPending() {
-    if (!this._blocked || this._blocked === "table_unsupported" || this.causalIssue) return;
+    if (!this._blocked || this._blocked === "table_unsupported" || this._blocked === "history_changed" || this.causalIssue) return;
     // A late ACK from the rejected connection must never acknowledge a retry.
     if (this.rejectedTransport) return;
     this.queued = this.inflight.flat().concat(this.queued);
@@ -211,14 +218,29 @@ export class SyncClient {
 
   /**
    * Restores ops saved by a previous session (e.g. from localStorage) before
-   * the first connection. They are replayed onto the fresh replica and resent;
-   * the server deduplicates anything it already has.
+   * the first connection. Epoch-aware drafts are replayed only against the
+   * same history. Unknown or changed epochs are retained for manual recovery.
    */
-  restore(clientId: number, ops: Op[], blocked?: string | null) {
+  restore(clientId: number, ops: Op[], blocked?: string | null, historyEpoch?: number | null) {
     if (this.doc) throw new Error("restore before the first connection");
+    if (historyEpoch != null && (!Number.isSafeInteger(historyEpoch) || historyEpoch < 1)) throw new RangeError("invalid draft history epoch");
     this.clientId = clientId;
+    this.draftEpoch = historyEpoch ?? null;
+    if (historyEpoch != null) this.historyEpoch = historyEpoch;
     this.queued = ops.concat(this.queued);
     if (blocked && ops.length && blocked !== "missing_dependency" && blocked !== "invalid_history") this.setBlocked(blocked);
+  }
+
+  /** Explicitly discard only a quarantined draft after the caller backs it up. */
+  discardQuarantined(): boolean {
+    if (this._blocked !== "history_changed" || this.causalIssue || !this.caughtUp || this.inflight.length || !this.queued.length) return false;
+    this.queued = [];
+    this.draftEpoch = null;
+    this.setBlocked(null);
+    this.h.change?.(false);
+    this.setStatus("synced");
+    this.acknowledgeIfSafe();
+    return true;
   }
 
   setAwareness(state: unknown) {
@@ -261,6 +283,7 @@ export class SyncClient {
       if (m.count !== 0) { this.gap("non-empty ACK for sync fence"); return; }
       this.awaitingFence = false;
       this.inflight.shift();
+      if (!this.inflight.length && !this.queued.length) this.draftEpoch = null;
       this.flush();
       this.acknowledgeIfSafe();
       if (this.caughtUp && !this.blocked && !this.inflight.length && !this.queued.length) this.setStatus("synced");
@@ -313,27 +336,32 @@ export class SyncClient {
         }
         // Moving from a v1 connection with a cached replica to v2 is also a
         // generation change: v1 sequences cannot be tied to any epoch.
+        const pending = this.inflight.flat().concat(this.queued);
         const epochChanged = epoch !== undefined && epoch !== this.historyEpoch && this.doc !== null;
+        // A stale or unidentifiable draft must not be replayed on a new
+        // generation: character IDs may now refer to different content.
+        const quarantine = pending.length > 0 && (this._blocked === "history_changed" || epoch !== undefined && (this.draftEpoch === null || this.draftEpoch !== epoch));
+        const newlyQuarantined = quarantine && this._blocked !== "history_changed";
         if (epochChanged) {
           this.lastSeq = 0;
           this.safeSeq = 0;
           this.droppedOnResync++;
         }
         if (epoch !== undefined) this.historyEpoch = epoch;
-        const pending = this.inflight.flat().concat(this.queued);
         this.inflight = [];
         this.awaitingFence = false;
         this.deferredAcks = [];
-        this.queued = [];
+        // Keep the draft owned even if a callback or snapshot application throws.
+        this.queued = pending;
         let rebuilt = false;
-        if (m.snapshot || !this.doc || m.clientId !== this.clientId || epochChanged) {
+        if (m.snapshot || !this.doc || m.clientId !== this.clientId || epochChanged || newlyQuarantined) {
           this.h.beforeRemote?.();
           const fresh = snapshot ?? new Doc(m.clientId);
-          if (!m.snapshot && this.doc && m.clientId !== this.clientId && !epochChanged) {
+          if (!m.snapshot && this.doc && m.clientId !== this.clientId && !epochChanged && !newlyQuarantined) {
             // server issued a new client id but no snapshot: keep our state, switch id
             this.doc.client = m.clientId;
           } else {
-            for (const op of pending) fresh.apply(op);
+            if (!quarantine) for (const op of pending) fresh.apply(op);
             this.doc = fresh;
             rebuilt = true;
           }
@@ -341,7 +369,10 @@ export class SyncClient {
         }
         this.clientId = m.clientId;
         this.safeSeq = Math.min(this.safeSeq, m.headSeq);
-        this.queued = pending;
+        if (newlyQuarantined) {
+          this.setBlocked("history_changed");
+          this.h.error?.("history_changed", "文档历史已变化或草稿版本无法确认，本地草稿未自动合并。");
+        }
         this.welcomeHead = m.headSeq;
         this.sequenceGap = this.lastSeq > m.headSeq;
         this.inspectCausality();

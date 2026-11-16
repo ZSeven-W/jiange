@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SyncClient, type Peer, type SyncStatus } from "@jiange/collab";
 import type { Presence } from "./presence";
-import { prepareBrowserPendingSession, writePendingOps, type PendingSession } from "./pending-ops-storage";
+import { pendingSessionQueue, prepareBrowserPendingSession, writePendingOps, type PendingSession } from "./pending-ops-storage";
 
 export interface RemotePeer {
   clientId: number;
@@ -62,7 +62,7 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
         peers: (ps: Peer[]) => setPeers(ps.filter((p) => p.state && typeof p.state === "object") as RemotePeer[]),
         error: (code, msg) => {
           console.warn("sync", code, msg);
-          if (code === "gap" || (c.blocked && code !== "missing_dependency" && code !== "invalid_history")) socket.current?.close();
+          if (code === "gap" || (c.blocked && code !== "missing_dependency" && code !== "invalid_history" && code !== "history_changed")) socket.current?.close();
           if (code === "read_only" || code === "forbidden" || code === "not_found") void qc.invalidateQueries({ queryKey: ["doc", docId] });
         },
       });
@@ -75,6 +75,9 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
   useEffect(() => {
     let stopped = false;
     let pending: PendingSession | null = null;
+    // StrictMode and quick navigation may remount before the old Web Lock is
+    // actually released. Wait for the same account/document's prior lifetime.
+    const lifetime = pendingSessionQueue.reserve(userId, docId), finish = lifetime.release;
     setStorageError(false);
     setLegacyPending(false);
     setOtherPending(false);
@@ -82,22 +85,30 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
       if (!pending) return;
       try {
         const ops = client.pendingOps();
-        writePendingOps(localStorage, pending.key, ops.length ? { clientId: client.clientId, ops, blocked: client.rejection ?? client.blocked } : null);
+        writePendingOps(localStorage, pending.key, ops.length ? { clientId: client.clientId, ops, blocked: client.rejection ?? client.blocked, historyEpoch: client.pendingHistoryEpoch } : null);
       } catch { setStorageError(true); }
     };
     const random = () => typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) => x.toString(16).padStart(2, "0")).join("");
     const failed = () => { if (!stopped) { setStorageError(true); setStorageClient(client); } };
     const prepared = (result: PendingSession) => {
-      if (stopped) { result.release(); return; }
       pending = result;
       setLegacyPending(result.legacy);
       setOtherPending(result.otherDrafts);
       if (result.corrupt) setStorageError(true);
-      if (result.draft?.ops.length && !client.doc) client.restore(result.draft.clientId, result.draft.ops, result.draft.blocked);
+      if (result.draft?.ops.length && !client.doc) client.restore(result.draft.clientId, result.draft.ops, result.draft.blocked, result.draft.historyEpoch);
       persist.current = (candidate) => { if (candidate === client) save(); };
       setStorageClient(client);
     };
-    void prepareBrowserPendingSession(() => ({ local: window.localStorage, session: window.sessionStorage, locks: navigator.locks }), userId, docId, random).then(prepared).catch(failed);
+    void (async () => {
+      await lifetime.ready.catch(() => {});
+      if (stopped) { finish(); return; }
+      let acquired: PendingSession | null = null;
+      try {
+        acquired = await prepareBrowserPendingSession(() => ({ local: window.localStorage, session: window.sessionStorage, locks: navigator.locks }), userId, docId, random);
+        if (stopped) { await acquired.release(); finish(); return; }
+        prepared(acquired);
+      } catch { if (acquired) { await acquired.release(); pending = null; } failed(); finish(); }
+    })();
     const id = setInterval(save, 1000); // remove successfully acknowledged batches
     window.addEventListener("beforeunload", save);
     return () => {
@@ -105,7 +116,7 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
       clearInterval(id);
       window.removeEventListener("beforeunload", save);
       save();
-      pending?.release();
+      if (pending) void pending.release().finally(finish);
       persist.current = () => {};
     };
   }, [client, docId, userId]);

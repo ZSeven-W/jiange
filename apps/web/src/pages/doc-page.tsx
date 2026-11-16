@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { idKey, Tx, type OpId, type SyncStatus } from "@jiange/collab";
+import { idKey, Tx, type Op, type OpId, type SyncStatus } from "@jiange/collab";
 import { bodyBlocks } from "@/editor/model";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./doc-header-meta";
 import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";
@@ -61,7 +61,7 @@ import { fetchDocxImages } from "./docx-images";
 import { uploadDocxImportImages } from "./docx-import-images";
 import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./doc-ai-panel";
-import { readAccountDraftBackups } from "@/lib/pending-ops-storage";
+import { archivePendingDraft, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys } from "@/lib/pending-ops-storage";
 import { createVisitRecorder } from "@/lib/recent-visit";
 import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./doc-meta-state";
 import { ResourceTypeNotice } from "./resource-type-notice";
@@ -69,6 +69,7 @@ import { canCopyContent, canCopyDocument, canDownloadDocument, copyErrorMessage,
 import { markdownExportLosses } from "./markdown-export";
 import { DocumentMoveDialog } from "./document-move-dialog";
 import { DocumentMentionsDialog } from "./document-mentions-dialog";
+import { PendingDraftPreview } from "./pending-draft-preview";
 import { collectDocumentMentions } from "./document-mentions";
 import { useI18n } from "@/lib/i18n";
 import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
@@ -93,6 +94,22 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   });
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState));
+  const [recoveryState, setRecoveryState] = useState<{ user: number; doc: number; keys: string[]; selected: string } | null>(null);
+  const [draftPreview, setDraftPreview] = useState<{ user: number; doc: number; ops: Op[]; archived: boolean } | null>(null);
+  const recoveryKeys = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.keys : [];
+  useEffect(() => {
+    let active = true;
+    setDraftPreview(null);
+    const refresh = () => {
+      try {
+        const keys = recoveryDraftKeys(localStorage, me.user.id, id);
+        if (active) setRecoveryState((old) => ({ user: me.user.id, doc: id, keys, selected: old?.user === me.user.id && old.doc === id && keys.includes(old.selected) ? old.selected : keys[0] ?? "" }));
+      } catch { if (active) setRecoveryState({ user: me.user.id, doc: id, keys: [], selected: "" }); }
+    };
+    const changed = (event: StorageEvent) => { if (event.key === null || event.key.startsWith(`jiange:recovery:v1:${me.user.id}:${id}:`)) refresh(); };
+    refresh(); window.addEventListener("storage", changed);
+    return () => { active = false; window.removeEventListener("storage", changed); };
+  }, [id, me.user.id]);
   const [visiblePolicyVerified, setVisiblePolicyVerified] = useState(() => typeof document !== "undefined" && document.visibilityState !== "hidden");
   const policyUpdatedAt = useRef(meta.dataUpdatedAt);
   const requiredPolicyUpdateAfter = useRef(0);
@@ -770,7 +787,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const downloadPending = () => {
     // Preserve the user's unacknowledged operations without embedding the
     // server replica, whose download permission might have changed offline.
-    const backup = pendingDocumentBackup(me.user.id, id, sync.client.clientId, sync.client.pendingOps());
+    const backup = pendingDocumentBackup(me.user.id, id, sync.client.clientId, sync.client.pendingOps(), sync.client.pendingHistoryEpoch);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
     a.download = `jiange-unsynced-${id}.json`;
@@ -787,8 +804,33 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       URL.revokeObjectURL(a.href);
     } catch { setRetrySyncError("无法读取本账号的本地草稿，请检查浏览器存储权限。"); }
   };
+  const showArchivedDraft = () => {
+    const key = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.selected : "";
+    if (!key) return;
+    try {
+      const saved = readRecoveryDraft(localStorage, me.user.id, id, key);
+      if (!saved) { setRetrySyncError("本地草稿不存在，请检查浏览器存储。"); return; }
+      setDraftPreview({ user: me.user.id, doc: id, ops: saved.ops, archived: true }); setRetrySyncError("");
+    } catch { setRetrySyncError("无法读取本地草稿；原始备份仍保存在浏览器中。"); }
+  };
+  const keepDraftAndContinue = () => {
+    const client = sync.client;
+    if (client.blocked !== "history_changed" || !client.caughtUp || !client.unacked || !metadataVerified) return;
+    let archived = false;
+    try {
+      const token = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, "0")).join("");
+      const ops = client.pendingOps();
+      const key = archivePendingDraft(localStorage, me.user.id, id, token, { clientId: client.clientId, ops, blocked: "history_changed", historyEpoch: client.pendingHistoryEpoch });
+      archived = true;
+      const keys = recoveryDraftKeys(localStorage, me.user.id, id);
+      setRecoveryState({ user: me.user.id, doc: id, keys, selected: key });
+      if (!client.discardQuarantined()) { setRetrySyncError("当前文档尚未同步完成；草稿已保留，请稍后重试。"); return; }
+      setDraftPreview((old) => old?.user === me.user.id && old.doc === id && !old.archived ? { ...old, ops, archived: true } : old);
+      setRetrySyncError("");
+    } catch { setRetrySyncError(archived ? "草稿副本已保存，但无法完成切换；请检查本地备份。" : "无法保存草稿副本，原草稿未清除；请先下载备份。"); }
+  };
   const retryPending = async () => {
-    if (sync.client.blocked === "missing_dependency" || sync.client.blocked === "invalid_history") {
+    if (sync.client.blocked === "missing_dependency" || sync.client.blocked === "invalid_history" || sync.client.blocked === "history_changed") {
       setRetrySyncError("所需历史尚未恢复，请先下载本地备份并联系管理员。");
       return;
     }
@@ -811,6 +853,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
         <p>{metadataState === "denied" ? "文档不存在或无权访问。" : "暂时无法连接服务器，请稍后重试。"}</p>
         <CommentAttemptRecovery store={commentAttempts} userId={me.user.id} />
         {hasPending && <p className="mt-3">未同步的修改仍保留在本地，尚未保存到云端。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
+        {recoveryKeys.length > 0 && <p className="mt-3">本账号还有已保留的本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
         {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，关闭页面后可能无法恢复。</p>}
         {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
         {sync.legacyPending && <p className="mt-3">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
@@ -995,7 +1038,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           onOutline={() => setOutlineOpen((v) => !v)}
           width={width}
           onWidthChange={(value) => { writeDocWidth(me.user.id, id, value); setWidth(value); }}
-          readOnly={!canEditRole}
+          readOnly={!canEditRole || sync.blocked === "history_changed"}
           allowContentCopy={contentCopyAllowed}
           allowDocumentPrint={downloadAllowed}
           metadataVerified={metadataVerified}
@@ -1003,6 +1046,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           title={title}
           workspace={meta.data?.workspaceName || me.workspaces[0]?.name || "我的空间"}
           status={metadataVerified ? sync.status : "offline"}
+          draftConflict={sync.blocked === "history_changed"}
           peers={sync.peers}
           me={presence}
         />
@@ -1022,12 +1066,21 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
         }}>导出原始数据</button>}</p>}
         {metadataVerified && !commentAccessDenied && (comments.isError || members.isError) && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论加载失败。 <button type="button" className="text-primary underline" onClick={() => { void comments.refetch(); void members.refetch(); }}>重试</button></p>}
         {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。 <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? "正在重试…" : "重试"}</button></div>}
-        {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
-          <span>{sync.blocked === "missing_dependency" ? "本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。" : sync.blocked === "invalid_history" ? "服务端文档历史不完整，无法确认同步状态；请联系管理员。" : `${sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。`}</span>{" "}
-          {sync.client.unacked > 0 && <><button type="button" onClick={downloadPending} className="underline">下载本地备份</button>{" "}</>}
-          {sync.blocked && sync.blocked !== "missing_dependency" && sync.blocked !== "invalid_history" && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="underline disabled:opacity-50">{retryingSync ? "检查中…" : "检查权限并重试"}</button>}
+        {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
+          <span>{sync.blocked === "history_changed" ? "文档历史已变化或草稿版本无法确认，本地草稿没有自动合并；当前显示的是云端内容。" : sync.blocked === "missing_dependency" ? "本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。" : sync.blocked === "invalid_history" ? "服务端文档历史不完整，无法确认同步状态；请联系管理员。" : `${sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。`}</span>{" "}
+          {sync.client.unacked > 0 && <button type="button" onClick={downloadPending} className="min-h-8 underline">下载本地备份</button>}
+          {sync.blocked === "history_changed" && <><button type="button" onClick={() => setDraftPreview({ user: me.user.id, doc: id, ops: sync.client.pendingOps(), archived: false })} className="min-h-8 underline" data-preview-pending-draft>查看本地草稿</button><button type="button" disabled={!sync.caughtUp || !metadataVerified} onClick={keepDraftAndContinue} className="min-h-8 underline disabled:opacity-50" data-keep-pending-draft>{canEditRole ? "保留草稿并继续编辑" : "保留草稿并查看文档"}</button></>}
+          {sync.blocked && sync.blocked !== "missing_dependency" && sync.blocked !== "invalid_history" && sync.blocked !== "history_changed" && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="min-h-8 underline disabled:opacity-50">{retryingSync ? "检查中…" : "检查权限并重试"}</button>}
           {retrySyncError && <span className="ml-2">{retrySyncError}</span>}
         </div>}
+        {recoveryKeys.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-[#F6F8FF] px-5 py-2 text-[13px] text-muted-foreground dark:bg-surface" data-recovery-drafts>
+          <span>本机保留 {recoveryKeys.length} 份未合并草稿。</span>
+          {recoveryKeys.length > 1 && <select aria-label="选择本地草稿" value={recoveryState?.selected ?? ""} onChange={(event) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: event.target.value } : old)} className="max-w-36 rounded border bg-surface px-1 py-0.5">{recoveryKeys.map((key, index) => <option key={key} value={key}>草稿 {index + 1}</option>)}</select>}
+          <button type="button" onClick={showArchivedDraft} className="text-primary hover:underline">查看</button>
+          <button type="button" onClick={downloadStoredDrafts} className="text-primary hover:underline">下载备份</button>
+          {retrySyncError && <span role="alert">{retrySyncError}</span>}
+        </div>}
+        {draftPreview?.user === me.user.id && draftPreview.doc === id && <PendingDraftPreview ops={draftPreview.ops} onClose={() => setDraftPreview(null)} onDownload={draftPreview.archived ? downloadStoredDrafts : downloadPending} />}
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
@@ -1250,6 +1303,7 @@ function TopBar({
   title,
   workspace,
   status,
+  draftConflict = false,
   peers,
   me,
   shareAnchor,
@@ -1315,6 +1369,7 @@ function TopBar({
   title: string;
   workspace: string;
   status: SyncStatus;
+  draftConflict?: boolean;
   peers: RemotePeer[];
   me: Presence;
 }) {
@@ -1328,7 +1383,7 @@ function TopBar({
       return next === prev ? prev : { ...next, doc: meta?.id };
     });
   }, [status, meta?.id]);
-  const metaText = headerMetaText(status, savedFlag.saved, meta?.updatedAt);
+  const metaText = draftConflict ? "本地草稿待处理" : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
   const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
     <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:h-16 md:pr-5", sidebarDocked && "md:pl-5")}>
@@ -1352,7 +1407,7 @@ function TopBar({
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
-      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: s.color }} />{metaText}</span>
+      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict ? "#D83931" : s.color }} />{metaText}</span>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
         {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">只读</span>}

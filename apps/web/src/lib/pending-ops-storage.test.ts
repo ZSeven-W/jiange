@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, encodeOps, encodeServerMsg, SyncClient } from "@jiange/collab";
-import { pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, writePendingOps } from "./pending-ops-storage";
+import { archivePendingDraft, PendingSessionQueue, pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, writePendingOps } from "./pending-ops-storage";
 
 function memoryStorage() {
   const items = new Map<string, string>();
@@ -27,6 +27,41 @@ const fresh = (() => { let n = 0; return () => `12345678-1234-1234-1234-${String
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("offline draft ownership", () => {
+  it("serializes remounts for the same account and document without blocking other documents", async () => {
+    const queue = new PendingSessionQueue(), first = queue.reserve(1, 2), second = queue.reserve(1, 2), other = queue.reserve(1, 3);
+    let ready = false; void second.ready.then(() => { ready = true; });
+    await first.ready; await other.ready; await settle(); expect(ready).toBe(false);
+    first.release(); first.release(); await second.ready; expect(ready).toBe(true);
+    second.release(); other.release();
+  });
+  it("preserves the original epoch in a recovery copy without auto-replaying it", async () => {
+    const local = memoryStorage(), session = memoryStorage(), locks = fakeLocks();
+    const saved = { clientId: 1, ops: [op], blocked: "history_changed", historyEpoch: 4 };
+    const key = archivePendingDraft(local, 10, 42, fresh(), saved);
+    expect(readRecoveryDraft(local, 10, 42, key)).toMatchObject(saved);
+    expect(readRecoveryDraft(local, 11, 42, key)).toBeNull();
+    expect(recoveryDraftKeys(local, 10, 42)).toEqual([key]);
+    expect(readAccountDraftBackups(local, 10, 42).map((item) => item.key)).toEqual([key]);
+    const next = await preparePendingSession(local, session, locks, 10, 42, fresh);
+    expect(next.draft).toBeNull(); next.release();
+  });
+
+  it("never overwrites a recovery copy or treats an invalid epoch as a valid draft", async () => {
+    const local = memoryStorage(), token = fresh(), saved = { clientId: 1, ops: [op], historyEpoch: 3 };
+    const key = archivePendingDraft(local, 10, 42, token, saved), before = local.getItem(key);
+    expect(() => archivePendingDraft(local, 10, 42, token, saved)).toThrow();
+    expect(local.getItem(key)).toBe(before);
+    expect(() => archivePendingDraft(local, 10, 42, fresh(), { ...saved, historyEpoch: 0 })).toThrow();
+    expect(local.getItem(key)).toBe(before);
+  });
+  it("does not let draft metadata change the recovery copy's account scope", () => {
+    const local = memoryStorage();
+    const forged = { clientId: 1, ops: [op], userId: 11, docId: 99, version: 99 };
+    const key = archivePendingDraft(local, 10, 42, fresh(), forged);
+    expect(JSON.parse(local.getItem(key)!)).toMatchObject({ userId: 10, docId: 42, version: 1 });
+    expect(readRecoveryDraft(local, 11, 99, key)).toBeNull();
+    expect(readRecoveryDraft(local, 10, 42, key)?.ops).toEqual([op]);
+  });
   it("restores unsupported table payload bytes for the owning session, including the older JSON form", async () => {
     const local = memoryStorage(), session = memoryStorage(), locks = fakeLocks(), owner = await preparePendingSession(local, session, locks, 10, 42, fresh);
     const table = { t: "ttable" as const, id: { client: 1, clock: 2 }, block: { client: 1, clock: 1 }, payload: new Uint8Array([0, 17, 128, 255]) };
@@ -80,6 +115,16 @@ describe("offline draft ownership", () => {
     expect(s.getItem(first.key)).not.toBeNull();
     expect(s.getItem(second.key)).not.toBeNull();
     recovered.release();
+  });
+  it("waits until a released lease is actually available to the next recovery", async () => {
+    const storage = memoryStorage(), locks = fakeLocks();
+    const first = await preparePendingSession(storage, memoryStorage(), locks, 10, 42, fresh);
+    writePendingOps(storage, first.key, { ...draft, historyEpoch: 3 });
+    await first.release();
+    const recovered = await preparePendingSession(storage, memoryStorage(), locks, 10, 42, fresh);
+    expect(recovered.key).toBe(first.key);
+    expect(recovered.draft?.historyEpoch).toBe(3);
+    await recovered.release();
   });
   it("without locks never replays a different tab and exports only the current account", async () => {
     const s = memoryStorage(), session = memoryStorage();

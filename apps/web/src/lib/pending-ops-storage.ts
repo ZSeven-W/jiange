@@ -1,18 +1,34 @@
 import { decodeOps, encodeOps, type Op } from "@jiange/collab";
 
-export interface PendingOpsDraft { clientId: number; ops: Op[]; blocked?: string | null }
-export interface PendingSession { key: string; draft: PendingOpsDraft | null; legacy: boolean; otherDrafts: boolean; corrupt: boolean; release: () => void }
+export interface PendingOpsDraft { clientId: number; ops: Op[]; blocked?: string | null; historyEpoch?: number | null }
+export interface PendingSession { key: string; draft: PendingOpsDraft | null; legacy: boolean; otherDrafts: boolean; corrupt: boolean; release: () => Promise<void> }
 
 type LockProvider = Pick<LockManager, "request">;
 export interface StorageEnvironment { local: Storage; session: Storage; locks?: LockProvider }
+
+/** Serialize same-account/document session lifetimes inside one page process. */
+export class PendingSessionQueue {
+  private readonly tails = new Map<string, Promise<void>>();
+  reserve(userId: number, docId: number): { ready: Promise<void>; release: () => void } {
+    const key = `${userId}:${docId}`, ready = this.tails.get(key) ?? Promise.resolve();
+    let finish!: () => void, released = false;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const tail = ready.catch(() => {}).then(() => finished);
+    this.tails.set(key, tail);
+    void tail.then(() => { if (this.tails.get(key) === tail) this.tails.delete(key); });
+    return { ready, release: () => { if (!released) { released = true; finish(); } } };
+  }
+}
+export const pendingSessionQueue = new PendingSessionQueue();
 const base = (userId: number, docId: number) => `jiange:pending:v3:${userId}:${docId}:`;
 export const pendingOpsKey = (userId: number, docId: number, token: string) => base(userId, docId) + token;
 const v2Key = (userId: number, docId: number) => `jiange:pending:v2:${userId}:${docId}`;
+const recoveryBase = (userId: number, docId: number) => `jiange:recovery:v1:${userId}:${docId}:`;
 
 function parse(raw: string | null): PendingOpsDraft | null {
   if (raw === null) return null;
   const draft = JSON.parse(raw) as PendingOpsDraft;
-  if (!Number.isSafeInteger(draft?.clientId) || draft.clientId < 1 || !Array.isArray(draft.ops) || (draft.blocked != null && typeof draft.blocked !== "string")) throw new Error("invalid saved operations");
+  if (!Number.isSafeInteger(draft?.clientId) || draft.clientId < 1 || !Array.isArray(draft.ops) || (draft.blocked != null && typeof draft.blocked !== "string") || (draft.historyEpoch != null && (!Number.isSafeInteger(draft.historyEpoch) || draft.historyEpoch < 1))) throw new Error("invalid saved operations");
   // JSON cannot preserve Uint8Array. Accept both the current byte array and
   // the older numeric-key object representation, without discarding raw data
   // if the payload is malformed or exceeds the protocol's per-op limit.
@@ -45,10 +61,38 @@ function accountKeys(storage: Storage, userId: number, docId: number): string[] 
 }
 /** Exports only account-scoped keys; never reads the old unowned key. */
 export function readAccountDraftBackups(storage: Storage, userId: number, docId: number): { key: string; raw: string }[] {
-  return accountKeys(storage, userId, docId).flatMap((key) => {
+  return [...accountKeys(storage, userId, docId), ...recoveryDraftKeys(storage, userId, docId)].flatMap((key) => {
     const raw = storage.getItem(key);
     return raw === null ? [] : [{ key, raw }];
   });
+}
+
+/** Recovery copies are never selected for automatic replay. */
+export function recoveryDraftKeys(storage: Storage, userId: number, docId: number): string[] {
+  const prefix = recoveryBase(userId, docId), result: string[] = [];
+  for (let i = 0; i < storage.length; i++) { const key = storage.key(i); if (key?.startsWith(prefix)) result.push(key); }
+  return result.sort();
+}
+
+/** Persist and read back an account-scoped copy before the active queue is cleared. */
+export function archivePendingDraft(storage: Storage, userId: number, docId: number, token: string, draft: PendingOpsDraft): string {
+  if (!Number.isSafeInteger(userId) || userId < 1 || !Number.isSafeInteger(docId) || docId < 1 || !/^[a-zA-Z0-9-]{16,100}$/.test(token) || !draft.ops.length) throw new Error("invalid recovery draft");
+  const key = recoveryBase(userId, docId) + token;
+  if (storage.getItem(key) !== null) throw new Error("recovery draft already exists");
+  const raw = JSON.stringify({ ...draft, version: 1, userId, docId, ops: draft.ops.map((op) => op.t === "ttable" ? { ...op, payload: Array.from(op.payload) } : op) });
+  // Validate the exact stored representation before depending on it.
+  if (!parse(raw)) throw new Error("invalid recovery draft");
+  storage.setItem(key, raw);
+  if (storage.getItem(key) !== raw) throw new Error("recovery draft could not be verified");
+  return key;
+}
+
+export function readRecoveryDraft(storage: Storage, userId: number, docId: number, key: string): PendingOpsDraft | null {
+  if (!key.startsWith(recoveryBase(userId, docId))) return null;
+  const raw = storage.getItem(key); if (raw === null) return null;
+  const metadata: unknown = JSON.parse(raw);
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || (metadata as { version?: unknown }).version !== 1 || (metadata as { userId?: unknown }).userId !== userId || (metadata as { docId?: unknown }).docId !== docId) throw new Error("invalid recovery draft scope");
+  return parse(raw);
 }
 export function writePendingOps(storage: Storage, key: string, draft: PendingOpsDraft | null): void {
   if (draft?.ops.length) storage.setItem(key, JSON.stringify({ ...draft, ops: draft.ops.map((op) => op.t === "ttable" ? { ...op, payload: Array.from(op.payload) } : op) }));
@@ -64,18 +108,21 @@ export function prepareBrowserPendingSession(getEnvironment: () => StorageEnviro
 }
 
 /** A lease is held until release; an occupied lock is never waited on. */
-async function tryLease(locks: LockProvider, name: string): Promise<(() => void) | null> {
+async function tryLease(locks: LockProvider, name: string): Promise<(() => Promise<void>) | null> {
   let decided = false;
   return new Promise((resolve) => {
     let unlock!: () => void;
     const held = new Promise<void>((r) => { unlock = r; });
+    let done!: () => void;
+    const finished = new Promise<void>((r) => { done = r; });
     try {
       void locks.request(name, { ifAvailable: true }, async (lock) => {
         decided = true;
-        resolve(lock ? unlock : null);
+        let released = false;
+        resolve(lock ? () => { if (!released) { released = true; unlock(); } return finished; } : null);
         if (lock) await held;
-      }).catch(() => { if (!decided) resolve(null); });
-    } catch { resolve(null); }
+      }).then(done, () => { done(); if (!decided) resolve(null); });
+    } catch { done(); resolve(null); }
   });
 }
 
@@ -108,7 +155,7 @@ export async function preparePendingSession(
   let corrupt = false;
   if (release) {
     try { draft = parse(storage.getItem(key)); }
-    catch { corrupt = true; release(); token = randomToken(); key = pendingOpsKey(userId, docId, token); release = await tryLease(locks!, key); }
+    catch { corrupt = true; await release(); token = randomToken(); key = pendingOpsKey(userId, docId, token); release = await tryLease(locks!, key); }
   }
   if (release && !draft) {
     for (const candidate of accountKeys(storage, userId, docId)) {
@@ -117,11 +164,11 @@ export async function preparePendingSession(
       if (!acquired) continue;
       try {
         const found = parse(storage.getItem(candidate));
-        if (found) { release(); release = acquired; key = candidate; token = candidate.slice(base(userId, docId).length); draft = found; break; }
+        if (found) { await release(); release = acquired; key = candidate; token = candidate.slice(base(userId, docId).length); draft = found; break; }
       } catch { corrupt = true; /* leave corrupt drafts intact for export */ }
-      acquired();
+      await acquired();
     }
   }
   try { session.setItem(sessionKey, token); } catch { /* safe: key is still isolated */ }
-  return { key, draft, legacy, otherDrafts: accountKeys(storage, userId, docId).some((k) => k !== key), corrupt, release: release ?? (() => {}) };
+  return { key, draft, legacy, otherDrafts: accountKeys(storage, userId, docId).some((k) => k !== key), corrupt, release: release ?? (() => Promise.resolve()) };
 }

@@ -33,8 +33,8 @@ export function mayUseDownloadRecheck<T extends DocumentPermissions & { id: numb
 }
 
 /** Preserve this account's unsent operations without embedding server content. */
-export function pendingDocumentBackup<T>(userId: number, docId: number, clientId: number, ops: T[]) {
-  return { version: 1, userId, docId, clientId, state: null, ops };
+export function pendingDocumentBackup<T>(userId: number, docId: number, clientId: number, ops: T[], historyEpoch?: number | null) {
+  return { version: 1, userId, docId, clientId, state: null, ops, ...(historyEpoch === undefined ? {} : { historyEpoch }) };
 }
 
 export function copyErrorMessage(error: unknown): string {
