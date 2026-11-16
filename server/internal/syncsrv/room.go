@@ -26,6 +26,7 @@ type room struct {
 	mu      sync.Mutex
 	doc     *collab.Doc // nil until loaded
 	head    int64       // last seq integrated into doc and fanned out
+	epoch   int64       // generation represented by the in-memory replica
 	snapSeq int64
 	// fullLog is set when doc was rebuilt from the complete operation log in
 	// this room's lifetime, so it holds every tombstone ever created.
@@ -252,6 +253,13 @@ func (r *room) sendErr(c *conn, code, msg string) {
 func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	actual, _, err := r.hub.Store.HeadVersion(ctx, r.id)
+	if err != nil || actual < 1 || uint64(actual) != epoch {
+		return errors.New("document history changed during join")
+	}
+	if r.epoch != 0 && r.epoch != actual {
+		r.resetForHistory()
+	}
 	if err := r.load(ctx); err != nil {
 		r.doc = nil
 		if errors.Is(err, errUnsupportedTable) {
@@ -274,6 +282,14 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 		c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
 		return errUnsupportedTable
 	}
+	// A rollback may race the load; never label a stale replica as the new epoch.
+	actual, _, err = r.hub.Store.HeadVersion(ctx, r.id)
+	if err != nil || actual < 1 || uint64(actual) != epoch {
+		r.resetForHistory()
+		return errors.New("document history changed during join")
+	}
+	r.epoch = actual
+	c.epoch = actual
 	welcome := func(head, snapSeq uint64, state []byte) {
 		if v2 {
 			c.send(collab.EncodeWelcomeV2(c.clientID, head, snapSeq, state, epoch))
@@ -329,6 +345,16 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 	}
 	r.conns[c] = struct{}{}
 	return nil
+}
+
+// Discard the old replica and force existing peers to reconnect. They retain
+// unacknowledged writes and v2 peers quarantine them on the next welcome.
+func (r *room) resetForHistory() {
+	r.doc = nil
+	r.epoch = 0
+	for c := range r.conns {
+		c.terminalFrame(collab.EncodeError("history_changed", "document history changed; reconnect required"))
+	}
 }
 
 func (r *room) leave(c *conn) {
@@ -469,6 +495,9 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 			return nil
 		}
 		writeCtx := store.WithDocumentActor(ctx, c.user.ID)
+		if c.epoch > 0 {
+			writeCtx = store.WithDocumentEpoch(writeCtx, c.epoch)
+		}
 		if c.writeGuard != nil {
 			seqs, err = r.hub.Store.AppendOpsAtHeadGuarded(writeCtx, *c.writeGuard, r.id, r.head, raws)
 		} else {
@@ -477,6 +506,13 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		}
 		if err != nil {
 			tx.Rollback()
+			if errors.Is(err, store.ErrHistoryChanged) {
+				r.resetForHistory()
+				if _, joined := r.conns[c]; !joined {
+					c.terminalFrame(collab.EncodeError("history_changed", "document history changed; reconnect required"))
+				}
+				return errBatchRejected
+			}
 			if errors.Is(err, store.ErrConflict) {
 				// Give other instances time to finish their bursts; vary the
 				// delay by replica so competing rooms do not retry in lockstep.

@@ -27,6 +27,16 @@ await a.send('Page.navigate', { url: new URL(`/#/doc/${identity.doc}`, base).hre
 const focusEnd = () => a.run(`(()=>{const e=document.querySelector('[data-type="paragraph"] [data-text]'), root=document.querySelector('[data-editor]');root.focus();const r=document.createRange();r.selectNodeContents(e);r.collapse(false);getSelection().removeAllRanges();getSelection().addRange(r);document.dispatchEvent(new Event('selectionchange'))})()`);
 await focusEnd(); await a.send('Input.insertText', { text: '云端正文' }); await a.wait('document.body.innerText.includes("云端正文") && !!document.querySelector("[data-status=synced]")');
 const headBefore = Number(sql(`SELECT seq FROM doc_heads WHERE doc_id=${identity.doc}`)); if (!Number.isSafeInteger(headBefore) || headBefore < 1) throw new Error('invalid head');
+if (process.env.JIANGE_EPOCH_ONLINE_TEST === '1') {
+  if (sql(`UPDATE doc_heads SET history_epoch=history_epoch+1 WHERE doc_id=${identity.doc} RETURNING history_epoch`) !== '2') throw new Error('epoch bump failed');
+  await focusEnd(); await a.send('Input.insertText', { text: '在线草稿😀' });
+  await a.wait('!!document.querySelector("[data-status=blocked]") && !!document.querySelector("[data-preview-pending-draft]")');
+  if (Number(sql(`SELECT seq FROM doc_heads WHERE doc_id=${identity.doc}`)) !== headBefore) throw new Error('old online connection wrote into the new history');
+  if (await a.run('document.querySelector("[data-editor]")?.innerText.includes("在线草稿😀")')) throw new Error('old online draft was replayed into cloud');
+  await a.run('document.querySelector("[data-preview-pending-draft]").click()'); await a.wait('document.querySelector("[data-pending-draft-preview] textarea")?.value.includes("在线草稿😀")');
+  await a.shot('jiange-document-epoch-online-fence-20261116.png');
+  console.log('old online connection rejected, reconnected and retained its draft'); await a.send('Page.close'); a.ws.close(); process.exit(0);
+}
 await a.send('Network.enable'); await a.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }); await a.run('window.dispatchEvent(new Event("offline"))'); await a.wait('!!document.querySelector("[data-status=offline]")'); await focusEnd(); await a.send('Input.insertText', { text: '本地草稿😀' }); await a.wait('document.body.innerText.includes("本地草稿😀")');
 await a.wait(`Object.keys(localStorage).some(k=>k.startsWith('jiange:pending:v3:${identity.user}:${identity.doc}:') && localStorage.getItem(k).includes('本地草稿😀') && JSON.parse(localStorage.getItem(k)).historyEpoch===1)`);
 if (sql(`UPDATE doc_heads SET history_epoch=history_epoch+1 WHERE doc_id=${identity.doc} RETURNING history_epoch`) !== '2') throw new Error('epoch bump failed');
@@ -56,5 +66,5 @@ if (await a.run(`localStorage.getItem(${JSON.stringify(key)})`) !== raw + ' ') t
 await a.run(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(raw)})`); await a.run('document.querySelector("[data-delete-recovery-draft]").click()'); await a.wait('!!document.querySelector("[data-ask-ok]")'); await a.run('document.querySelector("[data-ask-ok]").click()');
 await a.wait('!document.querySelector("[data-recovery-drafts]") && !document.querySelector("[data-pending-draft-preview]")');
 if (await a.run(`localStorage.getItem(${JSON.stringify(key)})`) !== null) throw new Error('confirmed recovery still present');
-await a.send('Page.reload'); await a.wait('document.body.innerText.includes("云端正文继续编辑")'); if (await a.run('!!document.querySelector("[data-recovery-drafts]")')) throw new Error('deleted copy reappeared');
+await a.send('Page.reload'); await a.wait('document.body?.innerText.includes("云端正文继续编辑")'); if (await a.run('!!document.querySelector("[data-recovery-drafts]")')) throw new Error('deleted copy reappeared');
 console.log('epoch draft quarantined, backed up, archived and safely deleted after confirmation'); await a.send('Page.close'); a.ws.close();

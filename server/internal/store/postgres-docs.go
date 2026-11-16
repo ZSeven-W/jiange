@@ -211,12 +211,15 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 	seqs = make([]int64, len(ops))
 	guard, guarded := documentWriteGuard(ctx)
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
-		var head int64
-		if err := tx.QueryRow(ctx, `SELECT seq FROM doc_heads WHERE doc_id=$1 FOR UPDATE`, doc).Scan(&head); err != nil {
+		var head, epoch int64
+		if err := tx.QueryRow(ctx, `SELECT seq,history_epoch FROM doc_heads WHERE doc_id=$1 FOR UPDATE`, doc).Scan(&head, &epoch); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if expected, ok := documentEpoch(ctx); ok && (expected < 1 || expected != epoch) {
+			return ErrHistoryChanged
 		}
 		nodeLocked := false
 		var expires time.Time

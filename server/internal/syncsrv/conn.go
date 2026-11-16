@@ -34,6 +34,7 @@ type conn struct {
 	// guarded by room.mu once joined
 	room     *room
 	clientID uint64
+	epoch    int64 // generation captured when this connection joined
 	acked    int64
 	// wantsV2 is explicit client capability on the WebSocket URL. Older servers
 	// ignore it and still speak v1; older clients never send it.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -11,6 +12,21 @@ import (
 // operation payload. A missing actor means attribution is unknown.
 type documentActorKey struct{}
 type documentWriteGuardKey struct{}
+type documentEpochKey struct{}
+
+// ErrHistoryChanged means a write was authored against a different log generation.
+var ErrHistoryChanged = errors.New("store: document history changed")
+
+// WithDocumentEpoch fences a sync append against the generation seen at join.
+// Stores check this value while holding the same lock as the append and epoch bump.
+func WithDocumentEpoch(ctx context.Context, epoch int64) context.Context {
+	return context.WithValue(ctx, documentEpochKey{}, epoch)
+}
+
+func documentEpoch(ctx context.Context) (int64, bool) {
+	epoch, ok := ctx.Value(documentEpochKey{}).(int64)
+	return epoch, ok
+}
 
 func WithDocumentActor(ctx context.Context, userID int64) context.Context {
 	return context.WithValue(ctx, documentActorKey{}, userID)

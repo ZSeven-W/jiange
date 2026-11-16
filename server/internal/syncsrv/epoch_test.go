@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/ZSeven-W/jiange/server/collab"
+	"github.com/ZSeven-W/jiange/server/internal/migrate"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
@@ -207,5 +210,93 @@ func TestWebSocketTableDocumentFirstContact(t *testing.T) {
 				t.Fatalf("unexpected error: %+v", msg)
 			}
 		})
+	}
+}
+
+// An epoch bump between validation and append must fence the old socket even
+// when the sequence number is unchanged. A new socket loads the new epoch.
+func TestEpochBumpAtSyncCommitClosesOldRoom(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	wrapped := &beforeGuardedAppend{DocStore: st, result: make(chan error, 1)}
+	wrapped.before = func(store.RestoreGuard) error { return st.BumpHistoryEpoch(ctx, doc) }
+	e.hub.Store = wrapped
+	first, peer := e.client(0, doc), e.client(1, doc)
+	head, err := st.Head(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.edit(typeAt("old generation", func(n int) int { return n }))
+	if err := <-wrapped.result; err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*client{first, peer} {
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("old peer stayed connected")
+		}
+	}
+	after, err := st.Head(ctx, doc)
+	if err != nil || after != head {
+		t.Fatalf("stale write committed: %d -> %d: %v", head, after, err)
+	}
+	current := e.client(0, doc)
+	current.edit(typeAt("current generation", func(n int) int { return n }))
+	converge(t, st, doc, current)
+	if next, err := st.Head(ctx, doc); err != nil || next <= head {
+		t.Fatalf("new generation did not accept edits: %d %v", next, err)
+	}
+	first.mu.Lock()
+	defer first.mu.Unlock()
+	if len(first.inflight) != 1 {
+		t.Fatalf("unacknowledged local batch missing: %d", len(first.inflight))
+	}
+}
+
+func TestPostgresEpochFenceAcrossRooms(t *testing.T) {
+	url := os.Getenv("JIANGE_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("JIANGE_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pg, err := store.NewPostgres(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	if _, err = migrate.Up(ctx, pg.Pool); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, pg, 1000)
+	other := &Hub{Store: pg, SnapshotEvery: 1000, PingInterval: time.Hour}
+	otherServer := httptest.NewServer(e.handler(other))
+	defer otherServer.Close()
+	doc := e.newDoc()
+	a := e.client(0, doc)
+	b := &client{t: t, user: 1, docID: doc, peers: map[uint64]string{}}
+	b.connect(otherServer.URL)
+	defer b.disconnect()
+	head, err := pg.Head(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.BumpHistoryEpoch(ctx, doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*client{a, b} {
+		c.edit(typeAt("stale", func(n int) int { return n }))
+	}
+	for _, c := range []*client{a, b} {
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("old instance accepted stale edit")
+		}
+	}
+	if actual, err := pg.Head(ctx, doc); err != nil || actual != head {
+		t.Fatalf("stale edit persisted: %d -> %d, %v", head, actual, err)
 	}
 }

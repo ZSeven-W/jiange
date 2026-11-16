@@ -257,6 +257,11 @@ func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, 
 		m.mu.Unlock()
 		return nil, ErrNotFound
 	}
+	actualEpoch := max(d.historyEpoch, 1)
+	if epoch, ok := documentEpoch(ctx); ok && (epoch < 1 || actualEpoch != epoch) {
+		m.mu.Unlock()
+		return nil, ErrHistoryChanged
+	}
 	guard, guarded := documentWriteGuard(ctx)
 	var expires time.Time
 	if guarded {

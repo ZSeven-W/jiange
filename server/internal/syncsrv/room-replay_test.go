@@ -26,6 +26,10 @@ func (s *replayStore) Head(context.Context, int64) (int64, error) {
 	return s.head, nil
 }
 
+func (s *replayStore) HeadVersion(context.Context, int64) (int64, int64, error) {
+	return 1, s.head, nil
+}
+
 func (s *replayStore) AppendOps(context.Context, int64, []store.RawOp) ([]int64, error) {
 	return s.appendSeqs, nil
 }
