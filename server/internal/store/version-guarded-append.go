@@ -28,6 +28,17 @@ type conditionalRequest struct {
 	request string
 	digest  [32]byte
 	probe   bool
+	title   *conditionalTitle
+}
+
+type conditionalTitle struct{ expected, value string }
+
+func (m *Memory) CommitConditionalTitleOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp, expected, value string) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return m.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest, title: &conditionalTitle{expected: expected, value: value}})
 }
 
 func (m *Memory) CommitConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
@@ -99,6 +110,10 @@ func (m *Memory) appendVersionGuarded(ctx context.Context, guard RestoreGuard, d
 		m.mu.Unlock()
 		return nil, ErrConflict
 	}
+	if request != nil && request.title != nil && d.meta.Title != request.title.expected {
+		m.mu.Unlock()
+		return nil, ErrConflict
+	}
 	batch, err := prepareMemoryIdentityBatch(d, ops)
 	if err != nil {
 		m.mu.Unlock()
@@ -128,6 +143,9 @@ func (m *Memory) appendVersionGuarded(ctx context.Context, guard RestoreGuard, d
 		d.opAt = append(d.opAt, now)
 	}
 	d.meta.UpdatedAt = now
+	if request != nil && request.title != nil {
+		d.meta.Title = request.title.value
+	}
 	m.setDocumentModifierLocked(d, guard.UserID)
 	head, subscribers := int64(len(d.ops)), slices.Clone(m.d.subs)
 	if request != nil {
@@ -155,6 +173,14 @@ func (p *Postgres) CommitConditionalOps(ctx context.Context, guard RestoreGuard,
 	return p.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest})
 }
 
+func (p *Postgres) CommitConditionalTitleOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp, expected, value string) ([]int64, error) {
+	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
+	if err != nil {
+		return nil, err
+	}
+	return p.appendVersionGuarded(ctx, guard, doc, expectedEpoch, expectedHead, ops, &conditionalRequest{request: request, digest: digest, title: &conditionalTitle{expected: expected, value: value}})
+}
+
 func (p *Postgres) LookupConditionalOps(ctx context.Context, guard RestoreGuard, doc, expectedEpoch, expectedHead int64, request string, ops []RawOp) ([]int64, error) {
 	digest, err := conditionalDigest(expectedEpoch, expectedHead, request, ops)
 	if err != nil {
@@ -178,9 +204,9 @@ func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard,
 			return err
 		}
 		var ws int64
-		var kind string
+		var kind, directoryTitle string
 		var deleted bool
-		err = tx.QueryRow(ctx, `SELECT workspace_id,kind,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&ws, &kind, &deleted)
+		err = tx.QueryRow(ctx, `SELECT workspace_id,kind,title,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR UPDATE`, doc).Scan(&ws, &kind, &directoryTitle, &deleted)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrForbidden
 		}
@@ -236,6 +262,9 @@ func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard,
 		if head != expectedHead {
 			return ErrConflict
 		}
+		if request != nil && request.title != nil && directoryTitle != request.title.expected {
+			return ErrConflict
+		}
 		for i, op := range ops {
 			duplicate, err := checkOperationIdentity(ctx, tx, doc, op)
 			if err != nil {
@@ -261,7 +290,12 @@ func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard,
 			if _, err = tx.Exec(ctx, `UPDATE doc_heads SET seq=$2 WHERE doc_id=$1`, doc, head); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc); err != nil {
+			if request != nil && request.title != nil {
+				_, err = tx.Exec(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1`, doc, request.title.value)
+			} else {
+				_, err = tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, doc)
+			}
+			if err != nil {
 				return err
 			}
 			if err = recordDocumentModifier(ctx, tx, doc, guard.UserID); err != nil {

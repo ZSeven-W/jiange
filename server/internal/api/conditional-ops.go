@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -183,6 +184,7 @@ func conditionalTableWidths(op collab.Op) bool {
 }
 
 // commitConditionalOps accepts text changes, table-cell properties, bounded table/column widths, and same-parent column moves.
+// Title text changes also update the matching directory name in the same commit.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
 func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +325,9 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 	if rejectUnsupportedTableView(w, state) {
 		return
 	}
+	originalTitle, originalKind, originalVisible := state.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
 	blockKinds := make(map[collab.OpID]string)
+	titleChanged := false
 	for _, op := range ops {
 		kind, found := blockKinds[op.Block]
 		if !found {
@@ -335,7 +339,11 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 			blockKinds[op.Block] = kind
 		}
-		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && (conditionalTableKey(op.Key) || conditionalTableWidths(op)) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
+		isTitleText := op.Block == (collab.OpID{Client: 0, Clock: 1}) && kind == "title" && (op.T == collab.TTextInsert || op.T == collab.TTextDelete)
+		if isTitleText {
+			titleChanged = true
+		}
+		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && (conditionalTableKey(op.Key) || conditionalTableWidths(op)) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) && !isTitleText {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
 			return
 		}
@@ -347,7 +355,29 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	seqs, err := st.CommitConditionalOps(r.Context(), guard, d.ID, in.Epoch, in.Head, in.RequestID, raws)
+	var seqs []int64
+	if titleChanged {
+		// The batch is based on the collaborative title at this exact head. A
+		// different directory name may have been changed before the request
+		// arrived, so do not silently replace it with a derived title.
+		if !originalVisible || originalKind != "title" || d.Title != originalTitle {
+			httpx.Error(w, http.StatusConflict, "title_changed", "目录名称与文档标题不一致，请先检查名称")
+			return
+		}
+		title, kind, visible := state.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
+		if !visible || kind != "title" || !utf8.ValidString(title) || utf8.RuneCountInString(title) > 200 || title != strings.TrimSpace(title) || strings.ContainsAny(title, "\r\n") {
+			httpx.Error(w, http.StatusBadRequest, "invalid_title", "标题不能超过 200 个字符、包含换行或首尾空白")
+			return
+		}
+		titleStore, ok := s.Store.(store.ConditionalTitleOpsCommitter)
+		if !ok {
+			httpx.Error(w, http.StatusServiceUnavailable, "unavailable", "标题条件提交暂不可用")
+			return
+		}
+		seqs, err = titleStore.CommitConditionalTitleOps(r.Context(), guard, d.ID, in.Epoch, in.Head, in.RequestID, raws, d.Title, title)
+	} else {
+		seqs, err = st.CommitConditionalOps(r.Context(), guard, d.ID, in.Epoch, in.Head, in.RequestID, raws)
+	}
 	if errors.Is(err, store.ErrOpIdentityConflict) {
 		httpx.Error(w, http.StatusConflict, "operation_conflict", "操作标识已变化，请重新操作")
 		return

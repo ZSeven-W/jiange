@@ -18,6 +18,13 @@ type ConditionalOpsCommitter interface {
 	LookupConditionalOps(context.Context, RestoreGuard, int64, int64, int64, string, []RawOp) ([]int64, error)
 }
 
+// ConditionalTitleOpsCommitter also updates the directory title in the same
+// transaction as the operation log and receipt. The caller must derive the
+// new title from the validated CRDT state at the expected history point.
+type ConditionalTitleOpsCommitter interface {
+	CommitConditionalTitleOps(context.Context, RestoreGuard, int64, int64, int64, string, []RawOp, string, string) ([]int64, error)
+}
+
 // A missing receipt is only an observation: a concurrent submission may
 // still be in flight and commit after the lookup returns.
 type ConditionalOpsStatus struct {
