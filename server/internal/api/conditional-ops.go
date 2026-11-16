@@ -275,7 +275,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case collab.TBlockSet:
-			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
+			if !archiveBatch && !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
 				return
 			}
@@ -335,7 +335,12 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 	blockKinds := make(map[collab.OpID]string)
 	titleChanged := false
 	if archiveBatch {
-		if !state.CanArchiveColumn(ops[2].Block) {
+		move := ops[len(ops)-1]
+		valid := state.CanArchiveColumn(move.Block)
+		if len(ops) == 4 {
+			valid = state.CanArchiveColumnWithMetadata(move.Block, ops[0].ID, ops[2].ID, move.ID, *ops[2].Value)
+		}
+		if !valid {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏状态不支持删除")
 			return
 		}
@@ -347,6 +352,14 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
 				return
 			}
+		}
+	} else if len(ops) == 1 && state.CanTransitionArchivedColumn(ops[0]) {
+		if err = state.TryApply(ops[0]); err != nil {
+			if lookup() {
+				return
+			}
+			httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+			return
 		}
 	} else {
 		for _, op := range ops {

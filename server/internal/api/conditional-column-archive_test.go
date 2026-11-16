@@ -188,6 +188,10 @@ func checkConditionalColumnArchive(t *testing.T, st store.Store) {
 	if _, _, visible := actual.VisibleBlockText(right.ID); !visible {
 		t.Fatal("sibling disappeared")
 	}
+	legacyRestore := collab.Op{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(author), Clock: actual.Clock() + 1}, Block: left.ID, Parent: group.ID, Pos: "A"}
+	if code := do("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", finalHead, []collab.Op{legacyRestore}); code != http.StatusBadRequest {
+		t.Fatalf("legacy archive without recorded origin must not be guessed: %d", code)
+	}
 }
 
 func TestMemoryConditionalColumnArchive(t *testing.T) {
