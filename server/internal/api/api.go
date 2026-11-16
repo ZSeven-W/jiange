@@ -187,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/slides/pages/{pid}":                      s.deleteSlidesPage,
 		"POST /api/slides/pages/{pid}/move":                   s.moveSlidesPage,
 		"GET /api/search":                                     s.searchDocs,
+		"GET /api/account-document-search":                    s.searchAccountDocuments,
 		"GET /api/favorites":                                  s.listFavorites,
 		"GET /api/pins":                                       s.listPins,
 		"GET /api/account-pins":                               s.accountPins,

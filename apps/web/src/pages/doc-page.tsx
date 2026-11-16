@@ -1268,7 +1268,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
-            {metadataVerified && !history && !presenting && referenceSetting?.visible && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />}
+            {metadataVerified && !history && !presenting && referenceSetting?.visible && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />}
           </article>}</DocumentCover>
           </div>
           </div>

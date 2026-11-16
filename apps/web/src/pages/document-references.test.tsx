@@ -18,9 +18,9 @@ describe("document reference list", () => {
   it("shows the section without rendering unverified results", () => {
     const client = new QueryClient();
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><DocumentReferencesPanel id={1} userId={2} enabled={false} synced={false} allowCopy={false}/></QueryClientProvider>);
-    expect(html).toContain("文档引用");
+    expect(html).toContain("反向引用");
     expect(html).toContain("文档尚未同步");
-    expect(html).not.toContain("暂无被引用文档");
+    expect(html).not.toContain("暂无反向引用");
   });
   it("shows the hide control only to an eligible editor", () => {
     const client = new QueryClient();
