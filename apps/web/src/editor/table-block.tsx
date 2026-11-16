@@ -99,6 +99,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [fillOpen, setFillOpen] = useState(false);
   const [alignOpen, setAlignOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
+  const [rowHeights, setRowHeights] = useState<number[]>([]);
   const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
   const reorderDrag = useRef<{ pointer: number; kind: "row" | "col"; indices: number[]; startX: number; startY: number; x: number; y: number; active: boolean; before: number | null; valid: boolean; session: TableReorderSession | null; target: HTMLElement; frame: number } | null>(null);
   const suppressGripClick = useRef(false);
@@ -121,6 +122,23 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     return () => { window.removeEventListener("keydown", escape); widthDrag.current?.session.cancel(); widthDrag.current = null; };
   }, []);
   useTableStickyHeader(root, header);
+  // A rowspan can cover rows of different heights. Track each actual row so
+  // the grip for a covered row stays aligned when its content or width changes.
+  useLayoutEffect(() => {
+    if (readOnly || !merges.some(([, c, height]) => c === 0 && height > 1)) return;
+    const table = root.current?.querySelector("table");
+    if (!table) return;
+    const elements = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody > tr"));
+    const measure = () => {
+      const heights = elements.map(row => row.getBoundingClientRect().height);
+      setRowHeights(previous => previous.length === heights.length && previous.every((height, index) => Math.abs(height - heights[index]) < 0.1) ? previous : heights);
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    elements.forEach(row => observer?.observe(row));
+    window.addEventListener("resize", measure);
+    measure();
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [readOnly, rawMerges, rows.length]);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
   const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean; kind: "mouse" | "touch"; previousRange?: CellRange | null; previousTouch?: boolean } | null>(null);
   const selectionSignature = JSON.stringify([data, rawMerges ?? "", fillProps["tbl.rows"] ?? "", fillProps["tbl.cols"] ?? "", readOnly]);
@@ -377,10 +395,19 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     reorderDrag.current=null;if(drag.frame)cancelAnimationFrame(drag.frame);
     if(drag.active){
       event.preventDefault();event.stopPropagation();suppressGripClick.current=true;setTimeout(()=>{suppressGripClick.current=false;},0);
-      if(!cancelled&&drag.before!==null&&drag.valid&&drag.session){const op:TableReorderOp={kind:drag.kind==="row"?"reorderRows":"reorderCols",indices:drag.indices,before:drag.before};setClipboardNotice(drag.session.commit(op)??"");}
+      let focusIndex = Number(drag.kind === "row" ? drag.target.dataset.tableRowGrip : drag.target.dataset.tableColGrip);
+      if(!cancelled&&drag.before!==null&&drag.valid&&drag.session){
+        const op:TableReorderOp={kind:drag.kind==="row"?"reorderRows":"reorderCols",indices:drag.indices,before:drag.before};
+        const plan=planTableReorder(rows,merges,op), error=drag.session.commit(op);
+        if(!error && plan) focusIndex=plan.order.indexOf(focusIndex);
+        setClipboardNotice(error??"");
+      }
       else {drag.session?.cancel();if(!cancelled)setClipboardNotice("无法拆开合并单元格，请调整选区或目标位置。");}
       setAxisSelection(null);setReorderGuide(null);
-      if(!cancelled)requestAnimationFrame(()=>{if(drag.target.isConnected && document.activeElement===document.body)drag.target.focus({preventScroll:true});});
+      if(!cancelled)requestAnimationFrame(()=>{
+        const target=root.current?.querySelector<HTMLButtonElement>(`[data-table-${drag.kind === "row" ? "row" : "col"}-grip="${focusIndex}"]`);
+        if(target && document.activeElement===document.body)target.focus({preventScroll:true});
+      });
     }
     if(drag.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);
   };
@@ -395,7 +422,12 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     if(!plan){setClipboardNotice("无法拆开合并单元格，请调整选区或目标位置。");return;}
     if(plan.order.every((old,index)=>old===index))return;
     const session=onBeginReorder();if(!session)return;
-    setClipboardNotice(session.commit(op)??"");setGrip(null);setAxisSelection(null);setRange(null);
+    const original=event.currentTarget, error=session.commit(op);
+    setClipboardNotice(error??"");setGrip(null);setAxisSelection(null);setRange(null);
+    if (!error) requestAnimationFrame(() => {
+      if (document.activeElement !== document.body && document.activeElement !== original) return;
+      root.current?.querySelector<HTMLButtonElement>(`[data-table-${g.kind === "row" ? "row" : "col"}-grip="${plan.order.indexOf(g.index)}"]`)?.focus({ preventScroll: true });
+    });
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
@@ -443,6 +475,11 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); setTouchSelecting(false); };
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
+  const renderGrip = (kind: "row" | "col", index: number, weight: number) => {
+    const active = grip?.kind === kind && grip.index === index || axisSelection?.kind === kind && axisSelection.indices.includes(index);
+    const label = kind === "row" ? `选择第 ${index + 1} 行` : `选择第 ${index + 1} 列`;
+    return <button key={index} type="button" aria-label={label} aria-keyshortcuts={kind === "row" ? "Alt+ArrowUp Alt+ArrowDown" : "Alt+ArrowLeft Alt+ArrowRight"} aria-pressed={active} title={`选择或拖动${kind === "row" ? "行" : "列"}，按住 Ctrl 或 Command 多选`} style={{ flex: `${weight} 1 0%` }} onMouseDown={e => e.preventDefault()} onClick={e => openGrip(e, { kind, index })} onKeyDown={e => keyReorder(e, { kind, index })} onPointerDown={e => beginReorder(e, { kind, index })} onPointerMove={moveReorder} onPointerUp={e => endReorder(e)} onPointerCancel={e => endReorder(e, true)} onLostPointerCapture={e => endReorder(e, true)} className={cn("pointer-events-auto min-h-0 min-w-0 touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:opacity-100", active && "bg-primary opacity-100")} data-table-row-grip={kind === "row" ? index : undefined} data-table-col-grip={kind === "col" ? index : undefined} />;
+  };
   return (
     <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined} data-table-axis-selection={axisSelection ? `${axisSelection.kind}:${axisSelection.indices.join(',')}` : undefined}
       onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
@@ -625,8 +662,8 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                       const handle = (corner: "start" | "end") => <button key={corner} type="button" aria-label={corner === "start" ? "调整选区起点" : "调整选区终点"} title="拖动或使用方向键调整选区" className={cn("absolute z-20 hidden size-8 touch-none items-center justify-center [@media(pointer:coarse)]:flex", corner === "start" ? "-left-4 -top-4" : "bottom-0 right-0")} onPointerDown={e => beginTouchSelection(e, corner)} onKeyDown={e => moveTouchSelectionWithKey(e, corner)} data-table-touch-handle={corner}><span className={cn("size-3 rounded-full border-2 border-white bg-primary shadow", corner === "end" && "absolute bottom-0 right-0")} /></button>;
                       return <>{touchSelecting && first && handle("start")}{last && handle("end")}</>;
                     })()}
-                    {editable && ri === 0 && (!span || span[1] === 1) && <button type="button" aria-label={`选择第 ${ci + 1} 列`} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" aria-pressed={grip?.kind === "col" && grip.index === ci || axisSelection?.kind === "col" && axisSelection.indices.includes(ci)} title="选择或拖动列，按住 Ctrl 或 Command 多选" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} onKeyDown={e=>keyReorder(e,{kind:"col",index:ci})} onPointerDown={e=>beginReorder(e,{kind:"col",index:ci})} onPointerMove={moveReorder} onPointerUp={e=>endReorder(e)} onPointerCancel={e=>endReorder(e,true)} onLostPointerCapture={e=>endReorder(e,true)} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:-top-4 [@media(pointer:coarse)]:h-4 [@media(pointer:coarse)]:opacity-100", (grip?.kind === "col" && grip.index === ci || axisSelection?.kind === "col" && axisSelection.indices.includes(ci)) && "bg-primary opacity-100")} data-table-col-grip={ci} />}
-                    {editable && ci === 0 && (!span || span[0] === 1) && <button type="button" aria-label={`选择第 ${ri + 1} 行`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-pressed={grip?.kind === "row" && grip.index === ri || axisSelection?.kind === "row" && axisSelection.indices.includes(ri)} title="选择或拖动行，按住 Ctrl 或 Command 多选" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} onKeyDown={e=>keyReorder(e,{kind:"row",index:ri})} onPointerDown={e=>beginReorder(e,{kind:"row",index:ri})} onPointerMove={moveReorder} onPointerUp={e=>endReorder(e)} onPointerCancel={e=>endReorder(e,true)} onLostPointerCapture={e=>endReorder(e,true)} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:-left-4 [@media(pointer:coarse)]:w-4 [@media(pointer:coarse)]:opacity-100", (grip?.kind === "row" && grip.index === ri || axisSelection?.kind === "row" && axisSelection.indices.includes(ri)) && "bg-primary opacity-100")} data-table-row-grip={ri} />}
+                    {editable && ri === 0 && <span className="pointer-events-none absolute -top-[14px] left-0 right-0 flex h-[10px] [@media(pointer:coarse)]:-top-4 [@media(pointer:coarse)]:h-4">{Array.from({ length: span?.[1] ?? 1 }, (_, offset) => renderGrip("col", ci + offset, colW(ci + offset)))}</span>}
+                    {editable && ci === 0 && <span className="pointer-events-none absolute -left-[14px] bottom-0 top-0 flex w-[10px] flex-col [@media(pointer:coarse)]:-left-4 [@media(pointer:coarse)]:w-4">{Array.from({ length: span?.[0] ?? 1 }, (_, offset) => renderGrip("row", ri + offset, rowHeights[ri + offset] || 1))}</span>}
                     {!readOnly && onBeginResize && ri === 0 && Array.from({ length: span?.[1] ?? 1 }, (_, offset) => {
                       const index = ci + offset, trailing = columnWidths.slice(index + 1, ci + (span?.[1] ?? 1)).reduce((sum, width) => sum + width, 0);
                       return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", span && offset < span[1] - 1 && "[@media(pointer:coarse)]:h-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {

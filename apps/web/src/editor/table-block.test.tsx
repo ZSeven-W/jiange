@@ -36,13 +36,16 @@ describe("Feishu table block", () => {
     expect(html).toContain('aria-label="调整第 1 列宽"');
     expect(html).toContain('aria-label="调整第 2 列宽"');
   });
-  it("keeps grips for moving a row or column with a perpendicular merge", () => {
+  it("keeps a separate grip for every row and column under merged cells", () => {
     const horizontal = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,1,2]]" onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
     expect(horizontal).toContain('data-table-row-grip="0"');
-    expect(horizontal).not.toContain('data-table-col-grip="0"');
+    for (const index of [0, 1, 2]) expect(horizontal).toContain(`data-table-col-grip="${index}"`);
     const vertical = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,2,1]]" onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
     expect(vertical).toContain('data-table-col-grip="0"');
-    expect(vertical).not.toContain('data-table-row-grip="0"');
+    for (const index of [0, 1]) expect(vertical).toContain(`data-table-row-grip="${index}"`);
+    const both = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,2,2]]" onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
+    for (const index of [0, 1]) expect(both).toContain(`data-table-row-grip="${index}"`);
+    for (const index of [0, 1, 2]) expect(both).toContain(`data-table-col-grip="${index}"`);
   });
   it("disables deleting the last row or column", () => {
     expect(gripMenu({ kind: "row", index: 0 }, 1, 3).find((i) => i.op.kind === "deleteRow")?.disabled).toBe(true);
