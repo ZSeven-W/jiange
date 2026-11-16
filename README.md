@@ -5,21 +5,21 @@
 开源的飞书文档 + 多维表格替代品，AI 原生、可自部署。除基础库外全部自研：自研协同模型（CRDT）、自研 Go 同步与 API 服务。
 An open-source, self-hostable, AI-native alternative to Feishu/Lark Docs and Base. Apart from a few foundational libraries, everything is written from scratch, including the collaborative data model (CRDT) and the Go backend.
 
-> 状态 / Status: 开发中。文档、幻灯片、多维表格及画板已有不同程度实现；普通表格仍为开发预览。实际进度和未完成项以 [ROADMAP.md](ROADMAP.md) 为准。
+> 状态 / Status: 开发中。文档、幻灯片、多维表格及画板已有不同程度实现；普通表格仍为开发预览。实际进度和未完成项以 [roadmap.md](roadmap.md) 为准。
 
 ## 目录 / Layout
 
 ```
 apps/web          React + Vite + TS + TanStack Query + Tailwind + shadcn/ui
 packages/collab   协同内核 (TS): OpId/Lamport, Fugue 文本序列, 块树 LWW+move, Peritext 标记, 二进制编码
-packages/{doc,slides,sheet,whiteboard}-sdk  编辑器的无 UI 模型与操作（见 HEADLESS_SDK.md）
+packages/{doc,slides,sheet,whiteboard}-sdk  编辑器的无 UI 模型与操作（见 headless-sdk.md）
 server/           Go 模块: cmd/jiange, internal/{api,auth,httpx,migrate,store,config}, collab (Go 版内核)
 spec/             PROTOCOL.md 协议规范 + vectors/ 跨语言一致性向量
 docker-compose.yml  Postgres + MinIO
 ci/               GitHub Actions workflow (see ci/README.md to enable)
 ```
 
-各编辑器和协同内核的无 UI SDK、构建方式及当前能力边界见 [HEADLESS_SDK.md](HEADLESS_SDK.md)。
+各编辑器和协同内核的无 UI SDK、构建方式及当前能力边界见 [headless-sdk.md](headless-sdk.md)。
 
 ## 允许的基础库 / Allowed foundational libraries
 
@@ -88,4 +88,6 @@ UI 先在 OpenPencil 中设计（`design/jiange.op`），预览见 `design/previ
 
 Set `JIANGE_S3_ENDPOINT` (e.g. `http://localhost:9000`), `JIANGE_S3_ACCESS_KEY`, `JIANGE_S3_SECRET_KEY` and optionally `JIANGE_S3_BUCKET` (default `jiange`; created on start). Without an endpoint, uploads are disabled. With docker-compose: `JIANGE_S3_ENDPOINT=http://localhost:9000 JIANGE_S3_ACCESS_KEY=jiange JIANGE_S3_SECRET_KEY=jiange-dev-secret`.
 
-> 开发路线与交接说明见 [ROADMAP.md](ROADMAP.md)。
+> 开发路线与交接说明见 [roadmap.md](roadmap.md)。
+
+文件及目录默认使用 kebab-case，代码标识符遵循各语言惯例。Go 平台及测试后缀、已应用的数据库迁移文件名、`README.md`、`Dockerfile`、许可证文件等保留工具约定；`pnpm lint:names` 可检查 Git 跟踪的路径。SDK 保留旧的 camelCase 子路径作为兼容入口，新代码可使用 kebab-case 子路径。

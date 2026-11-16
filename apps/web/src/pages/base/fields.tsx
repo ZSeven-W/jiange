@@ -7,7 +7,7 @@ import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
 import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Snowflake, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
-import { popupPosition } from "./popupPosition";
+import { popupPosition } from "./popup-position";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 

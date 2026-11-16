@@ -1,5 +1,5 @@
 import type { DocMeta } from "@/lib/api";
-import { canCopyDocument } from "./documentCopy";
+import { canCopyDocument } from "./document-copy";
 
 /** The copy endpoint supports documents and presentations, not bases or files. */
 export function canDuplicateHomeDocument(doc: DocMeta): boolean {

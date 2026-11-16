@@ -1,4 +1,4 @@
-import type { SlideTitleDraft } from "./SlideDeckTitle";
+import type { SlideTitleDraft } from "./slide-deck-title";
 
 const key = (userId: number, deckId: number) => `jiange:slides-title:${userId}:${deckId}`;
 

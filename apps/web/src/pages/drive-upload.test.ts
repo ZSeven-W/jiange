@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError, type DriveEntry } from "@/lib/api";
-import { DriveUploadStatus } from "@/components/DriveUploadStatus";
+import { DriveUploadStatus } from "@/components/drive-upload-status";
 import { DirectoryPickerGate, DriveUploadManager, planDriveUpload } from "./drive-upload";
 import { scanDriveDirectory, type DriveDirectoryHandle, type DriveFileHandle } from "./drive-upload-plan";
 

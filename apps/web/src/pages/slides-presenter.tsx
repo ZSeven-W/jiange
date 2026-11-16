@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, X } from "lucide-react";
 import type { SlidesPage } from "@/lib/api";
-import type { SlideContent } from "./slidesDraft";
+import type { SlideContent } from "./slides-draft";
 import { SlideShapes } from "./slides-shapes";
 import { hasLargeSlideTitle } from "./slides-layout";
 

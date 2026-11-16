@@ -1,5 +1,5 @@
 import type { SlideCreationLayout, SlideShape } from "@/lib/api";
-import type { SlideContent } from "./slidesDraft";
+import type { SlideContent } from "./slides-draft";
 
 /** Must match the server's atomic two-column creation preset. */
 export const TWO_COLUMN_SHAPES: SlideShape[] = [

@@ -131,7 +131,7 @@ func (d *Doc) HasBlock(id OpID) bool { return d.blocks[id] != nil }
 // strictness rule instead of misreading them.
 const StateVersion = 2
 
-// EncodeState serializes the replica (spec/PROTOCOL.md §State). Must match TS Doc.encodeState byte-for-byte.
+// EncodeState serializes the replica (spec/protocol.md §State). Must match TS Doc.encodeState byte-for-byte.
 // Docs without table payloads stay byte-identical v1; only table-bearing
 // states bump to v2 (readers accept both).
 func (d *Doc) EncodeState() []byte {

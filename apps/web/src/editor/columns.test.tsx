@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
-import type { SyncDoc } from "@/lib/useSyncDoc";
-import { Editor, setSelectionAlignment } from "./Editor";
+import type { SyncDoc } from "@/lib/use-sync-doc";
+import { Editor, setSelectionAlignment } from "./editor";
 import { deleteRange, joinBackward, joinForward, normalize, splitBlock, toggleMark } from "./model";
 import { selectionContainsColumns } from "./model";
-import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
-import { captureCompositionAnchor, captureCompositionSelection, resolveCompositionAnchor, resolveCompositionSelection } from "./compositionAnchor";
+import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./column-safety";
+import { captureCompositionAnchor, captureCompositionSelection, resolveCompositionAnchor, resolveCompositionSelection } from "./composition-anchor";
 
 function setup() {
   const doc = new Doc(1);

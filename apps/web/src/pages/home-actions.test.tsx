@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { docsApi, driveApi, extrasApi, type DocMeta } from "@/lib/api";
-import { HomeDocumentActions } from "./HomeDocumentActions";
+import { HomeDocumentActions } from "./home-document-actions";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("home document actions", () => {

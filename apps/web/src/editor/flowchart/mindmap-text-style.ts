@@ -1,6 +1,6 @@
 import { normalizeMindTextFormat, type MindTextFormat } from "./mindmap";
 import type { FlowGraph } from "./model";
-import { subscribeAuthChanges, subscribeLocalAuthChanges } from "@/lib/sessionCache";
+import { subscribeAuthChanges, subscribeLocalAuthChanges } from "@/lib/session-cache";
 
 export type MindTextStyleClip = { version: 1; size: number; color?: string; format: MindTextFormat };
 /** On macOS Option can change event.key; use physical key codes for the advertised shortcut. */

@@ -1,5 +1,5 @@
 import type { DocMeta, SlidesPage } from "@/lib/api";
-import { sameSlideContent } from "./slidesDraft";
+import { sameSlideContent } from "./slides-draft";
 const PREFIX = "JIANGE_SLIDE_V1:";
 export type SlideClipboard = { origin: string; userId: number; deckId: number; pageId: number; revision: number };
 

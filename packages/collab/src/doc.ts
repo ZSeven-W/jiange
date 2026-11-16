@@ -506,7 +506,7 @@ export class Doc {
 
   /* ------------------------------------------------------------ state (snapshot) encoding */
 
-  /** Encodes the full replica state (spec/PROTOCOL.md §State). */
+  /** Encodes the full replica state (spec/protocol.md §State). */
   encodeState(): Uint8Array {
     const w = new Writer();
     // 无表格文档保持 v1 字节不变；含表格载荷才升 v2（读取端两者皆收）。

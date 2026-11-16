@@ -1,4 +1,4 @@
-import type { FormFieldDef, FormValue } from "./PublicForm";
+import type { FormFieldDef, FormValue } from "./public-form";
 
 export type FormDraftEntry = { id: number; name: string; type: string; value: FormValue };
 export type FormDraftRead = { values: Record<number, FormValue>; unmatched: FormDraftEntry[]; unreadable: string | null };

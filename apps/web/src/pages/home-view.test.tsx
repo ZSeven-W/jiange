@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DocMeta, Me } from "@/lib/api";
 import { DriveUploadManager } from "./drive-upload";
-import { Home } from "./Home";
+import { Home } from "./home";
 import { homeViewKey, readHomeView, writeHomeView } from "./home-view";
 
 afterEach(() => vi.unstubAllGlobals());

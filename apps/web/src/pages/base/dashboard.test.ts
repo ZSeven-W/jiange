@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BaseRecord, Field } from "@/lib/api";
-import { dashboardStats } from "./Dashboard";
+import { dashboardStats } from "./dashboard";
 
 const fields: Field[] = [
   { id: 1, name: "任务", type: "text", position: 1, isPrimary: true },

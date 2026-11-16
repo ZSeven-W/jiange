@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { sameSlideContent, SlidesDraftQueue } from "./slidesDraft";
+import { sameSlideContent, SlidesDraftQueue } from "./slides-draft";
 import { SlideShapes } from "./slides-shapes";
 import { SlideSurface } from "./slides-presenter";
-import { SlideFormatPanel } from "./SlideFormatPanel";
+import { SlideFormatPanel } from "./slide-format-panel";
 import { isTwoColumnSlide, planSlideLayout, slidePresetContent, TWO_COLUMN_SHAPES } from "./slides-layout-preset";
 
 describe("two-column creation preset", () => {

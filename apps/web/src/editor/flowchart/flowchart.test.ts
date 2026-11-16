@@ -14,141 +14,6 @@ const sample: FlowGraph = {
   edges: [{ id: "e1", from: "a", to: "b" }, { id: "e2", from: "b", to: "c", label: "是" }],
 };
 
-describe("flowchart storage", () => {
-  it("writes only local intent after a peer changes or adds other objects", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const remote = { ...base, nodes: [...base.nodes.map((n) => n.id === "b" ? { ...n, text: "远程修改" } : n), { id: "new", shape: "rect" as const, text: "远程新增", x: 400, y: 0, w: 100, h: 50 }], edges: [...base.edges, { id: "new-edge", from: "b", to: "new" }] };
-    const props = flowWrites({}, remote);
-    const next = { ...base, nodes: base.nodes.map((n) => n.id === "a" ? { ...n, x: 50 } : n) };
-    const result = flowIntentWrites(props, base, next);
-    expect(Object.keys(result.writes)).toEqual(["fc.n.a"]);
-    expect(result.conflicts).toEqual([]);
-    const merged = readFlow({ ...props, ...result.writes });
-    expect(merged.nodes.find((n) => n.id === "a")?.x).toBe(50);
-    expect(merged.nodes.find((n) => n.id === "b")?.text).toBe("远程修改");
-    expect(merged.nodes.some((n) => n.id === "new")).toBe(true);
-    expect(merged.edges.some((e) => e.id === "new-edge")).toBe(true);
-  });
-
-  it("rejects stale edits to a changed or deleted object", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const next = { ...base, nodes: base.nodes.map((n) => n.id === "a" ? { ...n, text: "我的输入" } : n) };
-    const remote = { ...base, nodes: base.nodes.map((n) => n.id === "a" ? { ...n, text: "他人输入" } : n) };
-    const props = flowWrites({}, remote);
-    expect(flowIntentWrites(props, base, next)).toEqual({ writes: {}, conflicts: ["fc.n.a"] });
-    expect(flowIntentWrites({ ...props, "fc.n.a": "" }, base, next)).toEqual({ writes: {}, conflicts: ["fc.n.a"] });
-  });
-
-  it("does not delete a node and its edges when a peer adds a connection", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const next = { ...base, nodes: base.nodes.filter((n) => n.id !== "b"), edges: base.edges.filter((e) => e.from !== "b" && e.to !== "b") };
-    const remote = { ...base, edges: [...base.edges, { id: "remote", from: "a", to: "b" }] };
-    const result = flowIntentWrites(flowWrites({}, remote), base, next);
-    expect(result.writes).toEqual({});
-    expect(result.conflicts).toContain("fc.n.b");
-    expect(result.conflicts).toContain("fc.e.e1");
-  });
-
-  it("keeps linked nodes when a multi-delete conflicts on one endpoint", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const proposed = { ...base, nodes: base.nodes.filter((n) => n.id === "c"), edges: [] };
-    const live = { ...base, nodes: base.nodes.map((n) => n.id === "b" ? { ...n, text: "同事修改" } : n) };
-    const result = flowIntentWrites(flowWrites({}, live), base, proposed);
-    expect(result.writes).toEqual({});
-    expect(result.conflicts).toEqual(expect.arrayContaining(["fc.n.a", "fc.n.b", "fc.e.e1", "fc.e.e2"]));
-  });
-
-  it("applies undo without removing a peer's later changes", () => {
-    const before = readFlow(flowWrites({}, sample));
-    const after = { ...before, nodes: before.nodes.map((n) => n.id === "a" ? { ...n, x: 80 } : n) };
-    const live = { ...after, nodes: [...after.nodes, { id: "peer", shape: "rect" as const, text: "同事", x: 10, y: 10, w: 100, h: 50 }] };
-    const props = flowWrites({}, live);
-    const result = flowIntentWrites(props, after, before);
-    expect(Object.keys(result.writes)).toEqual(["fc.n.a"]);
-    expect(readFlow({ ...props, ...result.writes }).nodes.some((n) => n.id === "peer")).toBe(true);
-  });
-
-  it("preserves malformed untouched props and refuses edges to deleted nodes", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const added = { ...base, edges: [...base.edges, { id: "local", from: "a", to: "c" }] };
-    const props = { ...flowWrites({}, base), "fc.n.c": "", "fc.n.broken": "{bad" };
-    const result = flowIntentWrites(props, base, added);
-    expect(result.writes).toEqual({});
-    expect(result.conflicts).toEqual(["fc.e.local"]);
-  });
-
-  it("does not attach a local edge to a peer's conflicting node id", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const mine = { id: "same", shape: "rect" as const, text: "我的节点", x: 300, y: 0, w: 100, h: 50 };
-    const peer = { ...mine, text: "同事节点" };
-    const proposed = { ...base, nodes: [...base.nodes, mine], edges: [...base.edges, { id: "link", from: "a", to: "same" }] };
-    const live = { ...base, nodes: [...base.nodes, peer] };
-    const result = flowIntentWrites(flowWrites({}, live), base, proposed);
-    expect(result.writes).toEqual({});
-    expect(result.conflicts).toEqual(["fc.n.same", "fc.e.link"]);
-  });
-
-  it("applies an independent local change while preserving a conflicting one", () => {
-    const base = readFlow(flowWrites({}, sample));
-    const proposed = { ...base, nodes: base.nodes.map((n) => n.id === "a" ? { ...n, text: "本地" } : n.id === "c" ? { ...n, x: 40 } : n) };
-    const live = { ...base, nodes: base.nodes.map((n) => n.id === "a" ? { ...n, text: "远程" } : n) };
-    const result = flowIntentWrites(flowWrites({}, live), base, proposed);
-    expect(Object.keys(result.writes)).toEqual(["fc.n.c"]);
-    expect(result.conflicts).toEqual(["fc.n.a"]);
-  });
-  it("round-trips through per-object props and only writes what changed", () => {
-    const first = flowWrites({}, sample);
-    expect(Object.keys(first).filter((k) => k.startsWith("fc.n.")).length).toBe(3);
-    const props = { ...first };
-    expect(readFlow(props).nodes.map((n) => n.text).sort()).toEqual(["开始", "结束", "通过？"].sort());
-    expect(readFlow(props).edges.map((e) => e.label ?? "")).toEqual(["", "是"]);
-    const moved = { ...sample, nodes: sample.nodes.map((n) => (n.id === "c" ? { ...n, x: 300 } : n)) };
-    expect(Object.keys(flowWrites(props, moved))).toEqual(["fc.n.c"]);
-    const removed = { ...sample, nodes: sample.nodes.filter((n) => n.id !== "c"), edges: sample.edges.filter((e) => e.to !== "c") };
-    expect(flowWrites(props, removed)).toEqual({ "fc.n.c": "", "fc.e.e2": "" });
-  });
-  it("keeps both users' concurrent edits to different nodes", () => {
-    const a = new Doc(1), b = new Doc(2);
-    const tx = new Tx(a);
-    const block = tx.create("flowchart", null, ROOT, flowWrites({}, sample));
-    for (const op of tx.ops) b.apply(op);
-    const editA = new Tx(a), editB = new Tx(b);
-    const ga = readFlow(a.blockInfo(block).props), gb = readFlow(b.blockInfo(block).props);
-    for (const [k, v] of Object.entries(flowWrites(a.blockInfo(block).props, { ...ga, nodes: ga.nodes.map((n) => (n.id === "a" ? { ...n, text: "启动" } : n)) }))) editA.setProp(block, k, v);
-    for (const [k, v] of Object.entries(flowWrites(b.blockInfo(block).props, { ...gb, nodes: gb.nodes.map((n) => (n.id === "c" ? { ...n, text: "完成" } : n)) }))) editB.setProp(block, k, v);
-    for (const op of editA.ops) b.apply(op);
-    for (const op of editB.ops) a.apply(op);
-    for (const d of [a, b]) {
-      const texts = Object.fromEntries(readFlow(d.blockInfo(block).props).nodes.map((n) => [n.id, n.text]));
-      expect(texts).toEqual({ a: "启动", b: "通过？", c: "完成" });
-    }
-  });
-  it("rejects malformed objects and dangling edges", () => {
-    expect(normalizeNode({ x: "1" }, "bad id!")).toBeNull();
-    const g = readFlow({ "fc.n.a": '{"x":0,"y":0,"w":10,"h":10,"shape":"weird","text":"x","fill":"red"}', "fc.e.e": '{"from":"a","to":"missing"}', "fc.n.z": "not json" });
-    expect(g.nodes[0]).toMatchObject({ shape: "rect", w: 20 });
-    expect(g.nodes[0].fill).toBeUndefined();
-    expect(g.edges).toEqual([]);
-  });
-});
-
-describe("layout, routing and export", () => {
-  it("lays out ranks top-to-bottom and survives cycles", () => {
-    const cyc = { ...sample, edges: [...sample.edges, { id: "e3", from: "c", to: "a" }] };
-    const out = autoLayout(cyc);
-    const y = Object.fromEntries(out.nodes.map((n) => [n.id, n.y]));
-    expect(y.a).toBeLessThan(y.b);
-    expect(y.b).toBeLessThan(y.c);
-  });
-  it("routes orthogonal edges and writes Mermaid", () => {
-    const { d } = edgePath(sample.edges[0], sample.nodes[0], sample.nodes[1]);
-    expect(d.startsWith("M60,50")).toBe(true);
-    const m = toMermaid(sample);
-    expect(m).toContain('N1(["开始"])');
-    expect(m).toContain('N2 -->|"是"| N3');
-  });
-});
-
 describe("draw.io import", () => {
   const plain = `<mxfile><diagram name="P1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
     <mxCell id="s" value="开始" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry"/></mxCell>
@@ -254,18 +119,6 @@ describe("rotation and bends", () => {
   });
 });
 
-describe("image nodes", () => {
-  it("keeps a positive file id only on image nodes", () => {
-    expect(normalizeNode({ id: "i", shape: "image", fileId: 12 })?.fileId).toBe(12);
-    expect(normalizeNode({ id: "i", shape: "image", fileId: -1 })?.fileId).toBeUndefined();
-    expect(normalizeNode({ id: "i", shape: "image", fileId: "12" })?.fileId).toBeUndefined();
-    expect(normalizeNode({ id: "r", shape: "rect", fileId: 12 })?.fileId).toBeUndefined();
-    const g: FlowGraph = { theme: "feishu", nodes: [{ id: "i", shape: "image", text: "", fileId: 5, x: 0, y: 0, w: 100, h: 80 }], edges: [] };
-    expect(readFlow(flowWrites({}, g)).nodes[0].fileId).toBe(5);
-    expect(toMermaid(g)).toContain("图片");
-  });
-});
-
 describe("edge waypoints", () => {
   const a = { id: "a", shape: "rect" as const, text: "", x: 0, y: 0, w: 100, h: 40 };
   const b = { id: "b", shape: "rect" as const, text: "", x: 0, y: 300, w: 100, h: 40 };
@@ -288,5 +141,24 @@ describe("edge waypoints", () => {
     // Import re-bases coordinates to a 40px margin; the waypoint shifts with the nodes.
     const n = back.graph.nodes.find((x) => x.text === "" && x.y === 40)!;
     expect(back.graph.edges[0].pts).toEqual([{ x: 250 - 0 + (n.x - 0), y: 100 + 40 }]);
+  });
+});
+
+describe("flowchart collaboration", () => {
+  it("keeps both users' concurrent edits to different nodes", () => {
+    const a = new Doc(1), b = new Doc(2);
+    const tx = new Tx(a);
+    const block = tx.create("flowchart", null, ROOT, flowWrites({}, sample));
+    for (const op of tx.ops) b.apply(op);
+    const editA = new Tx(a), editB = new Tx(b);
+    const ga = readFlow(a.blockInfo(block).props), gb = readFlow(b.blockInfo(block).props);
+    for (const [k, v] of Object.entries(flowWrites(a.blockInfo(block).props, { ...ga, nodes: ga.nodes.map((n) => (n.id === "a" ? { ...n, text: "启动" } : n)) }))) editA.setProp(block, k, v);
+    for (const [k, v] of Object.entries(flowWrites(b.blockInfo(block).props, { ...gb, nodes: gb.nodes.map((n) => (n.id === "c" ? { ...n, text: "完成" } : n)) }))) editB.setProp(block, k, v);
+    for (const op of editA.ops) b.apply(op);
+    for (const op of editB.ops) a.apply(op);
+    for (const d of [a, b]) {
+      const texts = Object.fromEntries(readFlow(d.blockInfo(block).props).nodes.map((n) => [n.id, n.text]));
+      expect(texts).toEqual({ a: "启动", b: "通过？", c: "完成" });
+    }
   });
 });

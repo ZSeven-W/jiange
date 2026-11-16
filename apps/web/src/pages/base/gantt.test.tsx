@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BaseRecord, Field } from "@/lib/api";
-import { Gantt, ganttDate, ganttDay, ganttDropIndex, ganttMoveCells, ganttRange, rescheduleGantt } from "./Gantt";
+import { Gantt, ganttDate, ganttDay, ganttDropIndex, ganttMoveCells, ganttRange, rescheduleGantt } from "./gantt";
 
 const day = (text: string) => ganttDay(text)!;
 const fields: Field[] = [

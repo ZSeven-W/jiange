@@ -12,7 +12,8 @@
     "./clipboard": "./src/clipboard.ts",
     "./tsv": "./src/tsv.ts",
     "./xlsx": "./src/xlsx.ts",
-    "./xlsxRead": "./src/xlsxRead.ts"
+    "./xlsxRead": "./src/xlsx-read.ts",
+    "./xlsx-read": "./src/xlsx-read.ts"
   },
   "files": [
     "dist",
@@ -47,13 +48,17 @@
         "import": "./dist/xlsx.js"
       },
       "./xlsxRead": {
-        "types": "./dist/xlsxRead.d.ts",
-        "import": "./dist/xlsxRead.js"
+        "types": "./dist/xlsx-read.d.ts",
+        "import": "./dist/xlsx-read.js"
+      },
+      "./xlsx-read": {
+        "types": "./dist/xlsx-read.d.ts",
+        "import": "./dist/xlsx-read.js"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run"
   },

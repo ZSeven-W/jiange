@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { compactOutlinePlacement, OutlinePanel, OutlineTrigger, outlineOf } from "./OutlinePanel";
+import { compactOutlinePlacement, OutlinePanel, OutlineTrigger, outlineOf } from "./outline-panel";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 
 describe("outline & h4-h6", () => {
@@ -24,7 +24,7 @@ describe("outline & h4-h6", () => {
   });
 });
 
-import { diffViews, type DiffRow } from "./VersionDiff";
+import { diffViews, type DiffRow } from "./version-diff";
 import type { DocView } from "@/lib/api";
 
 const mk = (blocks: [string, string][]): DocView => ({
@@ -66,7 +66,7 @@ describe("version diff", () => {
   });
 });
 
-import { activeOutlineId } from "./OutlinePanel";
+import { activeOutlineId } from "./outline-panel";
 
 describe("outline reading position", () => {
   const items = [{ id: "a", level: 2, text: "A" }, { id: "b", level: 3, text: "B" }, { id: "c", level: 2, text: "C" }];
@@ -80,7 +80,7 @@ describe("outline reading position", () => {
   });
 });
 
-import { visibleOutline } from "./OutlinePanel";
+import { visibleOutline } from "./outline-panel";
 
 describe("collapsible outline", () => {
   const items = [

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// Sync protocol message types (spec/PROTOCOL.md §Sync).
+// Sync protocol message types (spec/protocol.md §Sync).
 const (
 	MsgHello   = 0x01
 	MsgOps     = 0x02

@@ -1,0 +1,171 @@
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ReadOnlyDoc } from "./read-only-doc";
+import { VersionView } from "./version-panel";
+import type { DocView } from "@/lib/api";
+import type { Comment } from "@/lib/api";
+import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+
+// Mermaid is asynchronous and requires a browser; exercise its integration here.
+vi.mock("@/editor/diagram-view", () => ({ DiagramView: () => <span data-diagram-preview>流程图预览</span> }));
+
+const b = (id: string, type: string, text = "", props: Record<string, string> = {}, parent = "0:0"): DocView["blocks"][number] => ({
+  id, type, parent, props, spans: text ? [{ text, marks: {} }] : [],
+});
+
+describe("read-only document snapshots", () => {
+  it("exposes block link handles only when the public page supplies an action", () => {
+    const view: DocView = { blocks: [b("1:1", "paragraph", "段落"), b("1:2", "columns"), b("1:3", "paragraph", "左栏", {}, "1:2")] };
+    const ordinary = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(ordinary).not.toContain("data-public-block");
+    const shared = renderToStaticMarkup(<ReadOnlyDoc view={view} onCopyBlockLink={() => {}} />);
+    expect(shared).toContain('data-public-block="1:1"');
+    expect(shared).toContain('data-public-block="1:3"');
+    expect((shared.match(/ data-block-handle="true"/g) ?? [])).toHaveLength(3);
+  });
+  it("renders formula instances once despite formatting splits, including legacy and copied formulas", () => {
+    const paragraph = b("1:1", "paragraph");
+    paragraph.spans = [
+      { text: "前", marks: {} },
+      { text: "x", marks: { math: "x^2", mathId: "1:10", bold: "true" } },
+      { text: "^2", marks: { math: "x^2", mathId: "1:10" } },
+      { text: "x^2", marks: { math: "x^2", mathId: "1:20" } },
+      { text: "x^2x^2", marks: { math: "x^2" } },
+      { text: "后😀", marks: {} },
+    ];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={{ blocks: [paragraph] }} />);
+    expect((html.match(/class="jiange-math"/g) ?? [])).toHaveLength(3);
+    expect(html).toContain("前");
+    expect(html).toContain("后😀");
+    expect(html).not.toContain("x^2");
+  });
+
+  it("renders rich content without exposing formula or diagram source", () => {
+    const rich = b("1:1", "paragraph");
+    rich.spans = [{ text: "重点", marks: { bold: "true", italic: "true" } }, { text: "文档", marks: { link: "https://example.com" } }];
+    const view: DocView = { blocks: [rich, b("1:2", "math", "x^2+y^2"), b("1:3", "diagram", "flowchart LR\nA-->B"), b("1:4", "table", "", { tableData: JSON.stringify([["事项", "状态"], ["验收", "完成"]]) })] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(html).toContain("font-semibold");
+    expect(html).toContain("italic");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain('class="jiange-math"');
+    expect(html).toContain("data-diagram-preview");
+    expect(html).toContain("验收");
+    expect(html).not.toContain("x^2+y^2");
+    expect(html).not.toContain("flowchart LR");
+  });
+
+  it("renders column children only within their parent and rejects unsafe links and file IDs", () => {
+    const paragraph = b("1:5", "paragraph");
+    paragraph.spans = [{ text: "危险链接", marks: { link: "javascript:alert(1)" } }];
+    const view: DocView = { blocks: [b("1:1", "columns"), b("1:2", "paragraph", "左栏", {}, "1:1"), b("1:3", "paragraph", "右栏", {}, "1:1"), b("1:4", "image", "", { fileId: "../../x", name: "图片" }), paragraph, b("1:6", "file", "", { fileId: "12", name: "资料.pdf", size: "1024" })] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect((html.match(/左栏/g) ?? [])).toHaveLength(1);
+    expect((html.match(/右栏/g) ?? [])).toHaveLength(1);
+    expect(html).toContain("图片不可用或需要登录");
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("../../x");
+    expect(html).toContain('href="/api/files/12"');
+  });
+
+  it("shows each column's alignment in read-only and public views", () => {
+    const view: DocView = { blocks: [b("1:1", "columns"), b("1:2", "paragraph", "居中", { align: "center" }, "1:1"), b("1:3", "paragraph", "靠右", { align: "right" }, "1:1"), b("1:4", "paragraph", "默认", { align: "unknown" }, "1:1")] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
+    expect(html).toMatch(/style="[^"]*text-align:center"[^>]*>.*居中/);
+    expect(html).toMatch(/style="[^"]*text-align:right"[^>]*>.*靠右/);
+    expect(html).toMatch(/style="[^"]*text-align:left"[^>]*>.*默认/);
+    expect(html).toContain("data-column-scroll");
+    expect(html).not.toContain("bg-sidebar/40");
+  });
+
+  it("projects saved column weights in presentation and public views", () => {
+    const view: DocView = { blocks: [b("1:1", "columns", "", { columnWidths: JSON.stringify({"1:2":1400,"1:3":600}) }), b("1:2", "paragraph", "宽栏", {}, "1:1"), b("1:3", "paragraph", "窄栏", {}, "1:1")] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
+    expect(html).toMatch(/style="flex-grow:1400;flex-basis:0%;text-align:left"[^>]*>.*宽栏/);
+    expect(html).toMatch(/style="flex-grow:600;flex-basis:0%;text-align:left"[^>]*>.*窄栏/);
+  });
+
+  it("uses the current public link for shared media and hides protected downloads", () => {
+    const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "预览图" }), b("1:2", "file", "", { fileId: "34", name: "方案.pdf" })] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
+    expect(html).toContain('src="/api/public/example-token/files/12"');
+    expect(html).toContain('href="/api/public/example-token/files/34"');
+    expect(html).toContain('referrerPolicy="no-referrer"');
+    expect(html).not.toContain('href="/api/files/34"');
+    const protectedHTML = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" disableFileDownloads />);
+    expect(protectedHTML).toContain('src="/api/public/example-token/files/12"');
+    expect(protectedHTML).not.toContain('/files/34');
+    expect(protectedHTML).toContain("下载已关闭");
+  });
+
+  it("offers image preview only when a preview handler is supplied", () => {
+    const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "示例.png", caption: "示意图", imageWidth: "50" })] };
+    const normal = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    const preview = renderToStaticMarkup(<ReadOnlyDoc view={view} onPreviewImage={() => {}} />);
+    expect(normal).not.toContain("查看图片：示意图");
+    expect(preview).toContain('aria-label="查看图片：示意图"');
+    expect(preview).toContain('src="/api/files/12"');
+    expect(preview).toContain("width:50%");
+  });
+
+  it("projects live comment anchors in text, columns and whole blocks without using stale quotes", () => {
+    const doc = new Doc(1), tx = new Tx(doc);
+    const paragraph = tx.create("paragraph", null, ROOT);
+    tx.insert(paragraph, 0, "前😀目标后");
+    const columns = tx.create("columns", paragraph, ROOT);
+    const column = tx.create("paragraph", null, columns);
+    tx.insert(column, 0, "分栏内容");
+    const image = tx.create("image", columns, ROOT);
+    tx.setProp(image, "fileId", "12");
+    const ids = doc.visibleIds(paragraph), columnIds = doc.visibleIds(column);
+    const base: Comment = { id: 11, docId: 1, userId: 1, userName: "测试", block: idKey(paragraph), startChar: idKey(ids[1]), endChar: idKey(ids[3]), quote: "😀目标", body: "评论", resolved: false, createdAt: "", updatedAt: "" };
+    const comments: Comment[] = [base, { ...base, id: 12 }, { ...base, id: 13, block: idKey(column), startChar: idKey(columnIds[0]), endChar: idKey(columnIds[1]) }, { ...base, id: 14, block: idKey(image), startChar: "", endChar: "" }, { ...base, id: 15, endChar: "99:99" }, { ...base, id: 16, resolved: true }];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={11} onActivateComment={() => {}} />);
+    expect(html).toContain('data-comment-anchor="11"');
+    expect(html).toContain('data-comment-anchor="13"');
+    expect(html).toContain('data-comment-block="14"');
+    expect(html).toContain('bg-[#FBDC8D]');
+    expect(html).not.toContain('data-comment-anchor="12"');
+    expect(html).not.toContain('data-comment-anchor="15"');
+    expect(html).not.toContain('data-comment-anchor="16"');
+    expect(html).toContain("😀目标");
+    const selectedImage = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={14} onActivateComment={() => {}} onPreviewImage={() => {}} />);
+    expect(selectedImage).toMatch(/<img[^>]+class="[^"]*outline-\[#F0B400\]/);
+    expect(selectedImage).not.toMatch(/data-readonly-block="image"[^>]+class="[^"]*outline/);
+    new Tx(doc).delete(paragraph, 1, 3);
+    const stale = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={comments} activeThread={11} onActivateComment={() => {}} />);
+    expect(stale).not.toContain('data-comment-anchor="11"');
+    expect(stale).not.toContain('data-comment-anchor="12"');
+  });
+
+  it("highlights the selected table rather than the full document width", () => {
+    const doc = new Doc(1), tx = new Tx(doc), table = tx.create("table", null, ROOT);
+    tx.setProp(table, "tableData", JSON.stringify([["事项", "状态"], ["评审", "完成"]]));
+    const comment: Comment = { id: 14, docId: 1, userId: 1, userName: "测试", block: idKey(table), startChar: "", endChar: "", quote: "[表格]", body: "评论", resolved: false, createdAt: "", updatedAt: "" };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={doc.view()} commentDoc={doc} comments={[comment]} activeThread={14} onActivateComment={() => {}} />);
+    expect(html).toMatch(/class="[^"]*outline-\[#F0B400\][^"]*" data-table-block/);
+    expect(html).not.toMatch(/data-readonly-block="table"[^>]+class="[^"]*outline/);
+  });
+
+  it("keeps images visible in protected versions without exposing attachment links", () => {
+    const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "预览图" }), b("1:2", "file", "", { fileId: "34", name: "方案.pdf" })] };
+    const protectedHTML = renderToStaticMarkup(<VersionView view={view} disableFileDownloads versionSeq={42} />);
+    expect(protectedHTML).toContain('src="/api/files/12?version=42"');
+    expect(protectedHTML).not.toContain('href="/api/files/34"');
+    expect(protectedHTML).toContain("下载已关闭");
+    const managerHTML = renderToStaticMarkup(<VersionView view={view} versionSeq={42} />);
+    expect(managerHTML).toContain('src="/api/files/12?version=42"');
+    expect(managerHTML).toContain('href="/api/files/34"');
+  });
+
+  it("limits video download controls and disables the external fallback link when downloads are restricted", () => {
+    const view: DocView = { blocks: [b("1:1", "video", "", { url: "https://example.com/demo.mp4", name: "示例视频" }), b("1:2", "video", "", { url: "https://example.com/watch", name: "外部视频" })] };
+    const restricted = renderToStaticMarkup(<ReadOnlyDoc view={view} disableFileDownloads />);
+    expect(restricted).toContain('controlsList="nodownload"');
+    expect(restricted).not.toContain('href="https://example.com/watch"');
+    expect(restricted).toContain("当前不提供外部链接");
+    const allowed = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(allowed).not.toContain('controlsList="nodownload"');
+    expect(allowed).toContain('href="https://example.com/watch"');
+  });
+});

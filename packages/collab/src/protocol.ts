@@ -1,6 +1,6 @@
 import { Reader, Writer } from "./encoding.js";
 
-/** Sync protocol message types (spec/PROTOCOL.md §Sync). One message per WebSocket binary frame. */
+/** Sync protocol message types (spec/protocol.md §Sync). One message per WebSocket binary frame. */
 export const MSG = {
   hello: 0x01,
   ops: 0x02,

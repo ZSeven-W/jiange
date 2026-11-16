@@ -8,14 +8,18 @@
   "exports": {
     ".": "./src/index.ts",
     "./model": "./src/model.ts",
-    "./tableCells": "./src/tableCells.ts",
-    "./blockStyles": "./src/blockStyles.ts",
-    "./columnWidths": "./src/columnWidths.ts",
-    "./columnMove": "./src/columnMove.ts",
+    "./tableCells": "./src/table-cells.ts",
+    "./blockStyles": "./src/block-styles.ts",
+    "./columnWidths": "./src/column-widths.ts",
+    "./columnMove": "./src/column-move.ts",
     "./docx": "./src/docx.ts",
     "./markdown": "./src/markdown.ts",
     "./zip": "./src/zip.ts",
-    "./xml": "./src/xml.ts"
+    "./xml": "./src/xml.ts",
+    "./table-cells": "./src/table-cells.ts",
+    "./block-styles": "./src/block-styles.ts",
+    "./column-widths": "./src/column-widths.ts",
+    "./column-move": "./src/column-move.ts"
   },
   "files": [
     "dist",
@@ -34,20 +38,20 @@
         "import": "./dist/model.js"
       },
       "./tableCells": {
-        "types": "./dist/tableCells.d.ts",
-        "import": "./dist/tableCells.js"
+        "types": "./dist/table-cells.d.ts",
+        "import": "./dist/table-cells.js"
       },
       "./blockStyles": {
-        "types": "./dist/blockStyles.d.ts",
-        "import": "./dist/blockStyles.js"
+        "types": "./dist/block-styles.d.ts",
+        "import": "./dist/block-styles.js"
       },
       "./columnWidths": {
-        "types": "./dist/columnWidths.d.ts",
-        "import": "./dist/columnWidths.js"
+        "types": "./dist/column-widths.d.ts",
+        "import": "./dist/column-widths.js"
       },
       "./columnMove": {
-        "types": "./dist/columnMove.d.ts",
-        "import": "./dist/columnMove.js"
+        "types": "./dist/column-move.d.ts",
+        "import": "./dist/column-move.js"
       },
       "./docx": {
         "types": "./dist/docx.d.ts",
@@ -64,11 +68,27 @@
       "./xml": {
         "types": "./dist/xml.d.ts",
         "import": "./dist/xml.js"
+      },
+      "./table-cells": {
+        "types": "./dist/table-cells.d.ts",
+        "import": "./dist/table-cells.js"
+      },
+      "./block-styles": {
+        "types": "./dist/block-styles.d.ts",
+        "import": "./dist/block-styles.js"
+      },
+      "./column-widths": {
+        "types": "./dist/column-widths.d.ts",
+        "import": "./dist/column-widths.js"
+      },
+      "./column-move": {
+        "types": "./dist/column-move.d.ts",
+        "import": "./dist/column-move.js"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run"
   },

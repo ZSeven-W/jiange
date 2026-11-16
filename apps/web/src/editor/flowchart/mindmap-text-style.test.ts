@@ -61,7 +61,7 @@ describe("mind map text style", () => {
   });
   it("clears the in-tab style cache when the authentication session changes", async () => {
     vi.resetModules(); vi.stubGlobal("window", new EventTarget()); vi.stubGlobal("BroadcastChannel", undefined);
-    const style = await import("./mindmap-text-style"), session = await import("@/lib/sessionCache");
+    const style = await import("./mindmap-text-style"), session = await import("@/lib/session-cache");
     style.setMindTextStyleSession(style.captureMindTextStyle(graph, "a")!); const revision = style.getMindTextStyleSessionRevision();
     expect(style.getMindTextStyleSession()?.format.bold).toBe(true);
     session.announceAuthChange(); expect(style.getMindTextStyleSession()).toBeNull(); expect(style.getMindTextStyleSessionRevision()).toBeGreaterThan(revision);

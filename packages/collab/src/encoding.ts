@@ -1,7 +1,7 @@
 import type { OpId } from "./id.js";
 import type { Anchor, Op, Side } from "./ops.js";
 
-/** Batch header: magic 'J' (0x4a) + format version. See spec/PROTOCOL.md. */
+/** Batch header: magic 'J' (0x4a) + format version. See spec/protocol.md. */
 export const MAGIC = 0x4a;
 export const VERSION = 1;
 

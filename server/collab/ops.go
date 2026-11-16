@@ -1,5 +1,5 @@
 // Package collab is the Go implementation of the Jiange collaborative document
-// model (spec/PROTOCOL.md). It must stay byte- and state-compatible with
+// model (spec/protocol.md). It must stay byte- and state-compatible with
 // packages/collab (TypeScript); spec/vectors enforce that.
 package collab
 

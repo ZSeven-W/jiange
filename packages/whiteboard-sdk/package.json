@@ -11,7 +11,8 @@
     "./mindmap": "./src/mindmap.ts",
     "./history": "./src/history.ts",
     "./viewport": "./src/viewport.ts",
-    "./inkGeometry": "./src/inkGeometry.ts"
+    "./inkGeometry": "./src/ink-geometry.ts",
+    "./ink-geometry": "./src/ink-geometry.ts"
   },
   "files": [
     "dist",
@@ -42,13 +43,17 @@
         "import": "./dist/viewport.js"
       },
       "./inkGeometry": {
-        "types": "./dist/inkGeometry.d.ts",
-        "import": "./dist/inkGeometry.js"
+        "types": "./dist/ink-geometry.d.ts",
+        "import": "./dist/ink-geometry.js"
+      },
+      "./ink-geometry": {
+        "types": "./dist/ink-geometry.d.ts",
+        "import": "./dist/ink-geometry.js"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run"
   },

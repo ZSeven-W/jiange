@@ -15,9 +15,11 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint:names
       - run: pnpm -r typecheck
       - run: pnpm test
       - run: pnpm test:sdk:pack
+      - run: pnpm test:sdk:coverage
       - run: pnpm --filter @jiange/web build
       - name: Vectors are up to date
         run: pnpm gen:vectors && git diff --exit-code spec/vectors

@@ -9,9 +9,12 @@
     "typecheck": "pnpm -r typecheck",
     "gen:vectors": "pnpm --filter @jiange/collab gen:vectors",
     "test:sdk:pack": "node scripts/verify-headless-sdks.mjs",
-    "test:xlsx:interop": "node scripts/verify-xlsx-interop.mjs"
+    "test:xlsx:interop": "node scripts/verify-xlsx-interop.mjs",
+    "test:sdk:coverage": "pnpm --filter @jiange/collab --filter @jiange/doc-sdk --filter @jiange/sheet-sdk --filter @jiange/slides-sdk --filter @jiange/whiteboard-sdk exec vitest run --coverage --coverage.include 'src/**/*.ts' --coverage.reporter=text --coverage.thresholds.statements=85 --coverage.thresholds.lines=85 --coverage.thresholds.branches=75 --coverage.thresholds.functions=80",
+    "lint:names": "node scripts/check-file-names.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0"
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "2.1.9"
   }
 }

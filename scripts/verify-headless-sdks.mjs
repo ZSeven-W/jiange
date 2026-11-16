@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,17 +20,23 @@ try {
     mkdirSync(destination, { recursive: true });
     execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', destination]);
     if (!existsSync(join(destination, 'dist', 'index.js')) || !existsSync(join(destination, 'dist', 'index.d.ts')) || existsSync(join(destination, 'src'))) throw new Error(`${name}: invalid package contents`);
+    if (readdirSync(join(destination, 'dist')).some(file => /[A-Z_]/.test(file))) throw new Error(`${name}: stale or non-kebab build output`);
   }
   writeFileSync(join(consumer, 'smoke.mjs'), `
 import assert from 'node:assert/strict';
 import { Doc, ROOT, Tx, SyncClient } from '@jiange/collab';
 import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights, captureColumnMove, applyColumnMove } from '@jiange/doc-sdk';
-import { columnWeights as columnWidthsSubpath } from '@jiange/doc-sdk/columnWidths';
-import { validColumnPosition } from '@jiange/doc-sdk/columnMove';
+import { columnWeights as columnWidthsSubpath } from '@jiange/doc-sdk/column-widths';
+import { validColumnPosition } from '@jiange/doc-sdk/column-move';
+import { columnWeights as legacyColumnWidths } from '@jiange/doc-sdk/columnWidths';
 import { moveShapeOrder, slideLineEndpoints } from '@jiange/slides-sdk';
 import { calculateSheet, translateSheetFormula, writeXlsx, readXlsx } from '@jiange/sheet-sdk';
+import { readXlsx as oldReadXlsx } from '@jiange/sheet-sdk/xlsxRead';
+import { readXlsx as newReadXlsx } from '@jiange/sheet-sdk/xlsx-read';
 import { listZip } from '@jiange/ooxml/zip';
 import { flowWrites, readFlow } from '@jiange/whiteboard-sdk';
+import { scaleInk as oldScaleInk } from '@jiange/whiteboard-sdk/inkGeometry';
+import { scaleInk as newScaleInk } from '@jiange/whiteboard-sdk/ink-geometry';
 assert.equal(typeof globalThis.document, 'undefined');
 const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, ROOT);
 tx.insert(block, 0, 'Hello'); const next = splitBlock(tx, {b:block,o:2});
@@ -40,6 +46,7 @@ const word = buildDocx({blocks:[{type:'paragraph',props:{},spans:[{text:'Hello S
 assert.equal((await parseDocx(word)).blocks[0].text, 'Hello SDK');
 assert.deepEqual(columnWeights('{"1:2":1400,"1:3":600}', ['1:2','1:3']), [1400,600]);
 assert.deepEqual(columnWidthsSubpath(undefined, ['1:2','1:3']), [1000,1000]);
+assert.deepEqual(legacyColumnWidths(undefined, ['1:2','1:3']), [1000,1000]);
 const group = tx.create('columns', next.b, ROOT), a = tx.create('paragraph', null, group), b = tx.create('paragraph', a, group);
 assert.equal(applyColumnMove(tx, captureColumnMove(doc, group, a), b), 'applied');
 assert.deepEqual(doc.children(group), [b, a]); assert.equal(doc.blockLocation(a).parent.clock, group.clock); assert.equal(validColumnPosition('A0'), false);
@@ -50,14 +57,15 @@ assert.equal(calculateSheet({'0:0':'2','0:1':'=A1*3'})['0:1'], 6);
 const xlsx = writeXlsx({sheets:[{name:'Sheet1',cells:[{row:0,col:0,value:'Hello'}]}]});
 assert.ok(listZip(xlsx).some(entry => entry.name === 'xl/workbook.xml'));
 assert.equal((await readXlsx(xlsx)).workbook.sheets[0].cells[0].value, 'Hello');
+assert.equal(oldReadXlsx, newReadXlsx); assert.equal(oldScaleInk, newScaleInk);
 const graph = {theme:'feishu',nodes:[{id:'n',x:0,y:0,w:140,h:60,shape:'rect',text:'Start'}],edges:[]};
 assert.equal(readFlow(flowWrites({},graph)).nodes[0].text,'Start');
 `);
   writeFileSync(join(consumer, 'types.ts'), `
 import { Doc, Tx, ROOT, SyncClient } from '@jiange/collab';
 import { splitBlock, columnWeights, captureColumnMove, type ColumnWidthSnapshot, type ColumnMoveSnapshot } from '@jiange/doc-sdk';
-import { COLUMN_WIDTHS } from '@jiange/doc-sdk/columnWidths';
-import { applyColumnMove } from '@jiange/doc-sdk/columnMove';
+import { COLUMN_WIDTHS } from '@jiange/doc-sdk/column-widths';
+import { applyColumnMove } from '@jiange/doc-sdk/column-move';
 import { moveShapeOrder, type SlideShape } from '@jiange/slides-sdk';
 import { calculateSheet, writeXlsx, readXlsx, type XlsxWorkbook } from '@jiange/sheet-sdk';
 import { readFlow, type FlowGraph } from '@jiange/whiteboard-sdk';

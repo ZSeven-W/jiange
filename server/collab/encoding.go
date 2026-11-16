@@ -108,7 +108,7 @@ func (r *reader) side() (uint8, error) {
 	return s, err
 }
 
-// EncodeOps encodes a batch of ops (spec/PROTOCOL.md §Encoding).
+// EncodeOps encodes a batch of ops (spec/protocol.md §Encoding).
 func EncodeOps(ops []Op) ([]byte, error) {
 	w := &writer{b: make([]byte, 0, 64)}
 	w.u8(Magic)

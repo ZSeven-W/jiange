@@ -1,4 +1,4 @@
-import { tableDataOf } from "./tableCells.js";
+import { tableDataOf } from "./table-cells.js";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
  *
@@ -7,11 +7,11 @@ import { tableDataOf } from "./tableCells.js";
  * and produces the same `MdBlock` seeds the Markdown importer uses, so both
  * formats share one insertion path.
  */
-import { CALLOUT_COLORS } from "./blockStyles.js";
+import { CALLOUT_COLORS } from "./block-styles.js";
 import { markdownTableRows, type MdBlock, type MdSpan } from "./markdown.js";
 import { createZip, listZip, readZipEntry, ZipError, type ZipEntry } from "./zip.js";
 import { child, children, escapeXml, XmlError, type XmlElement } from "./xml.js";
-import { parseDocxXml } from "./docxXml.js";
+import { parseDocxXml } from "./docx-xml.js";
 
 export const DOCX_MAX_BYTES = 10 * 1024 * 1024;
 /** Upper bound for any single inflated part we read from the archive. */

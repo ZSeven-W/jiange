@@ -1,5 +1,5 @@
 import { readFlow, toMermaid } from "@jiange/whiteboard-sdk/model";
-import { tableDataOf } from "./tableCells.js";
+import { tableDataOf } from "./table-cells.js";
 /**
  * Markdown import/export for Jiange documents (P6).
  *

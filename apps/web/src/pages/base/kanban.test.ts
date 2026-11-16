@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRecords } from "./Kanban";
+import { groupRecords } from "./kanban";
 import type { BaseRecord, Field } from "@/lib/api";
 
 const field: Field = { id: 2, name: "状态", type: "select", options: ["待办", "进行中", "完成"], position: 2 };

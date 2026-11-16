@@ -36,11 +36,11 @@ describe("en dictionary completeness", () => {
     for (const m of registry.matchAll(/label: "([^"]+)"/g)) if (!(m[1] in en)) missing.push(`registry.ts: ${m[1]}`);
     const fill = readFileSync(join(srcRoot, "src/pages/base/fill.ts"), "utf8");
     for (const m of fill.matchAll(/(low|medium|high|xhigh): "([^"]+)"/g)) if (!(m[2] in en)) missing.push(`fill.ts: ${m[2]}`);
-    const bell = readFileSync(join(srcRoot, "src/pages/NotificationBell.tsx"), "utf8");
+    const bell = readFileSync(join(srcRoot, "src/pages/notification-bell.tsx"), "utf8");
     for (const m of bell.matchAll(/(mention|reply|resolve): "([^"]+)"/g)) if (!(m[2] in en)) missing.push(`NotificationBell: ${m[2]}`);
-    const share = readFileSync(join(srcRoot, "src/components/ShareDialog.tsx"), "utf8");
+    const share = readFileSync(join(srcRoot, "src/components/share-dialog.tsx"), "utf8");
     for (const m of share.matchAll(/(view|edit|manage|anon|none): "([^"]*[一-龥][^"]*)"/g)) if (!(m[2] in en)) missing.push(`ShareDialog: ${m[2]}`);
-    const perms = readFileSync(join(srcRoot, "src/components/sharePermissions.tsx"), "utf8");
+    const perms = readFileSync(join(srcRoot, "src/components/share-permissions.tsx"), "utf8");
     for (const m of perms.matchAll(/label: "([^"]+)"/g)) if (!(m[1] in en)) missing.push(`sharePermissions: ${m[1]}`);
     expect(missing).toEqual([]);
   });

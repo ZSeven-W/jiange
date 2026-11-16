@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BaseRecord, Field } from "@/lib/api";
-import { CalendarView, calendarDate, calendarDays, calendarKey, groupCalendarRecords, shiftCalendar } from "./CalendarView";
-import { sessionWriteLedger } from "./writeSafety";
+import { CalendarView, calendarDate, calendarDays, calendarKey, groupCalendarRecords, shiftCalendar } from "./calendar-view";
+import { sessionWriteLedger } from "./write-safety";
 
 const record = (id: number, date?: string): BaseRecord => ({ id, baseId: 1, position: id, cells: { "1": `记录${id}`, ...(date === undefined ? {} : { "2": date }) } });
 const fields: Field[] = [{ id: 1, name: "名称", type: "text", position: 1 }, { id: 2, name: "日期", type: "date", position: 2 }];

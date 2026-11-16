@@ -1,7 +1,7 @@
 // Package syncsrv is Jiange's self-written realtime sync server: one room per
 // open document, server-assigned sequence numbers, acks, catch-up, presence,
 // snapshots with tombstone compaction, and cross-instance fan-out via the
-// store's notifications (Postgres LISTEN/NOTIFY). See spec/PROTOCOL.md §Sync.
+// store's notifications (Postgres LISTEN/NOTIFY). See spec/protocol.md §Sync.
 package syncsrv
 
 import (
