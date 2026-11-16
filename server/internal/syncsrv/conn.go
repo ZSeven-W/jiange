@@ -22,6 +22,7 @@ type conn struct {
 	ws          *websocket.Conn
 	user        store.User
 	out         chan []byte
+	projection  chan []byte // at most one pending full replacement for a slow viewer
 	terminal    chan []byte
 	cancel      context.CancelFunc
 	terminating atomic.Bool
@@ -30,6 +31,8 @@ type conn struct {
 	// connection. Test-only callers may leave it nil when not using sessions.
 	authenticate func(context.Context) error
 	writeGuard   *store.RestoreGuard
+	project      func(*collab.Doc) ([]byte, error)
+	wireMode     atomic.Int32 // 0 before HELLO, 1 editing replica, 2 view projection
 
 	// guarded by room.mu once joined
 	room     *room
@@ -39,6 +42,7 @@ type conn struct {
 	// wantsV2 is explicit client capability on the WebSocket URL. Older servers
 	// ignore it and still speak v1; older clients never send it.
 	wantsV2 bool
+	v3      bool
 	// v2 confirms history-epoch support; it does not imply table support.
 	v2      bool
 	dbAcked int64
@@ -55,6 +59,34 @@ func (c *conn) send(b []byte) {
 	}
 	select {
 	case c.out <- b:
+	default:
+		c.closed = true
+		c.cancel()
+	}
+}
+
+// A later complete projection subsumes all earlier ones. Coalescing prevents
+// a slow viewer from retaining hundreds of large document snapshots.
+// The caller holds room.mu, so there is only one projection producer.
+func (c *conn) sendProjection(b []byte) {
+	if c.closed {
+		return
+	}
+	if c.projection == nil {
+		c.send(b)
+		return
+	} // direct room test fixtures
+	select {
+	case c.projection <- b:
+		return
+	default:
+	}
+	select {
+	case <-c.projection:
+	default:
+	}
+	select {
+	case c.projection <- b:
 	default:
 		c.closed = true
 		c.cancel()
@@ -86,6 +118,24 @@ func (c *conn) terminalFrame(b []byte) {
 func (c *conn) writeLoop(stop, ctx context.Context) {
 	ping := time.NewTicker(c.hub.PingInterval)
 	defer ping.Stop()
+	var projections <-chan []byte // enabled only after WELCOME is written
+	write := func(b []byte) bool {
+		wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		// Permission can change while a message is waiting in the queue.
+		_, err := c.wireRole(wctx)
+		if err == nil {
+			err = c.ws.Write(wctx, websocket.MessageBinary, b)
+		}
+		cancel()
+		if err != nil {
+			c.cancel()
+			return false
+		}
+		if len(b) > 0 && b[0] == collab.MsgWelcome {
+			projections = c.projection
+		}
+		return true
+	}
 	for {
 		select {
 		case b := <-c.terminal:
@@ -102,22 +152,16 @@ func (c *conn) writeLoop(stop, ctx context.Context) {
 			c.writeTerminal(ctx, b)
 			return
 		case b := <-c.out:
-			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			// Permission can change while a message is waiting in the queue. Check
-			// immediately before sending, including for cross-instance broadcasts.
-			// A storage failure is treated as a denial, never as cached access.
-			_, err := c.currentRole(wctx)
-			if err == nil {
-				err = c.ws.Write(wctx, websocket.MessageBinary, b)
+			if !write(b) {
+				return
 			}
-			cancel()
-			if err != nil {
-				c.cancel()
+		case b := <-projections:
+			if !write(b) {
 				return
 			}
 		case <-ping.C:
 			pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			_, err := c.currentRole(pctx)
+			_, err := c.wireRole(pctx)
 			if err == nil {
 				err = c.ws.Ping(pctx)
 			}
@@ -133,7 +177,7 @@ func (c *conn) writeLoop(stop, ctx context.Context) {
 func (c *conn) writeTerminal(ctx context.Context, b []byte) {
 	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if _, err := c.currentRole(wctx); err == nil {
+	if _, err := c.wireRole(wctx); err == nil {
 		_ = c.ws.Write(wctx, websocket.MessageBinary, b)
 	}
 	c.cancel()
@@ -175,7 +219,7 @@ func (c *conn) readLoop(ctx context.Context) error {
 			continue
 		}
 		checkCtx, stopCheck := context.WithTimeout(ctx, 10*time.Second)
-		role, err := c.currentRole(checkCtx)
+		role, err := c.wireRole(checkCtx)
 		stopCheck()
 		if err != nil {
 			// Stop processing all traffic (including awareness) after revocation.
@@ -227,9 +271,27 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 		c.fail("not_found", "document not found")
 		return err
 	}
+	if store.RoleRank(meta.Role) < store.RoleRank(store.RoleView) {
+		return store.ErrNotFound
+	}
+	if store.RoleRank(meta.Role) < store.RoleRank(store.RoleEdit) {
+		c.wireMode.Store(2)
+	} else {
+		c.wireMode.Store(1)
+	}
 	c.docID.Store(doc)
 	c.v2 = m.HasEpoch || c.wantsV2
+	if c.wireMode.Load() == 2 && (!c.v3 || c.project == nil) {
+		c.fail("upgrade_required", "请升级客户端以安全查看文档")
+		return errors.New("read-only projection protocol required")
+	}
 	id := int64(m.ClientID)
+	// A view projection is not an editing replica. Give it its own ACK
+	// identity so it cannot advance the durable horizon of an offline editor
+	// whose draft may still depend on older history.
+	if c.wireMode.Load() == 2 {
+		id = 0
+	}
 	if id != 0 {
 		if uid, d, err := st.ClientOwner(ctx, id); err != nil || uid != c.user.ID || d != doc {
 			id = 0 // unknown or foreign id: issue a fresh one
@@ -296,6 +358,21 @@ func (c *conn) currentRole(ctx context.Context) (string, error) {
 		return "", store.ErrNotFound
 	}
 	return meta.Role, nil
+}
+
+// A connection's wire format cannot change in place: queued editor frames
+// must never be written after a downgrade, and an upgraded viewer must first
+// reconnect for a full replica before it may edit.
+func (c *conn) wireRole(ctx context.Context) (string, error) {
+	role, err := c.currentRole(ctx)
+	if err != nil {
+		return "", err
+	}
+	mode := c.wireMode.Load()
+	if mode != 0 && (mode == 1) != (store.RoleRank(role) >= store.RoleRank(store.RoleEdit)) {
+		return "", store.ErrForbidden
+	}
+	return role, nil
 }
 
 // mayAuthor checks every op is stamped with a replica id issued to this user for this doc.

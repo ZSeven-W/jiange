@@ -59,8 +59,13 @@ export class SyncClient {
   /** ACKs received while history is unresolved stay tied to this transport. */
   private deferredAcks: { firstSeq: number; count: number }[] = [];
   private rejectedTransport = false;
+  private mode: "edit" | "view" | null = null;
 
-  constructor(readonly docId: number, private h: SyncHandlers = {}) {}
+  constructor(readonly docId: number, private h: SyncHandlers = {}, private options: { requireMode?: boolean } = {}) {}
+
+  /** A view projection is replaced as a whole and must never be edited. */
+  get projectionOnly(): boolean { return this.mode === "view"; }
+  get syncMode(): "edit" | "view" | null { return this.mode; }
 
   get unacked(): number {
     return this.inflight.reduce((n, b) => n + b.length, 0) + this.queued.length;
@@ -87,6 +92,20 @@ export class SyncClient {
     this.refreshCaughtUp();
     this.setStatus("offline");
     this.h.error?.("table_unsupported", "当前版本无法安全显示此文档中的表格内容。");
+  }
+
+  private blockUnavailable(code: "projection_unavailable" | "protocol_incompatible", message: string) {
+    this.queued = this.inflight.flat().concat(this.queued);
+    this.inflight = [];
+    this.deferredAcks = [];
+    this.setBlocked(code);
+    this.doc = null;
+    this.send = null;
+    this.rejectedTransport = true;
+    this.refreshCaughtUp();
+    this.setStatus("offline");
+    this.h.change?.(true);
+    this.h.error?.(code, message);
   }
 
   /** Check only once the advertised server history is fully received. */
@@ -186,12 +205,13 @@ export class SyncClient {
     for (const op of ops) if (op) this.queued.push(op);
     this.h.change?.(false);
     if (ops.some((op) => op?.t === "ttable")) { this.blockUnsupportedTable(); return; }
+    if (this.projectionOnly && ops.some((op) => op !== null)) this.setBlocked("read_only");
     this.flush();
   }
 
   private flush() {
     // ACKs have no batch identifiers, so never have two batches outstanding.
-    if (!this.send || this.status === "connecting" || !this.caughtUp || this.blocked || this.inflight.length || this.queued.length === 0) return;
+    if (!this.send || this.projectionOnly || this.status === "connecting" || !this.caughtUp || this.blocked || this.inflight.length || this.queued.length === 0) return;
     const batch = this.queued;
     this.queued = [];
     this.inflight.push(batch);
@@ -206,7 +226,7 @@ export class SyncClient {
 
   /** Retry retained writes after the caller has checked access/connection state. */
   retryPending() {
-    if (!this._blocked || this._blocked === "table_unsupported" || this._blocked === "history_changed" || this.causalIssue) return;
+    if (this.projectionOnly || !this._blocked || this._blocked === "table_unsupported" || this._blocked === "history_changed" || this.causalIssue) return;
     // A late ACK from the rejected connection must never acknowledge a retry.
     if (this.rejectedTransport) return;
     this.queued = this.inflight.flat().concat(this.queued);
@@ -321,6 +341,14 @@ export class SyncClient {
     const m = decodeServerMsg(bytes);
     switch (m.type) {
       case "welcome": {
+        const incomingMode = "mode" in m ? m.mode : null;
+        if ((this.options.requireMode || this.mode !== null) && incomingMode === null) {
+          this.blockUnavailable("protocol_incompatible", "服务器未确认只读同步模式，已停止同步并保留本地草稿。");
+          throw new Error("sync mode negotiation required");
+        }
+        if (incomingMode !== null && (!Number.isSafeInteger(m.clientId) || m.clientId < 1 || !Number.isSafeInteger(m.headSeq) || m.headSeq < 0 || !m.snapshot || m.snapshot.seq !== m.headSeq)) {
+          throw new Error("sync mode requires a complete snapshot");
+        }
         const snapshot = m.snapshot ? Doc.fromState(m.clientId, m.snapshot.state) : null;
         if (snapshot?.hasTables() || this.doc?.hasTables() || this.pendingOps().some((op) => op.t === "ttable")) { this.blockUnsupportedTable(); return; }
         // A changed epoch invalidates every cached seq even at an unchanged
@@ -337,17 +365,21 @@ export class SyncClient {
         // Moving from a v1 connection with a cached replica to v2 is also a
         // generation change: v1 sequences cannot be tied to any epoch.
         const pending = this.inflight.flat().concat(this.queued);
+        if (this._blocked === "projection_unavailable" || this._blocked === "protocol_incompatible") this.setBlocked(pending.length ? incomingMode === "view" ? "read_only" : "not_ready" : null);
         const epochChanged = epoch !== undefined && epoch !== this.historyEpoch && this.doc !== null;
         // A stale or unidentifiable draft must not be replayed on a new
         // generation: character IDs may now refer to different content.
-        const quarantine = pending.length > 0 && (this._blocked === "history_changed" || epoch !== undefined && (this.draftEpoch === null || this.draftEpoch !== epoch));
-        const newlyQuarantined = quarantine && this._blocked !== "history_changed";
+        const staleDraft = pending.length > 0 && (this._blocked === "history_changed" || epoch !== undefined && (this.draftEpoch === null || this.draftEpoch !== epoch));
+        const readonlyDraft = pending.length > 0 && incomingMode === "view";
+        const quarantine = staleDraft || readonlyDraft;
+        const newlyQuarantined = staleDraft && this._blocked !== "history_changed";
         if (epochChanged) {
           this.lastSeq = 0;
           this.safeSeq = 0;
           this.droppedOnResync++;
         }
         if (epoch !== undefined) this.historyEpoch = epoch;
+        this.mode = incomingMode;
         this.inflight = [];
         this.awaitingFence = false;
         this.deferredAcks = [];
@@ -373,6 +405,7 @@ export class SyncClient {
           this.setBlocked("history_changed");
           this.h.error?.("history_changed", "文档历史已变化或草稿版本无法确认，本地草稿未自动合并。");
         }
+        if (readonlyDraft && !staleDraft) this.setBlocked("read_only");
         this.welcomeHead = m.headSeq;
         this.sequenceGap = this.lastSeq > m.headSeq;
         this.inspectCausality();
@@ -391,7 +424,26 @@ export class SyncClient {
         this.acknowledgeIfSafe();
         return;
       }
+      case "projection": {
+        if (!this.projectionOnly || this.historyEpoch !== m.historyEpoch || !Number.isSafeInteger(m.headSeq) || m.headSeq < this.lastSeq || !Number.isSafeInteger(m.historyEpoch) || m.historyEpoch < 1) {
+          throw new Error("invalid read-only projection");
+        }
+        const fresh = Doc.fromState(this.clientId, m.state);
+        if (fresh.hasTables()) { this.blockUnsupportedTable(); return; }
+        this.h.beforeRemote?.();
+        this.doc = fresh;
+        this.lastSeq = m.headSeq;
+        this.welcomeHead = m.headSeq;
+        this.sequenceGap = false;
+        this.inspectCausality();
+        this.refreshCaughtUp();
+        this.h.change?.(true);
+        this.acknowledgeIfSafe();
+        if (this.caughtUp && !this.blocked && !this.unacked) this.setStatus("synced");
+        return;
+      }
       case "ops": {
+        if (this.projectionOnly) throw new Error("raw operations in read-only projection mode");
         if (!this.doc) throw new Error("ops before welcome");
         if (m.firstSeq > this.lastSeq + 1) {
           this.gap(`expected seq ${this.lastSeq + 1}, got ${m.firstSeq}`);
@@ -434,6 +486,10 @@ export class SyncClient {
       }
       case "error":
         if (m.code === "table_unsupported") { this.blockUnsupportedTable(); return; }
+        if (m.code === "projection_unavailable") {
+          this.blockUnavailable("projection_unavailable", m.message);
+          return;
+        }
         if (this.inflight.length && ["read_only", "not_ready", "forbidden", "bad_ops"].includes(m.code)) {
           this.deferredAcks = [];
           this.setBlocked(m.code);

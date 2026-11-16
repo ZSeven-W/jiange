@@ -30,11 +30,11 @@ export interface SyncDoc {
 }
 
 function syncURL() {
-  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sync?protocol=2`;
+  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sync?protocol=3`;
 }
 
 /** Opens a live replica of a document over the Jiange sync protocol, reconnecting with backoff. */
-export function useSyncDoc(docId: number, userId: number, enabled = true): SyncDoc {
+export function useSyncDoc(docId: number, userId: number, enabled = true, role?: "view" | "edit" | "manage"): SyncDoc {
   const qc = useQueryClient();
   const [version, setVersion] = useState(0);
   const changeRevision = useRef(0);
@@ -65,7 +65,7 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
           if (code === "gap" || (c.blocked && code !== "missing_dependency" && code !== "invalid_history" && code !== "history_changed")) socket.current?.close();
           if (code === "read_only" || code === "forbidden" || code === "not_found") void qc.invalidateQueries({ queryKey: ["doc", docId] });
         },
-      });
+      }, { requireMode: true });
       return c;
     },
     [docId, userId, qc],
@@ -190,6 +190,14 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
     },
     [],
   );
+
+  // Metadata polling can notice a role change before the next socket frame.
+  // Reconnect promptly so the server can switch between projection and edit.
+  useEffect(() => {
+    if (!role || client.syncMode === null) return;
+    const expected = role === "view" ? "view" : "edit";
+    if (client.syncMode !== expected) socket.current?.close();
+  }, [client, role, version]);
 
   const status = client.status;
   return { client, version, getChangeRevision, status, peers, ready: client.doc !== null && status !== "connecting", caughtUp: client.caughtUp, blocked: client.blocked, storageError, legacyPending, otherPending, onBeforeRemote };

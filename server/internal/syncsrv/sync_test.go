@@ -70,7 +70,13 @@ func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 func (e *env) handler(h *Hub) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i, _ := strconv.Atoi(r.Header.Get("X-User"))
-		h.Serve(w, r, e.users[i], nil, e.guards[i])
+		h.Serve(w, r, e.users[i], nil, e.guards[i], func(d *collab.Doc) ([]byte, error) {
+			projected, err := d.ReadOnlyProjection(d.View())
+			if err != nil {
+				return nil, err
+			}
+			return projected.EncodeState(), nil
+		})
 	})
 }
 
@@ -100,6 +106,9 @@ type client struct {
 	cancel      context.CancelFunc
 	welcome     chan struct{}
 	gotSnap     bool
+	protocol3   bool
+	projections int
+	rawFrames   int
 	welcomeHead uint64
 	done        chan struct{}
 }
@@ -111,12 +120,23 @@ func (e *env) client(user int, doc int64) *client {
 	return c
 }
 
+func (e *env) viewClient(user int, doc int64) *client {
+	c := &client{t: e.t, url: strings.Replace(e.srv.URL, "http", "ws", 1), user: user, docID: doc, peers: map[uint64]string{}, protocol3: true}
+	c.connect(e.srv.URL)
+	e.t.Cleanup(c.disconnect)
+	return c
+}
+
 func (c *client) connect(base string) {
 	if base != "" {
 		c.url = strings.Replace(base, "http", "ws", 1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ws, _, err := websocket.Dial(ctx, c.url, &websocket.DialOptions{HTTPHeader: http.Header{"X-User": {strconv.Itoa(c.user)}}})
+	url := c.url
+	if c.protocol3 {
+		url += "?protocol=3"
+	}
+	ws, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"X-User": {strconv.Itoa(c.user)}}})
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -213,6 +233,7 @@ func (c *client) readLoop(ctx context.Context, ws *websocket.Conn) {
 			}
 			close(c.welcome)
 		case collab.MsgSOps:
+			c.rawFrames++
 			if m.FirstSeq != c.lastSeq+1 {
 				c.t.Errorf("gap: have %d got %d", c.lastSeq, m.FirstSeq)
 			}
@@ -221,6 +242,15 @@ func (c *client) readLoop(ctx context.Context, ws *websocket.Conn) {
 				c.doc.Apply(op)
 			}
 			c.lastSeq += uint64(len(ops))
+			reply = append(reply, collab.EncodeClientAck(c.lastSeq))
+		case collab.MsgProjection:
+			d, err := collab.DecodeState(m.State)
+			if err != nil {
+				c.t.Errorf("projection: %v", err)
+				break
+			}
+			c.doc, c.lastSeq = d, m.HeadSeq
+			c.projections++
 			reply = append(reply, collab.EncodeClientAck(c.lastSeq))
 		case collab.MsgSAck:
 			if len(c.inflight) > 0 {
@@ -646,16 +676,10 @@ func TestConnectedSharePermissionChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		shared.edit(typeAt("forbidden", func(n int) int { return n }))
-		waitFor(t, "read-only rejection", func() bool {
-			shared.mu.Lock()
-			defer shared.mu.Unlock()
-			return len(shared.errors) > 0
-		})
-		shared.mu.Lock()
-		gotErr := shared.errors[len(shared.errors)-1]
-		shared.mu.Unlock()
-		if gotErr != "read_only" {
-			t.Fatalf("got %q, want read_only", gotErr)
+		select {
+		case <-shared.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("downgraded connection did not close")
 		}
 		if h, _ := st.Head(ctx, doc); h != head {
 			t.Fatalf("downgraded write persisted: %d -> %d", head, h)
@@ -667,7 +691,7 @@ func TestConnectedSharePermissionChanges(t *testing.T) {
 		}
 		// Reconnect without replaying the rejected local draft: viewer access
 		// continues, while the original connection retains its pending batch.
-		viewer := e.client(2, doc)
+		viewer := e.viewClient(2, doc)
 		owner.edit(typeAt("after", func(n int) int { return n }))
 		waitFor(t, "viewer receives later changes", func() bool {
 			viewer.mu.Lock()
@@ -679,7 +703,7 @@ func TestConnectedSharePermissionChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("upgrade applies without reconnect", func(t *testing.T) {
+	t.Run("upgrade reconnects with an editing replica", func(t *testing.T) {
 		st := store.NewMemory()
 		e := newEnv(t, st, 1000)
 		doc := e.newDoc()
@@ -687,12 +711,19 @@ func TestConnectedSharePermissionChanges(t *testing.T) {
 		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleView); err != nil {
 			t.Fatal(err)
 		}
-		owner, shared := e.client(0, doc), e.client(2, doc)
+		owner, shared := e.client(0, doc), e.viewClient(2, doc)
 		if err := st.SetShare(ctx, doc, e.users[2].ID, store.RoleEdit); err != nil {
 			t.Fatal(err)
 		}
-		shared.edit(typeAt("allowed", func(n int) int { return n }))
-		if v := converge(t, st, doc, owner, shared); !strings.Contains(v, "allowed") {
+		shared.write(collab.EncodeClientAware(`{"name":"test"}`))
+		select {
+		case <-shared.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("upgraded view connection did not close")
+		}
+		editor := e.client(2, doc)
+		editor.edit(typeAt("allowed", func(n int) int { return n }))
+		if v := converge(t, st, doc, owner, editor); !strings.Contains(v, "allowed") {
 			t.Fatalf("write missing: %s", v)
 		}
 	})

@@ -93,7 +93,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     refetchOnWindowFocus: true,
   });
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
-  const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState));
+  const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState), metadataState === "ready" && meta.data?.kind === "doc" ? meta.data.role : undefined);
   const [recoveryState, setRecoveryState] = useState<{ user: number; doc: number; keys: string[]; selected: string } | null>(null);
   const [draftPreview, setDraftPreview] = useState<{ user: number; doc: number; ops: Op[]; archived: boolean; archiveKey?: string } | null>(null);
   const recoveryKeys = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.keys : [];
@@ -612,7 +612,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   // draft and selection survive, but do not submit using stale permissions.
   const canSubmitComment = permissionsVerified && canComment;
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
-  const canEditContent = canEditRole && !readingMode && !sync.blocked;
+  const canEditContent = canEditRole && !readingMode && !sync.blocked && !sync.client.projectionOnly;
   canEditRef.current = canEditContent;
   const saveNamedVersion = async (label: string, requestId: string) => {
     const client = sync.client;
@@ -894,6 +894,13 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
       {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
       {sync.legacyPending && <p className="mt-3">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+    </div>
+  </div>;
+  if (sync.blocked === "projection_unavailable" || sync.blocked === "protocol_incompatible") return <div className="grid flex-1 place-items-center px-6" role="alert" data-projection-unavailable>
+    <div className="max-w-md text-center text-[14px] text-muted-foreground">
+      <p>{sync.blocked === "protocol_incompatible" ? "服务端暂不支持安全同步，正在重新连接；如问题持续，请联系管理员更新服务。" : "文档暂时无法安全显示，正在重新连接；如问题持续，请联系文档所有者。"}</p>
+      {sync.client.unacked > 0 && <p className="mt-3">未同步的修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
+      {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
     </div>
   </div>;
   const replaceFound = (all: boolean) => {

@@ -11,6 +11,7 @@ export const MSG = {
   sack: 0x13,
   saware: 0x14,
   error: 0x15,
+  projection: 0x16,
 } as const;
 
 export type ClientMsg =
@@ -27,21 +28,19 @@ export type ServerMsg =
   // v2 welcome appends the history epoch: a change means the log rewound
   // (restore/PITR) and every cached seq is meaningless — take the snapshot.
   | { type: "welcome"; clientId: number; headSeq: number; snapshot: { seq: number; state: Uint8Array } | null; historyEpoch: number }
+  | { type: "welcome"; clientId: number; headSeq: number; snapshot: { seq: number; state: Uint8Array } | null; historyEpoch: number; mode: "edit" | "view" }
+  | { type: "projection"; headSeq: number; historyEpoch: number; state: Uint8Array }
   | { type: "ops"; firstSeq: number; batch: Uint8Array }
   | { type: "ack"; firstSeq: number; count: number }
   | { type: "aware"; clientId: number; state: string }
   | { type: "error"; code: string; message: string };
 
 function bytes(w: Writer, b: Uint8Array) {
-  w.uvar(b.length);
-  for (const x of b) w.u8(x);
+  w.blob(b);
 }
 
 function readBytes(r: Reader): Uint8Array {
-  const n = r.uvar();
-  const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = r.u8();
-  return out;
+  return r.blob();
 }
 
 export function encodeClientMsg(m: ClientMsg): Uint8Array {
@@ -86,7 +85,10 @@ export function encodeServerMsg(m: ServerMsg): Uint8Array {
       w.u8(MSG.welcome); w.uvar(m.clientId); w.uvar(m.headSeq);
       if (m.snapshot) { w.u8(1); w.uvar(m.snapshot.seq); bytes(w, m.snapshot.state); } else w.u8(0);
       if ("historyEpoch" in m) w.uvar(m.historyEpoch); // v2 only: v1 clients reject the trailing byte
+      if ("mode" in m) w.u8(m.mode === "view" ? 1 : 0);
       break;
+    case "projection":
+      w.u8(MSG.projection); w.uvar(m.headSeq); w.uvar(m.historyEpoch); bytes(w, m.state); break;
     case "ops":
       w.u8(MSG.sops); w.uvar(m.firstSeq); bytes(w, m.batch); break;
     case "ack":
@@ -107,16 +109,23 @@ export function decodeServerMsg(b: Uint8Array): ServerMsg {
     case MSG.welcome: {
       const clientId = r.uvar(), headSeq = r.uvar();
       const has = r.u8();
+      if (has !== 0 && has !== 1) throw new RangeError("invalid snapshot flag");
       const snapshot = has ? { seq: r.uvar(), state: readBytes(r) } : null;
       if (!r.done) {
         // v2 welcome from a v2-aware server; old servers send exactly v1 bytes.
-        m = { type: "welcome", clientId, headSeq, snapshot, historyEpoch: r.uvar() };
+        const historyEpoch = r.uvar();
+        if (!r.done) {
+          const mode = r.u8();
+          if (mode !== 0 && mode !== 1) throw new RangeError("invalid sync mode");
+          m = { type: "welcome", clientId, headSeq, snapshot, historyEpoch, mode: mode === 1 ? "view" : "edit" };
+        } else m = { type: "welcome", clientId, headSeq, snapshot, historyEpoch };
       } else {
         m = { type: "welcome", clientId, headSeq, snapshot };
       }
       break;
     }
     case MSG.sops: m = { type: "ops", firstSeq: r.uvar(), batch: readBytes(r) }; break;
+    case MSG.projection: m = { type: "projection", headSeq: r.uvar(), historyEpoch: r.uvar(), state: readBytes(r) }; break;
     case MSG.sack: m = { type: "ack", firstSeq: r.uvar(), count: r.uvar() }; break;
     case MSG.saware: m = { type: "aware", clientId: r.uvar(), state: r.str() }; break;
     case MSG.error: m = { type: "error", code: r.str(), message: r.str() }; break;

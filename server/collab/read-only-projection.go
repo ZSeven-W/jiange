@@ -21,6 +21,33 @@ const readOnlyMaxDepth = 512
 const readOnlyMaxStateBytes = 8 << 20
 const readOnlyMaxInteger = uint64(1<<53 - 1)
 
+// ReadOnlyProjectionView bounds materialization before a caller sanitizes it.
+// Calling View first would bypass the projection's work limits on large or
+// malformed documents. The returned view still requires access filtering.
+func (d *Doc) ReadOnlyProjectionView() (DocView, error) {
+	if d == nil || d.Pending() != 0 || d.HasTables() || len(d.blocks) > readOnlyMaxBlocks+1 {
+		return DocView{}, ErrReadOnlyProjection
+	}
+	var sourceChars, sourceMarks, sourceWork uint64
+	for _, block := range d.blocks {
+		if block == nil || len(block.chars) == 0 || block.id.Client > readOnlyMaxInteger || block.id.Clock > readOnlyMaxInteger {
+			return DocView{}, ErrReadOnlyProjection
+		}
+		sourceChars += uint64(len(block.chars) - 1)
+		sourceMarks += uint64(len(block.marks))
+		sourceWork += uint64(len(block.chars)-1) * uint64(len(block.marks))
+		if sourceChars > readOnlyMaxSourceChars || sourceMarks > readOnlyMaxMarks || sourceWork > readOnlyMaxViewWork {
+			return DocView{}, ErrReadOnlyProjection
+		}
+		for id := range block.chars {
+			if id.Client > readOnlyMaxInteger || id.Clock > readOnlyMaxInteger {
+				return DocView{}, ErrReadOnlyProjection
+			}
+		}
+	}
+	return d.View(), nil
+}
+
 // ReadOnlyProjection constructs a fresh snapshot from an already-authorized
 // and sanitized view. It keeps IDs of visible blocks and characters, allowing
 // comment and selection anchors to resolve, but drops deleted characters,
@@ -32,32 +59,22 @@ const readOnlyMaxInteger = uint64(1<<53 - 1)
 // readers need complete replacement projections and explicit protocol mode
 // changes when their permissions change. The original document is untouched.
 func (d *Doc) ReadOnlyProjection(view DocView) (*Doc, error) {
-	if d == nil || d.Pending() != 0 || d.HasTables() || len(d.blocks) > readOnlyMaxBlocks+1 || len(view.Blocks) > readOnlyMaxBlocks {
+	if len(view.Blocks) > readOnlyMaxBlocks {
 		return nil, ErrReadOnlyProjection
+	}
+	original, err := d.ReadOnlyProjectionView()
+	if err != nil {
+		return nil, err
 	}
 	usedClients := map[uint64]bool{0: true}
 	usedIDs := map[OpID]bool{Root: true}
 	visibleChars := 0
-	var sourceChars, sourceMarks, sourceWork uint64
 	for _, block := range d.blocks {
-		if block.id.Client > readOnlyMaxInteger || block.id.Clock > readOnlyMaxInteger {
-			return nil, ErrReadOnlyProjection
-		}
 		usedClients[block.id.Client] = true
-		sourceChars += uint64(len(block.chars) - 1)
-		sourceMarks += uint64(len(block.marks))
-		sourceWork += uint64(len(block.chars)-1) * uint64(len(block.marks))
-		if sourceChars > readOnlyMaxSourceChars || sourceMarks > readOnlyMaxMarks || sourceWork > readOnlyMaxViewWork {
-			return nil, ErrReadOnlyProjection
-		}
 		for id := range block.chars {
-			if id.Client > readOnlyMaxInteger || id.Clock > readOnlyMaxInteger {
-				return nil, ErrReadOnlyProjection
-			}
 			usedClients[id.Client] = true
 		}
 	}
-	original := d.View()
 	if len(original.Blocks) != len(view.Blocks) {
 		return nil, ErrReadOnlyProjection
 	}

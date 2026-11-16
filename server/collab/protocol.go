@@ -7,15 +7,16 @@ import (
 
 // Sync protocol message types (spec/protocol.md §Sync).
 const (
-	MsgHello   = 0x01
-	MsgOps     = 0x02
-	MsgAck     = 0x03
-	MsgAware   = 0x04
-	MsgWelcome = 0x11
-	MsgSOps    = 0x12
-	MsgSAck    = 0x13
-	MsgSAware  = 0x14
-	MsgError   = 0x15
+	MsgHello      = 0x01
+	MsgOps        = 0x02
+	MsgAck        = 0x03
+	MsgAware      = 0x04
+	MsgWelcome    = 0x11
+	MsgSOps       = 0x12
+	MsgSAck       = 0x13
+	MsgSAware     = 0x14
+	MsgError      = 0x15
+	MsgProjection = 0x16
 )
 
 // ClientMsg is a decoded client→server message. HistoryEpoch is present only
@@ -119,6 +120,8 @@ type ServerMsg struct {
 	State        []byte
 	HasEpoch     bool
 	HistoryEpoch uint64
+	HasMode      bool
+	ReadOnly     bool
 	FirstSeq     uint64
 	Batch        []byte
 	Count        uint64
@@ -157,6 +160,22 @@ func EncodeWelcomeV2(clientID, head uint64, snapSeq uint64, state []byte, epoch 
 		w.u8(0)
 	}
 	w.uvar(epoch)
+	return w.b
+}
+
+// EncodeWelcomeV3 is negotiated by protocol=3 and binds this connection to
+// either a full editing replica or a sanitized, replacement-only view.
+func EncodeWelcomeV3(clientID, head, snapSeq uint64, state []byte, epoch uint64, readOnly bool) []byte {
+	b := EncodeWelcomeV2(clientID, head, snapSeq, state, epoch)
+	return append(b, boolByte(readOnly))
+}
+
+func EncodeProjection(head, epoch uint64, state []byte) []byte {
+	w := &writer{}
+	w.u8(MsgProjection)
+	w.uvar(head)
+	w.uvar(epoch)
+	w.bytes(state)
 	return w.b
 }
 
@@ -209,6 +228,9 @@ func DecodeServerMsg(b []byte) (m ServerMsg, err error) {
 		if has, err = r.u8(); err != nil {
 			return
 		}
+		if has > 1 {
+			return m, errors.New("collab: invalid snapshot flag")
+		}
 		if has == 1 {
 			m.HasSnap = true
 			if m.SnapSeq, err = r.uvar(); err == nil {
@@ -221,9 +243,26 @@ func DecodeServerMsg(b []byte) (m ServerMsg, err error) {
 				m.HasEpoch = true
 			}
 		}
+		if err == nil && r.i < len(b) {
+			var mode byte
+			if mode, err = r.u8(); err == nil {
+				if mode > 1 {
+					err = errors.New("collab: invalid sync mode")
+				} else {
+					m.HasMode = true
+					m.ReadOnly = mode == 1
+				}
+			}
+		}
 	case MsgSOps:
 		if m.FirstSeq, err = r.uvar(); err == nil {
 			m.Batch, err = r.bytes()
+		}
+	case MsgProjection:
+		if m.HeadSeq, err = r.uvar(); err == nil {
+			if m.HistoryEpoch, err = r.uvar(); err == nil {
+				m.State, err = r.bytes()
+			}
 		}
 	case MsgSAck:
 		if m.FirstSeq, err = r.uvar(); err == nil {

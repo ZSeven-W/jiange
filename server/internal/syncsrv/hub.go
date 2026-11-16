@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
@@ -103,7 +104,7 @@ func (h *Hub) Rooms() int {
 }
 
 // Serve upgrades an authenticated request to a sync connection and blocks until it ends.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, authenticate func(context.Context) error, guard store.RestoreGuard) {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, authenticate func(context.Context) error, guard store.RestoreGuard, projectors ...func(*collab.Doc) ([]byte, error)) {
 	if guard.UserID != user.ID || guard.UserID <= 0 || len(guard.SessionHash) == 0 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -116,7 +117,11 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	ws.SetReadLimit(8 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), terminal: make(chan []byte, 1), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, writeGuard: &guard, wantsV2: r.URL.Query().Get("protocol") == "2"}
+	protocol := r.URL.Query().Get("protocol")
+	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), projection: make(chan []byte, 1), terminal: make(chan []byte, 1), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, writeGuard: &guard, wantsV2: protocol == "2" || protocol == "3", v3: protocol == "3"}
+	if len(projectors) > 0 {
+		c.project = projectors[0]
+	}
 	wctx, stopWriter := context.WithCancel(context.Background())
 	writerDone := make(chan struct{})
 	go func() { c.writeLoop(wctx, ctx); close(writerDone) }()
@@ -138,7 +143,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	if c.terminating.Load() {
 		select {
 		case b := <-c.terminal:
-			if _, err := c.currentRole(fctx); err == nil {
+			if _, err := c.wireRole(fctx); err == nil {
 				_ = ws.Write(fctx, websocket.MessageBinary, b)
 			}
 		default:
@@ -149,7 +154,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 			case b := <-c.out:
 				// The writer may have stopped because access was revoked. Never
 				// bypass its authorization check while draining queued frames.
-				if _, err := c.currentRole(fctx); err != nil || ws.Write(fctx, websocket.MessageBinary, b) != nil {
+				if _, err := c.wireRole(fctx); err != nil || ws.Write(fctx, websocket.MessageBinary, b) != nil {
 					flushing = false
 				}
 			default:

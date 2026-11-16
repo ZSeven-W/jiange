@@ -173,16 +173,47 @@ func (r *room) catchUp(ctx context.Context) error {
 		for _, op := range ops {
 			r.doc.Apply(op)
 		}
-		msg := collab.EncodeServerOps(uint64(rows[0].Seq), batch)
-		for c := range r.conns {
-			c.send(msg)
-		}
 		r.head = rows[len(rows)-1].Seq
+		r.sendOpsToEditors(uint64(rows[0].Seq), batch, nil, false)
+		// A later page may supply a dependency for an earlier operation.
+		// Never publish a partial view or disconnect viewers prematurely.
+		if r.doc.Pending() == 0 {
+			r.sendViewProjections()
+		}
 	}
 	if r.doc.Pending() != 0 {
 		return fmt.Errorf("catch up %d: %d %w at seq %d", r.id, r.doc.Pending(), errUnresolved, target)
 	}
 	return nil
+}
+
+// Raw CRDT operations are only for editing replicas. Viewers receive a fresh
+// sanitized snapshot at the integrated head, never incremental history.
+func (r *room) sendOpsToEditors(first uint64, batch []byte, sender *conn, includeSender bool) {
+	msg := collab.EncodeServerOps(first, batch)
+	for c := range r.conns {
+		if c.wireMode.Load() != 2 && (c != sender || includeSender) {
+			c.send(msg)
+		}
+	}
+}
+
+func (r *room) sendViewProjections() {
+	for c := range r.conns {
+		if c.wireMode.Load() != 2 {
+			continue
+		}
+		if c.project == nil {
+			c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请稍后重试"))
+			continue
+		}
+		state, err := c.project(r.doc)
+		if err != nil || len(state) == 0 {
+			c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请联系文档所有者"))
+			continue
+		}
+		c.sendProjection(collab.EncodeProjection(uint64(r.head), uint64(r.epoch), state))
+	}
 }
 
 // Each stored sequence belongs to exactly one operation; bounds are captured
@@ -290,6 +321,31 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 	}
 	r.epoch = actual
 	c.epoch = actual
+	if c.v3 {
+		var state []byte
+		if c.wireMode.Load() == 2 {
+			if c.project == nil {
+				return errors.New("view projection unavailable")
+			}
+			state, err = c.project(r.doc)
+			if err != nil || len(state) == 0 {
+				c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请联系文档所有者"))
+				return errors.New("view projection unavailable")
+			}
+		} else {
+			state = r.doc.EncodeState()
+		}
+		c.send(collab.EncodeWelcomeV3(c.clientID, uint64(r.head), uint64(r.head), state, epoch, c.wireMode.Load() == 2))
+		c.acked = min(lastSeq, r.head)
+		c.dbAcked = 0
+		for other := range r.conns {
+			if other.aware != "" {
+				c.send(collab.EncodeServerAware(other.clientID, other.aware))
+			}
+		}
+		r.conns[c] = struct{}{}
+		return nil
+	}
 	welcome := func(head, snapSeq uint64, state []byte) {
 		if v2 {
 			c.send(collab.EncodeWelcomeV2(c.clientID, head, snapSeq, state, epoch))
@@ -621,20 +677,13 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		for _, op := range rops {
 			r.doc.Apply(op)
 		}
-		msg := collab.EncodeServerOps(uint64(rows[0].Seq), batch)
-		for o := range r.conns {
-			o.send(msg)
-		}
+		r.sendOpsToEditors(uint64(rows[0].Seq), batch, nil, false)
 		r.head = rows[len(rows)-1].Seq
 	}
 	batch, _ := collab.EncodeOps(mine)
-	msg := collab.EncodeServerOps(uint64(first), batch)
-	for o := range r.conns {
-		if o != c || rejected > 0 {
-			o.send(msg)
-		}
-	}
+	r.sendOpsToEditors(uint64(first), batch, c, rejected > 0)
 	r.head = first + int64(len(mine)) - 1
+	r.sendViewProjections()
 	if rejected > 0 {
 		// The ACK has no batch ID or rejection list. Sending it here would
 		// make clients discard the rejected ops. Echo accepted ops to the

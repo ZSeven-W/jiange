@@ -213,6 +213,9 @@ func TestReadOnlyProjectionLimitsWorkDepthAndOutputSize(t *testing.T) {
 		d.InsertText(1, b.ID, 0, strings.Repeat("x", 5000))
 		// The guard must reject before View tries a 25-million comparison scan.
 		d.blocks[b.ID].marks = make([]markRec, 5000)
+		if _, err := d.ReadOnlyProjectionView(); !errors.Is(err, ErrReadOnlyProjection) {
+			t.Fatalf("preflight work limit: %v", err)
+		}
 		if _, err := d.ReadOnlyProjection(DocView{}); !errors.Is(err, ErrReadOnlyProjection) {
 			t.Fatalf("work limit: %v", err)
 		}
