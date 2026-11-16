@@ -12,6 +12,31 @@ function setup() {
 const children = (doc: Doc, parent: { client: number; clock: number }) => doc.children(parent).map(idKey);
 
 describe("experimental reversible column archive", () => {
+  it("archives a complete group while preserving descendants and late edits", () => {
+    const x = setup(), after = new Tx(x.doc).create("paragraph", x.parent, ROOT);
+    const peer = Doc.fromState(2, x.doc.encodeState());
+    const plan = prepareColumnArchive(x.doc, 19, ROOT, x.parent)!;
+    expect(plan).not.toBeNull();
+    const metadata = plan.ops[2]; if (metadata.t !== "bset") throw new Error("unexpected metadata");
+    expect(metadata.value.startsWith("v1|0:0|")).toBe(true);
+    for (const op of plan.ops) x.doc.apply(op);
+    expect(x.doc.view().blocks.some((block) => block.id === idKey(x.parent) || block.id === idKey(x.middle))).toBe(false);
+    const late = peer.insertText(x.middle, 2, "协作")!; x.doc.apply(late);
+    const handle = recoverColumnArchive(x.doc, plan.recovery)!;
+    const restore = prepareColumnArchiveTransition(handle, 20)!;
+    for (const op of restore.ops) x.doc.apply(op);
+    expect(x.doc.children(ROOT).map(idKey)).toEqual([x.parent, after].map(idKey));
+    expect(x.doc.children(x.parent).map(idKey)).toEqual([x.left, x.middle, x.right].map(idKey));
+    expect(x.doc.text(x.middle)).toBe("原文协作");
+    expect(x.doc.richChars(x.middle)[0].marks.bold).toBe("1");
+    const again = prepareColumnArchiveTransition(recoverColumnArchive(x.doc, restore.recovery)!, 21)!;
+    for (const op of again.ops) x.doc.apply(op);
+    expect(x.doc.view().blocks.some((block) => block.id === idKey(x.parent))).toBe(false);
+  });
+  it("does not treat a root paragraph as an archivable column group", () => {
+    const x = setup(), paragraph = new Tx(x.doc).create("paragraph", x.parent, ROOT);
+    expect(prepareColumnArchive(x.doc, 19, ROOT, paragraph)).toBeNull();
+  });
   it("prepares a bounded batch on an isolated author without changing the live document", () => {
     const x = setup(), before = x.doc.encodeState();
     expect(prepareColumnArchive(x.doc, x.doc.client, x.parent, x.middle)).toBeNull();

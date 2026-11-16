@@ -1172,13 +1172,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     [sync.client, run, um, onMathSource],
   );
 
-  /** 删除块（hover ✕）：连子块一起删（columns 的子块、无文本依赖）。 */
+  /** 分栏容器走可恢复的条件提交；其他块沿用普通删除。 */
   const deleteBlockByKey = useCallback(
     (blockKey: string) => {
       const d = sync.client.doc;
       if (!d) return;
       const b = { client: Number(blockKey.split(":")[0]), clock: Number(blockKey.split(":")[1]) };
       if (!d.hasBlock(b)) return;
+      if (d.blockInfo(b).type === "columns") { void startColumnArchive({ kind: "initial", parent: { client: 0, clock: 0 }, block: b }); return; }
       void ask("删除此块？", undefined, true).then((ok) => {
         if (!ok) return;
         if (!sel.current) sel.current = { a: { b, o: 0 }, f: { b, o: 0 } };
@@ -1191,7 +1192,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         um.seal();
       });
     },
-    [sync.client, run, um],
+    [sync.client, run, um, startColumnArchive],
   );
 
   /**
@@ -1248,6 +1249,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           if (!multi) return deleteBlockByKey(blockKey);
           void ask(`删除选中的 ${span.length} 个块？`, undefined, true).then((ok) => {
             if (!ok || readOnlyRef.current || !validEditorSelection(d, target)) return;
+            if (selectionContainsColumns(d, target)) { setColumnNotice("暂不支持连同其他块一起删除分栏，请单独删除分栏。"); return; }
             sel.current = target;
             run((tx) => {
               for (const x of normalize(tx.doc, target).blocks) {
@@ -3553,7 +3555,16 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
   const [columnDrop, setColumnDrop] = useState<{ id: string; side: "before" | "after" } | null>(null);
   const [columnMenu, setColumnMenu] = useState<{ id: string; left: number; top: number } | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState(false);
+  const groupControlsRef = useRef<HTMLSpanElement>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedGroup) return;
+    if (type !== "columns" || !onDeleteBlock) { setSelectedGroup(false); return; }
+    const changed = (event: Event) => { if (!(event.target instanceof Node) || !groupControlsRef.current?.contains(event.target)) setSelectedGroup(false); };
+    document.addEventListener("pointerdown", changed); document.addEventListener("focusin", changed);
+    return () => { document.removeEventListener("pointerdown", changed); document.removeEventListener("focusin", changed); };
+  }, [selectedGroup, type, onDeleteBlock]);
   useEffect(() => {
     if (!selectedColumn) return;
     if (!onDeleteColumn || !(childBlocks ?? []).some((child) => child.id === selectedColumn)) { setSelectedColumn(null); return; }
@@ -3675,8 +3686,8 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
     <div
       data-block={id}
       data-type={type}
-      className={cn("group relative", type === "divider" ? "py-5" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", handleOpen && !inSelection && "rounded-[4px] bg-[#E6ECFD] dark:bg-primary/15", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
-      data-block-selected={inSelection ? "true" : undefined}
+      className={cn("group relative", type === "divider" ? "py-5" : type === "image" || type === "file" ? "" : (BLOCK_CLASS[type] ?? BLOCK_CLASS.paragraph), inSelection && "rounded-[4px] bg-primary/[0.06]", (handleOpen || selectedGroup) && !inSelection && "rounded-[4px] bg-[#E6ECFD] dark:bg-primary/15", blockThreads?.length && "rounded-[6px] outline outline-1 outline-offset-2 outline-[#F7D46E]", blockThreads?.includes(activeThread ?? -1) && "bg-[#FFF6D1]/60 outline-2 outline-[#F0B400] dark:bg-[#5a4a12]/30")}
+      data-block-selected={inSelection || selectedGroup ? "true" : undefined}
       data-comment-block={blockThreads?.length ? blockThreads.join(" ") : undefined}
       style={{ marginLeft: indent * 24, textAlign: props.align === "center" || props.align === "right" ? props.align : undefined }}
       onDragOver={(e) => {
@@ -3685,7 +3696,17 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute items-center", alwaysShowInsert ? "-left-[26px] sm:-left-[36px] top-[5px] sm:top-[2px]" : "-left-7 sm:-left-[62px]", !alwaysShowInsert && (type === "columns" ? "top-[11px]" : "top-[2px]"), alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false} data-block-controls>
+      <span ref={groupControlsRef} className={cn("absolute items-center", alwaysShowInsert ? "-left-[26px] sm:-left-[36px] top-[5px] sm:top-[2px]" : "-left-7 sm:-left-[62px]", !alwaysShowInsert && (type === "columns" ? "top-[11px]" : "top-[2px]"), alwaysShowInsert || handleOpen || selectedGroup || (selectionCount ?? 0) > 1 ? "flex" : type === "columns" ? "pointer-events-none flex opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false} data-block-controls
+        onFocus={(event) => { if (type === "columns" && onDeleteBlock && event.target instanceof Element && event.target.closest("[data-block-handle]")) setSelectedGroup(true); }}
+        onPointerDown={(event) => { if (type === "columns" && onDeleteBlock && event.target instanceof Element && event.target.closest("[data-block-handle]")) setSelectedGroup(true); }}
+        onKeyDown={(event) => {
+          if (type !== "columns" || !onDeleteBlock || !selectedGroup || (selectionCount ?? 0) > 1) return;
+          if (event.key === "Escape" && !handleOpen) { event.preventDefault(); event.stopPropagation(); setSelectedGroup(false); if (event.target instanceof HTMLElement) event.target.blur(); return; }
+          if (event.key !== "Backspace" && event.key !== "Delete") return;
+          if (event.target instanceof Element && (event.target.closest("input, textarea, select") || event.target.closest("[contenteditable]")?.getAttribute("contenteditable") === "true")) return;
+          event.preventDefault(); event.stopPropagation();
+          if (!event.repeat && !event.nativeEvent.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { setSelectedGroup(false); setHandleOpen(false); onDeleteBlock(id); }
+        }}>
         {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock && !onBlockAction)) && !((selectionCount ?? 0) > 1) ? (
           <button
             className={cn("relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']", alwaysShowInsert && "size-[22px] border border-[#DEE0E3] bg-surface sm:size-7")}
@@ -3706,6 +3727,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             onOpenChange={setHandleOpen}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
+            keyShortcuts={type === "columns" && onDeleteBlock ? "Backspace Delete" : undefined}
             can={blockAbilities ?? { convert: !!onSetProp && CONVERTIBLE.has(type), insertAfter: !!onInsertAfter, delete: !!onDeleteBlock }}
             onAction={(action) => {
               if (action.kind === "insertAfter") return onInsertAfter?.();

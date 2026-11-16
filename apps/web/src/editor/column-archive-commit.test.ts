@@ -1,7 +1,7 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx, encodeOps, type Op } from "@jiange/collab";
-import { prepareColumnArchive, recoverColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
+import { prepareColumnArchive, prepareColumnArchiveTransition, recoverColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
 import { ApiError, queryConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalJournalStorageKey, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalObservation } from "@/lib/conditional-journal";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";
@@ -41,6 +41,13 @@ function fixture() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional column archive", () => {
+  it("accepts root-level group archive and guarded restore without text", () => {
+    const f = fixture(), group = prepareColumnArchive(f.doc, 20, ROOT, f.parent)!;
+    expect(columnArchiveBatch(encodeOps([...group.ops]))).toHaveLength(4);
+    for (const op of group.ops) f.doc.apply(op);
+    const restored = prepareColumnArchiveTransition(recoverColumnArchive(f.doc, group.recovery)!, 21)!;
+    expect(columnArchiveBatch(encodeOps([...restored.ops]))).toHaveLength(1);
+  });
   it("persists no content and retries exactly the same request after a reload", async () => {
     const f = fixture(); f.send.mockRejectedValueOnce(new Error("network"));
     expect(await f.commit.start(f.plan, 1, 5, signal())).toBe("pending");

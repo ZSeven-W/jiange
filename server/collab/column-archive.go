@@ -56,9 +56,29 @@ func (d *Doc) CanArchiveColumn(id OpID) bool {
 	return true
 }
 
+// CanArchiveColumnGroup accepts only a root-level columns container. Other
+// root blocks, in particular the title, cannot use this archive protocol.
+func (d *Doc) CanArchiveColumnGroup(id OpID) bool {
+	b := d.blocks[id]
+	if b == nil || b.deleted || id == Root || b.parent != Root || b.props["type"].value != "columns" {
+		return false
+	}
+	positions := make(map[string]bool)
+	for otherID, other := range d.blocks {
+		if otherID == Root || other.deleted || other.parent != Root {
+			continue
+		}
+		if !validColumnArchivePosition(other.pos) || positions[other.pos] {
+			return false
+		}
+		positions[other.pos] = true
+	}
+	return len(positions) <= 10000
+}
+
 // Check the recorded origin before writing metadata and hiding the column.
 func (d *Doc) CanArchiveColumnWithMetadata(id, archive, metadataID, moveID OpID, metadata string) bool {
-	if !d.CanArchiveColumn(id) {
+	if !d.CanArchiveColumn(id) && !d.CanArchiveColumnGroup(id) {
 		return false
 	}
 	b := d.blocks[id]
@@ -96,16 +116,20 @@ func (d *Doc) CanTransitionArchivedColumn(op Op) bool {
 	if len(parts) != 4 || parts[0] != "v1" || !validColumnArchivePosition(parts[2]) {
 		return false
 	}
-	parent, ok := archiveMetadataID(parts[1])
-	if !ok {
-		return false
+	parent := Root
+	if parts[1] != Root.Key() {
+		var ok bool
+		parent, ok = archiveMetadataID(parts[1])
+		if !ok {
+			return false
+		}
 	}
 	archive, ok := archiveMetadataID(parts[3])
 	if !ok {
 		return false
 	}
 	p, tombstone := d.blocks[parent], d.blocks[archive]
-	if p == nil || p.deleted || p.parent != Root || p.props["type"].value != "columns" || tombstone == nil || !tombstone.deleted || tombstone.props["type"].value != columnArchiveType {
+	if p == nil || p.deleted || (parent != Root && (p.parent != Root || p.props["type"].value != "columns")) || (parent == Root && b.props["type"].value != "columns") || tombstone == nil || !tombstone.deleted || tombstone.props["type"].value != columnArchiveType {
 		return false
 	}
 	for id, other := range d.blocks {
@@ -114,6 +138,9 @@ func (d *Doc) CanTransitionArchivedColumn(op Op) bool {
 		}
 	}
 	if b.parent == parent && b.pos == parts[2] && op.Parent == archive && op.Pos == "U" {
+		if parent == Root {
+			return d.CanArchiveColumnGroup(op.Block)
+		}
 		return d.CanArchiveColumn(op.Block)
 	}
 	if b.parent != archive || b.pos != "U" || op.Parent != parent || op.Pos != parts[2] {
@@ -129,6 +156,9 @@ func (d *Doc) CanTransitionArchivedColumn(op Op) bool {
 			return false
 		}
 		positions[pos] = true
+	}
+	if parent == Root {
+		return len(positions) < 10000
 	}
 	return len(positions) >= 1 && len(positions) < 1000
 }

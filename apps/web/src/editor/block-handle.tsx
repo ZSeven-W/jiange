@@ -74,7 +74,7 @@ function Grip() {
  * 转换为 / 颜色 / 缩进 / 剪切、复制、复制链接、评论 / 在下方添加、删除。
  * 跨块选区时手柄出现在第一个选中块上，`count` 为选中块数，菜单作用于全部选中块。
  */
-export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, onAction, can = {}, count = 1, indent = 0, align, tableHeaders }: {
+export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, onAction, can = {}, count = 1, indent = 0, align, tableHeaders, keyShortcuts }: {
   type: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -86,6 +86,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   indent?: number;
   align?: string;
   tableHeaders?: { row: boolean; column: boolean; toggle: (axis: "row" | "column") => void; equalize?: () => void; equalizeDisabled?: boolean };
+  keyShortcuts?: string;
 }) {
   const root = useRef<HTMLSpanElement>(null);
   const [sub, setSub] = useState<"layout" | "colors" | "translate" | null>(null);
@@ -123,6 +124,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
       aria-label={multi ? `${count} 个块的菜单` : "块菜单"}
       aria-haspopup="menu"
       aria-expanded={open}
+      aria-keyshortcuts={keyShortcuts}
       className={cn("flex h-[26px] items-center gap-2 rounded-md border border-transparent px-[5px] text-subtle transition-colors hover:border-[#D9DBDF] hover:bg-[#ECEEEF] dark:hover:border-border dark:hover:bg-hover", onDragStart && "cursor-grab active:cursor-grabbing", (open || multi) && "border-[#D9DBDF] bg-[#ECEEEF] dark:border-border dark:bg-hover", multi && "text-primary")}
       data-block-handle
     >

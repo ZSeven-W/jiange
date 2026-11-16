@@ -57,6 +57,11 @@ const archived = prepareColumnArchive(doc, 7, group, a); assert.ok(archived); as
 for (const op of archived.ops) doc.apply(op);
 const handle = recoverColumnArchive(doc, archived.recovery); assert.ok(handle); assert.equal(doc.children(group).length, 1);
 assert.ok(toggleArchivedColumn(new Tx(doc), handle)); assert.deepEqual(doc.children(group), [b, a]);
+const wholeGroup = prepareColumnArchive(doc, 8, ROOT, group); assert.ok(wholeGroup);
+for (const op of wholeGroup.ops) doc.apply(op);
+assert.equal(doc.children(ROOT).some(item => item.client === group.client && item.clock === group.clock), false);
+const groupHandle = recoverColumnArchive(doc, wholeGroup.recovery); assert.ok(groupHandle);
+assert.ok(toggleArchivedColumn(new Tx(doc), groupHandle)); assert.deepEqual(doc.children(group), [b, a]);
 const line = {id:'l',kind:'line',x:10,y:10,width:20,height:5,color:'#000000'};
 assert.equal(moveShapeOrder([line], 'l', 'front').length, 1); assert.ok(slideLineEndpoints(line,960,540).end.x > 0);
 assert.equal(translateSheetFormula('=A1+$A$1',1,0), '=A2+$A$1');

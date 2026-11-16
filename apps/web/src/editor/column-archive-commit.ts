@@ -28,14 +28,14 @@ export function columnArchiveBatch(bytes: Uint8Array): Op[] | null {
     if (!ops.every((op) => safe(op.id.client) && safe(op.id.clock))) return null;
     if (ops.length === 1) {
       const op = ops[0];
-      if (op.t !== "bmove" || !safe(op.block.clock) || !safe(op.parent.clock) || !Number.isSafeInteger(op.block.client) || op.block.client < 0 || !Number.isSafeInteger(op.parent.client) || op.parent.client < 0 || same(op.block, op.parent) || !position(op.pos)) return null;
+      if (op.t !== "bmove" || !safe(op.block.clock) || !(safe(op.parent.clock) || op.parent.client === 0 && op.parent.clock === 0) || !Number.isSafeInteger(op.block.client) || op.block.client < 0 || !Number.isSafeInteger(op.parent.client) || op.parent.client < 0 || same(op.block, op.parent) || !position(op.pos)) return null;
       return ops;
     }
     if (ops.length !== 4) return null;
     const [create, del, metadata, move] = ops;
     if (create.t !== "bcreate" || create.parent.client !== 0 || create.parent.clock !== 0 || create.type !== "jiange-column-archive-v1" || create.pos !== "U" || del.t !== "bdel" || metadata.t !== "bset" || move.t !== "bmove" || !same(del.block, create.id) || !same(move.parent, create.id) || !same(metadata.block, move.block) || move.pos !== "U" || metadata.key !== "_column_archive_v1" || !safe(move.block.clock) || !Number.isSafeInteger(move.block.client) || move.block.client < 0) return null;
     if (ops.some((op, i) => op.id.client !== create.id.client || op.id.clock !== create.id.clock + i)) return null;
-    if (!new RegExp(`^v1\\|(?:0|[1-9]\\d*):[1-9]\\d*\\|[0-9A-Za-z]{1,512}\\|${id(create.id)}$`).test(metadata.value)) return null;
+    if (!new RegExp(`^v1\\|(?:0:0|(?:0|[1-9]\\d*):[1-9]\\d*)\\|[0-9A-Za-z]{1,512}\\|${id(create.id)}$`).test(metadata.value)) return null;
     const origin = metadata.value.split("|");
     if (!position(origin[2]) || origin[1].split(":").some((part) => !Number.isSafeInteger(Number(part)))) return null;
     return ops;

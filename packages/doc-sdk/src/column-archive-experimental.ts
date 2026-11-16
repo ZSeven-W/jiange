@@ -2,11 +2,10 @@ import { Doc, Tx, decodeOps, encodeOps, eqId, idKey, ROOT, type Op, type OpId } 
 import { captureColumnMove, validColumnPosition, type ColumnMoveSnapshot } from "./column-move.js";
 
 /**
- * Experimental only: not exported from the SDK entry point or connected to UI.
+ * Experimental subpath used by the editor; it is not a stable SDK contract.
  * A deleted parent hides its live child in both TS and Go projections. Keeping
  * the child alive allows late character edits to follow the original identity.
- * Transport atomicity, conditional server admission, durable handle storage,
- * and the editor undo stack must be integrated before exposing this to users.
+ * Hosts must provide conditional server admission, journal recovery and undo.
  */
 const ARCHIVE_TYPE = "jiange-column-archive-v1";
 const ARCHIVE_POS = "U";
@@ -48,11 +47,11 @@ function freezeArchivePlan(doc: Doc, base: Uint8Array, tx: Tx, result: ColumnArc
 export function prepareColumnArchive(doc: Doc, author: number, parent: OpId, block: OpId): PreparedColumnArchive | null {
   if (!Number.isSafeInteger(author) || author <= 0 || author === doc.client || doc.pendingCount !== 0) return null;
   try {
-    const captured = captureColumnMove(doc, parent, block);
+    const captured = captureArchiveTarget(doc, parent, block);
     if (!captured) return null;
     const base = doc.encodeState();
     if (base.byteLength > MAX_PLAN_STATE_BYTES) return null;
-    const copy = Doc.fromState(author, base), clone = captureColumnMove(copy, parent, block);
+    const copy = Doc.fromState(author, base), clone = captureArchiveTarget(copy, parent, block);
     if (!clone || clone.pos !== captured.pos || clone.version !== captured.version || clone.guard !== captured.guard) return null;
     const tx = new Tx(copy), result = archiveColumn(tx, clone);
     if (!result) return null;
@@ -94,6 +93,13 @@ const parseId = (value: string): OpId => {
 
 /** Verify the same group and sibling positions without comparing column text. */
 function siblingGuard(doc: Doc, parent: OpId, block: OpId): string | null {
+  if (eqId(parent, ROOT)) {
+    const children = doc.children(ROOT);
+    if (children.length > 10000) return null;
+    const locations = children.map((item) => ({ item, loc: doc.blockLocation(item) }));
+    if (locations.some((item, i) => !eqId(item.loc.parent, ROOT) || !validColumnPosition(item.loc.pos) || i > 0 && locations[i - 1].loc.pos >= item.loc.pos)) return null;
+    return JSON.stringify(["root", locations.filter(({ item }) => !eqId(item, block)).map(({ item, loc }) => [idKey(item), loc.pos, idKey(loc.version)])]);
+  }
   if (!doc.hasBlock(parent)) return null;
   const info = doc.blockInfo(parent);
   if (info.type !== "columns" || !eqId(info.parent, ROOT)) return null;
@@ -105,11 +111,22 @@ function siblingGuard(doc: Doc, parent: OpId, block: OpId): string | null {
   return JSON.stringify([idKey(parentLoc.version), typeVersion ? idKey(typeVersion) : null, items]);
 }
 
+/** Capture a complete root-level columns group with its surrounding positions. */
+function captureArchiveTarget(doc: Doc, parent: OpId, block: OpId): ColumnMoveSnapshot | null {
+  if (!eqId(parent, ROOT)) return captureColumnMove(doc, parent, block);
+  if (!doc.hasBlock(block)) return null;
+  const info = doc.blockInfo(block), guard = siblingGuard(doc, ROOT, block);
+  if (info.type !== "columns" || !eqId(info.parent, ROOT) || guard === null) return null;
+  const ids = doc.children(ROOT).map(idKey), location = doc.blockLocation(block);
+  if (!ids.includes(idKey(block)) || !validColumnPosition(location.pos)) return null;
+  return Object.freeze({ doc, parent: Object.freeze({ ...ROOT }), block: Object.freeze({ ...block }), ids: Object.freeze(ids), pos: location.pos, version: idKey(location.version), guard });
+}
+
 /** Hide a captured column under a new tombstoned parent without deleting it. */
 export function archiveColumn(tx: Tx, captured: ColumnMoveSnapshot): ColumnArchive | null {
   const doc = tx.doc;
   if (doc !== captured.doc || doc.pendingCount !== 0) return null;
-  const current = captureColumnMove(doc, captured.parent, captured.block);
+  const current = captureArchiveTarget(doc, captured.parent, captured.block);
   if (!current || current.pos !== captured.pos || current.version !== captured.version || current.guard !== captured.guard || current.ids.length !== captured.ids.length || current.ids.some((id, i) => id !== captured.ids[i])) return null;
   let ids: OpId[];
   try { ids = doc.allocateOpIds(4); } catch { return null; }
@@ -140,13 +157,14 @@ export function recoverColumnArchive(doc: Doc, raw: string): ColumnArchive | nul
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const value = data as Record<string, unknown>;
   const keys = Object.keys(value).sort().join(",");
-  if (keys !== "archive,archived,block,guard,originalPos,parent,v,version" || value.v !== 1 || !validId(value.parent) || !validId(value.block) || !validId(value.archive) || !validId(value.version) || typeof value.originalPos !== "string" || !validColumnPosition(value.originalPos) || typeof value.guard !== "string" || typeof value.archived !== "boolean") return null;
+  if (keys !== "archive,archived,block,guard,originalPos,parent,v,version" || value.v !== 1 || value.parent !== "0:0" && !validId(value.parent) || !validId(value.block) || !validId(value.archive) || !validId(value.version) || typeof value.originalPos !== "string" || !validColumnPosition(value.originalPos) || typeof value.guard !== "string" || typeof value.archived !== "boolean") return null;
   const entry: ColumnArchive = Object.freeze({ doc, parent: Object.freeze(parseId(value.parent)), block: Object.freeze(parseId(value.block)), archive: Object.freeze(parseId(value.archive)), originalPos: value.originalPos, guard: value.guard, version: value.version, archived: value.archived });
   return validArchiveState(doc, entry) ? entry : null;
 }
 
 function validArchiveState(doc: Doc, entry: ColumnArchive): boolean {
   if (entry.doc !== doc || doc.pendingCount !== 0 || !doc.hasBlock(entry.block) || doc.deletedBlockType(entry.archive) !== ARCHIVE_TYPE || siblingGuard(doc, entry.parent, entry.block) !== entry.guard) return false;
+  if (eqId(entry.parent, ROOT) && doc.blockInfo(entry.block).type !== "columns") return false;
   if (doc.blockInfo(entry.block).props[ARCHIVE_META] !== `v1|${idKey(entry.parent)}|${entry.originalPos}|${idKey(entry.archive)}`) return false;
   const loc = doc.blockLocation(entry.block);
   if (idKey(loc.version) !== entry.version || !eqId(loc.parent, entry.archived ? entry.archive : entry.parent) || loc.pos !== (entry.archived ? ARCHIVE_POS : entry.originalPos)) return false;
