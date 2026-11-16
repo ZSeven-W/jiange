@@ -142,15 +142,30 @@ describe("replaceMatches", () => {
     expect(doc.text(blocks[1])).toBe("另一个完成");
   });
 
-  it("does not attach the original person identity to replacement text", () => {
-    const { doc, blocks: [block] } = setup(["paragraph", "@小简"]);
+  it("finds person and document mentions but never replaces any overlapping part", () => {
+    const { doc, blocks: [block] } = setup(["paragraph", "@小简 项目计划 小简"]);
     const mark = new Tx(doc);
     mark.format(block, 0, 3, "mention", "42");
-    mark.format(block, 0, 3, "bold", "true");
+    mark.format(block, 4, 8, "link", "#/doc/7");
+    expect(findMatches(doc, "小简").map((match) => match.mention)).toEqual([true, false]);
+    expect(findMatches(doc, "简 项")[0].mention).toBe(true);
+    expect(findMatches(doc, "项目")[0].mention).toBe(true);
     const tx = new Tx(doc);
-    replaceMatches(tx, findMatches(doc, "@小简"), "@张三");
-    expect(doc.text(block)).toBe("@张三");
-    expect(doc.richChars(block).every((char) => char.marks.bold === "true" && !char.marks.mention)).toBe(true);
+    expect(replaceMatches(tx, findMatches(doc, "小简"), "张三")).toEqual({ replaced: 1, skipped: 1 });
+    expect(doc.text(block)).toBe("@小简 项目计划 张三");
+    expect(doc.richChars(block)[0].marks.mention).toBe("42");
+    expect(doc.richChars(block)[4].marks.link).toBe("#/doc/7");
+    expect(replaceMatches(new Tx(doc), findMatches(doc, "项目"), "新")).toEqual({ replaced: 0, skipped: 1 });
+  });
+
+  it("rechecks mention marks when a match becomes a mention after searching", () => {
+    const { doc, blocks: [block] } = setup(["paragraph", "目标"]);
+    const match = findMatches(doc, "目标")[0];
+    new Tx(doc).format(block, 0, 2, "mention", "42");
+    const tx = new Tx(doc);
+    expect(replaceMatches(tx, [match], "新")).toEqual({ replaced: 0, skipped: 1 });
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe("目标");
   });
 
   it("rejects other document instances and blocks moved under a column", () => {

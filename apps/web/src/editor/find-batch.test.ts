@@ -47,6 +47,30 @@ describe("mixed find and replace all", () => {
     expect(undo.canUndo).toBe(false);
   });
 
+  it("refuses a batch if a text result becomes a mention before applying it", () => {
+    const { doc, text, table, undo, history } = setup(), matches = findDocumentMatches(doc, "目标");
+    new Tx(doc).format(text, 0, 2, "mention", "42");
+    const before = doc.encodeState();
+    expect(applyFindBatch(doc, undo, history, matches, "完成").status).toBe("stale");
+    expect(doc.encodeState()).toEqual(before);
+    expect(grid(doc, table)[0][0]).toBe("目标😀目标");
+  });
+
+  it("replaces ordinary text and table matches while preserving mentions through undo", () => {
+    const { doc, text, table, undo, history } = setup();
+    new Tx(doc).format(text, 0, 2, "link", "#/doc/12");
+    const matches = findDocumentMatches(doc, "目标");
+    expect(matches.filter((match) => match.mention)).toHaveLength(1);
+    expect(applyFindBatch(doc, undo, history, matches.filter((match) => !match.mention), "完成").status).toBe("replaced");
+    expect(doc.text(text)).toBe("目标与完成");
+    expect(doc.richChars(text)[0].marks.link).toBe("#/doc/12");
+    expect(grid(doc, table)[0][0]).toBe("完成😀完成");
+    expect(history.step(doc, undo, undo.peekMarker(false)!, false).status).toBe("ready");
+    expect(doc.text(text)).toBe("目标与目标");
+    expect(doc.richChars(text)[0].marks.link).toBe("#/doc/12");
+    expect(grid(doc, table)[0][0]).toBe("目标😀目标");
+  });
+
   it("rejects stale text without replacing otherwise-valid tables", () => {
     const { doc, text, table, undo, history } = setup(), matches = findDocumentMatches(doc, "目标");
     new Tx(doc).delete(text, 0, 1);

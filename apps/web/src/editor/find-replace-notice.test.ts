@@ -22,6 +22,7 @@ describe("replacement synchronization feedback", () => {
     deliver(client, { type: "ack", firstSeq: 2, count: 0 });
     expect(replacementSyncNotice(notice, client)).toContain("2 处替换操作已同步");
     expect(replacementSyncNotice(notice, client)).toContain("1 处内容已变化并跳过");
+    expect(replacementSyncNotice({ ...notice, skippedMentions: 2 }, client)).toContain("跳过 2 处提及内容");
     expect(replacementSyncNotice(notice, client)).toContain("并发修改");
     client.close();
     expect(replacementSyncNotice({ ...notice, acknowledged: true }, client)).toContain("替换操作已同步");

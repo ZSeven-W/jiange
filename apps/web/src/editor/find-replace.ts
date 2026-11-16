@@ -21,6 +21,8 @@ export interface FindMatch {
   /** Visible character IDs and exact source captured at search time. */
   ids: OpId[];
   text: string;
+  /** Matches touching a person or document mention can be found, but not replaced. */
+  mention?: boolean;
   /** Table text is stored as whole-cell registers rather than character IDs. */
   table?: { row: number; col: number; snapshot: string; cellVersion: string | null };
 }
@@ -63,6 +65,8 @@ function literalRegExp(query: string, caseSensitive: boolean): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "gu" : "giu");
 }
 
+const isMention = (marks: Record<string, string>) => !!marks.mention || !!marks.link?.startsWith("#/doc/");
+
 /**
  * Finds non-overlapping matches in the title and visible body/column blocks.
  * Offsets are Unicode code points, never UTF-16 indices. Unicode's simple
@@ -95,7 +99,7 @@ export function findMatches(doc: Doc, query: string, options: FindOptions = {}):
         const end = boundaries.get(match.index! + match[0].length);
         // Ignore a match that would start/end inside a surrogate pair.
         if (start === undefined || end === undefined || start === end) continue;
-        result.push({ doc, block, parent: { ...parent }, start, end, ids: ids.slice(start, end).map((id) => ({ ...id })), text: match[0] });
+        result.push({ doc, block, parent: { ...parent }, start, end, ids: ids.slice(start, end).map((id) => ({ ...id })), text: match[0], mention: chars.slice(start, end).some((char) => isMention(char.marks)) });
       }
       from = to;
     }
@@ -161,7 +165,7 @@ export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacemen
     if (start === undefined || match.ids.some((id, i) => !state.ids[start + i] || !eqId(id, state.ids[start + i]))) { skipped++; continue; }
     const end = start + match.ids.length;
     const chars = state.chars.slice(start, end);
-    if (chars.some((char) => !!char.marks.math) || chars.map((char) => char.ch).join("") !== match.text) { skipped++; continue; }
+    if (chars.some((char) => !!char.marks.math || isMention(char.marks)) || chars.map((char) => char.ch).join("") !== match.text) { skipped++; continue; }
     planned.push({ match, start, end, marks: sharedMarks(chars.map((char) => char.marks)), order: location.index });
   }
   planned.sort((a, b) => {
