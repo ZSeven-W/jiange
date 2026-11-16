@@ -1,5 +1,18 @@
 import { eqId, ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
 import { collapsed, type Pos, type Sel } from "./model";
+import { isMultiwordSlashPrefix } from "./pinyin";
+
+/** Open slash commands only at the beginning of a line or after whitespace. */
+export function canOpenSlashMenu(doc: Doc, slash: Pos): boolean {
+  if (!doc.hasBlock(slash.b) || !Number.isSafeInteger(slash.o) || slash.o < 0) return false;
+  const info = doc.blockInfo(slash.b), chars = doc.richChars(slash.b);
+  if (info.type === "code" || chars[slash.o]?.ch !== "/" || chars[slash.o].marks.code || chars[slash.o].marks.math) return false;
+  return slash.o === 0 || /\s/u.test(chars[slash.o - 1]?.ch ?? "");
+}
+
+export function validSlashQueryText(kind: "/" | "@", text: string): boolean {
+  return text.startsWith(kind) && [...text].length <= 32 && (!/\s/u.test(text) || kind === "/" && isMultiwordSlashPrefix(text.slice(1)));
+}
 
 /** A typed query is identified by the actual characters, not cursor offsets. */
 export interface SlashQuery {
@@ -46,7 +59,7 @@ export function updateSlashQuery(query: SlashQuery, cursor: Pos, action: "append
   if (action === "append" ? next.length <= query.ids.length : next.length >= query.ids.length) return null;
   const result = { ...query, ids: next };
   const resolved = resolveSlashQuery(doc, result);
-  return resolved && !/\s/.test(resolved.text) && [...resolved.text].length <= 16 ? result : null;
+  return resolved && validSlashQueryText(query.kind, resolved.text) ? result : null;
 }
 
 /** Remove only the verified command, returning its current insertion offset. */

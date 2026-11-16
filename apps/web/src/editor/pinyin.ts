@@ -51,7 +51,7 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "link", label: "链接", group: "基础", icon: "链", py: ["lian", "jie"], en: ["link", "hyperlink", "url"] },
   { id: "todo", label: "待办事项", group: "常用", icon: "☑", py: ["dai", "ban", "shi", "xiang"], en: ["todo", "task", "check", "rw"] },
   { id: "image", label: "图片", group: "常用", icon: "图", py: ["tu", "pian"], en: ["image", "picture", "img"] },
-  { id: "file", label: "附件", group: "常用", icon: "附", py: ["fu", "jian"], en: ["file", "attachment", "wj"] },
+  { id: "file", label: "附件", group: "常用", icon: "附", py: ["fu", "jian"], en: ["file", "attachment", "wj", "sp"] },
   { id: "video", label: "视频", group: "常用", icon: "视", py: ["shi", "pin"], en: ["video", "wj"] },
   { id: "table", label: "表格", group: "常用", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
   { id: "columns", label: "分栏", group: "常用", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
@@ -69,4 +69,10 @@ export function filterItems(q: string, items = SLASH_ITEMS): MenuItem[] {
   const s = q.trim().toLowerCase();
   if (!s) return items;
   return items.filter((it) => it.label.includes(s) || it.en.some((e) => e.startsWith(s)) || pinyinMatch(it.py, s));
+}
+
+/** A space remains part of the query only while completing a supported alias. */
+export function isMultiwordSlashPrefix(query: string): boolean {
+  const lower = query.toLowerCase();
+  return SLASH_ITEMS.some((item) => item.en.some((alias) => alias.includes(" ") && alias.startsWith(lower)));
 }

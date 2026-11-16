@@ -86,7 +86,7 @@ import { applyColumnMove, captureColumnMove } from "./column-move";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./column-alignment-owner";
 import { browserConditionalJournalEnvironment, ConditionalJournal, conditionalJournalStorageKey } from "@/lib/conditional-journal";
-import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
+import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-assets";
@@ -1416,7 +1416,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!d || !eqId(m.at.b, f.b) || !collapsed(sel.current!)) return null;
       if (m.fromButton) return f.o === m.at.o ? m : null;
       const q = m.query && resolveSlashQuery(d, m.query);
-      if (!q || f.o !== q.end || /\s/.test(q.text) || [...q.text].length > 16) return null;
+      if (!q || f.o !== q.end || !m.query || !validSlashQueryText(m.query.kind, q.text)) return null;
       return q.start === m.at.o ? m : { ...m, at: { b: f.b, o: q.start } };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1546,7 +1546,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           const end = sel.current?.f;
           if ((t === "/" || t === "@") && end && !isColumnText(d, end.b)) {
             const at = { b: end.b, o: Math.max(0, end.o - 1) };
-            const query = captureSlashQuery(d, at, end, t);
+            const query = t === "/" && !canOpenSlashMenu(d, at) ? null : captureSlashQuery(d, at, end, t);
             changeSlash(query ? { at, query, index: 0, kind: t } : null);
           } else if (tracking && oldQuery && end && slashRef.current?.query === oldQuery) {
             const query = updateSlashQuery(oldQuery, end, "append");

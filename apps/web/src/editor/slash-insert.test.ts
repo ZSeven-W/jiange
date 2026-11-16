@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import { bodyBlocks } from "./model";
-import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
+import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
 
 function setup(text: string) {
   const doc = new Doc(1);
@@ -13,6 +13,38 @@ function setup(text: string) {
 const state = (doc: Doc) => bodyBlocks(doc).map((b) => [doc.blockInfo(b).type, doc.text(b)]);
 
 describe("typed slash and mention query identity", () => {
+  it.each([["/", 0, true], ["前 /", 2, true], ["前\n/", 2, true], ["https://", 6, false], ["文/", 1, false]] as const)("checks slash trigger context in %s", (text, offset, expected) => {
+    const { doc, block } = setup(text);
+    expect(canOpenSlashMenu(doc, { b: block, o: offset })).toBe(expected);
+  });
+  it("keeps code blocks and inline code literal", () => {
+    const { doc, block } = setup("/");
+    new Tx(doc).format(block, 0, 1, "code", "1");
+    expect(canOpenSlashMenu(doc, { b: block, o: 0 })).toBe(false);
+    new Tx(doc).format(block, 0, 1, "code", null);
+    new Tx(doc).setProp(block, "type", "code");
+    expect(canOpenSlashMenu(doc, { b: block, o: 0 })).toBe(false);
+  });
+  it.each(["numbered list", "bulleted list"])("tracks a spaced alias: %s", (alias) => {
+    const { doc, block } = setup("/");
+    let query = captureSlashQuery(doc, { b: block, o: 0 }, { b: block, o: 1 }, "/")!;
+    for (const ch of alias) {
+      const end = doc.visibleIds(block).length;
+      doc.insertText(block, end, ch);
+      query = updateSlashQuery(query, { b: block, o: end + 1 }, "append")!;
+      expect(query).not.toBeNull();
+    }
+    expect(resolveSlashQuery(doc, query)?.text).toBe(`/${alias}`);
+    doc.insertText(block, doc.visibleIds(block).length, " ");
+    expect(updateSlashQuery(query, { b: block, o: alias.length + 2 }, "append")).toBeNull();
+  });
+  it("keeps selection tracking and input tracking consistent for spaced queries", () => {
+    expect(validSlashQueryText("/", "/numbered ")).toBe(true);
+    expect(validSlashQueryText("/", "/bulleted list")).toBe(true);
+    expect(validSlashQueryText("/", "/numbered other")).toBe(false);
+    expect(validSlashQueryText("@", "@numbered list")).toBe(false);
+    expect(validSlashQueryText("/", `/${"a".repeat(32)}`)).toBe(false);
+  });
   it.each(["/", "@"] as const)("follows %s when a peer inserts before it and rejects inserted query text", (kind) => {
     const { doc, block } = setup(`前${kind}查询`);
     const query = captureSlashQuery(doc, { b: block, o: 1 }, { b: block, o: 4 }, kind)!;

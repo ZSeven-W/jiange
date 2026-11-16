@@ -12,6 +12,6 @@ describe("pinyin", () => {
     expect(filterItems("代码").map((i) => i.id)).toEqual(["code"]);
   });
   it("recognizes Feishu aliases for supported commands", () => {
-    for (const [query, id] of [["url", "link"], ["eq", "math"], ["rw", "todo"], ["numbered list", "ordered"], ["bulleted list", "bullet"], ["wj", "file"], ["wj", "video"]]) expect(filterItems(query).map((item) => item.id)).toContain(id);
+    for (const [query, id] of [["url", "link"], ["eq", "math"], ["rw", "todo"], ["numbered list", "ordered"], ["bulleted list", "bullet"], ["wj", "file"], ["wj", "video"], ["sp", "file"], ["sp", "video"]]) expect(filterItems(query).map((item) => item.id)).toContain(id);
   });
 });
