@@ -23,6 +23,7 @@ const conditionalSafeInteger = 1<<53 - 1
 
 var conditionalCellKey = regexp.MustCompile(`^tbl\.c\.[A-Za-z0-9_-]{1,40}\.[A-Za-z0-9_-]{1,40}$`)
 var conditionalColumnID = regexp.MustCompile(`^\d+:\d+$`)
+var conditionalColumnPosition = regexp.MustCompile(`^[0-9A-Za-z]{1,512}$`)
 
 type conditionalOpsInput struct {
 	Epoch     int64  `json:"historyEpoch"`
@@ -146,7 +147,7 @@ func conditionalColumnWidths(op collab.Op) bool {
 	return true
 }
 
-// commitConditionalOps accepts text changes, table-cell properties, text alignment, and bounded column widths.
+// commitConditionalOps accepts text changes, table-cell properties, bounded column layout updates, and same-parent column moves.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
 func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +226,11 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case collab.TMark:
+		case collab.TBlockMove:
+			if len(ops) != 1 || !conditionalColumnPosition.MatchString(op.Pos) || strings.HasSuffix(op.Pos, "0") {
+				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏位置无效")
+				return
+			}
 		case collab.TBlockSet:
 			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
@@ -291,7 +297,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 			blockKinds[op.Block] = kind
 		}
-		if op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
+		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
 			return
 		}

@@ -15,7 +15,7 @@ function guard(doc: Doc, block: OpId): string | null {
 }
 
 export type ColumnAlignmentBefore = { value: string; version: string | null; guard: string };
-export type ConditionalAlignmentPlan = Readonly<{ op: Readonly<Extract<Op, { t: "bset" }>> }>;
+export type ConditionalAlignmentPlan = Readonly<{ op: Readonly<Extract<Op, { t: "bset" | "bmove" }>> }>;
 type PreparedAlignment = { doc: Doc; undo: object; key: string; redo: boolean; revision: number; block: OpId; before: ColumnAlignmentBefore; target: string; opId: OpId };
 
 /** Prepares guarded inverses; only confirmed server operations can advance history. */

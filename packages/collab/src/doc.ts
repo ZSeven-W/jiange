@@ -449,6 +449,12 @@ export class Doc {
     return { type: b.props.get("type")?.value ?? "", props, parent: b.loc.value.parent };
   }
 
+  /** Current location and winning operation identity, returned as detached values. */
+  blockLocation(block: OpId): { parent: OpId; pos: string; version: OpId } {
+    const b = this.block(block);
+    return { parent: { ...b.loc.value.parent }, pos: b.loc.value.pos, version: { ...b.loc.ts } };
+  }
+
   /** Identity of the winning write, including writes that repeat the same value. */
   propVersion(block: OpId, key: string): OpId | null {
     const ts = this.block(block).props.get(key)?.ts;

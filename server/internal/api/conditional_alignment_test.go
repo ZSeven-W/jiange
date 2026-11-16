@@ -47,9 +47,10 @@ func checkConditionalAlignment(t *testing.T, st store.Store) {
 	}
 	columns := state.CreateBlock(uint64(owner), collab.Root, "X", "columns")
 	column := state.CreateBlock(uint64(owner), columns.ID, "U", "paragraph")
+	secondColumn := state.CreateBlock(uint64(owner), columns.ID, "k", "paragraph")
 	table := state.CreateBlock(uint64(owner), collab.Root, "Y", "table")
 	code := state.CreateBlock(uint64(owner), collab.Root, "Z", "code")
-	ops := []collab.Op{columns, column, table, code}
+	ops := []collab.Op{columns, column, secondColumn, table, code}
 	var records []store.RawOp
 	for _, op := range ops {
 		raw, err := collab.EncodeOps([]collab.Op{op})
@@ -164,6 +165,24 @@ func checkConditionalAlignment(t *testing.T, st store.Store) {
 	widthOp.Block = column.ID
 	if got := do("dddddddddddddddddddddddddddddddd", finalHead, widthOp); got != http.StatusBadRequest {
 		t.Fatalf("width on paragraph: %d", got)
+	}
+	move := collab.Op{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: column.ID, Parent: columns.ID, Pos: "z"}
+	if got := do("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", finalHead, move); got != http.StatusOK {
+		t.Fatalf("valid column move: %d", got)
+	}
+	actual, finalHead, err = StateAtHead(ctx, st, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, bad := range []collab.Op{
+		{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: column.ID, Parent: collab.Root, Pos: "A"},
+		{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: table.ID, Parent: columns.ID, Pos: "A"},
+		{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: column.ID, Parent: columns.ID, Pos: "k"},
+		{T: collab.TBlockMove, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: column.ID, Parent: columns.ID, Pos: "A0"},
+	} {
+		if got := do(fmt.Sprintf("%032x", i+200), finalHead, bad); got != http.StatusBadRequest {
+			t.Fatalf("invalid move %d: %d", i, got)
+		}
 	}
 }
 

@@ -2,8 +2,9 @@ import { decodeOps, encodeOps, type Op } from "@jiange/collab";
 import { commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditionalJournal";
 import { COLUMN_WIDTHS, validColumnWidths } from "./columnWidths";
+import { validColumnPosition } from "./columnMove";
 
-type AlignmentOp = Extract<Op, { t: "bset" }>;
+type AlignmentOp = Extract<Op, { t: "bset" | "bmove" }>;
 type Transport = {
   send: (attempt: ConditionalAttempt, bytes: Uint8Array, signal: AbortSignal) => Promise<void>;
   status: (attempt: ConditionalAttempt, signal: AbortSignal) => Promise<ConditionalOpsStatus>;
@@ -19,8 +20,9 @@ type FinishResult = ConditionalResolution | "empty" | "blocked" | "needs_finaliz
 function columnLayoutOp(bytes: Uint8Array): AlignmentOp | null {
   try {
     const ops = decodeOps(bytes), op = ops[0];
-    if (ops.length !== 1 || op.t !== "bset") return null;
-    if (!(op.key === "align" && ["", "left", "center", "right"].includes(op.value) || op.key === COLUMN_WIDTHS && validColumnWidths(op.value))) return null;
+    if (ops.length !== 1 || op.t !== "bset" && op.t !== "bmove") return null;
+    if (op.t === "bset" && !(op.key === "align" && ["", "left", "center", "right"].includes(op.value) || op.key === COLUMN_WIDTHS && validColumnWidths(op.value))) return null;
+    if (op.t === "bmove" && (!validColumnPosition(op.pos) || ![op.parent.client, op.parent.clock].every(Number.isSafeInteger) || op.parent.client < 0 || op.parent.clock < 0 || op.parent.client === 0 && op.parent.clock === 0 || op.parent.client === op.block.client && op.parent.clock === op.block.clock)) return null;
     if (![op.id.client, op.id.clock, op.block.client, op.block.clock].every(Number.isSafeInteger) || op.id.client <= 0 || op.id.clock <= 0 || op.block.client < 0 || op.block.clock < 0 || op.block.client === 0 && op.block.clock <= 1) return null;
     return op;
   } catch { return null; }

@@ -11,6 +11,7 @@
     "./tableCells": "./src/tableCells.ts",
     "./blockStyles": "./src/blockStyles.ts",
     "./columnWidths": "./src/columnWidths.ts",
+    "./columnMove": "./src/columnMove.ts",
     "./docx": "./src/docx.ts",
     "./markdown": "./src/markdown.ts",
     "./zip": "./src/zip.ts",
@@ -43,6 +44,10 @@
       "./columnWidths": {
         "types": "./dist/columnWidths.d.ts",
         "import": "./dist/columnWidths.js"
+      },
+      "./columnMove": {
+        "types": "./dist/columnMove.d.ts",
+        "import": "./dist/columnMove.js"
       },
       "./docx": {
         "types": "./dist/docx.d.ts",

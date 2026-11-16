@@ -55,6 +55,24 @@ func (d *Doc) VisibleBlockText(id OpID) (string, string, bool) {
 	return d.Text(id), b.props["type"].value, true
 }
 
+// CanReorderColumn restricts a conditional move to an existing visible
+// column within the same root-level columns block. It is not authorization.
+func (d *Doc) CanReorderColumn(block, parent OpID, pos string) bool {
+	if block == Root || parent == Root || block == parent {
+		return false
+	}
+	b, p := d.blocks[block], d.blocks[parent]
+	if b == nil || p == nil || b.deleted || p.deleted || b.parent != parent || p.parent != Root || p.props["type"].value != "columns" {
+		return false
+	}
+	for id, sibling := range d.blocks {
+		if id != block && !sibling.deleted && sibling.parent == parent && sibling.pos == pos {
+			return false
+		}
+	}
+	return true
+}
+
 // InsertText inserts text at a visible index of block as `client`.
 func (d *Doc) InsertText(client uint64, block OpID, index int, text string) Op {
 	b := d.blocks[block]

@@ -24,8 +24,9 @@ try {
   writeFileSync(join(consumer, 'smoke.mjs'), `
 import assert from 'node:assert/strict';
 import { Doc, ROOT, Tx, SyncClient } from '@jiange/collab';
-import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights } from '@jiange/doc-sdk';
+import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights, captureColumnMove, applyColumnMove } from '@jiange/doc-sdk';
 import { columnWeights as columnWidthsSubpath } from '@jiange/doc-sdk/columnWidths';
+import { validColumnPosition } from '@jiange/doc-sdk/columnMove';
 import { moveShapeOrder, slideLineEndpoints } from '@jiange/slides-sdk';
 import { calculateSheet, translateSheetFormula, writeXlsx, readXlsx } from '@jiange/sheet-sdk';
 import { listZip } from '@jiange/ooxml/zip';
@@ -39,6 +40,9 @@ const word = buildDocx({blocks:[{type:'paragraph',props:{},spans:[{text:'Hello S
 assert.equal((await parseDocx(word)).blocks[0].text, 'Hello SDK');
 assert.deepEqual(columnWeights('{"1:2":1400,"1:3":600}', ['1:2','1:3']), [1400,600]);
 assert.deepEqual(columnWidthsSubpath(undefined, ['1:2','1:3']), [1000,1000]);
+const group = tx.create('columns', next.b, ROOT), a = tx.create('paragraph', null, group), b = tx.create('paragraph', a, group);
+assert.equal(applyColumnMove(tx, captureColumnMove(doc, group, a), b), 'applied');
+assert.deepEqual(doc.children(group), [b, a]); assert.equal(doc.blockLocation(a).parent.clock, group.clock); assert.equal(validColumnPosition('A0'), false);
 const line = {id:'l',kind:'line',x:10,y:10,width:20,height:5,color:'#000000'};
 assert.equal(moveShapeOrder([line], 'l', 'front').length, 1); assert.ok(slideLineEndpoints(line,960,540).end.x > 0);
 assert.equal(translateSheetFormula('=A1+$A$1',1,0), '=A2+$A$1');
@@ -51,14 +55,16 @@ assert.equal(readFlow(flowWrites({},graph)).nodes[0].text,'Start');
 `);
   writeFileSync(join(consumer, 'types.ts'), `
 import { Doc, Tx, ROOT, SyncClient } from '@jiange/collab';
-import { splitBlock, columnWeights, type ColumnWidthSnapshot } from '@jiange/doc-sdk';
+import { splitBlock, columnWeights, captureColumnMove, type ColumnWidthSnapshot, type ColumnMoveSnapshot } from '@jiange/doc-sdk';
 import { COLUMN_WIDTHS } from '@jiange/doc-sdk/columnWidths';
+import { applyColumnMove } from '@jiange/doc-sdk/columnMove';
 import { moveShapeOrder, type SlideShape } from '@jiange/slides-sdk';
 import { calculateSheet, writeXlsx, readXlsx, type XlsxWorkbook } from '@jiange/sheet-sdk';
 import { readFlow, type FlowGraph } from '@jiange/whiteboard-sdk';
 const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, ROOT);
 splitBlock(tx, { b: block, o: 0 }); new SyncClient(1);
 const weights: number[] = columnWeights(undefined, ['1:2']); const widthKey: string = COLUMN_WIDTHS; let snapshot: ColumnWidthSnapshot | null = null; void [weights, widthKey, snapshot];
+let move: ColumnMoveSnapshot | null = captureColumnMove(doc, block, block); if (move) applyColumnMove(tx, move, null);
 const shapes: SlideShape[] = []; moveShapeOrder(shapes, 'id', 'front');
 calculateSheet({}); const workbook: XlsxWorkbook = { sheets: [{ name: 'Sheet1', cells: [{row:0,col:0,value:1}] }] }; readXlsx(writeXlsx(workbook));
 const graph: FlowGraph = readFlow({}); void graph;

@@ -44,6 +44,16 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional column alignment request", () => {
+  it("accepts only bounded same-document column move operations", async () => {
+    const ctx = setup();
+    const move: Extract<Op, {t:"bmove"}> = {t:"bmove",id:{client:9,clock:4},block:{client:3,clock:2},parent:{client:3,clock:1},pos:"V"};
+    expect(await ctx.commit.start(move,2,3,signal())).toBe("sent");
+    const invalid = setup();
+    for (const bad of [{...move,pos:"A0"},{...move,pos:"../bad"},{...move,parent:{client:0,clock:0}},{...move,parent:move.block}]) {
+      await expect(invalid.commit.start(bad,2,3,signal())).rejects.toThrow(/invalid column layout/);
+    }
+    expect(invalid.send).not.toHaveBeenCalled();
+  });
   it("accepts bounded width metadata but refuses arbitrary text as a layout operation", async () => {
     const ctx = setup();
     const widths: Extract<Op, {t:"bset"}> = {...op, key:"columnWidths", value:'{"3:2":1400,"3:3":600}'};

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { encodeOps, eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
@@ -58,8 +59,8 @@ import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from
 import { TableStructureHistory } from "./tableStructureHistory";
 import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
-import { MessageCircle, Play } from "lucide-react";
-import { TodoCheck } from "./menuIcons";
+import { ArrowLeft, ArrowRight, MessageCircle, Play, Trash2 } from "lucide-react";
+import { GripDots, TodoCheck } from "./menuIcons";
 import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, navigateDocumentHash, REVISIT_DOCUMENT_LINK, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
 import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
 import { MathView } from "./MathView";
@@ -72,6 +73,8 @@ import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, sa
 import { applyColumnWidths, captureColumnWidths, columnWeights, COLUMN_WIDTHS } from "./columnWidths";
 import { ColumnAlignmentHistory, type ConditionalAlignmentPlan } from "./columnAlignmentHistory";
 import { ColumnWidthHistory } from "./columnWidthHistory";
+import { ColumnMoveHistory } from "./columnMoveHistory";
+import { applyColumnMove, captureColumnMove } from "./columnMove";
 import { ColumnAlignmentCommit } from "./columnAlignmentCommit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./columnAlignmentOwner";
 import { browserConditionalJournalEnvironment, ConditionalJournal, conditionalJournalStorageKey } from "@/lib/conditionalJournal";
@@ -178,6 +181,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
   const columnAlignmentHistory = useMemo(() => new ColumnAlignmentHistory(), [sync.client]);
   const columnWidthHistory = useMemo(() => new ColumnWidthHistory(), [sync.client]);
+  const columnMoveHistory = useMemo(() => new ColumnMoveHistory(), [sync.client]);
   const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
@@ -215,7 +219,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const currentUserId = useRef(userId); currentUserId.current = userId;
-  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory } | null>(null);
+  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory | ColumnMoveHistory } | null>(null);
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
   const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
@@ -374,7 +378,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setColumnNotice("另一页面正在处理该文档，或浏览器不支持跨页面锁。"); return; }
       const d = sync.client.doc, epoch = sync.client.epoch, head = sync.client.lastSeq;
       if (!d || !canStepFindBatch(sync.client) || epoch === null || readOnlyRef.current || controller.signal.aborted) { releaseAlignmentOwner(); return; }
-      const history = key.startsWith("column-width:") ? columnWidthHistory : columnAlignmentHistory;
+      const history = key.startsWith("column-move:") ? columnMoveHistory : key.startsWith("column-width:") ? columnWidthHistory : columnAlignmentHistory;
       const prepared = history.prepareConditional(d, um, key, redo);
       if (prepared.status !== "ready") {
         releaseAlignmentOwner();
@@ -399,7 +403,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }
     } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
 
   useEffect(() => {
     if (!alignmentPending) return;
@@ -993,7 +997,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -1640,6 +1644,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (isNativeControl(e.target)) {
       const key = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && !readOnlyRef.current && e.target instanceof Element && e.target.closest("[data-column-move-handle]")) { e.preventDefault(); undo(key === "y" || e.shiftKey); return; }
       if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && tableCellUndoRef.current(e.target, key === "y" || e.shiftKey)) e.preventDefault();
       return;
     }
@@ -2111,11 +2116,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对分栏布局操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏布局无法安全处理" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("column-width:")) { if (sync.client.doc) columnWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("column-move:")) { if (sync.client.doc) columnMoveHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
             else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
             else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
@@ -2245,6 +2251,18 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 columnRemount={remount}
                 syncVersion={sync.version}
                 syncStatus={sync.status}
+                onMoveColumn={readOnly ? undefined : (column, after) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
+                  const parse = (value: string) => { const match = /^(\d+):(\d+)$/.exec(value); return match ? { client: Number(match[1]), clock: Number(match[2]) } : null; };
+                  const target = parse(column), previous = after ? parse(after) : null;
+                  if (!target || after && !previous) { setColumnNotice("分栏位置无效，未移动内容。"); return; }
+                  const snapshot = captureColumnMove(doc, b, target);
+                  if (!snapshot) { setColumnNotice("分栏顺序已变化或位置无效，无法移动。"); return; }
+                  const tx = new Tx(doc), result = applyColumnMove(tx, snapshot, previous);
+                  if (result === "changed" || result === "invalid") { setColumnNotice("分栏顺序已变化，未移动内容，请重试。"); return; }
+                  if (result === "applied") { columnMoveHistory.record(doc, um, snapshot); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
+                }}
                 onAddColumn={readOnly ? undefined : (after) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return;
                   const tx = new Tx(doc);
@@ -2639,6 +2657,7 @@ interface BlockProps {
   syncVersion: number;
   syncStatus: SyncDoc["status"];
   onAddColumn?: (after: string | null) => void;
+  onMoveColumn?: (column: string, after: string | null) => void;
   onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
@@ -2691,17 +2710,47 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
   const [resizePreview, setResizePreview] = useState<{ left: string; right: string; first: number; second: number } | null>(null);
+  const draggingColumn = useRef<string | null>(null);
+  const [columnDrop, setColumnDrop] = useState<{ id: string; side: "before" | "after" } | null>(null);
+  const [columnMenu, setColumnMenu] = useState<{ id: string; left: number; top: number } | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!columnMenu) return;
+    const outside = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest("[data-column-move-menu], [data-column-move-handle]")) setColumnMenu(null); };
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setColumnMenu(null); requestAnimationFrame(() => { [...document.querySelectorAll<HTMLButtonElement>("[data-column-move-handle]")].find((handle) => handle.dataset.columnMoveHandle === columnMenu.id)?.focus({ preventScroll: true }); }); } };
+    const dismiss = () => setColumnMenu(null);
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", close); window.addEventListener("scroll", dismiss, true); window.addEventListener("resize", dismiss);
+    requestAnimationFrame(() => columnMenuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus());
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", close); window.removeEventListener("scroll", dismiss, true); window.removeEventListener("resize", dismiss); };
+  }, [columnMenu]);
   const widthIds = childBlocks?.map((child) => child.id) ?? [];
   const weights = columnWeights(props[COLUMN_WIDTHS], widthIds);
   const cancelResize = () => {
     const active = resize.current; resize.current = null; setResizePreview(null);
     if (active?.target.hasPointerCapture(active.pointer)) active.target.releasePointerCapture(active.pointer);
   };
+  const moveColumnBy = (column: string, direction: -1 | 1) => {
+    const ids = (childBlocks ?? []).map((child) => child.id), index = ids.indexOf(column);
+    if (!onMoveColumn || index < 0 || direction === -1 && index === 0 || direction === 1 && index === ids.length - 1) return;
+    onMoveColumn(column, direction === -1 ? (index >= 2 ? ids[index - 2] : null) : ids[index + 1]);
+  };
+  const dropColumn = (target: string, side: "before" | "after") => {
+    const source = draggingColumn.current;
+    draggingColumn.current = null; setColumnDrop(null);
+    if (!source || source === target || !onMoveColumn) return;
+    const remaining = (childBlocks ?? []).map((child) => child.id).filter((id) => id !== source), index = remaining.indexOf(target);
+    if (index < 0) return;
+    onMoveColumn(source, side === "after" ? target : index ? remaining[index - 1] : null);
+  };
+  const focusColumnHandle = (column: string) => requestAnimationFrame(() => {
+    const handles = document.querySelectorAll<HTMLButtonElement>("[data-column-move-handle]");
+    [...handles].find((handle) => handle.dataset.columnMoveHandle === column)?.focus({ preventScroll: true });
+  });
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
   const firstThread = commentThreads?.includes(activeThread ?? -1) ? activeThread : (commentThreads?.[0] ?? null);
@@ -2781,7 +2830,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 top-[2px] items-center sm:-left-[62px]", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false}>
+      <span className={cn("absolute -left-7 items-center sm:-left-[62px]", type === "columns" ? "top-[11px]" : "top-[2px]", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false} data-block-controls>
         {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock && !onBlockAction)) && !((selectionCount ?? 0) > 1) ? (
           <button
             className="relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
@@ -2830,25 +2879,32 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
         <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
       ) : type === "columns" ? (
         <div contentEditable={false} className="group/cols relative my-2" data-columns>
-          <div className="overflow-x-auto" data-column-scroll><div className="flex w-full">
+          <div className="-ml-6 overflow-x-auto pl-6" data-column-scroll><div className="flex w-full">
             {(childBlocks ?? []).map((ch, index, columns) => {
               const threads = ch.commentThreads ?? [];
               const weight = resizePreview?.left === ch.id ? resizePreview.first : resizePreview?.right === ch.id ? resizePreview.second : weights[index];
-              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" style={{ flexGrow: weight, flexBasis: "0%" }} data-column={ch.id} data-block={ch.id}>
+              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" style={{ flexGrow: weight, flexBasis: "0%" }} data-column={ch.id} data-block={ch.id}
+                onDragOver={(event) => {
+                  if (!draggingColumn.current) return;
+                  event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move";
+                  const rect = event.currentTarget.getBoundingClientRect(), side = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                  setColumnDrop((current) => current?.id === ch.id && current.side === side ? current : { id: ch.id, side });
+                }}
+                onDrop={(event) => { if (!draggingColumn.current) return; event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); dropColumn(ch.id, event.clientX < rect.left + rect.width / 2 ? "before" : "after"); }}>
+                {columnDrop?.id === ch.id && <span aria-hidden className={cn("pointer-events-none absolute bottom-0 top-0 z-20 w-0.5 rounded bg-[#3370ff]", columnDrop.side === "before" ? "-left-1" : "-right-1")} />}
+                {onMoveColumn && <button type="button" draggable aria-label={`第 ${index + 1} 栏菜单`} aria-haspopup="menu" aria-expanded={columnMenu?.id === ch.id} title="拖动或使用菜单移动分栏" data-column-move-handle={ch.id} className="pointer-events-none absolute -left-6 top-0 z-20 grid h-7 w-5 cursor-grab place-items-center rounded text-[#8f959e] opacity-0 hover:bg-[#eff0f1] hover:text-[#3370ff] active:cursor-grabbing focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/col:pointer-events-auto group-hover/col:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+                  onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); setColumnMenu((current) => current?.id === ch.id ? null : { id: ch.id, left: Math.max(8, Math.min(rect.left, window.innerWidth - 180)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 120)) }); }}
+                  onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("text/plain", ""); event.dataTransfer.effectAllowed = "move"; draggingColumn.current = ch.id; setColumnMenu(null); }}
+                  onDragEnd={(event) => { event.stopPropagation(); draggingColumn.current = null; setColumnDrop(null); }}
+                  onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); moveColumnBy(ch.id, event.key === "ArrowLeft" ? -1 : 1); } }}><GripDots /></button>}
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none" style={{ textAlign: blockAlign(ch.props.align) }}>
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
                 </div>
                 {threads.length > 0 && <button contentEditable={false} className="mt-1 flex items-center gap-0.5 rounded-full border border-[#f5b1e5] bg-surface px-1.5 py-0.5 text-[11px] font-medium text-[#c950a8] shadow-sm" title={`${threads.length} 条评论`} onMouseDown={(e) => e.preventDefault()} onClick={() => onAnchorClick?.(threads.includes(activeThread ?? -1) ? activeThread! : threads[0])} data-comment-bubble><MessageCircle size={11} strokeWidth={1.7} /> {threads.length}</button>}
-                {onDeleteColumn && <button
-                  className="absolute -right-1 -top-1 hidden size-5 place-items-center rounded-full border bg-surface text-[11px] text-subtle hover:text-destructive group-hover/col:grid"
-                  title="删除此栏"
-                  onClick={() => onDeleteColumn?.(ch.id)}
-                  data-del-column
-                >
-                  ✕
-                </button>}
-              </div>{index < columns.length - 1 && <div className="group/gutter relative w-8 shrink-0" contentEditable={false}>
+              </div>{index < columns.length - 1 && <div className="group/gutter relative w-8 shrink-0" contentEditable={false}
+                onDragOver={(event) => { if (!draggingColumn.current) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setColumnDrop((current) => current?.id === ch.id && current.side === "after" ? current : { id: ch.id, side: "after" }); }}
+                onDrop={(event) => { if (!draggingColumn.current) return; event.preventDefault(); event.stopPropagation(); dropColumn(ch.id, "after"); }}>
                   {onBeginColumnResize && <div role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 栏和第 ${index + 2} 栏宽度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(100 * weight / (weight + (resizePreview?.right === columns[index + 1].id ? resizePreview.second : weights[index + 1])))} title="拖动调整栏宽" data-column-resize={ch.id} className="absolute inset-0 z-10 hidden cursor-col-resize outline-none sm:block [@media(hover:none)]:hidden"
                     onPointerDown={(event) => {
                       if (event.button !== 0 || resize.current) return;
@@ -2884,13 +2940,22 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                     }}>
                     <span className="absolute inset-y-0 left-1/2 w-px bg-transparent group-hover/gutter:bg-[#3370ff] group-focus-within/gutter:bg-[#3370ff]" />
                   </div>}
-                  {onAddColumn && columns.length < MAX_COLUMNS && <button type="button" aria-label={`在第 ${index + 1} 栏后添加分栏`} title="添加分栏" onMouseDown={(event) => event.preventDefault()} onClick={() => onAddColumn(ch.id)} className="absolute left-1/2 top-0 z-20 hidden size-4 -translate-x-1/2 place-items-center rounded-full bg-[#3370ff] text-white opacity-0 shadow-sm group-hover/gutter:opacity-100 group-focus-visible/gutter:opacity-100 sm:grid [@media(hover:none)]:hidden" data-insert-column-after={ch.id}><AddIcon className="size-3" /></button>}
+                  {onAddColumn && columns.length < MAX_COLUMNS && <button type="button" aria-label={`在第 ${index + 1} 栏后添加分栏`} title="添加分栏" onMouseDown={(event) => event.preventDefault()} onClick={() => onAddColumn(ch.id)} className="absolute left-1/2 top-1.5 z-20 hidden size-4 -translate-x-1/2 place-items-center rounded-full bg-[#3370ff] text-white opacity-0 shadow-sm group-hover/gutter:opacity-100 group-focus-visible/gutter:opacity-100 sm:grid [@media(hover:none)]:hidden" data-insert-column-after={ch.id}><AddIcon className="size-3" /></button>}
                 </div>}</Fragment>;
             })}
           </div></div>
-          {onAddColumn && <button type="button" disabled={(childBlocks?.length ?? 0) >= MAX_COLUMNS} title={(childBlocks?.length ?? 0) >= MAX_COLUMNS ? "每组分栏最多支持 10 栏" : "添加分栏"} className="mt-1 px-1 text-[12px] text-subtle enabled:hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:opacity-0 sm:group-hover/cols:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => onAddColumn(childBlocks?.at(-1)?.id ?? null)} data-add-column>
+          {onAddColumn && <button type="button" disabled={(childBlocks?.length ?? 0) >= MAX_COLUMNS} title={(childBlocks?.length ?? 0) >= MAX_COLUMNS ? "每组分栏最多支持 10 栏" : "添加分栏"} className="mt-1 text-[12px] text-subtle enabled:hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:opacity-0 sm:group-hover/cols:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => onAddColumn(childBlocks?.at(-1)?.id ?? null)} data-add-column>
             + 添加一栏
           </button>}
+          {columnMenu && onMoveColumn && typeof document !== "undefined" && createPortal((() => {
+            const index = (childBlocks ?? []).findIndex((child) => child.id === columnMenu.id), count = childBlocks?.length ?? 0;
+            const action = (direction: -1 | 1) => { const id = columnMenu.id; setColumnMenu(null); moveColumnBy(id, direction); focusColumnHandle(id); };
+            return <div ref={columnMenuRef} role="menu" aria-label="分栏操作" data-column-move-menu style={{ position: "fixed", left: columnMenu.left, top: columnMenu.top }} className="z-[70] w-40 rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]">
+              <button type="button" role="menuitem" disabled={index <= 0} onClick={() => action(-1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowLeft size={15} />向左移动</button>
+              <button type="button" role="menuitem" disabled={index < 0 || index >= count - 1} onClick={() => action(1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowRight size={15} />向右移动</button>
+              {onDeleteColumn && <button type="button" role="menuitem" title="安全删除尚未完成" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />删除分栏</button>}
+            </div>;
+          })(), document.body)}
         </div>
       ) : commentBadge > 0 && (
         <button
