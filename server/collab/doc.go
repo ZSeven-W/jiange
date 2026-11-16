@@ -3,6 +3,7 @@ package collab
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 type charNode struct {
@@ -323,6 +324,19 @@ func (b *block) view(parent OpID) BlockView {
 		}
 	}
 	ord := b.fullOrder()
+	if len(b.marks) == 0 {
+		var text strings.Builder
+		for _, c := range ord {
+			if !c.deleted {
+				text.WriteRune(c.ch)
+			}
+		}
+		spans := []Span{}
+		if text.Len() > 0 {
+			spans = append(spans, Span{Text: text.String(), Marks: map[string]string{}})
+		}
+		return BlockView{ID: b.id.Key(), Parent: parent.Key(), Type: b.props["type"].value, Props: props, Spans: spans}
+	}
 	idx := make(map[OpID]int, len(ord))
 	for i, c := range ord {
 		idx[c.id] = i
@@ -349,6 +363,14 @@ func (b *block) view(parent OpID) BlockView {
 	}
 	spans := []Span{}
 	var last map[string]string
+	var text strings.Builder
+	flush := func() {
+		if text.Len() == 0 {
+			return
+		}
+		spans = append(spans, Span{Text: text.String(), Marks: last})
+		text.Reset()
+	}
 	for i, c := range ord {
 		if c.deleted {
 			continue
@@ -366,13 +388,15 @@ func (b *block) view(parent OpID) BlockView {
 				mk[k] = *v
 			}
 		}
-		if len(spans) > 0 && mapsEqual(last, mk) {
-			spans[len(spans)-1].Text += string(c.ch)
-		} else {
-			spans = append(spans, Span{Text: string(c.ch), Marks: mk})
+		if text.Len() > 0 && !mapsEqual(last, mk) {
+			flush()
+		}
+		if text.Len() == 0 {
 			last = mk
 		}
+		text.WriteRune(c.ch)
 	}
+	flush()
 	return BlockView{ID: b.id.Key(), Parent: parent.Key(), Type: b.props["type"].value, Props: props, Spans: spans}
 }
 

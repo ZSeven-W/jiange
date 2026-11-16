@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/btsync"
@@ -263,21 +262,7 @@ func (s *Server) Handler() http.Handler {
 					return store.ErrNotFound
 				}
 				return nil
-			}, store.RestoreGuard{UserID: u.ID, SessionHash: sessionHash, Now: s.now}, func(doc *collab.Doc) ([]byte, error) {
-				original, err := doc.ReadOnlyProjectionView()
-				if err != nil {
-					return nil, err
-				}
-				view, err := syncReadOnlyView(original)
-				if err != nil {
-					return nil, err
-				}
-				projected, err := doc.ReadOnlyProjection(view)
-				if err != nil {
-					return nil, err
-				}
-				return projected.EncodeState(), nil
-			})
+			}, store.RestoreGuard{UserID: u.ID, SessionHash: sessionHash, Now: s.now}, documentViewProjector)
 		})))
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,25 @@ import (
 	"strings"
 
 	"github.com/ZSeven-W/jiange/server/collab"
+	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
+
+// Every document viewer currently uses the same recipient-independent policy.
+var documentViewProjector = syncsrv.NewViewProjector(func(doc *collab.Doc) ([]byte, error) {
+	original, err := doc.ReadOnlyProjectionView()
+	if err != nil {
+		return nil, err
+	}
+	view, err := syncReadOnlyView(original)
+	if err != nil {
+		return nil, err
+	}
+	projected, err := doc.ReadOnlyProjection(view)
+	if err != nil {
+		return nil, err
+	}
+	return projected.EncodeState(), nil
+})
 
 // The live editor displays a few details that the public snapshot renderer
 // does not, notably bookmark descriptions/icons and attachment previews.

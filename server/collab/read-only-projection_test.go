@@ -239,3 +239,24 @@ func TestReadOnlyProjectionLimitsWorkDepthAndOutputSize(t *testing.T) {
 		}
 	})
 }
+
+func TestProjectionSpanComparisonAcrossBoundaries(t *testing.T) {
+	bold := map[string]string{"bold": "true"}
+	for _, tc := range []struct {
+		name  string
+		a, b  []Span
+		equal bool
+	}{
+		{"same text with split runs", []Span{{Text: "甲😀乙", Marks: bold}}, []Span{{Text: "甲", Marks: bold}, {Text: "", Marks: nil}, {Text: "😀乙", Marks: bold}}, true},
+		{"empty and nil marks", []Span{{Text: "甲", Marks: nil}}, []Span{{Text: "甲", Marks: map[string]string{}}}, true},
+		{"different characters", []Span{{Text: "甲😀", Marks: bold}}, []Span{{Text: "甲乙", Marks: bold}}, false},
+		{"different formatting", []Span{{Text: "甲乙", Marks: bold}}, []Span{{Text: "甲", Marks: bold}, {Text: "乙", Marks: nil}}, false},
+		{"different length", []Span{{Text: "甲乙"}}, []Span{{Text: "甲"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameProjectionSpans(tc.a, tc.b); got != tc.equal {
+				t.Fatalf("got %v want %v", got, tc.equal)
+			}
+		})
+	}
+}

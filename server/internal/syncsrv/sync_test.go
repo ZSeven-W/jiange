@@ -25,18 +25,26 @@ import (
 
 // env is a sync server on httptest; the X-User header stands in for the session cookie.
 type env struct {
-	t      *testing.T
-	st     store.Store
-	hub    *Hub
-	srv    *httptest.Server
-	users  []store.User
-	guards []store.RestoreGuard
-	ws     store.Workspace
+	t         *testing.T
+	st        store.Store
+	hub       *Hub
+	projector *ViewProjector
+	srv       *httptest.Server
+	users     []store.User
+	guards    []store.RestoreGuard
+	ws        store.Workspace
 }
 
 func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 	ctx := context.Background()
 	e := &env{t: t, st: st, hub: &Hub{Store: st, SnapshotEvery: snapEvery, PingInterval: time.Hour}}
+	e.projector = NewViewProjector(func(d *collab.Doc) ([]byte, error) {
+		projected, err := d.ReadOnlyProjection(d.View())
+		if err != nil {
+			return nil, err
+		}
+		return projected.EncodeState(), nil
+	})
 	sfx := strconv.FormatInt(time.Now().UnixNano(), 36)
 	for i, n := range []string{"kay", "alice", "mallory"} {
 		u, ws, err := st.CreateUser(ctx, n+sfx+"@t.dev", n, "x")
@@ -70,13 +78,7 @@ func newEnv(t *testing.T, st store.Store, snapEvery int64) *env {
 func (e *env) handler(h *Hub) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i, _ := strconv.Atoi(r.Header.Get("X-User"))
-		h.Serve(w, r, e.users[i], nil, e.guards[i], func(d *collab.Doc) ([]byte, error) {
-			projected, err := d.ReadOnlyProjection(d.View())
-			if err != nil {
-				return nil, err
-			}
-			return projected.EncodeState(), nil
-		})
+		h.Serve(w, r, e.users[i], nil, e.guards[i], e.projector)
 	})
 }
 

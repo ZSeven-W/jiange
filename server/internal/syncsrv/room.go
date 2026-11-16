@@ -199,20 +199,35 @@ func (r *room) sendOpsToEditors(first uint64, batch []byte, sender *conn, includ
 }
 
 func (r *room) sendViewProjections() {
+	type projectionResult struct {
+		frame  []byte
+		failed bool
+	}
+	// Reuse only within this one committed head and only for the same
+	// immutable policy instance. Never share results across different policies.
+	computed := make(map[*ViewProjector]projectionResult)
 	for c := range r.conns {
-		if c.wireMode.Load() != 2 {
+		if c.wireMode.Load() != 2 || c.closed {
 			continue
 		}
-		if c.project == nil {
+		if c.projector == nil || c.projector.project == nil {
 			c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请稍后重试"))
 			continue
 		}
-		state, err := c.project(r.doc)
-		if err != nil || len(state) == 0 {
+		result, exists := computed[c.projector]
+		if !exists {
+			state, err := c.projector.project(r.doc)
+			result.failed = err != nil || len(state) == 0
+			if !result.failed {
+				result.frame = collab.EncodeProjection(uint64(r.head), uint64(r.epoch), state)
+			}
+			computed[c.projector] = result
+		}
+		if result.failed {
 			c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请联系文档所有者"))
 			continue
 		}
-		c.sendProjection(collab.EncodeProjection(uint64(r.head), uint64(r.epoch), state))
+		c.sendProjection(result.frame)
 	}
 }
 
@@ -324,10 +339,10 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 	if c.v3 {
 		var state []byte
 		if c.wireMode.Load() == 2 {
-			if c.project == nil {
+			if c.projector == nil || c.projector.project == nil {
 				return errors.New("view projection unavailable")
 			}
-			state, err = c.project(r.doc)
+			state, err = c.projector.project(r.doc)
 			if err != nil || len(state) == 0 {
 				c.terminalFrame(collab.EncodeError("projection_unavailable", "文档暂无法安全显示，请联系文档所有者"))
 				return errors.New("view projection unavailable")

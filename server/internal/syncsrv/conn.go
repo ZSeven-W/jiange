@@ -31,7 +31,7 @@ type conn struct {
 	// connection. Test-only callers may leave it nil when not using sessions.
 	authenticate func(context.Context) error
 	writeGuard   *store.RestoreGuard
-	project      func(*collab.Doc) ([]byte, error)
+	projector    *ViewProjector
 	wireMode     atomic.Int32 // 0 before HELLO, 1 editing replica, 2 view projection
 
 	// guarded by room.mu once joined
@@ -281,7 +281,7 @@ func (c *conn) hello(ctx context.Context, m collab.ClientMsg) error {
 	}
 	c.docID.Store(doc)
 	c.v2 = m.HasEpoch || c.wantsV2
-	if c.wireMode.Load() == 2 && (!c.v3 || c.project == nil) {
+	if c.wireMode.Load() == 2 && (!c.v3 || c.projector == nil || c.projector.project == nil) {
 		c.fail("upgrade_required", "请升级客户端以安全查看文档")
 		return errors.New("read-only projection protocol required")
 	}

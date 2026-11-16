@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrReadOnlyProjection means a materialized view cannot be represented as a
@@ -241,26 +242,47 @@ func sameProjectionView(a, b DocView) bool {
 		if x.ID != y.ID || x.Parent != y.Parent || x.Type != y.Type || !reflect.DeepEqual(x.Props, y.Props) {
 			return false
 		}
-		type markedRune struct {
-			ch    rune
-			marks map[string]string
-		}
-		flatten := func(spans []Span) []markedRune {
-			out := []markedRune{}
-			for _, s := range spans {
-				for _, ch := range s.Text {
-					marks := s.Marks
-					if len(marks) == 0 {
-						marks = nil
-					}
-					out = append(out, markedRune{ch, marks})
-				}
-			}
-			return out
-		}
-		if !reflect.DeepEqual(flatten(x.Spans), flatten(y.Spans)) {
+		if !sameProjectionSpans(x.Spans, y.Spans) {
 			return false
 		}
 	}
 	return true
+}
+
+// Compare visible characters and formatting without allocating two arrays
+// proportional to the entire paragraph. Span boundaries may differ after
+// sanitization, so compare the underlying runes and marks rather than spans.
+func sameProjectionSpans(a, b []Span) bool {
+	type cursor struct {
+		spans         []Span
+		index, offset int
+	}
+	next := func(c *cursor) (rune, map[string]string, bool) {
+		for c.index < len(c.spans) {
+			span := c.spans[c.index]
+			if c.offset >= len(span.Text) {
+				c.index++
+				c.offset = 0
+				continue
+			}
+			r, size := utf8.DecodeRuneInString(span.Text[c.offset:])
+			c.offset += size
+			return r, span.Marks, true
+		}
+		return 0, nil, false
+	}
+	x, y := cursor{spans: a}, cursor{spans: b}
+	for {
+		left, lm, lok := next(&x)
+		right, rm, rok := next(&y)
+		if lok != rok {
+			return false
+		}
+		if !lok {
+			return true
+		}
+		if left != right || !mapsEqual(lm, rm) {
+			return false
+		}
+	}
 }
