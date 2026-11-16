@@ -59,8 +59,8 @@ import { parseTableWidths, updatedTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
 import { coverMap, parseMerges, planSelectionDelete, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills } from "./table-fill";
-import { planTableAppendRow, planTableClear, planTableCut, planTablePaste, planTablePasteGrid } from "./table-clipboard";
-import type { RichTableClipboard } from "./table-rich-clipboard";
+import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
+import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
 import { MemberCard, type MemberInfo } from "./member-card";
 import { ask, askText } from "@/components/ui/ask";
@@ -2313,7 +2313,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
               const beforeRows = tableRowsOf(current.props);
               const merges = parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0);
-              const result = operation.kind === "paste" ? operation.rich ? planTablePasteGrid(beforeRows, merges, operation.row, operation.col, operation.rich.cells.map(row => row.map(cell => cell.text))) : planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text, operation.literal) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : operation.kind === "clear" ? planTableClear(beforeRows, merges, operation.range) : planTableAppendRow(beforeRows);
+              const richPlan = operation.kind === "paste" && operation.rich ? planRichTablePaste(beforeRows, merges, operation.row, operation.col, operation.rich) : null;
+              const result = richPlan ?? (operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text, operation.literal) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : operation.kind === "clear" ? planTableClear(beforeRows, merges, operation.range) : planTableAppendRow(beforeRows));
               if (!result.ok) return result.message;
               if (operation.kind === "paste" && operation.rich) {
                 if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
@@ -2329,6 +2330,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   alignments.push({ row: r, col: c, axis: "horizontal", align: cell.horizontal }, { row: r, col: c, axis: "vertical", align: cell.vertical });
                 }));
                 setTableCellFills(tx, b, fills); setTableCellAlignments(tx, b, alignments);
+                if (richPlan?.ok && richPlan.merges.length !== merges.length) tx.setProp(b, "tableMerges", JSON.stringify(richPlan.merges));
                 if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
                 else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
                 return null;
