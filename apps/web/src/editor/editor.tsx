@@ -58,7 +58,7 @@ import { TableBlock, type TableReorderSession, type TableResizeSession } from ".
 import { parseTableWidths, updatedTableWidths, validTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
 import { coverMap, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
-import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills } from "./table-fill";
+import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills, tableFormatCells, type TableFormatTarget } from "./table-fill";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
@@ -2355,19 +2355,20 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               publish();
               return null;
             };
-            const tableFormat = (range: CellRange, format: { kind: "fill"; value: string } | { kind: "align"; axis: TableAlignAxis; value: TableAlign }): string | null => {
+            const tableFormat = (target: TableFormatTarget, format: { kind: "fill"; value: string } | { kind: "align"; axis: TableAlignAxis; value: TableAlign }): string | null => {
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b), rows = tableRowsOf(current.props), cols = rows[0]?.length ?? 0;
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
-              if (![range.r0, range.r1, range.c0, range.c1].every(Number.isSafeInteger) || range.r0 < 0 || range.c0 < 0 || range.r1 < range.r0 || range.c1 < range.c0 || range.r1 >= rows.length || range.c1 >= cols || rows.length * cols > 5000) return "选区无效。";
+              const merges = parseMergesStrict(current.props.tableMerges, rows.length, cols);
+              if (!merges) return "表格合并数据无效，请等待同步后重试。";
+              const cells = tableFormatCells(rows.length, cols, merges, target);
+              if (!cells) return "选区无效。";
               if (format.kind === "fill" && format.value !== "" && !/^#[0-9a-f]{6}$/i.test(format.value)) return "颜色无效。";
               if (format.kind === "align" && ((format.axis !== "horizontal" && format.axis !== "vertical") || !(format.axis === "horizontal" ? ["left", "center", "right"] : ["top", "middle", "bottom"]).includes(format.value))) return "对齐方式无效。";
               if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
               const migration = new Tx(doc);
               if (!isCellTable(current.props)) applyTableWrites(migration, b, current.props, cellTableWrites(current.props, rows, doc.client));
               const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
-              const cells: { row: number; col: number }[] = [];
-              for (let r = range.r0; r <= range.r1; r++) for (let c = range.c0; c <= range.c1; c++) cells.push({ row: r, col: c });
               if (format.kind === "fill") setTableCellFills(tx, b, cells.map(cell => ({ ...cell, fill: format.value })));
               else setTableCellAlignments(tx, b, cells.map(cell => ({ ...cell, axis: format.axis, align: format.value })));
               if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
@@ -2942,8 +2943,8 @@ interface BlockProps {
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   onTableHeader?: (axis: "row" | "column", enabled: boolean) => void;
-  onTableFill?: (range: CellRange, fill: string) => string | null;
-  onTableAlign?: (range: CellRange, axis: TableAlignAxis, align: TableAlign) => string | null;
+  onTableFill?: (target: TableFormatTarget, fill: string) => string | null;
+  onTableAlign?: (target: TableFormatTarget, axis: TableAlignAxis, align: TableAlign) => string | null;
   onTablePaste?: (r: number, c: number, text: string, literal?: boolean, rich?: RichTableClipboard) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;

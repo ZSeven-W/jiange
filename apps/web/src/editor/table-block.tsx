@@ -11,6 +11,7 @@ import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-se
 import { useTableStickyHeader } from "./table-sticky-header";
 import { visibleTableWidths } from "./table-widths";
 import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
+import { tableFormatCells, type TableFormatTarget } from "./table-fill";
 
 type GripSel = { kind: "row" | "col"; index: number };
 type AxisSelection = { kind: "row" | "col"; indices: number[] };
@@ -63,8 +64,8 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
 
 export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onBeginReorder, onEdit, onChange, onFill, onAlign, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
-  fillProps?: Record<string, string>; onFill?: (range: CellRange, fill: string) => string | null;
-  onAlign?: (range: CellRange, axis: TableAlignAxis, align: TableAlign) => string | null;
+  fillProps?: Record<string, string>; onFill?: (target: TableFormatTarget, fill: string) => string | null;
+  onAlign?: (target: TableFormatTarget, axis: TableAlignAxis, align: TableAlign) => string | null;
   onBeginResize?: (index: number) => TableResizeSession | null;
   onBeginReorder?: () => TableReorderSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -471,11 +472,11 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     setRange(normRange({ r0: anchor.r, c0: anchor.c, r1: moving.r, c1: moving.c })); setTouchSelecting(true);
     requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>(`[data-table-touch-handle="${corner}"]`)?.focus({ preventScroll: true }));
   };
-  const formatTarget = selected ?? (focus ? expandRange({ r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c }, merges) : null);
+  const formatRange = selected ?? (focus ? { r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c } : null);
+  const formatTarget: TableFormatTarget | null = axisSelection ? { kind: "axes", axis: axisSelection.kind, indices: axisSelection.indices } : formatRange ? { kind: "range", range: formatRange } : null;
+  const formatCells = formatTarget ? tableFormatCells(rows.length, nCols, merges, formatTarget) : null;
   const allAligned = (axis: TableAlignAxis, value: TableAlign) => {
-    if (!formatTarget) return false;
-    for (let r = formatTarget.r0; r <= formatTarget.r1; r++) for (let c = formatTarget.c0; c <= formatTarget.c1; c++) if (tableCellAlign(fillProps, r, c, axis) !== value) return false;
-    return true;
+    return !!formatCells?.length && formatCells.every(({ row, col }) => tableCellAlign(fillProps, row, col, axis) === value);
   };
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
@@ -516,7 +517,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
         if (!error) { setRange(null); setGrip(null); setTouchSelecting(false); }
       }}>
-      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || moreOpen || fillOpen || alignOpen || touchSelecting ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || axisSelection || moreOpen || fillOpen || alignOpen || touchSelecting ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
           <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setFillOpen(false); setAlignOpen(false); setGripMenuHidden(true); setMoreOpen((open) => !open); }} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
@@ -542,11 +543,11 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         </span>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
         {onFill && <span className="relative flex">
-          <button type="button" title="单元格背景色" aria-label="单元格背景色" aria-haspopup="menu" aria-expanded={fillOpen} disabled={!selected && !focus} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", fillOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setAlignOpen(false); setGripMenuHidden(true); setFillOpen(open => !open); }} data-table-fill><PaintBucket size={15} strokeWidth={1.7} /></button>
+          <button type="button" title="单元格背景色" aria-label="单元格背景色" aria-haspopup="menu" aria-expanded={fillOpen} disabled={!formatTarget} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", fillOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setAlignOpen(false); setGripMenuHidden(true); setFillOpen(open => !open); }} data-table-fill><PaintBucket size={15} strokeWidth={1.7} /></button>
           {fillOpen && <span role="menu" aria-label="单元格背景色" className="absolute left-0 top-9 z-40 w-[230px] rounded-lg border border-[#DEE0E3] bg-surface p-2 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-fill-menu>
             <span className="block px-1 pb-2 text-xs text-muted-foreground">背景颜色</span>
-            <span className="grid grid-cols-6 gap-1">{["#FFFFFF", "#F2F3F5", "#FBE4E2", "#FFF1D1", "#E5F5E8", "#E3ECFF", "#DEE0E3", "#F7C6C2", "#FCE2A8", "#BDEBC7", "#BFD3FF", "#E8D9FC"].map(color => <button key={color} type="button" role="menuitem" aria-label={color} title={color} className="size-8 rounded border border-black/10 hover:outline hover:outline-2 hover:outline-primary" style={{ backgroundColor: color }} onMouseDown={e => e.preventDefault()} onClick={() => { const target = selected ?? (focus ? { r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c } : null); if (target) setClipboardNotice(onFill(expandRange(target, merges), color) ?? ""); setFillOpen(false); }} data-table-fill-color={color} />)}</span>
-            <button type="button" role="menuitem" className="mt-2 h-8 w-full rounded px-1 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { const target = selected ?? (focus ? { r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c } : null); if (target) setClipboardNotice(onFill(expandRange(target, merges), "") ?? ""); setFillOpen(false); }} data-table-fill-reset>恢复默认</button>
+            <span className="grid grid-cols-6 gap-1">{["#FFFFFF", "#F2F3F5", "#FBE4E2", "#FFF1D1", "#E5F5E8", "#E3ECFF", "#DEE0E3", "#F7C6C2", "#FCE2A8", "#BDEBC7", "#BFD3FF", "#E8D9FC"].map(color => <button key={color} type="button" role="menuitem" aria-label={color} title={color} className="size-8 rounded border border-black/10 hover:outline hover:outline-2 hover:outline-primary" style={{ backgroundColor: color }} onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onFill(formatTarget, color) ?? ""); setFillOpen(false); }} data-table-fill-color={color} />)}</span>
+            <button type="button" role="menuitem" className="mt-2 h-8 w-full rounded px-1 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onFill(formatTarget, "") ?? ""); setFillOpen(false); }} data-table-fill-reset>恢复默认</button>
           </span>}
         </span>}
         {onAlign && <span className="relative flex">
@@ -559,7 +560,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入列</span></button>
         {onHeader && <button type="button" title="标题行" aria-label="标题行" aria-pressed={header} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header><Rows3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题行</span></button>}
         {onHeaderColumn && <button type="button" title="标题列" aria-label="标题列" aria-pressed={headerColumn} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", headerColumn ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeaderColumn(!headerColumn)} data-table-header-column><Columns3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题列</span></button>}
-        {!multi && <><span className="mx-0.5 h-4 w-px bg-border" />
+        {!multi && !axisSelection && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button></>}
         {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); setTouchSelecting(false); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
