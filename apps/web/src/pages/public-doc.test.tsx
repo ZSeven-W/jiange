@@ -18,5 +18,8 @@ describe("public document error actions", () => {
     expect(retry).toContain("重试");
     expect(expired).toContain("链接已失效或已关闭分享");
     expect(expired).not.toContain("#/s/abc");
+    const unsupported = renderToStaticMarkup(<PublicDocMessage issue="unsupported_table" token="abc" onRetry={() => {}} />);
+    expect(unsupported).toContain("无法安全显示此文档中的表格内容");
+    expect(unsupported).not.toContain("暂时无法连接服务器");
   });
 });

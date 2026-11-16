@@ -18,7 +18,7 @@ const maxCopyClock = uint64(1<<53 - 1)
 // collectCopyFileIDs returns only visible attachment blocks. Empty placeholders
 // are retained as-is; a malformed nonempty reference is rejected before create.
 func collectCopyFileIDs(src *collab.Doc) ([]int64, error) {
-	if src == nil || src.Pending() != 0 {
+	if src == nil || src.Pending() != 0 || src.HasTables() {
 		return nil, fmt.Errorf("copy source is unavailable or incomplete")
 	}
 	seen := map[int64]bool{}

@@ -297,6 +297,9 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if rejectUnsupportedTableView(w, doc) {
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "cover": cover, "view": doc.View()})
 }
 

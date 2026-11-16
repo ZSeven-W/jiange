@@ -117,6 +117,7 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
     let delay = 1000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const connect = () => {
+      if (stopped || client.blocked === "table_unsupported") return;
       const sock = new WebSocket(syncURL());
       sock.binaryType = "arraybuffer";
       ws = sock;
@@ -142,7 +143,7 @@ export function useSyncDoc(docId: number, userId: number, enabled = true): SyncD
         // Revocation can close the socket without a protocol error; re-check
         // metadata so a previously editable page becomes read-only.
         if (!stopped) void qc.invalidateQueries({ queryKey: ["doc", docId] });
-        if (!stopped && navigator.onLine) timer = setTimeout(connect, delay + Math.random() * 300);
+        if (!stopped && client.blocked !== "table_unsupported" && navigator.onLine) timer = setTimeout(connect, delay + Math.random() * 300);
         delay = Math.min(delay * 2, 5000);
       };
     };

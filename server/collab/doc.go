@@ -73,7 +73,7 @@ func NewDoc() *Doc {
 }
 
 // HasTables reports whether the replica carries experimental-table payloads
-// (state v2). V1 peers cannot join such documents.
+// (state v2). Current clients cannot safely materialize such documents.
 func (d *Doc) HasTables() bool {
 	for _, list := range d.tables {
 		if len(list) > 0 {

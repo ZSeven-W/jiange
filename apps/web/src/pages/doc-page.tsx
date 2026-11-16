@@ -292,7 +292,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const comments = useQuery({ queryKey: commentListKey(id, me.user.id, commentSession), queryFn: () => commentsApi.list(id), enabled: metadataVerified && !commentSuspended, refetchInterval: 5000, refetchIntervalInBackground: false });
   const members = useQuery({ queryKey: commentMembersKey(id, me.user.id, commentSession), queryFn: () => commentsApi.members(id), enabled: metadataVerified && !commentSuspended });
   const commentAccessDenied = (comments.isError && isDocAccessDenied(comments.error)) || (members.isError && isDocAccessDenied(members.error)) || commentSuspended;
-  const commentsAvailable = metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
+  const commentsAvailable = sync.blocked !== "table_unsupported" && metadataVerified && !commentAccessDenied && comments.isSuccess && members.isSuccess;
   const mentionSummary = useMemo(() => {
     if (mentionsTarget?.doc !== id || mentionsTarget.user !== me.user.id || !metadataVerified || !sync.client.doc) return null;
     return collectDocumentMentions(sync.client.doc.view(), commentsAvailable && !members.isFetching ? members.data : []);
@@ -476,6 +476,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     if (!md.trim()) { setPageNotice({ ok: false, text: "没有可保存的内容。" }); return; }
     const name = await askText("保存为模板", "模板名称", (title || "未命名模板").slice(0, 100));
     if (!name?.trim()) return;
+    const current = exportContext.current;
+    if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client || !current.verified || !canCopyContent(current.meta) || current.client.blocked || !current.client.caughtUp) return;
     try { await templatesApi.add(name.trim(), md); void qc.invalidateQueries({ queryKey: ["my-templates"] }); setPageNotice({ ok: true, text: `已保存为模板「${name.trim()}」，新建文档时可在模板中选择。` }); }
     catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : "保存模板失败，请重试。" }); }
   };
@@ -587,7 +589,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   // Commenting and editing are separate capabilities: a viewer may comment
   // without ever gaining permission to modify the document.
   const canEditRole = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
-  const canComment = metadataVerified && canWriteComments(meta.data);
+  const canComment = sync.blocked !== "table_unsupported" && metadataVerified && canWriteComments(meta.data);
   // Keep the composer mounted while policy is being revalidated so the local
   // draft and selection survive, but do not submit using stale permissions.
   const canSubmitComment = permissionsVerified && canComment;
@@ -824,6 +826,15 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     {sync.legacyPending && <p className="mt-3 text-[13px] text-muted-foreground">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
     {retrySyncError && <p className="mt-3 text-[13px] text-muted-foreground">{retrySyncError}</p>}
   </ResourceTypeNotice>;
+  if (sync.blocked === "table_unsupported") return <div className="grid flex-1 place-items-center px-6" role="alert" data-table-unsupported>
+    <div className="max-w-md text-center text-[14px] text-muted-foreground">
+      <p>当前版本无法安全显示此文档中的表格内容，请更新应用或联系管理员。</p>
+      {sync.client.unacked > 0 && <p className="mt-3">未同步的修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
+      {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
+      {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
+      {sync.legacyPending && <p className="mt-3">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+    </div>
+  </div>;
   const replaceFound = (all: boolean) => {
     setFindPending(null);
     const doc = sync.client.doc;

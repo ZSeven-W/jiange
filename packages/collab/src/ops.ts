@@ -21,8 +21,8 @@ export type Op =
   | { t: "mark"; id: OpId; block: OpId; key: string; value: string | null; start: Anchor; end: Anchor }
   /** Carries one experimental-table sub-CRDT operation for `block` as opaque
    * bytes. Consumes exactly one Lamport tick; the table op's internal OpId is
-   * this op's id (reserved via Doc.allocateOpIds). Old clients reject the
-   * tag, so servers must gate these ops to v2-negotiated rooms. */
+   * this op's id (reserved via Doc.allocateOpIds). Epoch-aware v2 alone does
+   * not imply table support; current servers reject this experimental op. */
   | { t: "ttable"; id: OpId; block: OpId; payload: Uint8Array };
 
 /** Number of Lamport ticks an op consumes. */

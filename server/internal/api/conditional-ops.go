@@ -285,6 +285,9 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusConflict, "document_changed", "文档已变化，请同步后重新操作")
 		return
 	}
+	if rejectUnsupportedTableView(w, state) {
+		return
+	}
 	blockKinds := make(map[collab.OpID]string)
 	for _, op := range ops {
 		kind, found := blockKinds[op.Block]

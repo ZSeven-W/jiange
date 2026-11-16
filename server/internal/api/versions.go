@@ -146,6 +146,9 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if rejectUnsupportedTableView(w, doc) {
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"seq": seq, "view": doc.View()})
 }
 
@@ -205,7 +208,7 @@ func (s *Server) restoreVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	ops, err := collab.RestoreOpsChecked(cur, target, uint64(client))
 	if errors.Is(err, collab.ErrRestoreUnrepresentable) {
-		httpx.Error(w, http.StatusConflict, "restore_unrepresentable", "该版本的格式或锚点暂无法安全还原，当前文档未更改")
+		httpx.Error(w, http.StatusConflict, "restore_unrepresentable", "当前文档或目标版本包含暂无法安全还原的内容，文档未更改")
 		return
 	}
 	if err != nil {

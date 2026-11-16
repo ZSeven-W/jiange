@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// ErrRestoreUnrepresentable means the target's mark behavior cannot safely be
-// expressed on an existing block without changing its collaborative history.
-var ErrRestoreUnrepresentable = errors.New("collab: cannot safely restore mark anchors")
+// ErrRestoreUnrepresentable means the current or target state cannot be
+// faithfully restored by the supported document operation model.
+var ErrRestoreUnrepresentable = errors.New("collab: cannot safely restore document state")
 
 // RestoreOps generates ordinary ops to transform cur into target and applies
 // them to cur. New blocks receive new IDs; their descendants must reference the
@@ -29,6 +29,9 @@ func RestoreOps(cur, target *Doc, client uint64) []Op {
 func RestoreOpsChecked(cur, target *Doc, client uint64) ([]Op, error) {
 	if cur == nil || target == nil || cur.Pending() != 0 || target.Pending() != 0 {
 		return nil, fmt.Errorf("%w: unresolved operations", ErrRestoreUnrepresentable)
+	}
+	if cur.HasTables() || target.HasTables() {
+		return nil, fmt.Errorf("%w: experimental table content", ErrRestoreUnrepresentable)
 	}
 	// View materializes each visible character against every mark. Refuse
 	// pathological work before building either view or cloning the state.

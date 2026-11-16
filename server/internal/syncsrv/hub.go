@@ -116,7 +116,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	ws.SetReadLimit(8 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, writeGuard: &guard, wantsV2: r.URL.Query().Get("protocol") == "2"}
+	c := &conn{hub: h, ws: ws, user: user, out: make(chan []byte, 512), terminal: make(chan []byte, 1), owned: map[uint64]bool{}, cancel: cancel, authenticate: authenticate, writeGuard: &guard, wantsV2: r.URL.Query().Get("protocol") == "2"}
 	wctx, stopWriter := context.WithCancel(context.Background())
 	writerDone := make(chan struct{})
 	go func() { c.writeLoop(wctx, ctx); close(writerDone) }()
@@ -135,16 +135,26 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, user store.User, aut
 	<-writerDone
 	// flush frames queued before the end (e.g. a final ERROR) without blocking long
 	fctx, cancelFlush := context.WithTimeout(context.Background(), time.Second)
-	for flushing := true; flushing; {
+	if c.terminating.Load() {
 		select {
-		case b := <-c.out:
-			// The writer may have stopped because access was revoked. Never
-			// bypass its authorization check while draining queued frames.
-			if _, err := c.currentRole(fctx); err != nil || ws.Write(fctx, websocket.MessageBinary, b) != nil {
-				flushing = false
+		case b := <-c.terminal:
+			if _, err := c.currentRole(fctx); err == nil {
+				_ = ws.Write(fctx, websocket.MessageBinary, b)
 			}
 		default:
-			flushing = false
+		}
+	} else {
+		for flushing := true; flushing; {
+			select {
+			case b := <-c.out:
+				// The writer may have stopped because access was revoked. Never
+				// bypass its authorization check while draining queued frames.
+				if _, err := c.currentRole(fctx); err != nil || ws.Write(fctx, websocket.MessageBinary, b) != nil {
+					flushing = false
+				}
+			default:
+				flushing = false
+			}
 		}
 	}
 	cancelFlush()

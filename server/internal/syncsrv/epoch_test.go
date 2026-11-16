@@ -182,7 +182,7 @@ func TestWebSocketTableDocumentFirstContact(t *testing.T) {
 	for _, tc := range []struct {
 		query string
 		want  byte
-	}{{"", collab.MsgError}, {"?protocol=2", collab.MsgWelcome}} {
+	}{{"", collab.MsgError}, {"?protocol=2", collab.MsgError}} {
 		t.Run(tc.query, func(t *testing.T) {
 			ws, _, err := websocket.Dial(ctx, base+tc.query, &websocket.DialOptions{HTTPHeader: http.Header{"X-User": {"0"}}})
 			if err != nil {
@@ -203,7 +203,7 @@ func TestWebSocketTableDocumentFirstContact(t *testing.T) {
 			if tc.want == collab.MsgWelcome && !msg.HasEpoch {
 				t.Fatal("v2 welcome omitted epoch")
 			}
-			if tc.want == collab.MsgError && msg.Code != "v2_required" {
+			if tc.want == collab.MsgError && msg.Code != "table_unsupported" {
 				t.Fatalf("unexpected error: %+v", msg)
 			}
 		})

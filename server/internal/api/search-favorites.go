@@ -70,6 +70,14 @@ func (s *Server) searchMaterialized(ctx context.Context, uid int64, query string
 					}
 					return nil, err
 				}
+				if doc.HasTables() {
+					if _, accessErr := s.Store.GetDoc(ctx, uid, candidate.ID); errors.Is(accessErr, store.ErrNotFound) {
+						continue
+					} else if accessErr != nil {
+						return nil, accessErr
+					}
+					return nil, errors.New("unsupported experimental table content in search candidate")
+				}
 				bodyMatch = searchableDocument(doc.View(), needle)
 			}
 			scanned = append(scanned, scannedDoc{candidate, bodyMatch})

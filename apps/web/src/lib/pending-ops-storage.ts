@@ -13,6 +13,22 @@ function parse(raw: string | null): PendingOpsDraft | null {
   if (raw === null) return null;
   const draft = JSON.parse(raw) as PendingOpsDraft;
   if (!Number.isSafeInteger(draft?.clientId) || draft.clientId < 1 || !Array.isArray(draft.ops) || (draft.blocked != null && typeof draft.blocked !== "string")) throw new Error("invalid saved operations");
+  // JSON cannot preserve Uint8Array. Accept both the current byte array and
+  // the older numeric-key object representation, without discarding raw data
+  // if the payload is malformed or exceeds the protocol's per-op limit.
+  draft.ops = draft.ops.map((op) => {
+    if (op?.t !== "ttable") return op;
+    const rawPayload: unknown = op.payload;
+    let bytes: unknown[];
+    if (Array.isArray(rawPayload)) bytes = rawPayload;
+    else if (rawPayload && typeof rawPayload === "object") {
+      const entries = Object.entries(rawPayload);
+      if (entries.some(([key], index) => key !== String(index))) throw new Error("invalid table payload");
+      bytes = entries.map(([, value]) => value);
+    } else throw new Error("invalid table payload");
+    if (!bytes.length || bytes.length > 512 || bytes.some((value) => !Number.isInteger(value) || (value as number) < 0 || (value as number) > 255)) throw new Error("invalid table payload");
+    return { ...op, payload: Uint8Array.from(bytes as number[]) };
+  });
   // JSON shape must round-trip through the wire codec exactly. Merely checking
   // that ops is an array lets corrupt entries throw later during WELCOME replay.
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, canonical(x)])) : v;
@@ -35,7 +51,7 @@ export function readAccountDraftBackups(storage: Storage, userId: number, docId:
   });
 }
 export function writePendingOps(storage: Storage, key: string, draft: PendingOpsDraft | null): void {
-  if (draft?.ops.length) storage.setItem(key, JSON.stringify(draft));
+  if (draft?.ops.length) storage.setItem(key, JSON.stringify({ ...draft, ops: draft.ops.map((op) => op.t === "ttable" ? { ...op, payload: Array.from(op.payload) } : op) }));
   else storage.removeItem(key);
 }
 

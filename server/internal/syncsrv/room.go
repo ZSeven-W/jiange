@@ -37,6 +37,26 @@ type room struct {
 // state they were replayed onto.
 var errUnresolved = errors.New("operations have unresolved dependencies")
 
+// Epoch-aware v2 peers still cannot materialize the experimental table model.
+// Until explicit table capability negotiation and server-side admission exist,
+// never expose or accept its opaque operations through the live editor.
+var errUnsupportedTable = errors.New("document contains unsupported experimental table content")
+
+func hasTableOp(ops []collab.Op) bool {
+	for _, op := range ops {
+		if op.T == collab.TTable {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *room) rejectUnsupportedTable() {
+	for c := range r.conns {
+		c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+	}
+}
+
 // replayLog rebuilds a replica from the complete operation log (seq 1..upTo)
 // without fanning anything out. Operations are never pruned, so this is the
 // lossless authority when a snapshot written by the legacy tombstone GC
@@ -56,6 +76,10 @@ func (r *room) replayLog(ctx context.Context, upTo int64) (*collab.Doc, error) {
 		_, ops, err := joinRows(rows)
 		if err != nil {
 			return nil, err
+		}
+		if hasTableOp(ops) {
+			r.rejectUnsupportedTable()
+			return nil, errUnsupportedTable
 		}
 		for _, op := range ops {
 			d.Apply(op)
@@ -107,6 +131,9 @@ func (r *room) load(ctx context.Context) error {
 		return err
 	}
 	r.fullLog = r.snapSeq == 0
+	if r.doc.HasTables() {
+		return errUnsupportedTable
+	}
 	err = r.catchUp(ctx)
 	if errors.Is(err, errUnresolved) && !r.fullLog {
 		// A snapshot from the legacy tombstone GC lacks characters that
@@ -137,6 +164,10 @@ func (r *room) catchUp(ctx context.Context) error {
 		batch, ops, err := joinRows(rows)
 		if err != nil {
 			return err
+		}
+		if hasTableOp(ops) {
+			r.rejectUnsupportedTable()
+			return errUnsupportedTable
 		}
 		for _, op := range ops {
 			r.doc.Apply(op)
@@ -191,6 +222,10 @@ func (r *room) remoteHead(head int64) {
 		return
 	}
 	if err := r.catchUp(context.Background()); err != nil {
+		if errors.Is(err, errUnsupportedTable) {
+			r.doc = nil
+			return
+		}
 		r.hub.Log.Error("catch up", "doc", r.id, "err", err)
 		r.reset()
 	}
@@ -219,19 +254,25 @@ func (r *room) join(ctx context.Context, c *conn, lastSeq int64, v2 bool, epoch 
 	defer r.mu.Unlock()
 	if err := r.load(ctx); err != nil {
 		r.doc = nil
+		if errors.Is(err, errUnsupportedTable) {
+			c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+			return err
+		}
 		r.hub.Log.Error("load document", "doc", r.id, "err", err)
 		c.send(collab.EncodeError("internal", "could not load document"))
 		return err
 	}
 	if err := r.catchUp(ctx); err != nil {
+		if errors.Is(err, errUnsupportedTable) {
+			c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+			return err
+		}
 		r.reset()
 		return err
 	}
-	if !v2 && r.doc.HasTables() {
-		// 该文档已含表格子 CRDT 载荷：v1 对端无法解码快照/重放，拒绝加入
-		// 而不是让其断线失步。
-		c.send(collab.EncodeError("v2_required", "该文档包含新版表格内容，请升级客户端"))
-		return errors.New("v1 peer joined a table-bearing document")
+	if r.doc.HasTables() {
+		c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+		return errUnsupportedTable
 	}
 	welcome := func(head, snapSeq uint64, state []byte) {
 		if v2 {
@@ -321,23 +362,9 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		c.send(collab.EncodeError("internal", "room unavailable"))
 		return errors.New("room unavailable")
 	}
-	// 表格子 CRDT 载荷（ttable）：只有 v2 协商（epoch HELLO）的连接可提交，
-	// 且房间内不能有 v1 成员——v1 解码器会拒绝该字节并断线/失步。
-	// 状态集成（Doc 应用与快照版本）落地前，门控在应用之前拒绝。
-	for _, op := range ops {
-		if op.T != collab.TTable {
-			continue
-		}
-		if !c.v2 {
-			c.send(collab.EncodeError("bad_ops", "表格操作需要 v2 同步协议"))
-			return errBatchRejected
-		}
-		for member := range r.conns {
-			if !member.v2 {
-				c.send(collab.EncodeError("bad_ops", "房间内存在旧协议客户端，无法应用表格操作"))
-				return errBatchRejected
-			}
-		}
+	if hasTableOp(ops) || r.doc.HasTables() {
+		c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全处理此文档中的表格内容"))
+		return errBatchRejected
 	}
 	var accepted []collab.Op
 	var raws []store.RawOp
@@ -349,8 +376,21 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 			return err
 		}
 		if err := r.catchUp(ctx); err != nil {
+			if errors.Is(err, errUnsupportedTable) {
+				if _, joined := r.conns[c]; !joined {
+					c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+				}
+				return errBatchRejected
+			}
 			r.reset()
 			return err
+		}
+		if r.doc.HasTables() {
+			r.rejectUnsupportedTable()
+			if _, joined := r.conns[c]; !joined {
+				c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+			}
+			return errBatchRejected
 		}
 		accepted, raws, rejected = nil, nil, 0
 		// Check the durable log before applying a retry: compacted snapshots
@@ -397,6 +437,13 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 			// there. Rebuild losslessly from the log and re-check the batch.
 			tx.Rollback()
 			if err := r.repairFromLog(ctx, fmt.Errorf("%d ops depend on unknown ops", rejected)); err != nil {
+				if errors.Is(err, errUnsupportedTable) {
+					r.doc = nil
+					if _, joined := r.conns[c]; !joined {
+						c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+					}
+					return errBatchRejected
+				}
 				r.reset()
 				return err
 			}
@@ -491,6 +538,12 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		// A duplicate may have been sequenced by a different instance after
 		// our initial catch-up. Deliver its history before acknowledging it.
 		if err := r.catchUp(ctx); err != nil {
+			if errors.Is(err, errUnsupportedTable) {
+				if _, joined := r.conns[c]; !joined {
+					c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+				}
+				return errBatchRejected
+			}
 			r.reset()
 			return err
 		}
@@ -521,6 +574,13 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		if err != nil {
 			r.reset()
 			return err
+		}
+		if hasTableOp(rops) {
+			r.rejectUnsupportedTable()
+			if _, joined := r.conns[c]; !joined {
+				c.terminalFrame(collab.EncodeError("table_unsupported", "当前版本无法安全打开此文档中的表格内容"))
+			}
+			return errBatchRejected
 		}
 		for _, op := range rops {
 			r.doc.Apply(op)

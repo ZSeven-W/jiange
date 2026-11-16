@@ -579,3 +579,20 @@ func TestRestoreOpsCrossLanguageVector(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreRejectsOpaqueTableStateWithoutMutation(t *testing.T) {
+	clean := NewDoc()
+	block := clean.CreateBlock(7, Root, "V", "table")
+	withTable, err := DecodeState(clean.EncodeState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withTable.Apply(Op{T: TTable, ID: OpID{Client: 7, Clock: withTable.Clock() + 1}, Block: block.ID, Payload: []byte(`{"kind":"axis-insert"}`)})
+	for _, pair := range []struct{ current, target *Doc }{{withTable, clean}, {clean, withTable}} {
+		before := pair.current.EncodeState()
+		ops, err := RestoreOpsChecked(pair.current, pair.target, 19)
+		if !errors.Is(err, ErrRestoreUnrepresentable) || len(ops) != 0 || !reflect.DeepEqual(before, pair.current.EncodeState()) {
+			t.Fatalf("unsafe restore: ops=%v err=%v", ops, err)
+		}
+	}
+}

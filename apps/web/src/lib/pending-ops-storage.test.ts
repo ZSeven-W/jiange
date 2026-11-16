@@ -27,6 +27,26 @@ const fresh = (() => { let n = 0; return () => `12345678-1234-1234-1234-${String
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("offline draft ownership", () => {
+  it("restores unsupported table payload bytes for the owning session, including the older JSON form", async () => {
+    const local = memoryStorage(), session = memoryStorage(), locks = fakeLocks(), owner = await preparePendingSession(local, session, locks, 10, 42, fresh);
+    const table = { t: "ttable" as const, id: { client: 1, clock: 2 }, block: { client: 1, clock: 1 }, payload: new Uint8Array([0, 17, 128, 255]) };
+    const pending = { clientId: 1, ops: [table], blocked: "table_unsupported" };
+    writePendingOps(local, owner.key, pending);
+    owner.release(); await settle();
+    const restored = await preparePendingSession(local, session, locks, 10, 42, fresh);
+    expect(restored.draft).toEqual(pending); restored.release(); await settle();
+    local.setItem(owner.key, JSON.stringify(pending)); // legacy Uint8Array serializes as numeric keys
+    const legacy = await preparePendingSession(local, session, locks, 10, 42, fresh);
+    expect(legacy.draft).toEqual(pending); legacy.release();
+  });
+  it("retains malformed experimental payloads for manual backup", async () => {
+    const local = memoryStorage(), key = pendingOpsKey(10, 42, fresh());
+    const raw = JSON.stringify({ clientId: 1, ops: [{ t: "ttable", id: { client: 1, clock: 2 }, block: { client: 1, clock: 1 }, payload: [1, 256] }] });
+    local.setItem(key, raw);
+    const current = await preparePendingSession(local, memoryStorage(), fakeLocks(), 10, 42, fresh);
+    expect(current.corrupt).toBe(true); expect(current.draft).toBeNull();
+    expect(readAccountDraftBackups(local, 10, 42).some((item) => item.raw === raw)).toBe(true); current.release();
+  });
   it("turns blocked browser storage getters into recoverable async errors", async () => {
     const denied = new DOMException("storage blocked", "SecurityError");
     let result: Promise<unknown> | undefined;

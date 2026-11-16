@@ -29,6 +29,15 @@ function renderWith(error: unknown, withCache = true, account = me, doc = metada
 }
 
 describe("document access errors", () => {
+  it("hides the editor when the server reports unsupported table content and preserves pending backup", () => {
+    state.blocked = "table_unsupported"; state.unacked = 1;
+    const html = renderWith(null);
+    expect(html).toContain("当前版本无法安全显示此文档中的表格内容");
+    expect(html).toContain("下载本地备份");
+    expect(html).not.toContain("可编辑正文"); expect(html).not.toContain("只读正文");
+    expect(html).not.toContain("检查权限并重试");
+    state.blocked = null; state.unacked = 0;
+  });
   it("does not open a different or unknown kind in the document editor", () => {
     state.unacked = 1;
     const base = renderWith(null, true, me, { ...metadata, kind: "base" });

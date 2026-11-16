@@ -18,12 +18,14 @@ const (
 )
 
 type conn struct {
-	hub    *Hub
-	ws     *websocket.Conn
-	user   store.User
-	out    chan []byte
-	cancel context.CancelFunc
-	docID  atomic.Int64 // set before join queues the first document frame
+	hub         *Hub
+	ws          *websocket.Conn
+	user        store.User
+	out         chan []byte
+	terminal    chan []byte
+	cancel      context.CancelFunc
+	terminating atomic.Bool
+	docID       atomic.Int64 // set before join queues the first document frame
 	// authenticate revalidates the session that originally opened this
 	// connection. Test-only callers may leave it nil when not using sessions.
 	authenticate func(context.Context) error
@@ -36,7 +38,7 @@ type conn struct {
 	// wantsV2 is explicit client capability on the WebSocket URL. Older servers
 	// ignore it and still speak v1; older clients never send it.
 	wantsV2 bool
-	// Only negotiated v2 peers may carry newer op kinds such as ttable.
+	// v2 confirms history-epoch support; it does not imply table support.
 	v2      bool
 	dbAcked int64
 	aware   string
@@ -58,15 +60,45 @@ func (c *conn) send(b []byte) {
 	}
 }
 
+// terminalFrame is delivered before closing the transport. It uses a separate
+// slot so a backed-up ordinary queue cannot hide the reason for the shutdown.
+// The caller holds room.mu. Test fixtures without a writer keep using out.
+func (c *conn) terminalFrame(b []byte) {
+	if c.terminating.Swap(true) {
+		return
+	}
+	if c.terminal == nil {
+		c.send(b)
+		c.closed = true
+		c.cancel()
+		return
+	}
+	c.closed = true
+	select {
+	case c.terminal <- b:
+	default:
+		c.cancel()
+	}
+}
+
 // writeLoop runs until stop ends; conn (the read side) is used to abort writes.
 func (c *conn) writeLoop(stop, ctx context.Context) {
 	ping := time.NewTicker(c.hub.PingInterval)
 	defer ping.Stop()
 	for {
 		select {
+		case b := <-c.terminal:
+			c.writeTerminal(ctx, b)
+			return
+		default:
+		}
+		select {
 		case <-stop.Done():
 			return
 		case <-ctx.Done():
+			return
+		case b := <-c.terminal:
+			c.writeTerminal(ctx, b)
 			return
 		case b := <-c.out:
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -97,6 +129,15 @@ func (c *conn) writeLoop(stop, ctx context.Context) {
 	}
 }
 
+func (c *conn) writeTerminal(ctx context.Context, b []byte) {
+	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := c.currentRole(wctx); err == nil {
+		_ = c.ws.Write(wctx, websocket.MessageBinary, b)
+	}
+	c.cancel()
+}
+
 func (c *conn) fail(code, msg string) {
 	c.out <- collab.EncodeError(code, msg) // best effort; writer drains before close
 }
@@ -123,6 +164,9 @@ func (c *conn) readLoop(ctx context.Context) error {
 		}
 		if typ != websocket.MessageBinary {
 			continue
+		}
+		if c.terminating.Load() {
+			return errBatchRejected
 		}
 		m, err := collab.DecodeClientMsg(b)
 		if err != nil {

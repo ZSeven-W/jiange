@@ -131,6 +131,9 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if rejectUnsupportedTableView(w, src) {
+		return
+	}
 	if title == "" {
 		base := strings.TrimSpace(src.Text(collab.OpID{Client: 0, Clock: 1}))
 		if base == "" {

@@ -66,7 +66,7 @@ export class SyncClient {
 
   /** True only after this connection has received every operation through welcome's head. */
   get caughtUp(): boolean { return this._caughtUp; }
-  get blocked(): string | null { return this.causalIssue ?? this._blocked; }
+  get blocked(): string | null { return this._blocked === "table_unsupported" ? this._blocked : this.causalIssue ?? this._blocked; }
   /** Server rejection, persisted even when a causal problem is also visible. */
   get rejection(): string | null { return this._blocked; }
 
@@ -75,6 +75,16 @@ export class SyncClient {
     const changed = this._blocked !== code;
     this._blocked = code;
     if (changed || before !== this.blocked) this.h.blocked?.(this.blocked);
+  }
+
+  private blockUnsupportedTable() {
+    this.deferredAcks = [];
+    this.setBlocked("table_unsupported");
+    this.send = null;
+    this.rejectedTransport = true;
+    this.refreshCaughtUp();
+    this.setStatus("offline");
+    this.h.error?.("table_unsupported", "当前版本无法安全显示此文档中的表格内容。");
   }
 
   /** Check only once the advertised server history is fully received. */
@@ -130,6 +140,8 @@ export class SyncClient {
 
   /** Attach a freshly opened transport. */
   open(send: (b: Uint8Array) => void) {
+    if (this._blocked === "table_unsupported") { this.setStatus("offline"); return; }
+    if (this.doc?.hasTables() || this.pendingOps().some((op) => op.t === "ttable")) { this.blockUnsupportedTable(); return; }
     this.send = send;
     this.welcomeHead = null;
     this.sequenceGap = false;
@@ -166,6 +178,7 @@ export class SyncClient {
   push(ops: (Op | null)[]) {
     for (const op of ops) if (op) this.queued.push(op);
     this.h.change?.(false);
+    if (ops.some((op) => op?.t === "ttable")) { this.blockUnsupportedTable(); return; }
     this.flush();
   }
 
@@ -186,7 +199,7 @@ export class SyncClient {
 
   /** Retry retained writes after the caller has checked access/connection state. */
   retryPending() {
-    if (!this._blocked || this.causalIssue) return;
+    if (!this._blocked || this._blocked === "table_unsupported" || this.causalIssue) return;
     // A late ACK from the rejected connection must never acknowledge a retry.
     if (this.rejectedTransport) return;
     this.queued = this.inflight.flat().concat(this.queued);
@@ -279,9 +292,14 @@ export class SyncClient {
   }
 
   receive(bytes: Uint8Array) {
+    // Once incompatible content is reported, neither a late welcome nor an
+    // ACK from this transport may expose a partial view or clear local work.
+    if (this._blocked === "table_unsupported") return;
     const m = decodeServerMsg(bytes);
     switch (m.type) {
       case "welcome": {
+        const snapshot = m.snapshot ? Doc.fromState(m.clientId, m.snapshot.state) : null;
+        if (snapshot?.hasTables() || this.doc?.hasTables() || this.pendingOps().some((op) => op.t === "ttable")) { this.blockUnsupportedTable(); return; }
         // A changed epoch invalidates every cached seq even at an unchanged
         // head: the log itself is a different generation (restore/PITR).
         const epoch = "historyEpoch" in m ? m.historyEpoch : undefined;
@@ -310,7 +328,7 @@ export class SyncClient {
         let rebuilt = false;
         if (m.snapshot || !this.doc || m.clientId !== this.clientId || epochChanged) {
           this.h.beforeRemote?.();
-          const fresh = m.snapshot ? Doc.fromState(m.clientId, m.snapshot.state) : new Doc(m.clientId);
+          const fresh = snapshot ?? new Doc(m.clientId);
           if (!m.snapshot && this.doc && m.clientId !== this.clientId && !epochChanged) {
             // server issued a new client id but no snapshot: keep our state, switch id
             this.doc.client = m.clientId;
@@ -349,6 +367,7 @@ export class SyncClient {
           return;
         }
         const ops = decodeOps(m.batch);
+        if (ops.some((op) => op.t === "ttable")) { this.blockUnsupportedTable(); return; }
         // HELLO advertises the safe horizon, which can lag the applied view.
         // Replayed prefixes are already present; only apply new contiguous ops.
         const skip = Math.min(ops.length, Math.max(0, this.lastSeq + 1 - m.firstSeq));
@@ -383,6 +402,7 @@ export class SyncClient {
         return;
       }
       case "error":
+        if (m.code === "table_unsupported") { this.blockUnsupportedTable(); return; }
         if (this.inflight.length && ["read_only", "not_ready", "forbidden", "bad_ops"].includes(m.code)) {
           this.deferredAcks = [];
           this.setBlocked(m.code);

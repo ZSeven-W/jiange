@@ -25,6 +25,17 @@ describe("public document refresh", () => {
     expect(state.snapshot?.copyProtected).toBe(true);
     expect(updatePublicDocState(state, "abc", { issue: "expired" }).snapshot).toBeNull();
     expect(updatePublicDocState(state, "abc", { issue: "login" }).snapshot).toBeNull();
+    expect(updatePublicDocState(state, "abc", { issue: "unsupported_table" }).snapshot).toBeNull();
+  });
+
+  it("recognizes a verified unsupported table response without treating unrelated 409s as definitive", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "table_unsupported" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "other" }), { status: 409 }));
+    vi.stubGlobal("fetch", fetcher);
+    const signal = new AbortController().signal;
+    expect(await fetchPublicDoc("abc", signal)).toEqual({ issue: "unsupported_table" });
+    expect(await fetchPublicDoc("abc", signal)).toEqual({ issue: "temporary" });
   });
 
   it("keeps the last snapshot only for temporary failure and retries failed images after recovery", () => {
