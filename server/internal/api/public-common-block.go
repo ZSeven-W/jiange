@@ -15,8 +15,7 @@ var publicTextColor = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a
 var publicCharID = regexp.MustCompile(`^(0|[1-9][0-9]*):(0|[1-9][0-9]*)$`)
 
 // publicCommonBlock projects properties used by public and saved-version
-// renderers. Flowchart registers need a separate semantic projection; until
-// then they retain their existing behavior and must not be treated as safe.
+// renderers, including the semantic projection of flowchart registers.
 func publicCommonBlock(block collab.BlockView, children map[string]bool, columnChild bool) collab.BlockView {
 	props := block.Props
 	clean := map[string]string{}
@@ -88,14 +87,7 @@ func publicCommonBlock(block collab.BlockView, children map[string]bool, columnC
 	case "bookmark":
 		keep("url", "name", "title")
 	case "flowchart":
-		// Do not silently break existing public boards until their nested
-		// node and mind-map metadata has a matching semantic projection.
-		clean = make(map[string]string, len(props))
-		for key, value := range props {
-			if !strings.HasPrefix(key, "tbl.") && key != "tableData" && key != "tableMerges" && key != "tableWidths" && key != "tableHeader" && key != "tableHeaderColumn" {
-				clean[key] = value
-			}
-		}
+		clean = publicFlowProps(props)
 	}
 	block.Props = clean
 	switch block.Type {

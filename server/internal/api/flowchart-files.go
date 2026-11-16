@@ -15,14 +15,12 @@ func flowchartReferencesImage(props map[string]string, fileID string) bool {
 		return false
 	}
 	for key, value := range props {
-		if !strings.HasPrefix(key, "fc.n.") || value == "" {
+		if !strings.HasPrefix(key, "fc.n.") || !publicFlowID.MatchString(strings.TrimPrefix(key, "fc.n.")) || value == "" {
 			continue
 		}
-		var node struct {
-			Shape  string  `json:"shape"`
-			FileID float64 `json:"fileId"`
-		}
-		if json.Unmarshal([]byte(value), &node) == nil && node.Shape == "image" && int64(node.FileID) == want && node.FileID == float64(int64(node.FileID)) {
+		node := publicFlowNode(value)
+		file, ok := publicNumber(node["fileId"])
+		if node["shape"] == "image" && ok && int64(file) == want {
 			return true
 		}
 	}

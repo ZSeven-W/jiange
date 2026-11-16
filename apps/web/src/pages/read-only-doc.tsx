@@ -1,5 +1,5 @@
 import { FlowSvg } from "@/editor/flowchart/flowchart-block";
-import { readFlow } from "@/editor/flowchart/model";
+import { flowBounds, readFlow } from "@/editor/flowchart/model";
 import { tableCellAlign, tableCellFill, tableDataOf } from "@/editor/table-cells";
 import { calloutStyle } from "@/editor/block-styles";
 import { codeLangLabel } from "@/editor/code-block-header";
@@ -75,6 +75,36 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
   return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={`查看图片：${name}`} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
+/** Folding a shared mind map changes only this reader's view. */
+function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; publicToken?: string; versionSeq?: number }) {
+  const graph = readFlow(block.props);
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [overflow, setOverflow] = useState(false);
+  const scroll = useRef<HTMLDivElement>(null);
+  const baseCollapsed = JSON.stringify(graph.mindCollapsed ?? []);
+  useEffect(() => { setOverrides({}); }, [baseCollapsed]);
+  const collapsed = new Set(graph.mindCollapsed ?? []);
+  for (const [id, folded] of Object.entries(overrides)) { if (folded) collapsed.add(id); else collapsed.delete(id); }
+  const display = { ...graph, mindCollapsed: [...collapsed] };
+  const hasContent = graph.nodes.length || graph.strokes?.length || graph.mind?.length;
+  const bounds = flowBounds(display);
+  const minWidth = Math.min(8192, Math.max(200, bounds.w + 80));
+  const minHeight = Math.min(8192, Math.max(120, bounds.h + 80));
+  useEffect(() => {
+    const element = scroll.current;
+    if (!element) return;
+    const measure = () => setOverflow(element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [minWidth, minHeight, hasContent]);
+  const height = Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360));
+  const sizing = { "--flow-min-width": `${minWidth}px`, "--flow-min-height": `${minHeight}px` } as CSSProperties;
+  return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label="图形预览，可滚动查看" tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">滑动查看完整图形</p>}</div>;
+}
+
 function ReadOnlyTable({ data, merges, widths, fillProps = {}, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; widths?: string; fillProps?: Record<string, string>; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {
   const rows = parseTableData(data);
   const columnWidths = visibleTableWidths(rows, parseTableWidths(widths));
@@ -146,7 +176,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-[15px]" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
-        case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
+        case "flowchart": content = <ReadOnlyFlowchart block={block} publicToken={publicToken} versionSeq={imageVersionSeq} />; break;
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} widths={block.props.tableWidths} fillProps={block.props} header={block.props.tableHeader !== "none"} headerColumn={block.props.tableHeaderColumn === "column"} activeComment={activeBlockComment} />; break;
         case "columns": {
           const columns = children.get(block.id) ?? [], weights = columnWeights(block.props[COLUMN_WIDTHS], columns.map((child) => child.id));

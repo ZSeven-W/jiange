@@ -14,6 +14,19 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  it("renders a mind map or ink even when the flowchart has no ordinary nodes", () => {
+    const mind = b("1:1", "flowchart", "", { "fc.m.root": JSON.stringify({ parent: null, order: 0, text: "项目计划", x: 0, y: 0 }), "fc.m.child": JSON.stringify({ parent: "root", order: 0, text: "设计评审" }), "fc.mc.root": "1" });
+    const ink = b("1:2", "flowchart", "", { "fc.s.ink": JSON.stringify({ points: [{ x: 0, y: 0 }, { x: 40, y: 30 }], color: "#3370ff", width: 3 }) });
+    for (const publicToken of [undefined, "example-token"]) {
+      const html = renderToStaticMarkup(<ReadOnlyDoc view={{ blocks: [mind, ink] }} publicToken={publicToken} />);
+      expect(html).toContain("项目计划");
+      expect(html).toContain('aria-expanded="false"');
+      expect(html).not.toContain("设计评审");
+      expect(html).toContain('data-flow-stroke="ink"');
+      expect(html).toContain("min-w-[var(--flow-min-width)]");
+      expect(html).not.toContain("空白流程图");
+    }
+  });
   it("preserves table column widths in normal, shared and presentation snapshots", () => {
     const view: DocView = { blocks: [b("1:1", "table", "", { tableData: '[["A","B"],["C","D"]]', tableWidths: '[180,120]' })] };
     for (const publicToken of [undefined, "example-token"]) {

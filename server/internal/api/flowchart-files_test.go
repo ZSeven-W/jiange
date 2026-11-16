@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/server/collab"
@@ -9,19 +10,25 @@ import (
 
 func TestFlowchartReferencesImage(t *testing.T) {
 	props := map[string]string{
-		"fc.v":    "1",
-		"fc.n.a":  `{"shape":"image","fileId":42,"x":0,"y":0,"w":100,"h":80,"text":""}`,
-		"fc.n.b":  `{"shape":"rect","fileId":7,"text":"x"}`,
-		"fc.n.c":  "",
-		"fc.e.e1": `{"from":"a","to":"b","fileId":9}`,
+		"fc.v":         "1",
+		"fc.n.a":       `{"shape":"image","fileId":42,"x":0,"y":0,"w":100,"h":80,"text":""}`,
+		"fc.n.b":       `{"shape":"rect","fileId":7,"text":"x"}`,
+		"fc.n.c":       "",
+		"fc.n.bad key": `{"shape":"image","fileId":55}`,
+		"fc.n.huge":    `{"shape":"image","fileId":9007199254740992}`,
+		"fc.e.e1":      `{"from":"a","to":"b","fileId":9}`,
 	}
 	if !flowchartReferencesImage(props, "42") {
 		t.Fatal("image node not found")
 	}
-	for _, id := range []string{"7", "9", "0", "abc", "43"} {
+	for _, id := range []string{"7", "9", "0", "abc", "43", "55", "9007199254740992"} {
 		if flowchartReferencesImage(props, id) {
 			t.Fatalf("unexpected reference for %s", id)
 		}
+	}
+	props["fc.n.oversized"] = `{"shape":"image","fileId":56,"extra":"` + strings.Repeat("a", 8<<20) + `"}`
+	if flowchartReferencesImage(props, "56") {
+		t.Fatal("image from an unrenderable oversized node must not be authorized")
 	}
 }
 
