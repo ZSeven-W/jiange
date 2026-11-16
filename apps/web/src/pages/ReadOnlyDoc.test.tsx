@@ -14,6 +14,15 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  it("exposes block link handles only when the public page supplies an action", () => {
+    const view: DocView = { blocks: [b("1:1", "paragraph", "段落"), b("1:2", "columns"), b("1:3", "paragraph", "左栏", {}, "1:2")] };
+    const ordinary = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(ordinary).not.toContain("data-public-block");
+    const shared = renderToStaticMarkup(<ReadOnlyDoc view={view} onCopyBlockLink={() => {}} />);
+    expect(shared).toContain('data-public-block="1:1"');
+    expect(shared).toContain('data-public-block="1:3"');
+    expect((shared.match(/ data-block-handle="true"/g) ?? [])).toHaveLength(3);
+  });
   it("renders formula instances once despite formatting splits, including legacy and copied formulas", () => {
     const paragraph = b("1:1", "paragraph");
     paragraph.spans = [

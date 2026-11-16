@@ -15,6 +15,7 @@ import { MathView } from "@/editor/MathView";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
 import { safeURL } from "@/lib/safeURL";
+import { BlockHandle } from "@/editor/BlockHandle";
 
 type Block = DocView["blocks"][number];
 type Span = Block["spans"][number];
@@ -99,7 +100,11 @@ function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: stri
 
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
-export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void }) {
+export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment, onCopyBlockLink }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; onCopyBlockLink?: (blockId: string) => void }) {
+  const [menuBlock, setMenuBlock] = useState<string | null>(null);
+  const [touchBlock, setTouchBlock] = useState<string | null>(null);
+  const actions = (block: Block) => onCopyBlockLink && <span className={cn("pointer-events-none absolute -left-10 top-0 z-20 flex items-center opacity-0 group-hover/public-block:pointer-events-auto group-hover/public-block:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:-left-14 [&_[data-block-handle]]:gap-0.5 [&_[data-block-handle]]:px-1", (menuBlock === block.id || touchBlock === block.id) && "pointer-events-auto opacity-100")}><BlockHandle type={block.type} open={menuBlock === block.id} onOpenChange={(open) => setMenuBlock(open ? block.id : null)} can={{ link: true }} onAction={(action) => { if (action.kind === "link") onCopyBlockLink(block.id); }}/></span>;
+  const touch = (event: React.PointerEvent<HTMLDivElement>, id: string) => { if (event.pointerType === "touch" && event.target instanceof Element && event.target.closest("[data-public-block]")?.getAttribute("data-public-block") === id && !event.target.closest("a,button,input,textarea,video")) setTouchBlock(id); };
   const children = new Map<string, Block[]>();
   for (const block of view.blocks) {
     const group = children.get(block.parent) ?? [];
@@ -137,7 +142,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} activeComment={activeBlockComment} />; break;
-        case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} className="min-w-0 flex-1 rounded-md bg-sidebar/40 p-2">{richText(child)}{renderChildren(child.id)}</div>)}</div></div>; break;
+        case "columns": content = <div data-columns className="my-2 rounded-lg border p-2"><div className="flex gap-2">{(children.get(block.id) ?? []).map((child) => <div key={child.id} data-public-block={onCopyBlockLink ? child.id : undefined} onPointerDown={(event) => touch(event, child.id)} className={cn("min-w-0 flex-1 rounded-md bg-sidebar/40 p-2", onCopyBlockLink && "group/public-block relative")}>{actions(child)}{richText(child)}{renderChildren(child.id)}</div>)}</div></div>; break;
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {
@@ -151,7 +156,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         }
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
-      return <div key={block.id} data-readonly-block={block.type} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} className={cn(activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
+      return <div key={block.id} data-readonly-block={block.type} data-public-block={onCopyBlockLink ? block.id : undefined} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} onPointerDown={(event) => touch(event, block.id)} className={cn(onCopyBlockLink && "group/public-block relative", activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{actions(block)}{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
     });
   }
   return <div data-readonly-doc>{renderChildren("0:0")}</div>;

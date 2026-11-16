@@ -33,6 +33,11 @@ export function publicDocumentPermissions(state: PublicDocState, token: string, 
   return { copy: canCopyContent(meta), download: canDownloadDocument(meta) };
 }
 
+/** A block link shares the existing token, not the document's text. */
+export function mayCopyPublicBlockLink(state: PublicDocState, token: string, refreshing: boolean, visible: boolean, blockId: string): boolean {
+  return state.token === token && !!state.snapshot && !state.issue && !refreshing && visible && state.snapshot.view.blocks.some((block) => block.id === blockId && block.type !== "title");
+}
+
 /** A definitive denial hides stale content; a network failure preserves it. */
 export function updatePublicDocState(previous: PublicDocState, token: string, result: PublicOutcome): PublicDocState {
   const current = previous.token === token ? previous : initialPublicDocState(token);

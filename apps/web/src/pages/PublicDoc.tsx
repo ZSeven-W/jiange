@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ReadOnlyDoc } from "./ReadOnlyDoc";
 import { PublicDocumentCover } from "@/components/DocumentCover";
 import { Logo } from "@/components/brand";
-import { fetchPublicDoc, initialPublicDocState, publicDocumentPermissions, updatePublicDocState, type PublicIssue } from "./publicDocState";
+import { fetchPublicDoc, initialPublicDocState, mayCopyPublicBlockLink, publicDocumentPermissions, updatePublicDocState, type PublicDocState, type PublicIssue } from "./publicDocState";
+import { publicBlockKey, publicBlockLink } from "./publicBlockLinks";
 
 /** Explain a failed public link without discarding its token on sign-in. */
 export function PublicDocMessage({ issue, token, onRetry }: { issue: PublicIssue; token: string; onRetry: () => void }) {
@@ -17,7 +18,21 @@ export function PublicDoc({ token }: { token: string }) {
   const [state, setState] = useState(() => initialPublicDocState(token));
   const [verification, setVerification] = useState<{ token: string; inFlight: boolean }>({ token, inFlight: true });
   const [coverRecovery, setCoverRecovery] = useState<{ token: string; count: number }>({ token, count: 0 });
+  const [notice, setNotice] = useState("");
+  const [, setNavigation] = useState(0);
   const refreshRef = useRef<() => void>(() => {});
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const anchored = useRef<string | null>(null);
+  const highlight = useRef<{ element: HTMLElement; timer: number } | null>(null);
+  const authority = useRef<{ token: string; state: PublicDocState; refreshing: boolean }>({ token, state, refreshing: true });
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    const clear = () => { const current = highlight.current; if (current) { window.clearTimeout(current.timer); current.element.removeAttribute("data-block-linked"); highlight.current = null; } };
+    const changed = () => { anchored.current = null; clear(); setNavigation((value) => value + 1); };
+    window.addEventListener("hashchange", changed);
+    return () => { window.removeEventListener("hashchange", changed); clear(); };
+  }, [token]);
   useEffect(() => {
     let active = true, inFlight = false;
     let controller: AbortController | null = null;
@@ -60,6 +75,26 @@ export function PublicDoc({ token }: { token: string }) {
   // A retained offline snapshot is useful for reading, but is not proof that
   // its public link and its permissions are still valid.
   const permissions = publicDocumentPermissions(current, token, verification.token !== token || verification.inFlight);
+  authority.current = { token, state: current, refreshing: verification.token !== token || verification.inFlight };
+  useEffect(() => {
+    const key = publicBlockKey(window.location.hash, token);
+    if (!key || anchored.current === key) return;
+    const el = [...(bodyRef.current?.querySelectorAll<HTMLElement>("[data-public-block]") ?? [])].find((item) => item.dataset.publicBlock === key);
+    if (!el) return;
+    anchored.current = key;
+    el.scrollIntoView({ block: "center" });
+    el.setAttribute("data-block-linked", "true");
+    const timer = window.setTimeout(() => { el.removeAttribute("data-block-linked"); if (highlight.current?.timer === timer) highlight.current = null; }, 2000);
+    highlight.current = { element: el, timer };
+  });
+  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(timer); }, [notice]);
+  const copyBlockLink = (block: string) => {
+    const state = authority.current;
+    if (state.token !== token || !mayCopyPublicBlockLink(state.state, token, state.refreshing, document.visibilityState !== "hidden", block)) { setNotice("分享状态尚未确认，请稍后重试。"); return; }
+    const url = publicBlockLink(window.location.href, token, block);
+    if (!url || !navigator.clipboard?.writeText) { setNotice("无法复制链接，请检查浏览器剪贴板权限。"); return; }
+    void navigator.clipboard.writeText(url).then(() => { if (mounted.current && authority.current.token === token) setNotice("已复制块链接"); }, () => { if (mounted.current && authority.current.token === token) setNotice("无法复制链接，请检查浏览器剪贴板权限。"); });
+  };
   useEffect(() => {
     document.title = `${snap?.title.trim() || "公开文档"} - Jiange`;
   }, [snap?.title]);
@@ -80,12 +115,13 @@ export function PublicDoc({ token }: { token: string }) {
             {issue === "temporary" && <div role="status" className="mb-4 rounded-md bg-[#FFF7E8] px-3 py-2 text-[13px] text-[#8C5A00]">暂时无法连接，当前显示上次加载的内容；分享状态尚未重新确认。 <button type="button" className="underline" onClick={() => refreshRef.current()}>重试</button></div>}
             <h1 className="text-[34px] font-semibold leading-[1.3] tracking-tight">{snap.title || "未命名文档"}</h1>
             <div className="mt-3 text-[13px] text-subtle">最近修改于 {new Date(snap.updatedAt).toLocaleString("zh-CN", { hour12: false })}</div>
-            <div className="mt-8">
-              <ReadOnlyDoc view={snap.view} publicToken={token} disableFileDownloads={!permissions.download} imageRecovery={current.recovery} />
+            <div ref={bodyRef} className="mt-8">
+              <ReadOnlyDoc view={snap.view} publicToken={token} disableFileDownloads={!permissions.download} imageRecovery={current.recovery} onCopyBlockLink={copyBlockLink} />
             </div>
           </>
         )}
       </div>
+      {notice && <div role="status" className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg">{notice}</div>}
     </div>
   );
 }

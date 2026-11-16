@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchPublicDoc, initialPublicDocState, publicDocumentPermissions, updatePublicDocState, type PublicSnapshot } from "./publicDocState";
+import { fetchPublicDoc, initialPublicDocState, mayCopyPublicBlockLink, publicDocumentPermissions, updatePublicDocState, type PublicSnapshot } from "./publicDocState";
 
 const snapshot: PublicSnapshot = { title: "公开方案", updatedAt: "2026-11-06T00:00:00Z", view: { blocks: [] } };
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("public document refresh", () => {
+  it("only copies a block link from the current verified and visible share", () => {
+    const view = { blocks: [{ id: "1:2", parent: "0:0", type: "paragraph", props: {}, spans: [] }, { id: "0:1", parent: "0:0", type: "title", props: {}, spans: [] }] };
+    const loaded = updatePublicDocState(initialPublicDocState("abc"), "abc", { snapshot: { ...snapshot, view, copyProtected: true } });
+    expect(mayCopyPublicBlockLink(loaded, "abc", false, true, "1:2")).toBe(true);
+    expect(mayCopyPublicBlockLink(loaded, "other", false, true, "1:2")).toBe(false);
+    expect(mayCopyPublicBlockLink(loaded, "abc", true, true, "1:2")).toBe(false);
+    expect(mayCopyPublicBlockLink(loaded, "abc", false, false, "1:2")).toBe(false);
+    expect(mayCopyPublicBlockLink(loaded, "abc", false, true, "missing")).toBe(false);
+    expect(mayCopyPublicBlockLink(loaded, "abc", false, true, "0:1")).toBe(false);
+    expect(mayCopyPublicBlockLink(updatePublicDocState(loaded, "abc", { issue: "temporary" }), "abc", false, true, "1:2")).toBe(false);
+    expect(mayCopyPublicBlockLink(updatePublicDocState(loaded, "abc", { issue: "expired" }), "abc", false, true, "1:2")).toBe(false);
+  });
   it("replaces stale content when updated and hides it after a link is disabled or requires login", () => {
     let state = updatePublicDocState(initialPublicDocState("abc"), "abc", { snapshot });
     state = updatePublicDocState(state, "abc", { snapshot: { ...snapshot, title: "更新后的方案", copyProtected: true } });
