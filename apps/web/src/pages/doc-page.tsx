@@ -8,7 +8,7 @@ import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/use-sync-doc";
 import { CollabText } from "@/components/collab-text";
 import { Editor, type ExternalUndoRecorder, type FindBatchReplacer, type TableFindReplacer } from "@/editor/editor";
-import { replaceMatches } from "@/editor/find-replace";
+import { planFindReplacement, replaceMatches } from "@/editor/find-replace";
 import { FindScrollIntent } from "@/editor/find-navigation";
 import { preflightFindReplace } from "@/editor/find-replace-safety";
 import { replacementSyncNotice, type ReplacementNotice } from "@/editor/find-replace-notice";
@@ -659,8 +659,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const displayedMatches = matches.length > 500 ? (activeMatch ? [activeMatch] : []) : matches;
   const findCanReplace = !findUpdating && canEditContent && sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0;
   const activeIsTitle = !!activeMatch && idKey(activeMatch.block) === idKey(TITLE);
-  const hasTitleMatches = matches.some((match) => idKey(match.block) === idKey(TITLE));
-  const mentionMatches = matches.filter((match) => match.mention).length;
+  const replacementPlan = planFindReplacement(matches, activeMatch, true);
   const requestFindScroll = useCallback(() => setFindNavigation(findScrollIntent.current.request()), []);
   const openFind = useCallback((mode: FindReplaceMode) => {
     setFindMode(mode);
@@ -924,17 +923,13 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       setFindMessage("请等待文档同步完成并确认有编辑权限后重试。");
       return;
     }
-    const selected = (all ? matches : activeMatch ? [activeMatch] : []).filter((match) => !match.mention);
-    const skippedMentions = all ? mentionMatches : activeMatch?.mention ? 1 : 0;
-    if (!selected.length && skippedMentions) { setFindMessage("提及成员和文档的内容不能替换。"); return; }
+    const { selected, skippedTitles, skippedMentions } = planFindReplacement(matches, activeMatch, all);
+    if (!selected.length && (skippedMentions || skippedTitles)) { setFindMessage(skippedTitles ? "标题暂不支持替换。" : "提及成员和文档的内容不能替换。"); return; }
     if (!selected.length) return;
-    if (selected.some((match) => idKey(match.block) === idKey(TITLE))) {
-      setFindMessage("暂不支持替换标题；请选择正文结果。全部替换需要先排除标题匹配。");
-      return;
-    }
+    const skippedMessage = `${skippedTitles ? `，跳过 ${skippedTitles} 处标题` : ""}${skippedMentions ? `，跳过 ${skippedMentions} 处提及内容` : ""}`;
     if (all && selected.some((match) => match.table)) {
       const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
-      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, skippedMentions, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容${skippedMentions ? `，跳过 ${skippedMentions} 处提及内容` : ""}，文档未修改。`); requestFindScroll(); }
+      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容${skippedMessage}，文档未修改。`); requestFindScroll(); }
       else setFindMessage(result.status === "stale" ? "内容已变化，请重新查找；文档未修改。" : result.status === "size" || result.status === "work" ? "替换内容或范围过大，请缩小范围；文档未修改。" : "当前无法安全替换，请确认编辑权限和同步状态。");
       return;
     }
@@ -957,8 +952,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       sync.client.push(tx.ops);
     }
     setFindIndex(all ? 0 : Math.max(activeFindIndex, 0));
-    if (tx.ops.length) { setFindMessage(""); setFindPending({ count: result.replaced, skipped: result.skipped, skippedMentions, historyChanges: sync.client.droppedOnResync }); }
-    else setFindMessage(result.skipped ? `${result.skipped} 处内容已变化并跳过；文档未修改。` : `${result.replaced} 处已是目标内容${skippedMentions ? `，跳过 ${skippedMentions} 处提及内容` : ""}，文档未修改。`);
+    if (tx.ops.length) { setFindMessage(""); setFindPending({ count: result.replaced, skipped: result.skipped, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); }
+    else setFindMessage(result.skipped ? `${result.skipped} 处内容已变化并跳过${skippedMessage}；文档未修改。` : `${result.replaced} 处已是目标内容${skippedMessage}，文档未修改。`);
     if (result.replaced) requestFindScroll();
   };
 
@@ -1242,9 +1237,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             matchCount={matches.length}
             activeIndex={activeFindIndex}
             canReplace={findCanReplace && !activeIsTitle && !activeMatch?.mention}
-            canReplaceAll={findCanReplace && !hasTitleMatches && matches.length > mentionMatches}
+            canReplaceAll={findCanReplace && replacementPlan.selected.length > 0}
             scopeNotice="搜索标题、正文、分栏和表格；公式不在范围内。"
-            warningMessage={`${hasTitleMatches && findMode === "replace" ? "标题暂不支持替换，含标题匹配时无法全部替换。" : ""}${mentionMatches && findMode === "replace" ? `提及成员或文档的 ${mentionMatches} 处结果不可替换，全部替换时将跳过。` : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
+            warningMessage={`${replacementPlan.skippedTitles && findMode === "replace" ? `标题中的 ${replacementPlan.skippedTitles} 处结果暂不支持替换，全部替换时将跳过。` : ""}${replacementPlan.skippedMentions && findMode === "replace" ? `提及成员或文档的 ${replacementPlan.skippedMentions} 处结果不可替换，全部替换时将跳过。` : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             onModeChange={setFindMode}
             onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}

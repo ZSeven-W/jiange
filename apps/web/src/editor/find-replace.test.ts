@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, type OpId } from "@jiange/collab";
-import { findMatches, replaceMatches, resolveFindMatch } from "./find-replace";
+import { findMatches, planFindReplacement, replaceMatches, resolveFindMatch } from "./find-replace";
 import { TITLE } from "./model";
 
 function setup(...entries: [string, string][]) {
@@ -66,6 +66,22 @@ describe("findMatches", () => {
     expect(replaceMatches(tx, [matches[0]], "产品")).toEqual({ replaced: 0, skipped: 1 });
     expect(tx.ops).toHaveLength(0);
     expect(doc.text(TITLE)).toBe("😀项目计划");
+  });
+
+  it("plans editable matches while separately counting title and mention results", () => {
+    const doc = new Doc(1);
+    doc.apply({ t: "bcreate", id: TITLE, parent: ROOT, pos: "U", type: "title" });
+    doc.insertText(TITLE, 0, "目标目标");
+    const tx = new Tx(doc), body = tx.create("paragraph", TITLE, ROOT);
+    tx.insert(body, 0, "目标 目标");
+    tx.format(body, 0, 2, "mention", "42");
+    const matches = findMatches(doc, "目标"), plan = planFindReplacement(matches, matches[0], true);
+    expect(plan.skippedTitles).toBe(2);
+    expect(plan.skippedMentions).toBe(1);
+    expect(plan.selected).toEqual([matches[3]]);
+    expect(planFindReplacement(matches, matches[0], false)).toMatchObject({ selected: [], skippedTitles: 1, skippedMentions: 0 });
+    expect(planFindReplacement(matches, matches[2], false)).toMatchObject({ selected: [], skippedTitles: 0, skippedMentions: 1 });
+    expect(planFindReplacement(matches, matches[3], false).selected).toEqual([matches[3]]);
   });
 
   it("finds columns in canvas order, excludes hidden child source, and resolves Unicode offsets", () => {

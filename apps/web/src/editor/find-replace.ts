@@ -32,6 +32,19 @@ export interface FindOptions {
   caseSensitive?: boolean;
 }
 
+/** Partition immutable search results before replacing. Title writes need a
+ * separate atomic directory-name commit, and mentions must remain intact. */
+export function planFindReplacement(matches: readonly FindMatch[], active: FindMatch | null, all: boolean): { selected: FindMatch[]; skippedTitles: number; skippedMentions: number } {
+  const selected: FindMatch[] = [];
+  let skippedTitles = 0, skippedMentions = 0;
+  for (const match of all ? matches : active ? [active] : []) {
+    if (eqId(match.block, TITLE)) skippedTitles++;
+    else if (match.mention) skippedMentions++;
+    else selected.push(match);
+  }
+  return { selected, skippedTitles, skippedMentions };
+}
+
 /** Visible title and text blocks in canvas order, with each column at its container's position. */
 export function searchableLocations(doc: Doc): { block: OpId; parent: OpId }[] {
   const out: { block: OpId; parent: OpId }[] = [];
