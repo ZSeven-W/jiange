@@ -27,6 +27,14 @@ type blockingImageReferenceStore struct {
 	release chan struct{}
 }
 
+func (s *blockingImageReferenceStore) ListVersionEntries(ctx context.Context, guard store.RestoreGuard, doc int64) ([]store.VersionEntry, error) {
+	return s.Store.(versionEntryStore).ListVersionEntries(ctx, guard, doc)
+}
+
+func (s *blockingImageReferenceStore) CreateVersionEntry(ctx context.Context, guard store.RestoreGuard, doc, epoch, head int64, state []byte, label, request string) (store.VersionEntry, error) {
+	return s.Store.(versionEntryStore).CreateVersionEntry(ctx, guard, doc, epoch, head, state, label, request)
+}
+
 func (s *blockingImageReferenceStore) wait(ctx context.Context, kind string) error {
 	if !s.active.Load() || s.kind != kind || s.calls.Add(1) != 2 {
 		return nil

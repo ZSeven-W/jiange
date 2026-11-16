@@ -346,6 +346,7 @@ func TestDocumentDownloadThresholdRecheckedAfterBlobOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	referenceTestFile(t, st, doc.ID, file.ID, "file")
 	results, failures := make(chan *http.Response, 1), make(chan error, 1)
 	go func() {
 		response, err := viewer.Get(ts.URL + "/api/files/" + strconv.FormatInt(file.ID, 10))

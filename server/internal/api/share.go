@@ -484,6 +484,10 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
 	authorize := func() (bool, error) {
 		meta, err := s.Store.GetDoc(r.Context(), u.ID, f.DocID)
 		if err != nil {
@@ -494,6 +498,9 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
 			// and field which contain it. Until references are projected by
 			// access policy, do not serve files to restricted Base viewers.
 			return false, store.ErrNotFound
+		}
+		if meta.Kind == "doc" {
+			return s.documentFileAccess(r, f, guard)
 		}
 		requireRaster := !store.DocumentDownloadAllowed(meta, meta.Role)
 		if !requireRaster {

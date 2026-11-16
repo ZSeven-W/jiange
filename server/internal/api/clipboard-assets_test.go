@@ -113,6 +113,8 @@ func TestClipboardAssetsAccessAndRetry(t *testing.T) {
 	if res.StatusCode != 404 {
 		t.Fatalf("reader must not access source file: %d", res.StatusCode)
 	}
+	// A copied upload is visible to collaborators after the pasted block is saved.
+	referenceTestFile(t, st, target.ID, mapping[file.ID], "file")
 	res, err = other.Get(ts.URL + "/api/files/" + strconv64(mapping[file.ID]))
 	if err != nil {
 		t.Fatal(err)

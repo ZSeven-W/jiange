@@ -28,6 +28,14 @@ type protectDuringFileAccess struct {
 	userID int64
 }
 
+func (s *protectDuringFileAccess) ListVersionEntries(ctx context.Context, guard store.RestoreGuard, doc int64) ([]store.VersionEntry, error) {
+	return s.Store.(versionEntryStore).ListVersionEntries(ctx, guard, doc)
+}
+
+func (s *protectDuringFileAccess) CreateVersionEntry(ctx context.Context, guard store.RestoreGuard, doc, epoch, head int64, state []byte, label, request string) (store.VersionEntry, error) {
+	return s.Store.(versionEntryStore).CreateVersionEntry(ctx, guard, doc, epoch, head, state, label, request)
+}
+
 type blockingFileBlob struct {
 	blob.Store
 	started chan struct{}
@@ -71,6 +79,7 @@ func TestAuthenticatedFileRechecksAfterBlobOpen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			referenceTestFile(t, st, doc.ID, file.ID, "file")
 			result := make(chan *http.Response, 1)
 			failure := make(chan error, 1)
 			go func() {

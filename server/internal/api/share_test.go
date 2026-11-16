@@ -182,6 +182,7 @@ func TestSharingRolesLinkAndFiles(t *testing.T) {
 	if res.StatusCode != 201 || f.Size != 12 {
 		t.Fatalf("upload: %d %+v", res.StatusCode, f)
 	}
+	referenceTestFile(t, st, d.ID, f.ID, "image")
 	res, _ = bob.Get(ts.URL + "/api/files/" + strconv.FormatInt(f.ID, 10))
 	b, _ := io.ReadAll(res.Body)
 	if res.StatusCode != 200 || string(b[:4]) != "\x89PNG" {

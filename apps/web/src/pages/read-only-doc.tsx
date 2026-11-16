@@ -156,7 +156,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {
-          const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken);
+          const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken, imageVersionSeq);
           content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;
         }
         case "video": content = <ReadOnlyVideo url={block.props.url} name={block.props.name} disableFileDownloads={disableFileDownloads} />; break;

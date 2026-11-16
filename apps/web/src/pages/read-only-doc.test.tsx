@@ -172,7 +172,7 @@ describe("read-only document snapshots", () => {
     expect(protectedHTML).toContain("下载已关闭");
     const managerHTML = renderToStaticMarkup(<VersionView view={view} versionSeq={42} />);
     expect(managerHTML).toContain('src="/api/files/12?version=42"');
-    expect(managerHTML).toContain('href="/api/files/34"');
+    expect(managerHTML).toContain('href="/api/files/34?version=42"');
   });
 
   it("limits video download controls and disables the external fallback link when downloads are restricted", () => {
