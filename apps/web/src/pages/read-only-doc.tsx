@@ -73,13 +73,13 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
   return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={`查看图片：${name}`} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
-function ReadOnlyTable({ data, merges, header = true, activeComment = false }: { data?: string; merges?: string; header?: boolean; activeComment?: boolean }) {
+function ReadOnlyTable({ data, merges, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {
   const rows = parseTableData(data);
   const cover = coverMap(parseMerges(merges, rows.length, rows[0]?.length ?? 0));
   return <div className={cn("my-2 w-fit max-w-full overflow-x-auto", activeComment && "rounded-[2px] outline outline-2 outline-offset-2 outline-[#F0B400]")} data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri}>{Array.isArray(row) && row.map((cell, ci) => {
     const cov = cover.get(`${ri}:${ci}`);
     if (cov === "hidden") return null;
-    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", header && ri === 0 && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
+    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
   })}</tr>)}</tbody></table></div>;
 }
 
@@ -142,7 +142,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
-        case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} activeComment={activeBlockComment} />; break;
+        case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} headerColumn={block.props.tableHeaderColumn === "column"} activeComment={activeBlockComment} />; break;
         case "columns": {
           const columns = children.get(block.id) ?? [], weights = columnWeights(block.props[COLUMN_WIDTHS], columns.map((child) => child.id));
           content = <div data-columns className="my-2 overflow-x-auto" data-column-scroll><div className="flex w-full gap-8">{columns.map((child, index) => <div key={child.id} data-public-block={onCopyBlockLink ? child.id : undefined} onPointerDown={(event) => touch(event, child.id)} className={cn("min-w-[132px] flex-1 whitespace-pre-wrap break-words sm:min-w-0", onCopyBlockLink && "group/public-block relative")} style={{ flexGrow: weights[index], flexBasis: "0%", textAlign: child.props.align === "center" || child.props.align === "right" ? child.props.align : "left" }}>{actions(child)}{richText(child)}{renderChildren(child.id)}</div>)}</div></div>;

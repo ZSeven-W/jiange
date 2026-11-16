@@ -42,4 +42,13 @@ describe("Feishu table block", () => {
     expect(plain).toContain('aria-pressed="false"');
     expect(renderToStaticMarkup(<TableBlock data={data} onEdit={noop} onDelete={noop} readOnly />)).toContain("bg-[#F5F6F7]");
   });
+  it("styles the first column independently of the first row", () => {
+    const html = renderToStaticMarkup(<TableBlock data={data} header={false} headerColumn onHeader={noop} onHeaderColumn={noop} onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
+    expect((html.match(/bg-\[#F5F6F7\]/g) ?? [])).toHaveLength(2);
+    expect(html).toMatch(/aria-label="标题列" aria-pressed="true"/);
+    expect(html).toMatch(/aria-label="标题行" aria-pressed="false"/);
+    const both = renderToStaticMarkup(<TableBlock data={data} header headerColumn onEdit={noop} onDelete={noop} readOnly />);
+    expect((both.match(/bg-\[#F5F6F7\]/g) ?? [])).toHaveLength(4);
+    expect(both).not.toContain("data-table-header-column");
+  });
 });

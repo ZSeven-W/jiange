@@ -9,7 +9,7 @@ type Transitions = { undo: (Transition | null)[]; redo: (Transition | null)[] };
 /** Capture all table registers, including hidden cells, and paragraph text after whole-table deletion. */
 function guard(doc: Doc, block: OpId): string {
   const info = doc.blockInfo(block);
-  const keys = new Set(["type", "tableData", "tableMerges", "tableWidths", "tableHeader", ...Object.keys(info.props).filter((key) => key.startsWith("tbl."))]);
+  const keys = new Set(["type", "tableData", "tableMerges", "tableWidths", "tableHeader", "tableHeaderColumn", ...Object.keys(info.props).filter((key) => key.startsWith("tbl."))]);
   const versions = [...keys].sort().map((key) => {
     const version = doc.propVersion(block, key);
     return [key, version ? idKey(version) : null];
@@ -81,6 +81,11 @@ export class TableStructureHistory {
   private readonly entries = new Map<string, Entry>();
   private readonly transitions = new Map<string, Transitions>();
 
+  /** Capture the table before a known structural/property action for adjacent undo rebasing. */
+  snapshot(doc: Doc, block: OpId): string | null {
+    return doc.hasBlock(block) ? guard(doc, block) : null;
+  }
+
   private hasLiveStructure<S>(block: OpId, undo: UndoManager<S>): boolean {
     return [...this.entries].some(([key, entry]) => idKey(entry.block) === idKey(block) && undo.hasMarker(key));
   }
@@ -135,7 +140,7 @@ export class TableStructureHistory {
     to.push(item);
   }
 
-  record<S>(doc: Doc, block: OpId, tx: Tx, undo: UndoManager<S>): string | null {
+  record<S>(doc: Doc, block: OpId, tx: Tx, undo: UndoManager<S>, before?: string | null): string | null {
     for (const key of this.entries.keys()) if (!undo.hasMarker(key)) this.entries.delete(key);
     for (const key of this.transitions.keys()) if (!undo.hasMarker(key)) this.transitions.delete(key);
     const changes = new Map<string, Change>();
@@ -148,7 +153,7 @@ export class TableStructureHistory {
     }
     if (!changes.size) return null;
     const key = `table-structure:${idKey(block)}:${++this.next}`;
-    this.entries.set(key, { block, changes: [...changes.values()], expected: guard(doc, block) });
+    this.entries.set(key, { block, changes: [...changes.values()], expected: guard(doc, block), other: before ?? undefined });
     return key;
   }
 
@@ -163,6 +168,11 @@ export class TableStructureHistory {
     const actual = guard(doc, entry.block);
     let rebase: { logical: ReturnType<typeof historyVersions>; actual: ReturnType<typeof historyVersions> } | undefined;
     if (target && restored(target, actual, tx.ops, entry.block, new Set(entry.changes.map((change) => change.key)))) {
+      for (const [otherKey, other] of this.entries) {
+        if (otherKey === key || idKey(other.block) !== idKey(entry.block)) continue;
+        other.expected = rebaseStructureSnapshot(other.expected, target, actual, tx.ops);
+        if (other.other) other.other = rebaseStructureSnapshot(other.other, target, actual, tx.ops);
+      }
       for (const [transitionKey, transitions] of this.transitions) for (const tracked of [...transitions.undo, ...transitions.redo]) {
         if (!tracked || !transitionKey.startsWith(`table:${idKey(entry.block)}:`)) continue;
         tracked.before = rebaseStructureSnapshot(tracked.before, target, actual, tx.ops);

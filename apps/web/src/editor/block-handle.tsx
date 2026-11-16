@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ChevronRight, Copy, IndentDecrease, IndentIncrease, Languages, LayoutTemplate, Link2, MessageSquarePlus, Palette, Scissors, Share2, Sparkles, Trash2 } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, Check, ChevronRight, Columns3, Copy, IndentDecrease, IndentIncrease, Languages, LayoutTemplate, Link2, MessageSquarePlus, Palette, Rows3, Scissors, Share2, Sparkles, Trash2 } from "lucide-react";
 import { MENU_ICONS } from "./menu-icons";
 import { cn } from "@/lib/utils";
 
@@ -74,7 +74,7 @@ function Grip() {
  * 转换为 / 颜色 / 缩进 / 剪切、复制、复制链接、评论 / 在下方添加、删除。
  * 跨块选区时手柄出现在第一个选中块上，`count` 为选中块数，菜单作用于全部选中块。
  */
-export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, onAction, can = {}, count = 1, indent = 0, align }: {
+export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, onAction, can = {}, count = 1, indent = 0, align, tableHeaders }: {
   type: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -85,6 +85,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   count?: number;
   indent?: number;
   align?: string;
+  tableHeaders?: { row: boolean; column: boolean; toggle: (axis: "row" | "column") => void };
 }) {
   const root = useRef<HTMLSpanElement>(null);
   const [sub, setSub] = useState<"layout" | "colors" | "translate" | null>(null);
@@ -164,6 +165,9 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
             <button type="button" onMouseDown={keep} onClick={() => { onOpenChange(false); onAction?.({ kind: "color", key: "color", value: null }); onAction?.({ kind: "color", key: "bg", value: null }); }} className="mt-2 block w-full rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-hover" data-block-color-reset>恢复默认</button>
           </div>}
         </div>}
+      </div>}
+      {type === "table" && !multi && tableHeaders && <div className={section}>
+        {([ ["row", "标题行", Rows3], ["column", "标题列", Columns3] ] as const).map(([axis, label, Icon]) => <button key={axis} type="button" role="menuitemcheckbox" aria-checked={tableHeaders[axis]} className={item} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.toggle(axis); }} data-block-table-header={axis}><Icon size={16} strokeWidth={1.6} className={icon} />{label}{tableHeaders[axis] && <Check size={15} className="ml-auto text-primary" />}</button>)}
       </div>}
       {groupB && <div className={section}>
         {can.comment && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "comment" })} data-block-comment><MessageSquarePlus size={16} strokeWidth={1.6} className={icon} />评论</button>}

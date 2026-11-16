@@ -35,6 +35,14 @@ describe("Feishu-style block handle", () => {
     expect(html).toContain("data-block-copy");
     expect(html).toContain("data-delete-block");
   });
+  it("offers independent table header toggles only for an editable single table", () => {
+    const headers = { row: true, column: false, toggle: noop };
+    const html = renderToStaticMarkup(<BlockHandle type="table" open onOpenChange={noop} tableHeaders={headers} />);
+    expect(html).toMatch(/role="menuitemcheckbox" aria-checked="true"[^>]*data-block-table-header="row"/);
+    expect(html).toMatch(/role="menuitemcheckbox" aria-checked="false"[^>]*data-block-table-header="column"/);
+    expect(renderToStaticMarkup(<BlockHandle type="table" count={2} open onOpenChange={noop} tableHeaders={headers} />)).not.toContain("data-block-table-header");
+    expect(renderToStaticMarkup(<BlockHandle type="table" open onOpenChange={noop} />)).not.toContain("data-block-table-header");
+  });
   it("shows the selected-block count and bulk actions for a multi-block selection", () => {
     const html = renderToStaticMarkup(<BlockHandle type="paragraph" count={3} open onOpenChange={noop} onDragStart={noop} can={blockAbilities("image", true, true, true)} />);
     expect(html).toContain("已选择 3 个块");

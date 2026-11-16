@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
-import { tableDataOf, tableRowsOf, writeTable } from "./table-cells";
+import { applyTableWrites, cellTableWrites, isCellTable, tableDataOf, tableRowsOf, writeTable } from "./table-cells";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
 import { TableStructureHistory } from "./table-structure-history";
@@ -57,6 +57,71 @@ function stepStructure(ctx: ReturnType<typeof setup>, key: string, redo = false)
 }
 
 describe("guarded table selection deletion history", () => {
+  it("undoes and redoes successive independent header changes", () => {
+    const ctx = setup();
+    const change = (key: string, value: string) => {
+      const before = ctx.history.snapshot(ctx.doc, ctx.table), tx = new Tx(ctx.doc);
+      tx.setProp(ctx.table, key, value);
+      const marker = ctx.history.record(ctx.doc, ctx.table, tx, ctx.undo, before)!;
+      ctx.undo.recordMarker(marker); return marker;
+    };
+    const row = change("tableHeader", "none"), col = change("tableHeaderColumn", "column");
+    expect(stepStructure(ctx, col)).toBe("ready");
+    expect(stepStructure(ctx, row)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeaderColumn).toBe("");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeader).toBe("");
+    expect(stepStructure(ctx, row, true)).toBe("ready");
+    expect(stepStructure(ctx, col, true)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeaderColumn).toBe("column");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeader).toBe("none");
+  });
+  it("refuses a header undo after the peer changes that property even to the same value", () => {
+    const ctx = setup(), before = ctx.history.snapshot(ctx.doc, ctx.table), tx = new Tx(ctx.doc);
+    tx.setProp(ctx.table, "tableHeaderColumn", "column");
+    const key = ctx.history.record(ctx.doc, ctx.table, tx, ctx.undo, before)!; ctx.undo.recordMarker(key);
+    const peer = Doc.fromState(2, ctx.doc.encodeState()); ctx.doc.apply(peer.setProp(ctx.table, "tableHeaderColumn", "column"));
+    expect(stepStructure(ctx, key)).toBe("conflict");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeaderColumn).toBe("column");
+    expect(ctx.undo.peekMarker(false)).toBe(key);
+  });
+  it("preserves undo order across a structural edit and a later header toggle", () => {
+    const ctx = setup(), structure = deleteFirstRow(ctx), before = ctx.history.snapshot(ctx.doc, ctx.table), tx = new Tx(ctx.doc);
+    tx.setProp(ctx.table, "tableHeaderColumn", "column");
+    const header = ctx.history.record(ctx.doc, ctx.table, tx, ctx.undo, before)!; ctx.undo.recordMarker(header);
+    expect(stepStructure(ctx, header)).toBe("ready");
+    expect(stepStructure(ctx, structure)).toBe("ready");
+    expect(stepStructure(ctx, structure, true)).toBe("ready");
+    expect(stepStructure(ctx, header, true)).toBe("ready");
+    expect(tableRowsOf(ctx.doc.blockInfo(ctx.table).props)).toEqual([["C", "D"]]);
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeaderColumn).toBe("column");
+  });
+  it("undoes a later cell edit before the header toggle", () => {
+    const ctx = setup(), props = ctx.doc.blockInfo(ctx.table).props, migration = new Tx(ctx.doc);
+    applyTableWrites(migration, ctx.table, props, cellTableWrites(props, tableRowsOf(props), ctx.doc.client));
+    const before = ctx.history.snapshot(ctx.doc, ctx.table), tx = new Tx(ctx.doc);
+    tx.setProp(ctx.table, "tableHeaderColumn", "column");
+    const header = ctx.history.record(ctx.doc, ctx.table, tx, ctx.undo, before)!; ctx.undo.recordMarker(header);
+    const cell = editCell(ctx, 0, "A!");
+    expect(stepCell(ctx, cell)).toBe("ready");
+    expect(stepStructure(ctx, header)).toBe("ready");
+    expect(stepStructure(ctx, header, true)).toBe("ready");
+    expect(stepCell(ctx, cell, true)).toBe("ready");
+    expect(tableRowsOf(ctx.doc.blockInfo(ctx.table).props)[0][0]).toBe("A!");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableHeaderColumn).toBe("column");
+  });
+  it("keeps the migration after a header undo so a late peer cell edit stays visible", () => {
+    const ctx = setup(), props = ctx.doc.blockInfo(ctx.table).props, migration = new Tx(ctx.doc);
+    applyTableWrites(migration, ctx.table, props, cellTableWrites(props, tableRowsOf(props), ctx.doc.client));
+    const peer = Doc.fromState(2, ctx.doc.encodeState()), before = ctx.history.snapshot(ctx.doc, ctx.table), tx = new Tx(ctx.doc);
+    tx.setProp(ctx.table, "tableHeaderColumn", "column");
+    const header = ctx.history.record(ctx.doc, ctx.table, tx, ctx.undo, before)!; ctx.undo.recordMarker(header);
+    const peerEdit = new Tx(peer), peerProps = peer.blockInfo(ctx.table).props;
+    writeTable(peerEdit, ctx.table, peerProps, [["A", "B"], ["C", "远端"]], peer.client);
+    expect(stepStructure(ctx, header)).toBe("ready");
+    for (const op of peerEdit.ops) ctx.doc.apply(op);
+    expect(isCellTable(ctx.doc.blockInfo(ctx.table).props)).toBe(true);
+    expect(tableRowsOf(ctx.doc.blockInfo(ctx.table).props)[1][1]).toBe("远端");
+  });
   it("undoes and redoes the whole structural transaction", () => {
     const ctx = setup(), key = deleteFirstRow(ctx);
     expect(ctx.history.step(ctx.doc, ctx.undo, key, false).status).toBe("ready");

@@ -14,6 +14,14 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  it("shows an independently enabled title column in public and ordinary views", () => {
+    const view: DocView = { blocks: [b("1:1", "table", "", { tableData: JSON.stringify([["A", "B"], ["C", "D"]]), tableHeader: "none", tableHeaderColumn: "column" })] };
+    for (const publicToken of [undefined, "example-token"]) {
+      const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken={publicToken} />);
+      expect((html.match(/bg-\[#F5F6F7\]/g) ?? [])).toHaveLength(2);
+      expect(html).toContain(">A</td>"); expect(html).toContain(">C</td>");
+    }
+  });
   it("exposes block link handles only when the public page supplies an action", () => {
     const view: DocView = { blocks: [b("1:1", "paragraph", "段落"), b("1:2", "columns"), b("1:3", "paragraph", "左栏", {}, "1:2")] };
     const ordinary = renderToStaticMarkup(<ReadOnlyDoc view={view} />);

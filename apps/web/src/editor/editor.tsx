@@ -92,7 +92,7 @@ import { validEditorSelection } from "./selection-safety";
 import { editorClipboardRoute, isNativeControl } from "./native-control";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
-import { applyTableWrites, tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./table-cells";
+import { applyTableWrites, cellTableWrites, isCellTable, tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./table-cells";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -2330,6 +2330,23 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   force((x) => x + 1);
                   publish();
                 }}
+                onTableHeader={readOnly ? undefined : (axis, enabled) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
+                  // A legacy grid is migrated independently of the visible header
+                  // change. Undo must not remove its axes: offline collaborators may
+                  // already have addressed cells using those stable IDs.
+                  const props = doc.blockInfo(b).props, migration = new Tx(doc);
+                  if (!isCellTable(props) && Object.entries(props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未更改标题，请等待同步后重试。"); return; }
+                  if (!isCellTable(props)) applyTableWrites(migration, b, props, cellTableWrites(props, tableRowsOf(props), doc.client));
+                  const before = tableStructureHistory.snapshot(doc, b);
+                  const tx = new Tx(doc);
+                  tx.setProp(b, axis === "row" ? "tableHeader" : "tableHeaderColumn", enabled ? (axis === "row" ? "row" : "column") : "none");
+                  if (!tx.ops.length) { if (migration.ops.length) { sync.client.push(migration.ops); force((x) => x + 1); } return; }
+                  um.seal();
+                  const marker = tableStructureHistory.record(doc, b, tx, um, before);
+                  if (marker) um.recordMarker(marker);
+                  sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force((x) => x + 1); publish();
+                }}
                 onTablePaste={readOnly ? undefined : (row, col, text, literal) => tableClipboard({ kind: "paste", row, col, text, literal })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
@@ -2671,6 +2688,7 @@ interface BlockProps {
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
+  onTableHeader?: (axis: "row" | "column", enabled: boolean) => void;
   onTablePaste?: (r: number, c: number, text: string, literal?: boolean) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;
@@ -2710,7 +2728,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -2845,6 +2863,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             type={type}
             indent={indent}
             align={props.align}
+            tableHeaders={type === "table" && onTableHeader ? { row: props.tableHeader !== "none", column: props.tableHeaderColumn === "column", toggle: (axis) => onTableHeader(axis, axis === "row" ? props.tableHeader === "none" : props.tableHeaderColumn !== "column") } : undefined}
             count={selectionCount ?? 1}
             open={handleOpen}
             onOpenChange={setHandleOpen}
@@ -2975,7 +2994,9 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           findNavigation={findNavigation}
           widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
           header={props.tableHeader !== "none"}
-          onHeader={onSetProp ? (on) => onSetProp("tableHeader", on ? "row" : "none") : undefined}
+          headerColumn={props.tableHeaderColumn === "column"}
+          onHeader={onTableHeader ? (on) => onTableHeader("row", on) : undefined}
+          onHeaderColumn={onTableHeader ? (on) => onTableHeader("column", on) : undefined}
           onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}

@@ -42,6 +42,7 @@ describe("Markdown export loss preflight", () => {
       expect(markdownExportLosses({ blocks: [block("table", "", { tableData: data })] }).join("；")).toContain("表格数据格式异常");
     }
     expect(markdownExportLosses({ blocks: [block("table", "附加文字", { tableData: '[["a"]]', style: "custom" })] }).join("；")).toContain("表格的额外内容或设置");
+    expect(markdownExportLosses({ blocks: [block("table", "", { tableData: '[["a"]]', tableHeaderColumn: "column" })] }).join("；")).toContain("表格的额外内容或设置");
   });
 
   it("warns when UTF-8 export would replace lone surrogates in cells, text, or links", () => {

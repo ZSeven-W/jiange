@@ -220,6 +220,7 @@ describe("Word export → import round trip", () => {
   it("does not report losses for fully supported content", () => {
     expect(docxExportLosses(view)).toEqual(["公式和图表以源码文本导出，Word 中不会渲染"]);
     expect(docxExportLosses({ blocks: [b("paragraph", [{ text: "x", marks: { link: "javascript:alert(1)" } }])] })).toEqual(["部分链接协议不受支持，已导出为普通文字"]);
+    expect(docxExportLosses({ blocks: [b("table", "", { tableData: '[["a"]]', tableHeaderColumn: "column" })] })).toContain("表格的额外内容或设置无法完整保留");
   });
 });
 
