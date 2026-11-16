@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SlashMenu } from "./slash-menu";
 import { filterItems, SLASH_ITEMS } from "./pinyin";
+import { validTablePickerSize } from "./table-size-picker";
 
 const render = (items = SLASH_ITEMS, query?: string) => renderToStaticMarkup(<SlashMenu x={0} y={0} items={items} index={2} query={query} onPick={() => {}} onHover={() => {}} />);
 
@@ -18,6 +19,14 @@ describe("Feishu-style slash menu layout", () => {
     expect(render(filterItems("biao"))).not.toContain("data-slash-grid");
     expect(filterItems("正文").map((it) => it.id)).toContain("paragraph");
     expect(filterItems("zhengwen").map((it) => it.id)).toContain("paragraph");
+  });
+  it("exposes a table size submenu only for the plus insertion path", () => {
+    const props = { x: 0, y: 0, items: SLASH_ITEMS, index: 0, onPick: () => {}, onHover: () => {} };
+    const plus = renderToStaticMarkup(<SlashMenu {...props} onTableOpen={() => {}} />);
+    expect(plus).toMatch(/aria-haspopup="grid" aria-expanded="false"[^>]*data-value="table"/);
+    expect(renderToStaticMarkup(<SlashMenu {...props} />)).not.toContain('aria-haspopup="grid"');
+    expect(validTablePickerSize({ rows: 9, columns: 9 })).toBe(true);
+    for (const size of [{ rows: 0, columns: 1 }, { rows: 10, columns: 1 }, { rows: 1, columns: 2.5 }]) expect(validTablePickerSize(size)).toBe(false);
   });
 });
 

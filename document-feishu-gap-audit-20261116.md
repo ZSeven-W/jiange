@@ -10,7 +10,7 @@
 
 | 方面 | 当前情况和差距 | 核心依据 |
 | --- | --- | --- |
-| 文档表格的内容模型 | **部分**。支持纯文本、行列、合并、粘贴与选区；单元格不能像飞书文档表格一样容纳段落、列表、图片、附件、公式等不同内容。已支持标题列及标题行吸顶，仍缺单元格横纵对齐、背景色等。 | [本地表格编辑器](apps/web/src/editor/table-block.tsx)、[单元格模型](packages/doc-sdk/src/table-cells.ts)、[标题列验证](document-table-header-report-20261116.md)；[飞书文档表格](https://www.feishu.cn/hc/zh-CN/articles/639833584167-%E5%9C%A8%E6%96%87%E6%A1%A3%E4%B8%AD%E6%8F%92%E5%85%A5%E8%A1%A8%E6%A0%BC) |
+| 文档表格的内容模型 | **部分**。支持纯文本、行列、合并、粘贴与选区；单元格不能像飞书文档表格一样容纳段落、列表、图片、附件、公式等不同内容。已支持标题列、标题行吸顶，以及“+”入口选择表格行列；仍缺单元格横纵对齐、背景色等。 | [本地表格编辑器](apps/web/src/editor/table-block.tsx)、[单元格模型](packages/doc-sdk/src/table-cells.ts)、[标题列验证](document-table-header-report-20261116.md)；[飞书文档表格](https://www.feishu.cn/hc/zh-CN/articles/639833584167-%E5%9C%A8%E6%96%87%E6%A1%A3%E4%B8%AD%E6%8F%92%E5%85%A5%E8%A1%A8%E6%A0%BC) |
 | 文档表格并发 | **部分**。不同单元格的文本有独立属性；同一单元格仍以后写胜出，行列结构、合并和宽度仍是整体竞争；并发新增行列可能导致另一方新增结构不可见。实验性表格 CRDT 尚未接入正式协议和编辑器；兼容门禁现已禁止不透明载荷进入现有编辑器，见 [兼容验证报告](document-table-compatibility-report-20261116.md)。 | [模型注释与实现](packages/doc-sdk/src/table-cells.ts)、[路线图](roadmap.md) |
 | 分栏 | **部分**。已有添加、同组移动和调宽，但每栏仍是单个文本块，不能像完整块容器一样混排多个段落/图片/表格；安全删除尚不可用；本地 10 栏限制无法约束并发新增。栏宽和顺序的普通并发写入仍有后写胜出限制。 | [分栏验证报告](document-column-ui-report-20261116.md)、[删除保护](apps/web/src/editor/column-safety.ts)；[飞书分栏说明](https://www.feishu.cn/hc/zh-CN/articles/501138383591-%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3%E7%9A%84%E5%88%86%E6%A0%8F%E5%8A%9F%E8%83%BD) |
 | 协作、离线和升级 | **部分**。已有 CRDT、同步、回执和部分条件撤销；历史代际、旧客户端协议门禁、跨实例升级和安全墓碑回收仍需完整闭环。部分表格和分栏普通写入不是条件提交；不能把局部并发测试视为全部冲突场景均安全。 | [协同 SDK](packages/collab/src/sync.ts)、[路线图 P0](roadmap.md) |
@@ -21,7 +21,7 @@
 | 方面 | 当前情况和差距 | 核心依据 |
 | --- | --- | --- |
 | 修订模式 | **已缺**。飞书提供修订建议、接受/拒绝、评论及撤回；当前代码未找到对应的模式或建议处理实现。普通评论和历史版本不能替代修订模式。 | [飞书修订模式](https://www.feishu.cn/content/feishu-documents-new-revision-mode-meet-professional-needs-boost-collaboration-efficiency)、[文档页](apps/web/src/pages/doc-page.tsx) |
-| `/` 命令及嵌入 | **部分**。当前注册 24 项，基础文本、标题、列表、图片、文件、表格、分栏、公式和流程图等已有入口；飞书列出的日期提醒、群名片、投票、电子表格、多维表格、问卷、日程、第三方嵌入等未形成对应完整文档插入能力。`/url`、`/eq` 等官方别名也未列入当前命令别名。真实嵌入必须包含资源归属、权限、编辑和导出，不应只放静态占位。 | [当前命令注册](apps/web/src/editor/pinyin.ts)；[飞书快捷命令](https://www.feishu.cn/hc/zh-CN/articles/273504118179-%E5%BF%AB%E9%80%9F%E6%8F%92%E5%85%A5%E6%94%AF%E6%8C%81%E7%9A%84%E5%86%85%E5%AE%B9%E7%B1%BB%E5%9E%8B%E7%BC%A9%E5%86%99) |
+| `/` 命令及嵌入 | **部分**。当前注册 24 项，基础文本、标题、列表、图片、文件、表格、分栏、公式和流程图等已有入口；飞书列出的日期提醒、群名片、投票、电子表格、多维表格、问卷、日程、第三方嵌入等未形成对应完整文档插入能力。已补 `/url`、`/eq`、`/rw` 等常用官方别名；其他别名与操作仍需逐项核验。真实嵌入必须包含资源归属、权限、编辑和导出，不应只放静态占位。 | [当前命令注册](apps/web/src/editor/pinyin.ts)；[飞书快捷命令](https://www.feishu.cn/hc/zh-CN/articles/273504118179-%E5%BF%AB%E9%80%9F%E6%8F%92%E5%85%A5%E6%94%AF%E6%8C%81%E7%9A%84%E5%86%85%E5%AE%B9%E7%B1%BB%E5%9E%8B%E7%BC%A9%E5%86%99) |
 | 同步块、子页面列表 | **已缺/待核验**。当前命令和文档模型中未找到完整的跨文档同步块或权限过滤的子页面列表；应分别建立引用关系和权限边界。 | [飞书同步块](https://www.feishu.cn/hc/zh-CN/articles/446198306304-v7.8-%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3%E5%90%8C%E6%AD%A5%E5%9D%97-%E4%B8%80%E5%A4%84%E6%9B%B4%E6%96%B0-%E5%A4%9A%E5%A4%84%E5%AE%9E%E6%97%B6%E5%90%8C%E6%AD%A5)、[飞书子页面列表](https://www.feishu.cn/hc/zh-CN/articles/780474929438-%E4%BD%BF%E7%94%A8%E5%AD%90%E9%A1%B5%E9%9D%A2%E5%88%97%E8%A1%A8) |
 | 基础编辑细节 | **部分**。已有标题、正文、代码、链接、查找替换及撤销等；跨块选区、输入法组合输入、所有命令的段中插入、粘贴和快捷键尚未逐项对照。当前有些附件等命令在段落中间会拒绝安全拆分。 | [编辑器](apps/web/src/editor/editor.tsx)、[链接报告](document-rich-link-report-20261116.md) |
 | 评论与通知 | **部分**。已有划词/块评论、回复、解决、提及和恢复机制；跨段锚点、权限变化、匿名评论和正文提及通知等仍需完整闭环和并发验证。 | [评论面板](apps/web/src/pages/comments-panel.tsx)、[路线图](roadmap.md) |

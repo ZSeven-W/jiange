@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
-import { bodyBlocks, clipText, copyRange, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "../src/model.js";
+import { bodyBlocks, clipText, copyRange, createBlankTable, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "../src/model.js";
 
 function setup(...lines: string[]) {
   const d = new Doc(1);
@@ -153,6 +153,11 @@ describe("formula and diagram blocks", () => {
 import { applyTableEdit, parseTableData } from "../src/model.js";
 
 describe("table block transforms", () => {
+  it("creates a bounded rectangular grid with independent rows", () => {
+    const rows = createBlankTable(2, 3)!;
+    expect(rows).toEqual([["", "", ""], ["", "", ""]]); rows[0][0] = "A"; expect(rows[1][0]).toBe("");
+    for (const [r, c] of [[0, 1], [1, 0], [201, 1], [1, 51], [200, 50], [1.5, 1], [NaN, 1]]) expect(createBlankTable(r, c)).toBeNull();
+  });
   it("parses tableData with fallback", () => {
     expect(parseTableData(JSON.stringify([["a"], ["b"]]))).toEqual([["a"], ["b"]]);
     expect(parseTableData(undefined)[0].length).toBe(3);

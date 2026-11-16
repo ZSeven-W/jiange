@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { MenuItem } from "./pinyin";
 import { MenuGlyph } from "./menu-icons";
+import { ChevronRight } from "lucide-react";
+import { TableSizePicker, type TableSize } from "./table-size-picker";
 
 /**
  * 斜杠菜单（受控列表）：高亮完全由 index 驱动，↑/↓ 换高亮、Enter 选中、
@@ -52,6 +54,11 @@ export function SlashMenu({
   index,
   onPick,
   onHover,
+  tableSize,
+  onTableOpen,
+  onTableSizeChange,
+  onTableSizePick,
+  onTableSizeClose,
 }: {
   x: number;
   y: number;
@@ -60,8 +67,14 @@ export function SlashMenu({
   index: number;
   onPick: (it: MenuItem) => void;
   onHover: (i: number) => void;
+  tableSize?: TableSize;
+  onTableOpen?: () => void;
+  onTableSizeChange?: (size: TableSize) => void;
+  onTableSizePick?: (size: TableSize) => void;
+  onTableSizeClose?: () => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLButtonElement>(null);
   const [placement, setPlacement] = useState({ dx: 0, dy: 0, maxHeight: 480 });
   const placementRef = useRef(placement);
   useLayoutEffect(() => {
@@ -132,7 +145,7 @@ export function SlashMenu({
   return (
     <div className="absolute z-30 w-[232px] max-w-[calc(100vw-16px)]" style={{ left: x + placement.dx, top: y + placement.dy }} onMouseDown={(e) => e.preventDefault()} data-slash-menu>
       {/* 飞书实测：宽 232、#D9DBDF 描边、内边距 8、分组标题 40 高（含上内边距）、行高 32、图标 20 距行左 8、文字距图标 16、选中 #EDEDEE。 */}
-      <div ref={listRef} style={{ maxHeight: placement.maxHeight }} className="overflow-y-auto rounded-lg border border-[#D9DBDF] bg-surface px-2 pb-2 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border">
+      <div ref={listRef} style={{ maxHeight: placement.maxHeight }} className={cn("overflow-y-auto rounded-lg border border-[#D9DBDF] bg-surface px-2 pb-2 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", tableSize && "max-sm:invisible")}>
         {query && <div className="flex h-8 items-end px-1 pb-1 text-[12px] text-subtle">搜索：{query}</div>}
         {items.length === 0 && <div className="px-2 py-3 text-[13px] text-subtle">没有匹配的块</div>}
         {groups.map((g) => (
@@ -146,23 +159,28 @@ export function SlashMenu({
                 return (
                   <button
                     key={it.id}
+                    ref={it.id === "table" ? tableRef : undefined}
                     type="button"
+                    aria-haspopup={it.id === "table" && onTableOpen ? "grid" : undefined}
+                    aria-expanded={it.id === "table" && onTableOpen ? !!tableSize : undefined}
                     data-selected={selected}
                     data-value={it.id}
                     className={cn("flex h-8 w-full items-center gap-4 rounded-md px-2 text-left text-[14px] text-foreground", selected ? "bg-[#EDEDEE] dark:bg-hover" : "hover:bg-[#EDEDEE] dark:hover:bg-hover")}
-                    onMouseEnter={() => onHover(gi)}
-                    onClick={() => onPick(it)}
+                    onMouseEnter={() => { onHover(gi); if (it.id === "table") onTableOpen?.(); }}
+                    onClick={() => { if (it.id === "table" && onTableOpen) { onHover(gi); onTableOpen(); } else onPick(it); }}
                   >
                     <span className={cn("grid size-5 shrink-0 place-items-center", it.id === "code" ? "text-[#2EA121]" : "text-primary")}>
                       <MenuGlyph id={it.id} fallback={it.icon} size={18} />
                     </span>
                     <span className="flex-1 truncate">{it.label}</span>
+                    {it.id === "table" && onTableOpen && <ChevronRight size={14} className="text-subtle" />}
                   </button>
                 );
               })}
           </div>
         ))}
       </div>
+      {tableSize && onTableSizeChange && onTableSizePick && onTableSizeClose && <TableSizePicker anchor={tableRef} size={tableSize} onChange={onTableSizeChange} onPick={onTableSizePick} onClose={onTableSizeClose} />}
     </div>
   );
 }

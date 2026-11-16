@@ -409,3 +409,9 @@ export function parseTableData(data: string | undefined): string[][] {
 export const EMPTY_TABLE: readonly (readonly string[])[] = [["", "", ""], ["", "", ""], ["", "", ""]];
 /** The current Feishu slash command inserts two blank rows and three columns. */
 export const NEW_TABLE: readonly (readonly string[])[] = [["", "", ""], ["", "", ""]];
+
+/** Create independent rows for a bounded document table. */
+export function createBlankTable(rows: number, columns: number): string[][] | null {
+  if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(columns) || rows < 1 || columns < 1 || rows > 200 || columns > 50 || rows * columns > 5000) return null;
+  return Array.from({ length: rows }, () => Array.from({ length: columns }, () => ""));
+}
