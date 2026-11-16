@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
+	mux.Handle("GET /api/account-docs", s.requireUser(http.HandlerFunc(s.listDocsForAccount)))
 	mux.Handle("POST /api/docs", s.requireUser(http.HandlerFunc(s.createDoc)))
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))

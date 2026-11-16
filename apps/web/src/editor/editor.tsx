@@ -89,6 +89,7 @@ import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSla
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-assets";
+import { pastedDocumentLink } from "./document-link-paste";
 import type { SlashInsertion, SlashQuery } from "./slash-insert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./comment-anchor";
 import { searchableLocations, type FindMatch } from "./find-replace";
@@ -139,6 +140,9 @@ interface Props {
   findNavigation?: number;
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
+  /** Documents eligible for recognizing a pasted document URL. */
+  documentLinkDocs?: MentionDoc[];
+  documentLinkDocsUpdatedAt?: number;
   /** workspace members offered by the @ menu（@人提及） */
   people?: MemberInfo[];
   /** stores a file and returns its id; enables image/file blocks */
@@ -176,7 +180,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], documentLinkDocs = [], documentLinkDocsUpdatedAt = 0, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -1947,9 +1951,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const oldRange = currentDoc && oldQuery && resolveSlashQuery(currentDoc, oldQuery);
     const tracking = !!oldRange && !!selection && collapsed(selection) && eqId(selection.f.b, oldQuery!.block) && selection.f.o === oldRange.end;
     if (active && !tracking) changeSlash(null);
+    const documentLink = documentLinkDocsUpdatedAt > 0 && Date.now() - documentLinkDocsUpdatedAt < 30_000 && !active && !files.length && currentDoc && selection && validEditorSelection(currentDoc, selection) && currentDoc.blockInfo(selection.f.b).type !== "code" && !isSourceBlock(currentDoc, selection.f.b)
+      ? pastedDocumentLink(raw, plain, location.origin, location.pathname, documentLinkDocs)
+      : null;
     if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
       if (files.length) { setColumnNotice("暂不支持在分栏中粘贴图片或附件，请先将文件插入正文。"); return; }
-      const clip = columnClipboardBlocks(raw, plain);
+      const clip = documentLink ?? columnClipboardBlocks(raw, plain);
       if (!clip) { setColumnNotice("分栏暂不支持粘贴该内容，原内容已保留。"); return; }
       run((tx, s) => {
         const at = collapsed(s) ? s.a : deleteRange(tx, s);
@@ -1969,7 +1976,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       void insertFiles(files, { captured: { doc: d, anchor: selection.f.b, beforeAnchor: offset === 0, commandIds: null }, client: sync.client, type: info.type, parent: info.parent, cursor: { ...selection.f }, boundaryIds: d.visibleIds(selection.f.b) });
       return;
     }
-    const clip = clipboardBlocks(raw, plain);
+    const clip = documentLink ?? clipboardBlocks(raw, plain);
     if (!clip) { setColumnNotice("剪贴板中没有可粘贴的内容，原内容已保留。"); return; }
     const assetPlan = planClipboardAssets(clip, location.origin);
     if (!assetPlan.ok) { setColumnNotice(assetPlan.message); return; }

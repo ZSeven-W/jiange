@@ -506,6 +506,10 @@ export const extrasApi = {
 };
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
+  listForAccount: (userId: number) => request<{ docs?: unknown }>("GET", "/api/account-docs", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r): Pick<DocMeta, "id" | "title">[] => {
+    if (!Array.isArray(r?.docs) || r.docs.length > 500 || !r.docs.every((d) => d && Number.isSafeInteger(d.id) && d.id > 0 && typeof d.title === "string")) throw new TypeError("无法确认文档列表");
+    return r.docs;
+  }),
   recent: () => request<{ docs: RecentDoc[] }>("GET", "/api/recent").then((r) => r.docs),
   recordVisit: (id: number) => request<void>("POST", `/api/docs/${id}/visit`),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),

@@ -616,6 +616,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const importFile = (file: File) => { void (isDocxFile(file) ? importWord(file) : importMd(file)); };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
   const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
+  const pasteDocs = useQuery({ queryKey: ["paste-document-titles", me.user.id], queryFn: () => docsApi.listForAccount(me.user.id), enabled: metadataVerified, refetchInterval: 30_000, refetchIntervalInBackground: false, retry: false });
+  const documentLinkDocs = pasteDocs.isSuccess && !pasteDocs.isFetching ? pasteDocs.data : [];
   // Commenting and editing are separate capabilities: a viewer may comment
   // without ever gaining permission to modify the document.
   const canEditRole = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
@@ -1186,6 +1188,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
+                documentLinkDocs={documentLinkDocs}
+                documentLinkDocsUpdatedAt={pasteDocs.dataUpdatedAt}
                 upload={canEditContent ? (f, progress) => docsApi.upload(id, f, progress) : undefined}
                 copyClipboardAssets={canEditContent ? (source, ids, request, signal) => docsApi.copyClipboardAssets(id, source, ids, request, me.user.id, signal) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}
