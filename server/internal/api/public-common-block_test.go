@@ -78,6 +78,21 @@ func TestPublicCommonBlockRejectsInvalidMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicTextMarksPreserveOnlyKnownLinkKinds(t *testing.T) {
+	got := publicTextMarks(map[string]string{"link": "#/doc/12", "linkKind": "text"})
+	if got["link"] != "#/doc/12" || got["linkKind"] != "text" {
+		t.Fatalf("text link: %#v", got)
+	}
+	got = publicTextMarks(map[string]string{"link": "#/doc/12", "linkKind": "unknown"})
+	if _, ok := got["linkKind"]; ok {
+		t.Fatalf("unknown kind leaked: %#v", got)
+	}
+	got = publicTextMarks(map[string]string{"link": "javascript:bad", "linkKind": "text"})
+	if _, ok := got["linkKind"]; ok {
+		t.Fatalf("kind without valid link: %#v", got)
+	}
+}
+
 func TestPublicColumnChildUsesTextRenderer(t *testing.T) {
 	view := collab.DocView{Blocks: []collab.BlockView{
 		{ID: "1:1", Parent: "0:0", Type: "columns", Props: map[string]string{}},

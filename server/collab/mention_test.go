@@ -109,6 +109,31 @@ func TestMentionTargetRejectsHiddenFormulaAndDocumentLink(t *testing.T) {
 	}
 }
 
+func TestMentionTargetDistinguishesOrdinaryDocumentLink(t *testing.T) {
+	d := NewDoc()
+	block := d.CreateBlock(4, Root, "V", "paragraph")
+	insert := d.InsertText(4, block.ID, 0, "@人")
+	value := "2"
+	mark := Op{T: TMark, ID: d.next(4, 1), Block: block.ID, Key: "mention", Value: &value, Start: Anchor{Char: insert.ID}, End: Anchor{Char: OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + 1}, Side: 1}}
+	d.Apply(mark)
+	link := "#/doc/42"
+	over := mark
+	over.ID, over.Key, over.Value = d.next(4, 1), "link", &link
+	d.Apply(over)
+	kind := "text"
+	over.ID, over.Key, over.Value = d.next(4, 1), "linkKind", &kind
+	d.Apply(over)
+	if d.MentionTarget(block.ID, mark.ID) != 2 {
+		t.Fatal("ordinary link hid visible mention")
+	}
+	kind = "reference"
+	over.ID, over.Value = d.next(4, 1), &kind
+	d.Apply(over)
+	if d.MentionTarget(block.ID, mark.ID) != 0 {
+		t.Fatal("document reference exposed hidden mention")
+	}
+}
+
 func TestInvalidShareLinkDoesNotHideVisibleMention(t *testing.T) {
 	d := NewDoc()
 	block := d.CreateBlock(4, Root, "V", "paragraph")

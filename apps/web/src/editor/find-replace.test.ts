@@ -194,6 +194,15 @@ describe("replaceMatches", () => {
     new Tx(doc).format(block, 0, 4, "link", "#/p/public_token");
     expect(findMatches(doc, "共享")[0].mention).toBe(true);
   });
+  it("can replace text in a manually authored internal hyperlink", () => {
+    const { doc, blocks: [block] } = setup(["paragraph", "原始链接"]), tx = new Tx(doc);
+    tx.format(block, 0, 4, "link", "#/doc/12"); tx.format(block, 0, 4, "linkKind", "text");
+    const match = findMatches(doc, "原始")[0];
+    expect(match.mention).toBe(false);
+    expect(replaceMatches(new Tx(doc), [match], "更新")).toEqual({ replaced: 1, skipped: 0 });
+    expect(doc.text(block)).toBe("更新链接");
+    expect(doc.richChars(block).slice(0, 2).every((char) => char.marks.linkKind === "text")).toBe(true);
+  });
 
   it("rejects other document instances and blocks moved under a column", () => {
     const a = setup(["paragraph", "目标"], ["columns", ""]);

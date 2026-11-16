@@ -125,7 +125,12 @@ export function parseInline(line: string): MdSpan[] {
       }
       if (text[i] === "[") {
         const link = linkAt(text, i, closers![i + 1], linkCache);
-        if (link && link.label) { flush(); parse(link.label, { ...marks, link: link.url }, depth + 1); i = link.end; continue; }
+        if (link && link.label) {
+          flush();
+          const internal = link.url.startsWith("#/doc/") || /^#\/(s|p)\/[A-Za-z0-9_-]{1,256}$/.test(link.url);
+          parse(link.label, internal ? { ...marks, link: link.url, linkKind: "text" } : { ...marks, link: link.url }, depth + 1);
+          i = link.end; continue;
+        }
       }
       // A valid Markdown comment separates adjacent formatting delimiters
       // without adding content to the rendered document.

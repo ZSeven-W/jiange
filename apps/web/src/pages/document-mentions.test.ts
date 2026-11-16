@@ -7,6 +7,10 @@ function block(id: string, type: string, spans: { text: string; marks: Record<st
 }
 
 describe("document mention summary", () => {
+  it("keeps a visible person mention under an ordinary document hyperlink", () => {
+    const result = collectDocumentMentions({ blocks: [block("1:1", "paragraph", [{ text: "@小简", marks: { mention: "2", link: "#/doc/9", linkKind: "text" } }])] });
+    expect(result.people[0]?.userId).toBe(2);
+  });
   it("groups contiguous formatted spans and counts separate mentions in document order", () => {
     const view: DocView = { blocks: [
       block("1:1", "paragraph", [

@@ -210,7 +210,7 @@ func (s *Server) scanDocumentReferences(ctx context.Context, guard store.Restore
 				}
 				snippet := clipReferenceText(text.String(), 180)
 				for _, span := range block.Spans {
-					if span.Text == "" || span.Marks["math"] != "" {
+					if span.Text == "" || span.Marks["math"] != "" || span.Marks["linkKind"] == "text" {
 						continue
 					}
 					href := span.Marks["link"]

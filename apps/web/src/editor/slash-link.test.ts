@@ -62,4 +62,22 @@ describe("slash link insertion", () => {
     expect(insertInlineLink(tx, anchor, "link", "https://example.test/")).toBeNull();
     expect(tx.ops).toHaveLength(0);
   });
+  it("distinguishes a manually authored internal link from a reference", () => {
+    const { doc, block } = fixture("链接"), anchor = captureInlineLinkSelection(doc, { a: { b: block, o: 0 }, f: { b: block, o: 2 } })!;
+    expect(insertInlineLink(new Tx(doc), anchor, "链接", "#/doc/12")).not.toBeNull();
+    expect(doc.richChars(block).every((char) => char.marks.link === "#/doc/12" && char.marks.linkKind === "text")).toBe(true);
+  });
+  it("does not edit or insert inside a document reference", () => {
+    const { doc, block } = fixture("引用"), tx = new Tx(doc);
+    tx.format(block, 0, 2, "link", "#/doc/12"); tx.format(block, 0, 2, "linkKind", "reference");
+    expect(captureInlineLinkSelection(doc, { a: { b: block, o: 0 }, f: { b: block, o: 1 } })).toBeNull();
+    expect(captureInlineLink(doc, { b: block, o: 1 })).toBeNull();
+  });
+  it("rejects a changed link classification while the form is open", () => {
+    const { doc, block } = fixture("链接"), anchor = captureInlineLinkSelection(doc, { a: { b: block, o: 0 }, f: { b: block, o: 2 } })!;
+    new Tx(doc).format(block, 0, 2, "linkKind", "text");
+    const tx = new Tx(doc);
+    expect(insertInlineLink(tx, anchor, "链接", "#/doc/12")).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+  });
 });

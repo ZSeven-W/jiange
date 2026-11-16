@@ -1,5 +1,5 @@
 import type { DocView } from "@/lib/api";
-import { isDocumentReferenceURL } from "@/lib/safe-url";
+import { isDocumentReferenceMarks } from "@/lib/safe-url";
 
 export interface MentionedPerson { userId: number; name: string; count: number; firstBlock: string; resolvedName: boolean }
 export interface MentionSummary { people: MentionedPerson[]; truncated: boolean }
@@ -31,7 +31,7 @@ export function collectDocumentMentions(view: DocView, members: readonly { id: n
       if (++scanned > MAX_SPANS) { truncated = true; break; }
       const raw = span.marks.mention;
       const id = raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : 0;
-      const valid = Number.isSafeInteger(id) && id > 0 && !!span.text && !span.marks.math && !isDocumentReferenceURL(span.marks.link);
+      const valid = Number.isSafeInteger(id) && id > 0 && !!span.text && !span.marks.math && !isDocumentReferenceMarks(span.marks);
       if (!valid) { finish(); continue; }
       if (current.id === id) current.text = (current.text + span.text.slice(0, 160)).slice(0, 160);
       else { finish(); current.id = id; current.text = span.text.slice(0, 160); }

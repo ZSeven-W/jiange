@@ -16,7 +16,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
 
-func appendReference(t *testing.T, st store.Store, docID int64, href, text string) string {
+func appendReference(t *testing.T, st store.Store, docID int64, href, text string, kind ...string) string {
 	t.Helper()
 	ctx := context.Background()
 	d, _, err := StateAtHead(ctx, st, docID)
@@ -30,8 +30,19 @@ func appendReference(t *testing.T, st store.Store, docID int64, href, text strin
 	if !d.Apply(mark) {
 		t.Fatal("mark failed")
 	}
+	ops := []collab.Op{block, inserted, mark}
+	if len(kind) > 0 {
+		value := kind[0]
+		kindMark := mark
+		kindMark.ID = collab.OpID{Client: 51, Clock: d.Clock() + 1}
+		kindMark.Key, kindMark.Value = "linkKind", &value
+		if !d.Apply(kindMark) {
+			t.Fatal("kind mark failed")
+		}
+		ops = append(ops, kindMark)
+	}
 	var rows []store.RawOp
-	for _, op := range []collab.Op{block, inserted, mark} {
+	for _, op := range ops {
 		raw, err := collab.EncodeOps([]collab.Op{op})
 		if err != nil {
 			t.Fatal(err)
@@ -42,6 +53,31 @@ func appendReference(t *testing.T, st store.Store, docID int64, href, text strin
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("%d:%d", block.ID.Client, block.ID.Clock)
+}
+
+func TestDocumentReferencesExcludeManualTextLinks(t *testing.T) {
+	e := newCopyTestEnv(t)
+	ctx := context.Background()
+	source, err := e.store.CreateDoc(ctx, e.ownerSpace.ID, e.ownerUser.ID, nil, "来源", syncsrv.InitialOps("来源"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	href := fmt.Sprintf("#/doc/%d", e.source.ID)
+	appendReference(t, e.store, source.ID, href, "普通文字链接", "text")
+	guard := store.RestoreGuard{UserID: e.ownerUser.ID, SessionHash: []byte("reference-kind")}
+	if err = e.store.CreateSession(ctx, guard.SessionHash, guard.UserID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: e.store, Now: time.Now}
+	result, err := server.scanDocumentReferences(ctx, guard, e.source.ID)
+	if err != nil || len(result.Incoming) != 0 {
+		t.Fatalf("manual link counted: %+v %v", result, err)
+	}
+	block := appendReference(t, e.store, source.ID, href, "文档引用", "reference")
+	result, err = server.scanDocumentReferences(ctx, guard, e.source.ID)
+	if err != nil || len(result.Incoming) != 1 || len(result.Incoming[0].Contexts) != 1 || result.Incoming[0].Contexts[0].Block != block {
+		t.Fatalf("reference missing: %+v %v", result, err)
+	}
 }
 
 func TestDocumentReferencesRequireAccessAndRespectCopyPolicy(t *testing.T) {

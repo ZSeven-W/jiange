@@ -98,7 +98,7 @@ export function imageInfo(data: Uint8Array): Omit<DocxImage, "data"> | null {
 
 const TEXT_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo", "callout"]);
 const SOURCE_TYPES = new Set(["code", "math", "diagram"]);
-const DOCX_MARKS = new Set(["bold", "italic", "underline", "strike", "code", "link", "color", "bg"]);
+const DOCX_MARKS = new Set(["bold", "italic", "underline", "strike", "code", "link", "linkKind", "color", "bg"]);
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 function absoluteLink(url: string | undefined, origin: string | undefined): string | undefined {
@@ -139,6 +139,7 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
     else if (block.type !== "divider" && !TEXT_TYPES.has(block.type) && !SOURCE_TYPES.has(block.type)) losses.add("部分特殊内容块无法完整导出");
     if (TEXT_TYPES.has(block.type)) {
       if (block.spans.some((span) => Object.entries(span.marks).some(([key, value]) => value && !DOCX_MARKS.has(key)))) losses.add("提及、行内公式等特殊文字样式以纯文本导出");
+      if (block.spans.some((span) => span.marks.linkKind !== "text" && (span.marks.link?.startsWith("#/doc/") || /^#\/(s|p)\/[A-Za-z0-9_-]{1,256}$/.test(span.marks.link ?? "")))) losses.add("文档引用将作为普通超链接导出，重新导入后不会保留引用关系");
       if (block.spans.some((span) => span.marks.link && !absoluteLink(span.marks.link, options.origin))) losses.add("部分链接协议不受支持，已导出为普通文字");
     }
   }

@@ -90,6 +90,11 @@ describe("xml", () => {
 });
 
 describe("Word export → import round trip", () => {
+  it("warns when document references become ordinary Word hyperlinks", () => {
+    const losses = (linkKind: string) => docxExportLosses({ blocks: [b("paragraph", [{ text: "链接", marks: { link: "#/doc/12", linkKind } }])] }, { origin: "https://jiange.test" });
+    expect(losses("reference").join("；")).toContain("文档引用将作为普通超链接导出");
+    expect(losses("text")).toEqual([]);
+  });
   const view = {
     blocks: [
       b("title", "季度计划"),

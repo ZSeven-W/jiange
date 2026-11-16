@@ -93,6 +93,13 @@ describe("read-only document snapshots", () => {
     expect(html).toContain("bg-[#E1EAFF]");
     expect(html).not.toContain('target="_blank"');
   });
+  it("does not style an internal text hyperlink as a document reference", () => {
+    const paragraph = b("1:1", "paragraph");
+    paragraph.spans = [{ text: "自定义文字", marks: { link: "#/doc/12", linkKind: "text" } }];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={{ blocks: [paragraph] }} publicToken="public-token" />);
+    expect(html).toContain('href="#/doc/12"');
+    expect(html).not.toContain("bg-[#E1EAFF]");
+  });
 
   it("renders column children only within their parent and rejects unsafe links and file IDs", () => {
     const paragraph = b("1:5", "paragraph");

@@ -5,7 +5,7 @@ import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
-import { isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
+import { isDocumentReferenceMarks, isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
 import { parseMentionNotificationHash } from "@/lib/mention-notification-link";
 import {
   activeMarks,
@@ -39,6 +39,7 @@ import { SlashMenu, nextSlashIndex, slashGridSize } from "./slash-menu";
 import { TABLE_PICKER_LIMIT, validTablePickerSize, type TableSize } from "./table-size-picker";
 import { SlashLinkPopover } from "./slash-link-popover";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slash-link";
+import { toggleTextLink } from "./link-kind";
 import { captureLinkRange, resolveLinkRange, sameLinkRange, type LinkRange } from "./link-range";
 import { applyTableEdit, CLIPPABLE_BLOCKS, createBlankTable, NEW_TABLE, parseTableData, type ClipBlock } from "./model";
 import { blockAlign, FormatToolbar, type Align } from "./format-toolbar";
@@ -726,7 +727,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!point || !selection) return;
       sel.current = { a: current, f: current };
       selection.setBaseAndExtent(point.node, point.offset, point.node, point.offset);
-      if (afterLink) stored.current = { ...(stored.current ?? {}), link: null };
+      if (afterLink) stored.current = { ...(stored.current ?? {}), link: null, linkKind: null };
     });
   };
 
@@ -1028,7 +1029,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!doc.hasBlock(block) || !doc.view().blocks.some((item) => item.id === anchor.block)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被删除。"); return; }
       const ids = doc.visibleIds(block), index = ids.findIndex((id) => idKey(id) === anchor.char);
       const marks = index < 0 ? undefined : doc.richChars(block)[index]?.marks;
-      if (!marks || marks.mention !== String(userId) || marks.math || isDocumentReferenceURL(marks.link)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被修改或删除。"); return; }
+      if (!marks || marks.mention !== String(userId) || marks.math || isDocumentReferenceMarks(marks)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被修改或删除。"); return; }
       const point = root.current && posToDom(root.current, { b: block, o: index + 1 });
       const node = point && (point.node.nodeType === Node.ELEMENT_NODE ? point.node as Element : point.node.parentElement);
       const el = node?.closest<HTMLElement>(`[data-member="${userId}"]`);
@@ -1623,8 +1624,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (start === null) return;
         const n = tx.insert(m.at.b, start, it.label);
         tx.format(m.at.b, start, start + n, "link", `#/doc/${it.id.slice(4)}`);
+        tx.format(m.at.b, start, start + n, "linkKind", "reference");
         tx.insert(m.at.b, start + n, " ");
         tx.format(m.at.b, start + n, start + n + 1, "link", null);
+        tx.format(m.at.b, start + n, start + n + 1, "linkKind", null);
         applied = true;
         return { b: m.at.b, o: start + n + 1 };
       });
@@ -2276,7 +2279,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const href = a.getAttribute("href") ?? "";
       const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length), current = sync.client.doc;
       if (!from || !to || !current) return;
-      const range = captureLinkRange(current, from, to, href, a.hasAttribute("data-link"));
+      const range = captureLinkRange(current, from, to, href, true);
       if (!range) return;
       if (linkCard && sameLinkRange(linkCard.range, range)) return;
       if (editingLinkCard.current) return;
@@ -2311,7 +2314,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           if (!resolved || !safeURL(url)) { setConflictDraft({ text: url, message: "链接或编辑位置已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
           sel.current = { a: resolved.from, f: resolved.to };
           let applied = false;
-          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", url); applied = true; return valid.to; });
+          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", url); tx.format(valid.from.b, valid.from.o, valid.to.o, "linkKind", isDocumentReferenceURL(url) ? "text" : null); applied = true; return valid.to; });
           if (!applied) setConflictDraft({ text: url, message: "链接或编辑位置已变化，本次操作没有应用。请复制草稿后重试。" });
           else um.seal();
         }}
@@ -2321,7 +2324,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           if (!resolved) { setToast("链接已变化，请重新选择。"); return; }
           sel.current = { a: resolved.from, f: resolved.to };
           let applied = false;
-          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", null); applied = true; return valid.to; });
+          run((tx) => { const valid = resolveLinkRange(tx.doc, range); if (!valid) return; tx.format(valid.from.b, valid.from.o, valid.to.o, "link", null); tx.format(valid.from.b, valid.from.o, valid.to.o, "linkKind", null); applied = true; return valid.to; });
           if (!applied) setToast("链接已变化，请重新选择。"); else um.seal();
         }}
       />}
@@ -2923,7 +2926,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               } else toggleMark(tx, s, key, value);
             })
           }
-          onLink={(url) => run((tx, s) => toggleMark(tx, s, "link", url))}
+          onLink={(url) => { run((tx, s) => { const result = toggleTextLink(tx, s, url); if (result !== "applied") setColumnNotice(result === "invalid" ? "请输入有效的链接地址。" : "文档引用或公式不能直接设置文字链接。"); }); um.seal(); }}
           onType={(t) => run((tx, s) => { if (!isColumnText(tx.doc, s.f.b)) return setBlockType(tx, s, t); setColumnNotice("暂不支持更改栏内块类型。"); })}
           onComment={onComment ? () => {
             const s = sel.current;
@@ -2998,7 +3001,7 @@ export function setSelectionAlignment(tx: Tx, selection: Sel, align: Align): voi
   }
 }
 /** “清除格式”移除的行内样式。 */
-export const CLEARABLE_MARKS = ["bold", "italic", "underline", "strike", "code", "color", "bg", "link"] as const;
+export const CLEARABLE_MARKS = ["bold", "italic", "underline", "strike", "code", "color", "bg", "link", "linkKind"] as const;
 
 export function blockAbilities(type: string, multi: boolean, canCopy: boolean, canComment: boolean): BlockMenuAbilities {
   const textish = COLORABLE.has(type) || type === "code";
@@ -3523,7 +3526,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         <MathView src={marks.math} />
       </span>
     );
-  if (isDocumentReferenceURL(href))
+  if (href && isDocumentReferenceMarks(marks))
     return (
       <a
         style={style}

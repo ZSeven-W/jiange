@@ -14,7 +14,7 @@ import { DiagramView } from "@/editor/diagram-view";
 import { MathView } from "@/editor/math-view";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
-import { isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
+import { isDocumentReferenceMarks, safeURL } from "@/lib/safe-url";
 import { BlockHandle } from "@/editor/block-handle";
 import { columnWeights, COLUMN_WIDTHS } from "@/editor/column-widths";
 import { useTableStickyHeader } from "@/editor/table-sticky-header";
@@ -57,7 +57,7 @@ function RichText({ spans, flags, activeThread, onActivateComment }: { spans: Sp
     if (marks.underline || marks.strike) style.textDecoration = [marks.underline && "underline", marks.strike && "line-through"].filter(Boolean).join(" ");
     const classes = cn(marks.bold && "font-semibold", marks.italic && "italic", marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]", marks.mention && "rounded bg-accent px-0.5 font-medium text-primary");
     const href = safeURL(marks.link);
-    const internalMention = isDocumentReferenceURL(href);
+    const internalMention = isDocumentReferenceMarks(marks) && !!href;
     if (href) return wrap(<a href={href} target={href.startsWith("#/") ? undefined : "_blank"} rel={href.startsWith("#/") ? undefined : "noopener noreferrer"} className={cn(classes, "text-primary hover:underline", internalMention && "rounded bg-[#E1EAFF] px-1 py-px font-medium no-underline")} style={style}>{text}</a>);
     return wrap(<span className={classes} style={style}>{text}</span>);
   })}</>;

@@ -86,11 +86,11 @@ func (d *Doc) MentionTargets(refs []MentionRef) map[MentionRef]MentionMatch {
 			}
 			return point, true
 		}
-		intervals := map[string][]mentionInterval{"mention": {}, "math": {}, "link": {}}
+		intervals := map[string][]mentionInterval{"mention": {}, "math": {}, "link": {}, "linkKind": {}}
 		targets := make(map[OpID]mentionInterval, len(requested))
 		valid := true
 		for _, mark := range b.marks {
-			if mark.key != "mention" && mark.key != "math" && mark.key != "link" {
+			if mark.key != "mention" && mark.key != "math" && mark.key != "link" && mark.key != "linkKind" {
 				continue
 			}
 			from, a := slot(mark.start)
@@ -108,7 +108,7 @@ func (d *Doc) MentionTargets(refs []MentionRef) map[MentionRef]MentionMatch {
 		if !valid || len(targets) == 0 {
 			continue
 		}
-		keys := []string{"mention", "math", "link"}
+		keys := []string{"mention", "math", "link", "linkKind"}
 		active := map[string]*mentionHeap{}
 		next := map[string]int{}
 		for _, key := range keys {
@@ -143,7 +143,10 @@ func (d *Doc) MentionTargets(refs []MentionRef) map[MentionRef]MentionMatch {
 				v.hidden = true
 			}
 			if h := active["link"]; h.Len() > 0 && (*h)[0].mark.value != nil && (strings.HasPrefix(*(*h)[0].mark.value, "#/doc/") || mentionSharedDocumentLink.MatchString(*(*h)[0].mark.value)) {
-				v.hidden = true
+				kind := active["linkKind"]
+				if kind.Len() == 0 || (*kind)[0].mark.value == nil || *(*kind)[0].mark.value != "text" {
+					v.hidden = true
+				}
 			}
 			chars = append(chars, v)
 		}

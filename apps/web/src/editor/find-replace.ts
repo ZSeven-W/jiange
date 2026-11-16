@@ -1,6 +1,6 @@
 import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
 import { TITLE } from "./model";
-import { isDocumentReferenceURL } from "@/lib/safe-url";
+import { isDocumentReferenceMarks } from "@/lib/safe-url";
 
 // Body types whose text is visibly and directly editable by the body editor.
 // The title is searched separately; table cells have their own representation.
@@ -79,7 +79,7 @@ function literalRegExp(query: string, caseSensitive: boolean): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "gu" : "giu");
 }
 
-const isMention = (marks: Record<string, string>) => !!marks.mention || isDocumentReferenceURL(marks.link);
+const isMention = (marks: Record<string, string>) => !!marks.mention || isDocumentReferenceMarks(marks);
 
 /**
  * Finds non-overlapping matches in the title and visible body/column blocks.
@@ -140,6 +140,7 @@ function sharedMarks(marks: Record<string, string>[]): Record<string, string> {
     // Mention IDs and inline-math source carry semantics tied to the old text.
     if (key === "mention" || key === "math" || marks.some((m) => m[key] !== common[key])) delete common[key];
   }
+  if (!common.link) delete common.linkKind;
   return common;
 }
 

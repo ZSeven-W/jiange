@@ -12,6 +12,7 @@ describe("pasted document links", () => {
     const clip = documentLinkClip(target, " 项目😀说明 ")!;
     expect(clip[0].chars.map((c) => c.ch).join("")).toBe("项目😀说明");
     expect(clip[0].chars.every((c) => c.marks.link === target.href)).toBe(true);
+    expect(clip[0].chars.every((c) => c.marks.linkKind === "reference")).toBe(true);
     expect(documentLinkClip(target, "")?.[0].chars.map((c) => c.ch).join("")).toBe("未命名文档");
   });
   it("preserves a share token in the reference", () => {

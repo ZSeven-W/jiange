@@ -4,12 +4,13 @@ import { Doc, ROOT, Tx } from "@jiange/collab";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import { Editor } from "./editor";
 
-function renderDocument(url: string) {
+function renderDocument(url: string, kind?: string) {
   const doc = new Doc(1);
   const tx = new Tx(doc);
   const text = tx.create("paragraph", null, ROOT);
   tx.insert(text, 0, "文字链接");
   tx.format(text, 0, 4, "link", url);
+  if (kind) tx.format(text, 0, 4, "linkKind", kind);
   const bookmark = tx.create("bookmark", text, ROOT);
   tx.setProp(bookmark, "url", url);
   tx.setProp(bookmark, "name", "网页");
@@ -42,5 +43,10 @@ describe("untrusted document links in the editor", () => {
     expect(renderDocument("#/p/aBc_123")).toContain('href="#/p/aBc_123" data-mention');
     const video = renderDocument("https://example.com/video.mp4");
     expect(video).toContain('src="https://example.com/video.mp4"');
+  });
+  it("renders an internal text hyperlink as an ordinary editable link", () => {
+    const html = renderDocument("#/doc/42", "text");
+    expect(html).toMatch(/href="#\/doc\/42"[^>]*data-link/);
+    expect(html).not.toContain('href="#/doc/42" data-mention');
   });
 });

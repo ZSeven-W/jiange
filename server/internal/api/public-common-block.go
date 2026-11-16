@@ -134,6 +134,9 @@ func publicTextMarks(marks map[string]string) map[string]string {
 	}
 	if publicSafeLink(marks["link"]) {
 		out["link"] = marks["link"]
+		if marks["linkKind"] == "text" || marks["linkKind"] == "reference" {
+			out["linkKind"] = marks["linkKind"]
+		}
 	}
 	if value, err := strconv.ParseUint(marks["mention"], 10, 53); err == nil && value > 0 {
 		out["mention"] = strconv.FormatUint(value, 10)

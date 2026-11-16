@@ -1,5 +1,6 @@
 import { tableDataOf } from "@/editor/table-cells";
 import { markdownTableRows } from "@/lib/markdown";
+import { isDocumentReferenceMarks } from "@/lib/safe-url";
 
 type ExportBlock = {
   type: string;
@@ -9,7 +10,7 @@ type ExportBlock = {
 
 const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo"]);
 const SPECIAL_BLOCKS = new Set(["code", "math", "diagram", "divider", "flowchart"]);
-const MARKS = new Set(["bold", "italic", "strike", "code", "link"]);
+const MARKS = new Set(["bold", "italic", "strike", "code", "link", "linkKind"]);
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /** Describe losses in the current Markdown serializer without exposing document content. */
@@ -45,6 +46,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
       losses.add("公式包含独立的 $$ 分隔符，重新导入时公式可能被截断");
     }
     if (TEXT_BLOCKS.has(block.type)) {
+      if (block.spans.some((span) => isDocumentReferenceMarks(span.marks))) losses.add("文档引用会变为普通超链接，重新导入后不会保留引用关系");
       if (block.props.align === "center" || block.props.align === "right") losses.add("文字对齐方式不会保留");
       if (!text) losses.add("空段落和空文本块可能无法还原");
       if (text.includes("\n")) losses.add("文本块内换行可能无法还原");

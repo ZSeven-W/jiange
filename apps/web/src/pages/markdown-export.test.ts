@@ -6,6 +6,10 @@ const block = (type: string, text = "", props: Record<string, string> = {}, mark
 });
 
 describe("Markdown export loss preflight", () => {
+  it("warns only when document-reference semantics are lost", () => {
+    expect(markdownExportLosses({ blocks: [block("paragraph", "引用", {}, { link: "#/doc/12", linkKind: "reference" })] }).join("；")).toContain("文档引用会变为普通超链接");
+    expect(markdownExportLosses({ blocks: [block("paragraph", "链接", {}, { link: "#/doc/12", linkKind: "text" })] })).toEqual([]);
+  });
   it("warns when non-default paragraph alignment would be lost", () => {
     expect(markdownExportLosses({ blocks: [block("paragraph", "文字", { align: "center" }), block("h1", "标题", { align: "right" })] })).toEqual(["文字对齐方式不会保留"]);
     expect(markdownExportLosses({ blocks: [block("paragraph", "文字", { align: "left" })] })).toEqual([]);

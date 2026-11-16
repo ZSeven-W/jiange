@@ -27,7 +27,7 @@ export function pastedDocumentURL(raw: string, plain: string, origin: string, pa
 export function documentLinkClip(target: PastedDocumentURL, originalTitle: string): ClipBlock[] | null {
   const title = originalTitle.trim() || "未命名文档";
   if ([...title].length > 5000 || /[\r\n]/.test(title)) return null;
-  return [{ type: "paragraph", props: {}, chars: [...title].map((ch) => ({ ch, marks: { link: target.href } })) }];
+  return [{ type: "paragraph", props: {}, chars: [...title].map((ch) => ({ ch, marks: { link: target.href, linkKind: "reference" } })) }];
 }
 
 export interface PastedLinkAnchor { doc: Doc; block: OpId; parent: OpId; type: string; ids: OpId[]; text: string }

@@ -46,4 +46,12 @@ describe("stable link ranges", () => {
     tx.format(b, 1, 2, "mention", "42");
     expect(resolveLinkRange(doc, range)).toBeNull();
   });
+  it("does not combine or mutate links whose semantic kind differs", () => {
+    const doc = new Doc(1), tx = new Tx(doc), b = tx.create("paragraph", null, ROOT), href = "#/doc/12";
+    tx.insert(b, 0, "甲乙丙丁"); tx.format(b, 0, 4, "link", href); tx.format(b, 0, 2, "linkKind", "text"); tx.format(b, 2, 4, "linkKind", "reference");
+    const range = captureLinkRange(doc, { b, o: 0 }, { b, o: 1 }, href, true)!;
+    expect(range.ids).toHaveLength(2);
+    tx.format(b, 0, 2, "linkKind", "reference");
+    expect(resolveLinkRange(doc, range)).toBeNull();
+  });
 });

@@ -30,6 +30,13 @@ fmt.Println("jiange")
 `;
 
 describe("markdown inline marks", () => {
+  it("imports internal markdown links as ordinary text links", () => {
+    for (const url of ["#/doc/12", "#/s/token", "#/p/token"]) {
+      const md = `[文字](${url})`;
+      expect(parseInline(md)).toEqual([{ text: "文字", marks: { link: url, linkKind: "text" } }]);
+      expect(serializeInline(parseInline(md))).toBe(md);
+    }
+  });
   it("parses bold/italic/strike/code/link and combinations", () => {
     const spans = parseInline("**粗** *斜* ~~删~~ `码` [文字](https://a.b) ***粗斜***");
     expect(spans).toEqual([
