@@ -8,7 +8,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "gen:vectors": "pnpm --filter @jiange/collab gen:vectors",
-    "test:sdk:pack": "node scripts/verify-headless-sdks.mjs"
+    "test:sdk:pack": "node scripts/verify-headless-sdks.mjs",
+    "test:xlsx:interop": "node scripts/verify-xlsx-interop.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0"

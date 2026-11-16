@@ -68,6 +68,7 @@
   },
   "dependencies": {
     "@jiange/collab": "workspace:*",
-    "@jiange/whiteboard-sdk": "workspace:*"
+    "@jiange/whiteboard-sdk": "workspace:*",
+    "@jiange/ooxml": "workspace:*"
   }
 }

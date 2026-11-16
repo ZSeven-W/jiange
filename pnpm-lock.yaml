@@ -108,6 +108,9 @@ importers:
       '@jiange/collab':
         specifier: workspace:*
         version: link:../collab
+      '@jiange/ooxml':
+        specifier: workspace:*
+        version: link:../ooxml
       '@jiange/whiteboard-sdk':
         specifier: workspace:*
         version: link:../whiteboard-sdk
@@ -119,7 +122,20 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
+  packages/ooxml:
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
   packages/sheet-sdk:
+    dependencies:
+      '@jiange/ooxml':
+        specifier: workspace:*
+        version: link:../ooxml
     devDependencies:
       typescript:
         specifier: ~5.6.3

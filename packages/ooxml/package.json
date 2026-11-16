@@ -1,0 +1,44 @@
+{
+  "name": "@jiange/ooxml",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./xml": "./src/xml.ts",
+    "./zip": "./src/zip.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./xml": {
+        "types": "./dist/xml.d.ts",
+        "import": "./dist/xml.js"
+      },
+      "./zip": {
+        "types": "./dist/zip.d.ts",
+        "import": "./dist/zip.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

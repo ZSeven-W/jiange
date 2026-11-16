@@ -9,7 +9,11 @@
       ],
       "@jiange/whiteboard-sdk/model": [
         "../whiteboard-sdk/src/model.ts"
+      ],
+      "@jiange/ooxml/*": [
+        "../ooxml/src/*.ts"
       ]
-    }
+    },
+    "baseUrl": "."
   }
 }

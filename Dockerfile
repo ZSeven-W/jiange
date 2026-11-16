@@ -6,6 +6,7 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/collab/package.json packages/collab/
+COPY packages/ooxml/package.json packages/ooxml/
 COPY packages/doc-sdk/package.json packages/doc-sdk/
 COPY packages/slides-sdk/package.json packages/slides-sdk/
 COPY packages/sheet-sdk/package.json packages/sheet-sdk/
