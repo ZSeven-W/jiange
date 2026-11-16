@@ -33,9 +33,10 @@ const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspac
 			SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
 			FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
 			UNION ALL
-			SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 0 END AS rank
+			SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'workspace_view' THEN 1 WHEN 'workspace_edit' THEN 2 ELSE 0 END AS rank
 			FROM doc_link_joins j JOIN a ON j.doc_id = a.id JOIN nodes ln ON ln.id = j.doc_id
 			WHERE j.user_id = $1 AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
+			  AND (ln.link_role NOT IN ('workspace_view','workspace_edit') OR EXISTS (SELECT 1 FROM workspace_members lm WHERE lm.workspace_id=ln.workspace_id AND lm.user_id=$1))
 		) grants
 	) sh ON true`
 
@@ -123,7 +124,7 @@ func (p *Postgres) ChangeLinkRole(ctx context.Context, doc int64, role, candidat
 		}
 		if role == "none" {
 			next.Token = ""
-		} else if oldRole == "none" || next.Token == "" {
+		} else if oldRole == "none" || next.Token == "" || rotateWorkspaceLink(oldRole, role) {
 			next.Token = candidate
 		}
 		if role == "none" || oldToken != nil && *oldToken != next.Token {
@@ -151,11 +152,23 @@ func (p *Postgres) JoinLink(ctx context.Context, tok string, uid int64) (id int6
 		return 0, ErrNotFound
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT id FROM nodes WHERE link_token=$1 AND link_role <> 'none' AND deleted_at IS NULL FOR UPDATE`, tok).Scan(&id); err != nil {
+		var role string
+		var workspaceID int64
+		if err := tx.QueryRow(ctx, `SELECT id,link_role,workspace_id FROM nodes WHERE link_token=$1 AND link_role <> 'none' AND deleted_at IS NULL FOR UPDATE`, tok).Scan(&id, &role, &workspaceID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if isWorkspaceLink(role) {
+			var member int64
+			err := tx.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, workspaceID, uid).Scan(&member)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO doc_link_joins (doc_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, uid)
 		return err
@@ -165,7 +178,7 @@ func (p *Postgres) JoinLink(ctx context.Context, tok string, uid int64) (id int6
 
 func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision FROM nodes n`+roleJoins+`
-		WHERE n.deleted_at IS NULL AND m.user_id IS NULL AND (EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
+		WHERE n.deleted_at IS NULL AND (m.user_id IS NULL OR (n.personal AND n.creator_id <> $1)) AND (`+roleSQL+`) <> '' AND (EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
 		 OR (n.link_role <> 'none' AND EXISTS (SELECT 1 FROM doc_link_joins j WHERE j.doc_id = n.id AND j.user_id = $1)))
 		ORDER BY n.id`, uid)
 	if err != nil {

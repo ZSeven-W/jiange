@@ -14,10 +14,11 @@ import (
 // are also locked; absent rows are never used to authorize the request.
 func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string, bool, string, error) {
 	type ancestor struct {
-		id      int64
-		parent  *int64
-		link    string
-		deleted bool
+		id        int64
+		workspace int64
+		parent    *int64
+		link      string
+		deleted   bool
 	}
 	var chain []ancestor
 	seen := map[int64]bool{}
@@ -48,6 +49,7 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 			}
 			workspaceID, creatorID, protected, kind, personal = ws, creator, nodeProtected, nodeKind, nodePersonal
 		}
+		a.workspace = ws
 		chain = append(chain, a)
 		if a.parent == nil {
 			break
@@ -87,9 +89,16 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		}
 		if err == nil && !a.deleted {
 			linkRole := a.link
-			if linkRole == "anon" {
-				linkRole = RoleView
+			member := false
+			if isWorkspaceLink(linkRole) {
+				var memberID int64
+				err = tx.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, a.workspace, userID).Scan(&memberID)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return "", false, "", err
+				}
+				member = err == nil
 			}
+			linkRole = linkGrantRole(linkRole, member)
 			if RoleRank(linkRole) > RoleRank(best) {
 				best = linkRole
 			}

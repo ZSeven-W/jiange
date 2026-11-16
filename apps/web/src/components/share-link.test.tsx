@@ -15,6 +15,7 @@ describe("share QR", () => {
   it("uses the correct route and escapes tokens", () => {
     expect(verifiedShareUrl(share, "https://example.test", true)).toBe("https://example.test/#/s/test-token");
     expect(verifiedShareUrl({ ...share, link: { role: "anon", token: "a/b" } }, "https://example.test", true)).toBe("https://example.test/#/p/a%2Fb");
+    expect(verifiedShareUrl({ ...share, link: { role: "workspace_view", token: "abc" } }, "https://example.test", true)).toBe("https://example.test/#/s/abc");
   });
   it("uses a permission-checked direct address when link sharing is closed", () => {
     const closed: ShareInfo = { ...share, link: { role: "none", token: "old-disabled-token" } };

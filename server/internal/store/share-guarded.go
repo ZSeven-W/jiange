@@ -162,7 +162,7 @@ func (p *Postgres) SetShareGuarded(ctx context.Context, guard RestoreGuard, docI
 }
 
 func validLinkRole(role, candidate string) bool {
-	return role == "none" || (role == "anon" || role == RoleView || role == RoleEdit) && candidate != ""
+	return role == "none" || (role == "anon" || role == RoleView || role == RoleEdit || isWorkspaceLink(role)) && candidate != ""
 }
 
 func (m *Memory) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string) (Link, error) {
@@ -190,7 +190,7 @@ func (m *Memory) changeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, 
 	next := Link{Role: role, Token: old.Token, Revision: old.Revision}
 	if role == "none" {
 		next.Token = ""
-	} else if old.Role == "" || old.Role == "none" || old.Token == "" {
+	} else if old.Role == "" || old.Role == "none" || old.Token == "" || rotateWorkspaceLink(old.Role, role) {
 		next.Token = candidate
 	}
 	oldRole := old.Role
@@ -251,7 +251,7 @@ func (p *Postgres) changeLinkRoleGuarded(ctx context.Context, guard RestoreGuard
 		}
 		if role == "none" {
 			next.Token = ""
-		} else if oldRole == "none" || next.Token == "" {
+		} else if oldRole == "none" || next.Token == "" || rotateWorkspaceLink(oldRole, role) {
 			next.Token = candidate
 		}
 		if role == "none" || oldToken != nil && *oldToken != next.Token {

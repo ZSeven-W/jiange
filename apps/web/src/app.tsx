@@ -170,7 +170,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "base" ? (
         <BasePage key={`${route.id}:${me.user.id}`} id={route.id} userId={me.user.id} />
       ) : route.page === "join" ? (
-        <JoinLink token={route.token} />
+        <JoinLink token={route.token} userId={me.user.id} />
       ) : route.page === "drive" ? (
         <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} userId={me.user.id} uploads={uploads} />
       ) : route.page === "file" ? (

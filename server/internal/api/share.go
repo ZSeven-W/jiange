@@ -174,7 +174,7 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Role != "none" && in.Role != "anon" && in.Role != store.RoleView && in.Role != store.RoleEdit {
+	if in.Role != "none" && in.Role != "anon" && in.Role != store.RoleView && in.Role != store.RoleEdit && in.Role != store.LinkWorkspaceView && in.Role != store.LinkWorkspaceEdit {
 		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, anon, view or edit")
 		return
 	}

@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/docs/{id}/link":                             s.putLink,
 		"PUT /api/docs/{id}/link-guarded":                     s.putLinkAtRevision,
 		"POST /api/share/{token}":                             s.joinLink,
+		"POST /api/share/{token}/join-guarded":                s.joinLinkGuarded,
 		"GET /api/shared":                                     s.sharedWithMe,
 		"POST /api/docs/{id}/files":                           s.uploadFile,
 		"POST /api/docs/{id}/import-images":                   s.uploadImportImage,

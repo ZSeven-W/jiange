@@ -370,7 +370,7 @@ export interface Share {
 }
 export interface ShareInfo {
   members: Share[];
-  link: { role: "none" | "anon" | "view" | "edit"; token?: string; revision?: number };
+  link: { role: "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit"; token?: string; revision?: number };
   role: Role;
 }
 export interface FileMeta {
@@ -516,11 +516,12 @@ export const docsApi = {
   sharesForAccount: (id: number, userId: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares-account`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
-  setLinkAtRevision: (id: number, role: "none" | "anon" | "view" | "edit", expectedRevision: number, userId: number, signal?: AbortSignal) => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link-guarded`, { role, expectedRevision }, signal, { "X-Jiange-User-Id": String(userId) }).then((link) => {
+  setLinkAtRevision: (id: number, role: ShareInfo["link"]["role"], expectedRevision: number, userId: number, signal?: AbortSignal) => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link-guarded`, { role, expectedRevision }, signal, { "X-Jiange-User-Id": String(userId) }).then((link) => {
     if (link !== undefined && (link.role !== role || !Number.isSafeInteger(link.revision) || link.revision! < expectedRevision)) throw new TypeError("链接修改结果无法确认");
     return link;
   }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
+  joinForAccount: (token: string, userId: number, signal?: AbortSignal) => request<DocMeta>("POST", `/api/share/${encodeURIComponent(token)}/join-guarded`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
   upload: async (id: number, f: File, onProgress?: (percent: number) => void): Promise<FileMeta> => {
     const fd = new FormData();

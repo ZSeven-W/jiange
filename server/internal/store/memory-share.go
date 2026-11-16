@@ -38,10 +38,7 @@ func (m *Memory) roleLocked(uid int64, d *memDoc) string {
 			best = r
 		}
 		if m.sh.joins[cur.meta.ID][uid] && !cur.deleted {
-			r := m.sh.links[cur.meta.ID].Role
-			if r == "anon" {
-				r = RoleView
-			}
+			r := linkGrantRole(m.sh.links[cur.meta.ID].Role, m.member(uid, cur.meta.WorkspaceID))
 			if RoleRank(r) > RoleRank(best) {
 				best = r
 			}
@@ -122,6 +119,9 @@ func (m *Memory) SetLink(_ context.Context, doc int64, l Link) error {
 	if old.Role == "" {
 		old.Role = "none"
 	}
+	if rotateWorkspaceLink(old.Role, l.Role) && old.Token == l.Token {
+		return ErrConflict
+	}
 	if l.Role != old.Role || l.Token != old.Token {
 		if old.Revision >= 9007199254740991 {
 			return ErrConflict
@@ -150,7 +150,7 @@ func (m *Memory) ChangeLinkRole(_ context.Context, doc int64, role, candidate st
 	next := Link{Role: role, Token: old.Token, Revision: old.Revision}
 	if role == "none" {
 		next.Token = ""
-	} else if old.Role == "" || old.Role == "none" || old.Token == "" {
+	} else if old.Role == "" || old.Role == "none" || old.Token == "" || rotateWorkspaceLink(old.Role, role) {
 		next.Token = candidate
 	}
 	oldRole := old.Role
@@ -181,6 +181,9 @@ func (m *Memory) JoinLink(_ context.Context, tok string, uid int64) (int64, erro
 	for id, l := range m.sh.links {
 		if l.Token == tok && l.Role != "none" {
 			if d := m.doc(id); d != nil && !d.deleted {
+				if isWorkspaceLink(l.Role) && !m.member(uid, d.meta.WorkspaceID) {
+					return 0, ErrNotFound
+				}
 				if m.sh.joins == nil {
 					m.sh.joins = map[int64]map[int64]bool{}
 				}
@@ -228,7 +231,7 @@ func (m *Memory) SharedWithMe(_ context.Context, uid int64) ([]DocMeta, error) {
 	}
 	for doc := range docs {
 		d := m.doc(doc)
-		if d != nil && !d.deleted && !m.member(uid, d.meta.WorkspaceID) {
+		if d != nil && !d.deleted && (!m.member(uid, d.meta.WorkspaceID) || d.personal && d.meta.CreatorID != uid) && RoleRank(m.roleLocked(uid, d)) >= RoleRank(RoleView) {
 			meta := d.meta
 			meta.Role = m.roleLocked(uid, d)
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)

@@ -12,10 +12,37 @@ var ErrShareExists = fmt.Errorf("%w: share already exists", ErrConflict)
 
 // Roles, weakest first. "" means no access.
 const (
-	RoleView   = "view"
-	RoleEdit   = "edit"
-	RoleManage = "manage"
+	RoleView          = "view"
+	RoleEdit          = "edit"
+	RoleManage        = "manage"
+	LinkWorkspaceView = "workspace_view"
+	LinkWorkspaceEdit = "workspace_edit"
 )
+
+// Workspace-only links are a scope, not a document role.
+func isWorkspaceLink(role string) bool { return role == LinkWorkspaceView || role == LinkWorkspaceEdit }
+func linkGrantRole(role string, member bool) string {
+	switch role {
+	case LinkWorkspaceView:
+		if member {
+			return RoleView
+		}
+		return ""
+	case LinkWorkspaceEdit:
+		if member {
+			return RoleEdit
+		}
+		return ""
+	case "anon":
+		return RoleView
+	default:
+		return role
+	}
+}
+
+func rotateWorkspaceLink(oldRole, newRole string) bool {
+	return oldRole != "" && oldRole != "none" && newRole != "none" && isWorkspaceLink(oldRole) != isWorkspaceLink(newRole)
+}
 
 // RoleRank orders roles: none 0 < view 1 < edit 2 < manage 3.
 func RoleRank(r string) int {
@@ -40,7 +67,7 @@ type Share struct {
 
 // Link is a doc's link-sharing setting.
 type Link struct {
-	Role     string `json:"role"` // none | view | edit
+	Role     string `json:"role"` // none | anon | view | edit | workspace_view | workspace_edit
 	Token    string `json:"token,omitempty"`
 	Revision int64  `json:"revision"`
 }

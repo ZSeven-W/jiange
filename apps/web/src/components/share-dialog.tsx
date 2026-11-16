@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useId, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, commentsApi, docsApi, type DocMeta, type Role } from "@/lib/api";
+import { ApiError, commentsApi, docsApi, type DocMeta, type Role, type ShareInfo } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { Avatar } from "@/components/brand";
 import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/feishu-icons";
@@ -11,7 +11,7 @@ import { invitationConflict, inviteCandidates } from "@/components/share-invite"
 import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "@/components/share-permissions";
 import { ShareLinkAccessSelect, ShareLinkScopeSelect } from "@/components/share-link-controls";
 
-export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭" };
+export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭", workspace_view: "可阅读", workspace_edit: "可编辑" };
 
 export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMeta; userId: number; onClose: () => void; anchorRef?: RefObject<HTMLButtonElement | null> }) {
   const qc = useQueryClient();
@@ -29,6 +29,7 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   const [suggestIndex, setSuggestIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [linkError, setLinkError] = useState("");
+  const [linkNotice, setLinkNotice] = useState("");
   const [settingsError, setSettingsError] = useState("");
   const busyRef = useRef(false);
   const mountedRef = useRef(false);
@@ -87,9 +88,11 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
     busyRef.current = true;
     setBusy(true);
     setShowQr(false);
+    setCopied(false);
     setCopyError(false);
     setErr("");
     setLinkError("");
+    setLinkNotice("");
     setSettingsError("");
     try {
       await qc.cancelQueries({ queryKey: key });
@@ -127,13 +130,14 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   const linkRole = info.data?.link.role ?? "none";
   const linkRevision = info.data?.link.revision;
   const linkEditable = !!manage && !busy && !info.isFetching && Number.isSafeInteger(linkRevision) && linkRevision! >= 0 && linkRevision! < Number.MAX_SAFE_INTEGER && Number.isSafeInteger(userId) && userId > 0;
-  const changeLink = (next: "none" | "anon" | "view" | "edit") => {
+  const changeLink = (next: ShareInfo["link"]["role"]) => {
     if (!linkEditable || next === linkRole || linkRevision === undefined) return;
-    void update(async () => { const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), 10_000); try { await docsApi.setLinkAtRevision(meta.id, next, linkRevision, userId, controller.signal); } finally { window.clearTimeout(timer); } }, "link");
+    const workspaceBoundary = linkRole !== "none" && next !== "none" && (linkRole.startsWith("workspace_") !== next.startsWith("workspace_"));
+    void update(async () => { const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), 10_000); try { await docsApi.setLinkAtRevision(meta.id, next, linkRevision, userId, controller.signal); if (workspaceBoundary && mountedRef.current) setLinkNotice(t("访问范围已变更，请重新复制链接。")); } finally { window.clearTimeout(timer); } }, "link");
   };
   const verified = !info.isFetching && !info.isError && !busy;
   const url = verifiedShareUrl(info.data, location.origin, verified) || verifiedDirectShareUrl(info.data, meta, location.origin, location.pathname, verified);
-  const linkDescription = linkRole === "none" ? t("已有文档访问权限的人可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
+  const linkDescription = linkRole === "none" ? t("已有文档访问权限的人可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : linkRole === "workspace_view" || linkRole === "workspace_edit" ? t("获得链接的当前空间成员{role}，已有更高权限不变", { role: t(ROLE_LABEL[linkRole]) }) : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
   const permissions = contentPermissions(settings.data);
   const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage" && !!permissions;
   const settingsMessage = settingsError || (info.isError || settings.isError ? t("无法验证权限设置，请返回后重试。") : settings.data && settings.data.role !== "manage" ? t("你已没有管理权限。") : !manage && !info.isFetching ? t("你已没有管理权限。") : settings.data && !permissions ? t("当前服务不支持分项权限设置，请刷新后重试。") : "");
@@ -209,10 +213,11 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
             <p className="mb-4 font-medium">{t("链接分享")}</p>
             <div className="flex items-center gap-3">
               <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#1456f0] text-white"><BuildingIcon className="size-[15px]" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!linkEditable} onChange={changeLink} /></span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
+              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!linkEditable} onChange={changeLink} /></span><span className="block break-words text-[12px] leading-[18px] text-subtle sm:truncate" title={linkDescription}>{linkDescription}</span></span>
               <ShareLinkAccessSelect role={linkRole} disabled={!linkEditable} onChange={changeLink} />
             </div>
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
+            {linkNotice && <p role="status" className="pt-2 text-[12px] text-subtle">{linkNotice}</p>}
             {manage && !info.isFetching && (!Number.isSafeInteger(linkRevision) || linkRevision! < 0 || linkRevision! >= Number.MAX_SAFE_INTEGER) && <p role="status" className="pt-2 text-[12px] text-subtle">{t("当前服务暂不支持安全修改链接权限，请更新服务。")}</p>}
           </div>
           <footer className="flex min-h-[66px] items-center gap-2 bg-sidebar px-4 py-3">
