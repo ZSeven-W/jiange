@@ -1,35 +1,58 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
-import { pastedDocumentLink } from "./document-link-paste";
+import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink } from "./document-link-paste";
 import { pasteBlocks } from "./model";
 
-const docs = [{ id: 12, title: " 项目😀说明 " }, { id: 9, title: "" }];
-const convert = (value: string, raw = "") => pastedDocumentLink(raw, value, "https://example.test", "/", docs);
+const parse = (value: string, raw = "") => pastedDocumentURL(raw, value, "https://example.test", "/");
 
 describe("pasted document links", () => {
-  it("inserts an accessible document title as a mention and undoes it", () => {
-    const clip = convert("https://example.test/#/doc/12")!;
-    const doc = new Doc(1), init = new Tx(doc), block = init.create("paragraph", null, ROOT);
-    init.insert(block, 0, "前后");
-    const tx = new Tx(doc); pasteBlocks(tx, { b: block, o: 1 }, clip);
-    expect(doc.text(block)).toBe("前项目😀说明后");
-    expect(doc.richChars(block).slice(1, -1).every((ch) => ch.marks.link === "#/doc/12")).toBe(true);
-    const undo = new UndoManager(); undo.record(tx, null, null); undo.undo(doc);
-    expect(doc.text(block)).toBe("前后");
-    undo.redo(doc); expect(doc.text(block)).toBe("前项目😀说明后");
-    expect(convert("https://example.test/#/doc/9")?.[0].chars.map((c) => c.ch).join("")).toBe("未命名文档");
+  it("preserves a document block target and creates a title mention", () => {
+    const target = parse("https://example.test/#/doc/12?block=3%3A9")!;
+    expect(target).toEqual({ id: 12, href: "#/doc/12?block=3%3A9" });
+    const clip = documentLinkClip(target, " 项目😀说明 ")!;
+    expect(clip[0].chars.map((c) => c.ch).join("")).toBe("项目😀说明");
+    expect(clip[0].chars.every((c) => c.marks.link === target.href)).toBe(true);
+    expect(documentLinkClip(target, "")?.[0].chars.map((c) => c.ch).join("")).toBe("未命名文档");
   });
   it.each([
     "https://evil.test/#/doc/12", "https://example.test/other/#/doc/12",
-    "https://example.test/?extra=1#/doc/12", "https://example.test/#/doc/12?block=1:2",
-    "https://example.test/#/doc/13", "https://example.test/#/doc/012",
+    "https://example.test/?extra=1#/doc/12", "https://example.test/#/doc/12?block=1%3A2&x=1",
+    "https://example.test/#/doc/12?block=bad", "https://example.test/#/doc/012",
     "https://example.test/#/doc/9007199254740992", "https://example.test/#/s/token",
     " https://example.test/#/doc/12", "https://example.test/#/doc/12\n",
     "javascript:alert(1)", "https://user@example.test/#/doc/12",
-  ])("leaves other or ambiguous input unchanged: %s", (value) => {
-    expect(convert(value)).toBeNull();
+  ])("leaves other or ambiguous input unchanged: %s", (value) => expect(parse(value)).toBeNull());
+  it("does not override a rich clipboard payload", () => expect(parse("https://example.test/#/doc/12", "rich")).toBeNull());
+  it("only resolves unchanged inserted characters at their original location", () => {
+    const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
+    tx.insert(block, 0, "前https://example.test/#/doc/12后");
+    const text = "https://example.test/#/doc/12", anchor = capturePastedLink(doc, block, 1, text)!;
+    expect(resolvePastedLink(doc, anchor)).toEqual({ start: 1, end: 1 + text.length });
+    doc.insertText(block, 0, "甲");
+    expect(resolvePastedLink(doc, anchor)?.start).toBe(2);
+    new Tx(doc).format(block, 2, 3, "bold", "true");
+    expect(resolvePastedLink(doc, anchor)).toBeNull();
   });
-  it("does not override a rich clipboard payload", () => {
-    expect(convert("https://example.test/#/doc/12", '[{"type":"paragraph"}]')).toBeNull();
+  it("does not replace a range split by a remote insertion", () => {
+    const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT);
+    const text = "https://example.test/#/doc/12";
+    tx.insert(block, 0, text);
+    const anchor = capturePastedLink(doc, block, 0, text)!;
+    doc.insertText(block, 4, "并发");
+    expect(resolvePastedLink(doc, anchor)).toBeNull();
+    expect(doc.text(block)).toContain("并发");
+  });
+  it("combines literal paste and conversion into one undo action", () => {
+    const doc = new Doc(1), initial = new Tx(doc), block = initial.create("paragraph", null, ROOT);
+    initial.insert(block, 0, "前后");
+    const undo = new UndoManager(), literal = new Tx(doc), value = "https://example.test/#/doc/12";
+    literal.insert(block, 1, value); undo.record(literal, null, null, "paste", 100);
+    const anchor = capturePastedLink(doc, block, 1, value)!, range = resolvePastedLink(doc, anchor)!;
+    const conversion = new Tx(doc); conversion.delete(block, range.start, range.end);
+    pasteBlocks(conversion, { b: block, o: range.start }, documentLinkClip(parse(value)!, "需求")!);
+    undo.record(conversion, null, null, "paste", 100); undo.seal();
+    expect(doc.text(block)).toBe("前需求后");
+    undo.undo(doc); expect(doc.text(block)).toBe("前后");
+    undo.redo(doc); expect(doc.text(block)).toBe("前需求后");
   });
 });

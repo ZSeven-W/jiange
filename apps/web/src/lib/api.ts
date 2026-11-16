@@ -506,9 +506,9 @@ export const extrasApi = {
 };
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
-  listForAccount: (userId: number) => request<{ docs?: unknown }>("GET", "/api/account-docs", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r): Pick<DocMeta, "id" | "title">[] => {
-    if (!Array.isArray(r?.docs) || r.docs.length > 500 || !r.docs.every((d) => d && Number.isSafeInteger(d.id) && d.id > 0 && typeof d.title === "string")) throw new TypeError("无法确认文档列表");
-    return r.docs;
+  pasteTarget: (id: number, userId: number, signal: AbortSignal) => request<{ id?: unknown; title?: unknown }>("GET", `/api/docs/${id}/paste-target`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then((result) => {
+    if (!result || result.id !== id || typeof result.title !== "string") throw new TypeError("无法确认文档名称");
+    return result.title;
   }),
   recent: () => request<{ docs: RecentDoc[] }>("GET", "/api/recent").then((r) => r.docs),
   recordVisit: (id: number) => request<void>("POST", `/api/docs/${id}/visit`),

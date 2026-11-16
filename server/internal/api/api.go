@@ -62,7 +62,6 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
-	mux.Handle("GET /api/account-docs", s.requireUser(http.HandlerFunc(s.listDocsForAccount)))
 	mux.Handle("POST /api/docs", s.requireUser(http.HandlerFunc(s.createDoc)))
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
@@ -150,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/duplicate":                       s.duplicateDoc,
 		"POST /api/docs/{id}/account-duplicate":               s.accountDuplicate,
 		"GET /api/docs/{id}/account-metadata":                 s.accountDoc,
+		"GET /api/docs/{id}/paste-target":                     s.pasteDocumentTarget,
 		"GET /api/docs/{id}/members":                          s.docMembers,
 		"GET /api/notifications":                              s.listNotifications,
 		"POST /api/notifications/read":                        s.markNotificationsRead,

@@ -89,7 +89,7 @@ import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSla
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-assets";
-import { pastedDocumentLink } from "./document-link-paste";
+import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink, type PastedLinkAnchor } from "./document-link-paste";
 import type { SlashInsertion, SlashQuery } from "./slash-insert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./comment-anchor";
 import { searchableLocations, type FindMatch } from "./find-replace";
@@ -140,9 +140,8 @@ interface Props {
   findNavigation?: number;
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
-  /** Documents eligible for recognizing a pasted document URL. */
-  documentLinkDocs?: MentionDoc[];
-  documentLinkDocsUpdatedAt?: number;
+  /** Recheck access to a single pasted document before displaying its title. */
+  resolveDocumentLink?: (id: number, signal: AbortSignal) => Promise<string>;
   /** workspace members offered by the @ menu（@人提及） */
   people?: MemberInfo[];
   /** stores a file and returns its id; enables image/file blocks */
@@ -180,8 +179,9 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], documentLinkDocs = [], documentLinkDocsUpdatedAt = 0, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
+  const pastedLinkSerial = useRef(0);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
   const composing = useRef<{ sel: Sel; anchor?: CompositionAnchor; snapshot?: ReturnType<Doc["richChars"]>; findRanges?: { start: number; end: number; active: boolean }[]; slashQuery?: SlashQuery } | null>(null);
@@ -1951,12 +1951,51 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const oldRange = currentDoc && oldQuery && resolveSlashQuery(currentDoc, oldQuery);
     const tracking = !!oldRange && !!selection && collapsed(selection) && eqId(selection.f.b, oldQuery!.block) && selection.f.o === oldRange.end;
     if (active && !tracking) changeSlash(null);
-    const documentLink = documentLinkDocsUpdatedAt > 0 && Date.now() - documentLinkDocsUpdatedAt < 30_000 && !active && !files.length && currentDoc && selection && validEditorSelection(currentDoc, selection) && currentDoc.blockInfo(selection.f.b).type !== "code" && !isSourceBlock(currentDoc, selection.f.b)
-      ? pastedDocumentLink(raw, plain, location.origin, location.pathname, documentLinkDocs)
+    const target = !active && !composing.current && !files.length && currentDoc && selection && validEditorSelection(currentDoc, selection) && currentDoc.blockInfo(selection.f.b).type !== "code" && !isSourceBlock(currentDoc, selection.f.b)
+      ? pastedDocumentURL(raw, plain, location.origin, location.pathname)
       : null;
+    if (target && resolveDocumentLink && userId && currentDoc) {
+      const client = sync.client, account = userId, tag = `pasted-document:${++pastedLinkSerial.current}`, started = Date.now();
+      let anchor: PastedLinkAnchor | null = null;
+      // Paste immediately, so an unavailable or slow server never loses the
+      // clipboard. A later safe conversion joins this same undo entry.
+      um.seal();
+      run((tx, s) => {
+        const at = collapsed(s) ? s.a : deleteRange(tx, s);
+        const clip = clipboardBlocks("", plain)!;
+        const end = pasteBlocks(tx, at, clip);
+        if (eqId(at.b, end.b)) anchor = capturePastedLink(tx.doc, at.b, at.o, plain);
+        return end;
+      }, tag);
+      const captured = anchor as PastedLinkAnchor | null, revision = um.revision;
+      if (!captured) { um.seal(); return; }
+      const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 5000);
+      void resolveDocumentLink(target.id, controller.signal).then((title) => {
+        const rootNode = root.current, selected = sel.current;
+        if (!mounted.current || currentClient.current !== client || currentUserId.current !== account || client.doc !== captured.doc || readOnlyRef.current || client.blocked || !client.caughtUp || (client.status !== "synced" && client.status !== "syncing") || um.revision !== revision || !rootNode || !document.activeElement || !rootNode.contains(document.activeElement) || isNativeControl(document.activeElement) || !selected || !collapsed(selected) || !eqId(selected.f.b, captured.block)) return;
+        const range = resolvePastedLink(captured.doc, captured), clip = documentLinkClip(target, title);
+        if (!range || !clip || selected.f.o !== range.end) return;
+        const tx = new Tx(captured.doc);
+        tx.delete(captured.block, range.start, range.end);
+        const end = pasteBlocks(tx, { b: captured.block, o: range.start }, clip), next = { a: end, f: end };
+        if (!tx.ops.length) return;
+        // The unique tag and unchanged history revision make this a single
+        // undo step even if metadata took longer than the typing merge window.
+        um.record(tx, selected, next, tag, started);
+        sel.current = next;
+        client.push(tx.ops);
+        um.seal();
+        force((x) => x + 1);
+        publish();
+      }).catch(() => { /* Keep the literal URL on denial, timeout or failure. */ }).finally(() => {
+        clearTimeout(timeout);
+        if (um.revision === revision) um.seal();
+      });
+      return;
+    }
     if (currentDoc && sel.current && isColumnText(currentDoc, sel.current.f.b)) {
       if (files.length) { setColumnNotice("暂不支持在分栏中粘贴图片或附件，请先将文件插入正文。"); return; }
-      const clip = documentLink ?? columnClipboardBlocks(raw, plain);
+      const clip = columnClipboardBlocks(raw, plain);
       if (!clip) { setColumnNotice("分栏暂不支持粘贴该内容，原内容已保留。"); return; }
       run((tx, s) => {
         const at = collapsed(s) ? s.a : deleteRange(tx, s);
@@ -1976,7 +2015,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       void insertFiles(files, { captured: { doc: d, anchor: selection.f.b, beforeAnchor: offset === 0, commandIds: null }, client: sync.client, type: info.type, parent: info.parent, cursor: { ...selection.f }, boundaryIds: d.visibleIds(selection.f.b) });
       return;
     }
-    const clip = documentLink ?? clipboardBlocks(raw, plain);
+    const clip = clipboardBlocks(raw, plain);
     if (!clip) { setColumnNotice("剪贴板中没有可粘贴的内容，原内容已保留。"); return; }
     const assetPlan = planClipboardAssets(clip, location.origin);
     if (!assetPlan.ok) { setColumnNotice(assetPlan.message); return; }
