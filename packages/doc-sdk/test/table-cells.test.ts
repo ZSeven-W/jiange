@@ -131,3 +131,25 @@ describe('cell background fills', () => {
     expect(invalid.ops).toEqual([]);
   });
 });
+
+describe('cell alignment', () => {
+  it('merges concurrent changes to separate axes, and rejects an invalid batch without partial writes', async () => {
+    const { setTableCellAlignments, tableCellAlign } = await import('../src/table-cells.js');
+    const { a, b, table } = replicas();
+    sync(edit(a, table, 0, 0, '文字'), b);
+    const first = new Tx(a), second = new Tx(b);
+    setTableCellAlignments(first, table, [{ row: 0, col: 0, axis: 'horizontal', align: 'right' }]);
+    setTableCellAlignments(second, table, [{ row: 0, col: 0, axis: 'vertical', align: 'bottom' }]);
+    sync(first.ops, b); sync(second.ops, a);
+    for (const doc of [a, b]) {
+      expect(tableCellAlign(doc.blockInfo(table).props, 0, 0, 'horizontal')).toBe('right');
+      expect(tableCellAlign(doc.blockInfo(table).props, 0, 0, 'vertical')).toBe('bottom');
+      expect(tableCellAlign(doc.blockInfo(table).props, 0, 1, 'horizontal')).toBe('left');
+    }
+    const tx = new Tx(a);
+    expect(() => setTableCellAlignments(tx, table, [{ row: 0, col: 0, axis: 'horizontal', align: 'left' }, { row: 0, col: 1, axis: 'horizontal', align: 'bottom' }])).toThrow();
+    expect(tx.ops).toEqual([]);
+    setTableCellAlignments(tx, table, [{ row: 0, col: 0, axis: 'horizontal', align: 'left' }]);
+    expect(tableCellAlign(a.blockInfo(table).props, 0, 0, 'horizontal')).toBe('left');
+  });
+});

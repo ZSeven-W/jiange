@@ -1,9 +1,12 @@
-import { tableCellFill } from './table-cells';
+import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from './table-cells';
 import type { CellRange, TableOp } from './table-ops';
 
 export type FillGrid = string[][];
 export function readTableFills(props: Record<string, string>, rows: number, cols: number): FillGrid {
   return Array.from({ length: rows }, (_, row) => Array.from({ length: cols }, (_, col) => tableCellFill(props, row, col)));
+}
+export function readTableAlignments(props: Record<string, string>, rows: number, cols: number, axis: TableAlignAxis): FillGrid {
+  return Array.from({ length: rows }, (_, row) => Array.from({ length: cols }, (_, col) => tableCellAlign(props, row, col, axis)));
 }
 
 /** Match row/column edits to the existing content model; clearing text keeps fill. */
@@ -26,3 +29,4 @@ export function deleteSelectionFills(grid: FillGrid, kind: 'rows' | 'cols', rang
   return next;
 }
 export const fillCells = (grid: FillGrid) => grid.flatMap((row, r) => row.map((fill, c) => ({ row: r, col: c, fill })));
+export const alignmentCells = (grid: FillGrid, axis: TableAlignAxis) => grid.flatMap((row, r) => row.map((align, c) => ({ row: r, col: c, axis, align: (align || (axis === 'horizontal' ? 'left' : 'top')) as TableAlign })));

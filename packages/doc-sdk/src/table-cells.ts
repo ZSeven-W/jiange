@@ -24,6 +24,11 @@ export const TBL_MIRROR = "tbl.m";
 export const TBL_BASE = "tbl.base";
 export const cellKey = (row: string, col: string) => `tbl.c.${row}.${col}`;
 export const cellFillKey = (row: string, col: string) => `tbl.fill.${row}.${col}`;
+export type TableAlignAxis = "horizontal" | "vertical";
+export type TableHorizontalAlign = "left" | "center" | "right";
+export type TableVerticalAlign = "top" | "middle" | "bottom";
+export type TableAlign = TableHorizontalAlign | TableVerticalAlign;
+export const cellAlignKey = (row: string, col: string, axis: TableAlignAxis) => `tbl.${axis === "horizontal" ? "halign" : "valign"}.${row}.${col}`;
 
 /** FNV-1a 32-bit over UTF-8, lowercase hex (mirrored in Go for server search). */
 export function tableHash(value: string): string {
@@ -61,6 +66,31 @@ export function setTableCellFills(tx: Tx, block: OpId, cells: readonly { row: nu
     if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col) || row < 0 || col < 0 || row >= rows.length || col >= cols.length || (fill !== "" && !/^#[0-9a-f]{6}$/i.test(fill))) throw new Error("invalid table fill");
   }
   for (const { row, col, fill } of cells) tx.setProp(block, cellFillKey(rows[row], cols[col]), fill.toUpperCase());
+}
+
+export function tableCellAlign(props: Record<string, string>, row: number, col: number, axis: "horizontal"): TableHorizontalAlign;
+export function tableCellAlign(props: Record<string, string>, row: number, col: number, axis: "vertical"): TableVerticalAlign;
+export function tableCellAlign(props: Record<string, string>, row: number, col: number, axis: TableAlignAxis): TableAlign;
+export function tableCellAlign(props: Record<string, string>, row: number, col: number, axis: TableAlignAxis): TableAlign {
+  const fallback = axis === "horizontal" ? "left" : "top";
+  if (!Number.isSafeInteger(row) || row < 0 || !Number.isSafeInteger(col) || col < 0) return fallback;
+  const rows = props[TBL_VERSION] === "2" ? ids(props[TBL_ROWS]) : null, cols = props[TBL_VERSION] === "2" ? ids(props[TBL_COLS]) : null;
+  const r = rows ? rows[row] : `r${row}`, c = cols ? cols[col] : `c${col}`;
+  if (!r || !c) return fallback;
+  const value = props[cellAlignKey(r, c, axis)];
+  if (axis === "horizontal" && (value === "center" || value === "right")) return value;
+  if (axis === "vertical" && (value === "middle" || value === "bottom")) return value;
+  return fallback;
+}
+
+/** Per-axis cell registers keep concurrent horizontal and vertical edits independent. */
+export function setTableCellAlignments(tx: Tx, block: OpId, cells: readonly { row: number; col: number; axis: TableAlignAxis; align: TableAlign }[]): void {
+  const props = tx.doc.blockInfo(block).props, rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
+  if (props[TBL_VERSION] !== "2" || !rows || !cols) throw new Error("table must be migrated before setting cell alignment");
+  for (const { row, col, axis, align } of cells) {
+    if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col) || row < 0 || col < 0 || row >= rows.length || col >= cols.length || (axis !== "horizontal" && axis !== "vertical") || !(axis === "horizontal" ? ["left", "center", "right"] : ["top", "middle", "bottom"]).includes(align)) throw new Error("invalid table alignment");
+  }
+  for (const { row, col, axis, align } of cells) tx.setProp(block, cellAlignKey(rows[row], cols[col], axis), align === (axis === "horizontal" ? "left" : "top") ? "" : align);
 }
 
 export function isCellTable(props: Record<string, string>): boolean {

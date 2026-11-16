@@ -1,5 +1,5 @@
 import { CLIPPABLE_BLOCKS, parseTableData, parseText, TEXTLESS, type ClipBlock } from "./model";
-import { cellFillKey, cellTableWrites, tableCellFill, tableDataOf } from "./table-cells";
+import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill, tableDataOf } from "./table-cells";
 import { formatTableTSV } from "./table-clipboard";
 import { coverMap, parseMerges } from "./table-ops";
 
@@ -46,7 +46,9 @@ export function blockClipboardHTML(raw: string, plain: string, blocks?: ClipBloc
       if (cell === "hidden") return "";
       const span = cell?.span;
       const fill = tableCellFill(block.props, r, c);
-      return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ""}${span?.[1] ? ` colspan="${span[1]}"` : ""}${fill ? ` style="background-color:${fill}"` : ""}>${escapeHTML(value).replace(/\n/g, "<br>")}</td>`;
+      const horizontal = tableCellAlign(block.props, r, c, "horizontal"), vertical = tableCellAlign(block.props, r, c, "vertical");
+      const styles = [fill && `background-color:${fill}`, horizontal !== "left" && `text-align:${horizontal}`, vertical !== "top" && `vertical-align:${vertical}`].filter(Boolean).join(";");
+      return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ""}${span?.[1] ? ` colspan="${span[1]}"` : ""}${styles ? ` style="${styles}"` : ""}>${escapeHTML(value).replace(/\n/g, "<br>")}</td>`;
     }).join("")}</tr>`).join("")}</table>`;
   }
   const html = `<div ${MARKER}="${payload}">${content}</div>`;
@@ -162,10 +164,15 @@ export function clipboardBlocks(raw: string, plain: string): ClipBlock[] | null 
           }
           const props = Object.fromEntries(Object.entries(block.props).filter(([key]) => !key.startsWith("tbl.")));
           props.tableData = tableDataOf(block.props);
-          if (Object.entries(block.props).some(([key, value]) => key.startsWith("tbl.fill.") && value)) {
+          if (Object.entries(block.props).some(([key, value]) => /^tbl\.(fill|halign|valign)\./.test(key) && value)) {
             const grid = parseTableData(props.tableData);
             Object.assign(props, cellTableWrites(props, grid, 0));
-            grid.forEach((row, r) => row.forEach((_, c) => { const fill = tableCellFill(block.props, r, c); if (fill) props[cellFillKey(`r${r}`, `c${c}`)] = fill; }));
+            grid.forEach((row, r) => row.forEach((_, c) => {
+              const fill = tableCellFill(block.props, r, c), horizontal = tableCellAlign(block.props, r, c, "horizontal"), vertical = tableCellAlign(block.props, r, c, "vertical");
+              if (fill) props[cellFillKey(`r${r}`, `c${c}`)] = fill;
+              if (horizontal !== "left") props[cellAlignKey(`r${r}`, `c${c}`, "horizontal")] = horizontal;
+              if (vertical !== "top") props[cellAlignKey(`r${r}`, `c${c}`, "vertical")] = vertical;
+            }));
           }
           return { ...block, props };
         });

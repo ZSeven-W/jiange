@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Columns3, Combine, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
@@ -8,7 +8,7 @@ import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
 import { visibleTableWidths } from "./table-widths";
-import { tableCellFill } from "./table-cells";
+import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
 
 type GripSel = { kind: "row" | "col"; index: number };
 export type TableResizeSession = { commit: (widths: number[]) => void | Promise<void>; cancel: () => void };
@@ -55,9 +55,10 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onEdit, onChange, onFill, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onEdit, onChange, onFill, onAlign, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
   fillProps?: Record<string, string>; onFill?: (range: CellRange, fill: string) => string | null;
+  onAlign?: (range: CellRange, axis: TableAlignAxis, align: TableAlign) => string | null;
   onBeginResize?: (index: number) => TableResizeSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
@@ -86,6 +87,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [clipboardNotice, setClipboardNotice] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [fillOpen, setFillOpen] = useState(false);
+  const [alignOpen, setAlignOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
   const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -195,6 +197,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const openGrip = (e: React.MouseEvent<HTMLElement>, g: GripSel) => {
     setMoreOpen(false);
     setFillOpen(false);
+    setAlignOpen(false);
     setGripMenuHidden(false);
     setRange(null);
     const same = grip?.kind === g.kind && grip?.index === g.index;
@@ -203,11 +206,11 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     setGrip(same ? null : g);
   };
   useEffect(() => {
-    if (!grip && !range && !moreOpen && !fillOpen) return;
-    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setRange(null); setMoreOpen(false); setFillOpen(false); } };
+    if (!grip && !range && !moreOpen && !fillOpen && !alignOpen) return;
+    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setRange(null); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
-  }, [grip, range, moreOpen, fillOpen]);
+  }, [grip, range, moreOpen, fillOpen, alignOpen]);
   const columnWidths = widthPreview ?? visibleTableWidths(rows, widths);
   const colW = (ci: number) => columnWidths[ci] ?? 100;
   const startResize = (e: React.PointerEvent<HTMLElement>, ci: number) => {
@@ -246,6 +249,12 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
+  const formatTarget = selected ?? (focus ? expandRange({ r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c }, merges) : null);
+  const allAligned = (axis: TableAlignAxis, value: TableAlign) => {
+    if (!formatTarget) return false;
+    for (let r = formatTarget.r0; r <= formatTarget.r1; r++) for (let c = formatTarget.c0; c <= formatTarget.c1; c++) if (tableCellAlign(fillProps, r, c, axis) !== value) return false;
+    return true;
+  };
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
@@ -255,7 +264,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const editable = !readOnly && !!onChange;
   return (
     <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block
-      onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); } }}
+      onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
         if (!multi || !selected) return;
@@ -272,9 +281,9 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
         if (!error) { setRange(null); setGrip(null); }
       }}>
-      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || moreOpen || fillOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || moreOpen || fillOpen || alignOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
-          <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => setMoreOpen((open) => !open)} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
+          <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setFillOpen(false); setAlignOpen(false); setGripMenuHidden(true); setMoreOpen((open) => !open); }} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
             {multi && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); merge(); }} data-table-merge><Combine size={15} strokeWidth={1.7} />合并单元格</button>}
             {!multi && focusMerge && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); split(); }} data-table-split><SquareSplitHorizontal size={15} strokeWidth={1.7} />拆分单元格</button>}
@@ -282,11 +291,17 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         </span>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
         {onFill && <span className="relative flex">
-          <button type="button" title="单元格背景色" aria-label="单元格背景色" aria-haspopup="menu" aria-expanded={fillOpen} disabled={!selected && !focus} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", fillOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setGripMenuHidden(true); setFillOpen(open => !open); }} data-table-fill><PaintBucket size={15} strokeWidth={1.7} /></button>
+          <button type="button" title="单元格背景色" aria-label="单元格背景色" aria-haspopup="menu" aria-expanded={fillOpen} disabled={!selected && !focus} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", fillOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setAlignOpen(false); setGripMenuHidden(true); setFillOpen(open => !open); }} data-table-fill><PaintBucket size={15} strokeWidth={1.7} /></button>
           {fillOpen && <span role="menu" aria-label="单元格背景色" className="absolute left-0 top-9 z-40 w-[230px] rounded-lg border border-[#DEE0E3] bg-surface p-2 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-fill-menu>
             <span className="block px-1 pb-2 text-xs text-muted-foreground">背景颜色</span>
             <span className="grid grid-cols-6 gap-1">{["#FFFFFF", "#F2F3F5", "#FBE4E2", "#FFF1D1", "#E5F5E8", "#E3ECFF", "#DEE0E3", "#F7C6C2", "#FCE2A8", "#BDEBC7", "#BFD3FF", "#E8D9FC"].map(color => <button key={color} type="button" role="menuitem" aria-label={color} title={color} className="size-8 rounded border border-black/10 hover:outline hover:outline-2 hover:outline-primary" style={{ backgroundColor: color }} onMouseDown={e => e.preventDefault()} onClick={() => { const target = selected ?? (focus ? { r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c } : null); if (target) setClipboardNotice(onFill(expandRange(target, merges), color) ?? ""); setFillOpen(false); }} data-table-fill-color={color} />)}</span>
             <button type="button" role="menuitem" className="mt-2 h-8 w-full rounded px-1 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { const target = selected ?? (focus ? { r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c } : null); if (target) setClipboardNotice(onFill(expandRange(target, merges), "") ?? ""); setFillOpen(false); }} data-table-fill-reset>恢复默认</button>
+          </span>}
+        </span>}
+        {onAlign && <span className="relative flex">
+          <button type="button" title="单元格文本对齐" aria-label="单元格文本对齐" aria-haspopup="menu" aria-expanded={alignOpen} disabled={!formatTarget} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", alignOpen && "bg-hover")} onMouseDown={e => e.preventDefault()} onClick={() => { setMoreOpen(false); setFillOpen(false); setGripMenuHidden(true); setAlignOpen(open => !open); }} data-table-align><AlignLeft size={15} strokeWidth={1.7} /></button>
+          {alignOpen && <span role="menu" aria-label="单元格文本对齐" className="absolute left-0 top-9 z-40 w-[160px] rounded-lg border border-[#DEE0E3] bg-surface p-2 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-align-menu>
+            {([ ["horizontal", "横向对齐", [["left", "左对齐", AlignLeft], ["center", "水平居中", AlignCenter], ["right", "右对齐", AlignRight]]], ["vertical", "纵向对齐", [["top", "顶部对齐", AlignStartHorizontal], ["middle", "垂直居中", AlignCenterHorizontal], ["bottom", "底部对齐", AlignEndHorizontal]]] ] as const).map(([axis, label, choices]) => <span key={axis} className="block"><span className="block px-1 py-1 text-xs text-muted-foreground">{label}</span><span className="flex gap-1">{choices.map(([value, title, Icon]) => <button key={value} type="button" role="menuitemradio" aria-checked={allAligned(axis, value)} aria-label={title} title={title} className={cn("grid size-10 place-items-center rounded hover:bg-hover", allAligned(axis, value) && "bg-[#E1EAFF] text-primary")} onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onAlign(formatTarget, axis, value) ?? ""); setAlignOpen(false); }} data-table-align-option={`${axis}:${value}`}><Icon size={16} strokeWidth={1.7} /></button>)}</span></span>)}
           </span>}
         </span>}
         <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} /><span className="max-[360px]:sr-only">插入行</span></button>
@@ -314,13 +329,14 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                 const activeFind = found?.ranges.some((range) => range.active) ?? false;
                 const showMirror = !!found && !(editing?.r === ri && editing.c === ci);
                 return (
-                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} style={{ backgroundColor: tableCellFill(fillProps, ri, ci) || undefined, backgroundImage: sel && tableCellFill(fillProps, ri, ci) ? "linear-gradient(#3370ff33,#3370ff33)" : undefined }} data-table-position={`${ri}:${ci}`} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
+                  <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} style={{ backgroundColor: tableCellFill(fillProps, ri, ci) || undefined, backgroundImage: sel && tableCellFill(fillProps, ri, ci) ? "linear-gradient(#3370ff33,#3370ff33)" : undefined, textAlign: tableCellAlign(fillProps, ri, ci, "horizontal"), verticalAlign: tableCellAlign(fillProps, ri, ci, "vertical") }} data-table-position={`${ri}:${ci}`} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
                     {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap break-words px-2 py-[8.5px]">{found ? tableFindText(cell, found.ranges) : cell}</span> : (
                       <div className="relative grid">
                       <div aria-hidden="true" className="invisible col-start-1 row-start-1 max-h-[237px] min-h-[39px] overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]">{cell}{"\u200b"}</div>
                       {found && <div aria-hidden="true" data-table-find-overlay className={cn("pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]", !showMirror && "invisible")}>{tableFindText(cell, found.ranges)}{"\u200b"}</div>}
                       <textarea
                         value={cell}
+                        style={{ textAlign: tableCellAlign(fillProps, ri, ci, "horizontal") }}
                         rows={Math.min(10, Math.max(1, cell.split("\n").length))}
                         onChange={(e) => {
                           if (multi) { e.currentTarget.value = cell; return; }
@@ -381,6 +397,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                         onMouseDown={(e) => {
                           setMoreOpen(false);
                           setFillOpen(false);
+                          setAlignOpen(false);
                           setGrip(null);
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);

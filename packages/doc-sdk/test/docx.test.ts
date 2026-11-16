@@ -4,7 +4,7 @@ import { buildDocx, docxExportLosses, DOCX_MAX_BYTES, DocxImportError, imageInfo
 import { createZip, crc32, listZip, readZipEntry } from "../src/zip.js";
 import { parseXml, XmlError } from "../src/xml.js";
 import type { MdBlock } from "../src/markdown.js";
-import { cellFillKey, cellTableWrites, tableCellFill } from "../src/table-cells.js";
+import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill } from "../src/table-cells.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -226,6 +226,25 @@ describe("Word export → import round trip", () => {
 });
 
 describe("Word table structure and headers", () => {
+  it("round-trips cell horizontal and vertical alignment", async () => {
+    const grid = [["名称", "进度"], ["多\n行", "完成"]], props: Record<string, string> = { tableData: JSON.stringify(grid), tableHeader: "none" };
+    Object.assign(props, cellTableWrites(props, grid, 1));
+    props[cellAlignKey("r0", "c1", "horizontal")] = "right";
+    props[cellAlignKey("r0", "c1", "vertical")] = "bottom";
+    props[cellAlignKey("r1", "c0", "horizontal")] = "center";
+    props[cellAlignKey("r1", "c0", "vertical")] = "middle";
+    const imported = (await parseDocx(buildDocx({ blocks: [b("table", "", props)] }))).blocks[0];
+    expect(tableCellAlign(imported.props, 0, 1, "horizontal")).toBe("right");
+    expect(tableCellAlign(imported.props, 0, 1, "vertical")).toBe("bottom");
+    expect(tableCellAlign(imported.props, 1, 0, "horizontal")).toBe("center");
+    expect(tableCellAlign(imported.props, 1, 0, "vertical")).toBe("middle");
+  });
+  it("warns when Word paragraphs in one cell have incompatible alignment", async () => {
+    const body = '<w:tbl><w:tr><w:tc><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>一</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>二</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const result = await parseDocx(rawDocx(body));
+    expect(result.warnings.join("；")).toContain("段落对齐方式未完整保留");
+    expect(tableCellAlign(result.blocks[0].props, 0, 0, "horizontal")).toBe("right");
+  });
   it("round-trips explicit cell fills, including white on a header", async () => {
     const grid = [["标题", "状态"], ["任务", "完成"]];
     const props: Record<string, string> = { tableData: JSON.stringify(grid), tableHeader: "row" };
