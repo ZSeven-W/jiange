@@ -1,7 +1,7 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Doc, encodeOps, ROOT, Tx, type Op } from "@jiange/collab";
-import { conditionalBatchBase64, queryConditionalOpsStatus } from "@/lib/api";
+import { ApiError, conditionalBatchBase64, queryConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalJournalStorageKey, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalObservation } from "@/lib/conditional-journal";
 import { TITLE } from "./model";
 import { findDocumentMatches } from "./table-find";
@@ -40,6 +40,13 @@ function fixture() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("durable conditional find batches", () => {
+  it("keeps the pending record when the server has not enabled safe cancellation", async () => {
+    const f = fixture(); f.send.mockRejectedValueOnce(new Error("network"));
+    await f.commit.start(f.plan.ops, 1, 5, signal(), () => true, () => {}, false);
+    f.cancel.mockRejectedValueOnce(new ApiError(503, "conditional_cancel_disabled", "disabled"));
+    expect(await f.commit.cancel(signal())).toBe("unavailable");
+    expect((await f.journal.read())?.redacted).toBe(true);
+  });
   it("can fence a redacted uncertain request without recovering its content", async () => {
     const f = fixture(); f.send.mockRejectedValueOnce(new Error("network"));
     expect(await f.commit.start(f.plan.ops, 1, 5, signal(), () => true, () => {}, false)).toBe("pending");

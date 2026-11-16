@@ -40,6 +40,10 @@ func (s *Server) cancelConditionalOps(w http.ResponseWriter, r *http.Request) {
 	if !driveExpectedUser(w, r, guard.UserID) {
 		return
 	}
+	if !s.EnableConditionalCancel {
+		httpx.Error(w, http.StatusServiceUnavailable, "conditional_cancel_disabled", "当前服务尚未开启安全停止功能")
+		return
+	}
 	request := r.PathValue("requestId")
 	if !versionEntryRequest.MatchString(request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "请求标识无效")

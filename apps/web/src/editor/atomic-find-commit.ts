@@ -1,5 +1,5 @@
 import { decodeOps, encodeOps, eqId, type Op } from "@jiange/collab";
-import { cancelConditionalOps, commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
+import { ApiError, cancelConditionalOps, commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditional-journal";
 import { TITLE } from "./model";
 
@@ -100,12 +100,12 @@ export class AtomicFindCommit {
     });
   }
   /** Fence a possibly delayed submission; a committed receipt remains for normal finalization. */
-  async cancel(signal: AbortSignal): Promise<AtomicFindFinishResult | "needs_resolution"> {
+  async cancel(signal: AbortSignal): Promise<AtomicFindFinishResult | "needs_resolution" | "unavailable"> {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
       if (!this.context.active() || signal.aborted || !this.network.cancel || attempt.redacted && attempt.purpose !== "atomic-find") return "blocked";
       if (!attempt.redacted && !atomicFindBatchOps(await lease.batch(attempt))) return "blocked";
-      let status: ConditionalOpsStatus; try { status = await this.network.cancel(attempt, signal); } catch { return "pending"; }
+      let status: ConditionalOpsStatus; try { status = await this.network.cancel(attempt, signal); } catch (error) { return error instanceof ApiError && error.status === 503 && error.code === "conditional_cancel_disabled" ? "unavailable" : "pending"; }
       const observed = this.context.observe();
       if (!observed || !this.context.active() || !this.validStatus(attempt, status)) return "blocked";
       const result = conditionalResolution(attempt, status, observed);

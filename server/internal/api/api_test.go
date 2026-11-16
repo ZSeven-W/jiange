@@ -14,9 +14,12 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
-func newTestServer(t *testing.T, st store.Store, now func() time.Time) (*httptest.Server, *http.Client) {
+func newTestServer(t *testing.T, st store.Store, now func() time.Time, enableCancel ...bool) (*httptest.Server, *http.Client) {
 	t.Helper()
 	s := &Server{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 1000, Now: now}
+	if len(enableCancel) > 0 {
+		s.EnableConditionalCancel = enableCancel[0]
+	}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)

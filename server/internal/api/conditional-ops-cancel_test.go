@@ -37,7 +37,7 @@ func cancelAPIDigest(epoch, head int64, ops []collab.Op) string {
 func checkConditionalCancelAPI(t *testing.T, st store.Store) {
 	t.Helper()
 	ctx := context.Background()
-	ts, client := newTestServer(t, st, nil)
+	ts, client := newTestServer(t, st, nil, true)
 	resp := post(t, client, ts.URL+"/api/auth/register", map[string]string{"email": "cancel-api@test.dev", "name": "Owner", "password": "password123"})
 	var me struct {
 		User store.User `json:"user"`
@@ -91,6 +91,40 @@ func checkConditionalCancelAPI(t *testing.T, st store.Store) {
 		return r.StatusCode, status
 	}
 	account := strconv.FormatInt(me.User.ID, 10)
+	disabled, disabledClient := newTestServer(t, st, nil)
+	disabledClient.Jar = client.Jar
+	requestBody, _ := json.Marshal(input)
+	disabledRequest, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/docs/%d/conditional-ops/%s/cancel", disabled.URL, doc.ID, request), bytes.NewReader(requestBody))
+	disabledRequest.Header.Set("Content-Type", "application/json")
+	disabledRequest.Header.Set("X-Jiange-User-Id", account)
+	disabledResponse, err := disabledClient.Do(disabledRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var disabledResult struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(disabledResponse.Body).Decode(&disabledResult); err != nil {
+		t.Fatal(err)
+	}
+	disabledResponse.Body.Close()
+	if disabledResponse.StatusCode != http.StatusServiceUnavailable || disabledResult.Error != "conditional_cancel_disabled" {
+		t.Fatalf("disabled cancellation: %d %+v", disabledResponse.StatusCode, disabledResult)
+	}
+	checkRequest, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/docs/%d/conditional-ops/%s", ts.URL, doc.ID, request), nil)
+	checkRequest.Header.Set("X-Jiange-User-Id", account)
+	checkResponse, err := client.Do(checkRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var existing store.ConditionalOpsStatus
+	if err := json.NewDecoder(checkResponse.Body).Decode(&existing); err != nil {
+		t.Fatal(err)
+	}
+	checkResponse.Body.Close()
+	if checkResponse.StatusCode != http.StatusOK || existing.State != "unknown" {
+		t.Fatalf("disabled endpoint must not create fence: %d %+v", checkResponse.StatusCode, existing)
+	}
 	if code, _ := sendCancel("", input); code != 400 {
 		t.Fatalf("missing account %d", code)
 	}

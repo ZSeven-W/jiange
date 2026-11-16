@@ -46,6 +46,8 @@ pnpm --filter @jiange/web dev            # http://localhost:5173 (proxies /api -
 
 环境变量 / Env: `DATABASE_URL`, `JIANGE_ADDR` (default `:8080`), `JIANGE_SESSION_TTL` (default `720h`), `JIANGE_SECURE_COOKIES=true` behind HTTPS.
 
+文档待确认操作的安全停止默认关闭。部署时先应用数据库迁移、升级并排空所有旧的文档写入实例，再设置 `JIANGE_ENABLE_CONDITIONAL_CANCEL=true`；启用后不能让不支持停止屏障的旧实例重新写入。详见[部署说明](document-conditional-cancel-report-20261117.md)。
+
 ## 测试 / Tests
 
 ```bash

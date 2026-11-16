@@ -12,6 +12,8 @@ type Config struct {
 	DatabaseURL   string
 	SessionTTL    time.Duration
 	SecureCookies bool
+	// Conditional cancellation must be enabled only after all writers understand fences.
+	EnableConditionalCancel bool
 	// AllowedOrigins are extra browser origins (host[:port]) allowed to open sync sockets.
 	AllowedOrigins []string
 	// S3/MinIO attachment storage; empty endpoint disables uploads unless BlobDir is set.
@@ -40,15 +42,16 @@ func Load() Config {
 		auto = 30 * time.Minute
 	}
 	return Config{
-		Addr:          getenv("JIANGE_ADDR", ":8080"),
-		DatabaseURL:   getenv("DATABASE_URL", "postgres://jiange:jiange@localhost:5432/jiange?sslmode=disable"),
-		SessionTTL:    ttl,
-		SecureCookies: getenv("JIANGE_SECURE_COOKIES", "false") == "true",
-		S3Endpoint:    os.Getenv("JIANGE_S3_ENDPOINT"),
-		S3Bucket:      getenv("JIANGE_S3_BUCKET", "jiange"),
-		S3AccessKey:   os.Getenv("JIANGE_S3_ACCESS_KEY"),
-		S3SecretKey:   os.Getenv("JIANGE_S3_SECRET_KEY"),
-		BlobDir:       os.Getenv("JIANGE_BLOB_DIR"),
+		Addr:                    getenv("JIANGE_ADDR", ":8080"),
+		DatabaseURL:             getenv("DATABASE_URL", "postgres://jiange:jiange@localhost:5432/jiange?sslmode=disable"),
+		SessionTTL:              ttl,
+		SecureCookies:           getenv("JIANGE_SECURE_COOKIES", "false") == "true",
+		EnableConditionalCancel: os.Getenv("JIANGE_ENABLE_CONDITIONAL_CANCEL") == "true",
+		S3Endpoint:              os.Getenv("JIANGE_S3_ENDPOINT"),
+		S3Bucket:                getenv("JIANGE_S3_BUCKET", "jiange"),
+		S3AccessKey:             os.Getenv("JIANGE_S3_ACCESS_KEY"),
+		S3SecretKey:             os.Getenv("JIANGE_S3_SECRET_KEY"),
+		BlobDir:                 os.Getenv("JIANGE_BLOB_DIR"),
 		AllowedOrigins: strings.FieldsFunc(getenv("JIANGE_ALLOWED_ORIGINS", "localhost:5173,127.0.0.1:5173"),
 			func(r rune) bool { return r == ',' || r == ' ' }),
 		AutoVersionEvery: auto,

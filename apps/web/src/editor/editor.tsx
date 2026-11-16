@@ -270,9 +270,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const alignmentPendingRef = useRef(false);
   const [alignmentPending, setAlignmentPending] = useState(false);
   const [canCancelFind, setCanCancelFind] = useState(false);
+  const [cancelUnavailable, setCancelUnavailable] = useState(false);
   const [alignmentMessage, setAlignmentMessage] = useState("");
   const [waitingResizeSync, setWaitingResizeSync] = useState(false);
-  const setPendingAlignment = useCallback((pending: boolean) => { alignmentPendingRef.current = pending; setAlignmentPending(pending); }, []);
+  const setPendingAlignment = useCallback((pending: boolean) => { alignmentPendingRef.current = pending; setAlignmentPending(pending); if (!pending) setCancelUnavailable(false); }, []);
+  useEffect(() => { setCancelUnavailable(false); }, [sync.client, userId]);
   const conditionalAlignment = useMemo(() => {
     if (typeof window === "undefined" || !Number.isSafeInteger(userId) || !userId || userId < 1) return null;
     try {
@@ -539,6 +541,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const kind = await conditionalFind.pendingKind();
       if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || controller.signal.aborted) return;
       if (kind !== "find" && kind !== "redacted") { setAlignmentMessage("待处理记录已变化，请重新核对。"); return; }
+      setCancelUnavailable(false);
       // The stop request contains only a digest and identifiers, not the batch.
       const result = await conditionalFind.cancel(controller.signal);
       if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
@@ -549,7 +552,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!handled) setColumnNotice("未提交的操作已停止。");
       } else if (result === "needs_resolution" || result === "committed") {
         setAlignmentMessage("操作已提交，正在核对保存结果。"); window.setTimeout(() => void reconcileAlignment(), 0);
-      } else if (result === "history_changed" || result === "mismatch") setAlignmentMessage("文档历史已变化，无法安全停止，请检查文档历史。");
+      } else if (result === "unavailable") setCancelUnavailable(true);
+      else if (result === "history_changed" || result === "mismatch") setAlignmentMessage("文档历史已变化，无法安全停止，请检查文档历史。");
       else if (result === "blocked") setAlignmentMessage("暂时无法停止，请检查账号权限和同步状态。");
       else setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。");
     } catch { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。"); }
@@ -2589,7 +2593,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {mentionNavigationNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{mentionNavigationNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setMentionNavigationNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button>{canCancelFind && <><button type="button" disabled={alignmentWorking || !!readOnly} className="text-primary disabled:opacity-50" onClick={() => void cancelAtomicFind()}>停止未确认操作</button><span className="basis-full text-xs text-subtle">停止只阻止尚未提交的请求；已提交的内容会保留。</span></>}</>}</div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button>{canCancelFind && <><button type="button" disabled={alignmentWorking || !!readOnly} className="text-primary disabled:opacity-50" onClick={() => void cancelAtomicFind()}>停止未确认操作</button><span className="basis-full text-xs text-subtle">{cancelUnavailable ? "当前服务尚未开启安全停止功能，请联系管理员；待确认记录会保留。" : "停止只阻止尚未提交的请求；已提交的内容会保留。"}</span></>}</>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>

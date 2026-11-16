@@ -27,12 +27,14 @@ type Server struct {
 	Log           *slog.Logger
 	SessionTTL    time.Duration
 	SecureCookies bool
-	Iterations    int // PBKDF2 iterations; tests lower this
-	Now           func() time.Time
-	Hub           *syncsrv.Hub // nil disables /api/sync
-	BtHub         *btsync.Hub  // nil disables base realtime
-	Blobs         blob.Store   // nil disables attachments
-	WebUI         http.Handler // embedded frontend; nil serves nothing at /
+	// Enable only after all document-writing instances support cancellation fences.
+	EnableConditionalCancel bool
+	Iterations              int // PBKDF2 iterations; tests lower this
+	Now                     func() time.Time
+	Hub                     *syncsrv.Hub // nil disables /api/sync
+	BtHub                   *btsync.Hub  // nil disables base realtime
+	Blobs                   blob.Store   // nil disables attachments
+	WebUI                   http.Handler // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
 	// AISecret (32 bytes, from JIANGE_SECRET_KEY) encrypts saved AI API keys; nil disables saving.
