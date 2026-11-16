@@ -63,6 +63,17 @@ describe("conditional column alignment request", () => {
     await expect(invalid.commit.start({...widths, value:'{"3:2":"正文"}'},2,3,signal())).rejects.toThrow(/invalid column layout/);
     expect(invalid.send).not.toHaveBeenCalled(); expect(await invalid.journal.read()).toBeNull();
   });
+  it("persists and retries table-width operations without accepting text payloads", async () => {
+    const ctx = setup();
+    const width: Extract<Op, {t:"bset"}> = {...op, key:"tableWidths", value:'[180,null,220.25]'};
+    ctx.send.mockRejectedValueOnce(new TypeError("network"));
+    expect(await ctx.commit.start(width,2,3,signal())).toBe("pending");
+    expect(await ctx.commit.retry(signal())).toBe("sent");
+    expect(ctx.send.mock.calls[1][1]).toEqual(encodeOps([width]));
+    const invalid = setup();
+    await expect(invalid.commit.start({...width,value:'["正文"]'},2,3,signal())).rejects.toThrow(/invalid column layout/);
+    expect(invalid.send).not.toHaveBeenCalled();
+  });
   it("finishes the captured undo history only after its receipt and operation are observed", async () => {
     const ctx = setup(), doc = new Doc(9), init = new Tx(doc);
     const parent = init.create("columns", null, ROOT), block = init.create("paragraph", null, parent);

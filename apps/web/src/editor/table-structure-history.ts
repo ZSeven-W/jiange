@@ -52,7 +52,7 @@ function rebaseSnapshot(snapshot: string, logical: string, actual: string, ops: 
     if ((current.get(key) ?? null) !== (old.get(key) ?? null)) return snapshot;
   }
   for (const op of ops) {
-    if (op.t !== "bset" || !op.key.startsWith("tbl.c.")) continue;
+    if (op.t !== "bset" || !(op.key === "tableData" || op.key === "tbl.m" || op.key.startsWith("tbl.c."))) continue;
     if ((current.get(op.key) ?? null) === (old.get(op.key) ?? null) && next.has(op.key)) current.set(op.key, next.get(op.key)!);
   }
   return JSON.stringify([[...current].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0), ...content]);
@@ -128,13 +128,15 @@ export class TableStructureHistory {
     const item = from.pop();
     if (!item || !doc.hasBlock(block)) { to.push(null); return; }
     const logical = redo ? item.after : item.before, actual = guard(doc, block);
-    if (!restored(logical, actual, ops, block)) { to.push(null); return; }
-    for (const entry of this.entries.values()) if (idKey(entry.block) === idKey(block)) entry.expected = rebaseSnapshot(entry.expected, logical, actual, ops);
+    const widthChange = key.startsWith(`table-width:${idKey(block)}:`);
+    if (!restored(logical, actual, ops, block, widthChange ? new Set(["tableWidths"]) : undefined)) { to.push(null); return; }
+    const rebase = widthChange ? rebaseStructureSnapshot : rebaseSnapshot;
+    for (const entry of this.entries.values()) if (idKey(entry.block) === idKey(block)) entry.expected = rebase(entry.expected, logical, actual, ops);
     for (const [transitionKey, transitions] of this.transitions) for (const tracked of [...transitions.undo, ...transitions.redo]) {
       if (!tracked) continue;
-      if (!transitionKey.startsWith(`table:${idKey(block)}:`)) continue;
-      tracked.before = rebaseSnapshot(tracked.before, logical, actual, ops);
-      tracked.after = rebaseSnapshot(tracked.after, logical, actual, ops);
+      if (!transitionKey.startsWith(`table:${idKey(block)}:`) && !transitionKey.startsWith(`table-width:${idKey(block)}:`)) continue;
+      tracked.before = rebase(tracked.before, logical, actual, ops);
+      tracked.after = rebase(tracked.after, logical, actual, ops);
     }
     if (redo) item.after = actual; else item.before = actual;
     to.push(item);
@@ -157,7 +159,7 @@ export class TableStructureHistory {
     return key;
   }
 
-  step<S>(doc: Doc, undo: UndoManager<S>, key: string, redo: boolean): { status: "ready"; ops: Op[]; rebase?: { logical: ReturnType<typeof historyVersions>; actual: ReturnType<typeof historyVersions> } } | { status: "empty" | "conflict" } {
+  step<S>(doc: Doc, undo: UndoManager<S>, key: string, redo: boolean): { status: "ready"; ops: Op[]; rebase?: { logical: ReturnType<typeof historyVersions>; actual: ReturnType<typeof historyVersions>; logicalSnapshot: string; actualSnapshot: string } } | { status: "empty" | "conflict" } {
     const entry = this.entries.get(key);
     if (!entry || undo.peekMarker(redo) !== key) return { status: "empty" };
     if (!doc.hasBlock(entry.block) || guard(doc, entry.block) !== entry.expected) return { status: "conflict" };
@@ -166,7 +168,7 @@ export class TableStructureHistory {
     for (const change of entry.changes) tx.setProp(entry.block, change.key, redo ? change.after : change.before);
     if (!tx.ops.length) return { status: "empty" };
     const actual = guard(doc, entry.block);
-    let rebase: { logical: ReturnType<typeof historyVersions>; actual: ReturnType<typeof historyVersions> } | undefined;
+    let rebase: { logical: ReturnType<typeof historyVersions>; actual: ReturnType<typeof historyVersions>; logicalSnapshot: string; actualSnapshot: string } | undefined;
     if (target && restored(target, actual, tx.ops, entry.block, new Set(entry.changes.map((change) => change.key)))) {
       for (const [otherKey, other] of this.entries) {
         if (otherKey === key || idKey(other.block) !== idKey(entry.block)) continue;
@@ -174,11 +176,11 @@ export class TableStructureHistory {
         if (other.other) other.other = rebaseStructureSnapshot(other.other, target, actual, tx.ops);
       }
       for (const [transitionKey, transitions] of this.transitions) for (const tracked of [...transitions.undo, ...transitions.redo]) {
-        if (!tracked || !transitionKey.startsWith(`table:${idKey(entry.block)}:`)) continue;
+        if (!tracked || (!transitionKey.startsWith(`table:${idKey(entry.block)}:`) && !transitionKey.startsWith(`table-width:${idKey(entry.block)}:`))) continue;
         tracked.before = rebaseStructureSnapshot(tracked.before, target, actual, tx.ops);
         tracked.after = rebaseStructureSnapshot(tracked.after, target, actual, tx.ops);
       }
-      rebase = { logical: historyVersions(target), actual: historyVersions(actual) };
+      rebase = { logical: historyVersions(target), actual: historyVersions(actual), logicalSnapshot: target, actualSnapshot: actual };
     }
     entry.other = source;
     entry.expected = actual;

@@ -10,6 +10,7 @@ import { useTableStickyHeader } from "./table-sticky-header";
 import { visibleTableWidths } from "./table-widths";
 
 type GripSel = { kind: "row" | "col"; index: number };
+export type TableResizeSession = { commit: (widths: number[]) => void; cancel: () => void };
 
 /** 行/列菜单项（飞书：上方/下方插入行、左侧/右侧插入列、删除、清空）。 */
 export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string[][] = [], merges: Merge[] = []): { label: string; op: TableOp; danger?: boolean; disabled?: boolean }[] {
@@ -53,9 +54,9 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, header = true, headerColumn = false, onHeader, onHeaderColumn, onWidths, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onEdit, onChange, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
-  onWidths?: (w: number[]) => void;
+  onBeginResize?: (index: number) => TableResizeSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
@@ -81,7 +82,19 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
   const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
+  const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !widthDrag.current) return;
+      event.preventDefault();
+      const drag = widthDrag.current; widthDrag.current = null; setWidthPreview(null); drag.session.cancel();
+      if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
+    };
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("keydown", escape); widthDrag.current?.session.cancel(); widthDrag.current = null; };
+  }, []);
   useTableStickyHeader(root, header);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
   const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean } | null>(null);
@@ -189,14 +202,32 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [grip, range, moreOpen]);
-  const columnWidths = visibleTableWidths(rows, widths);
+  const columnWidths = widthPreview ?? visibleTableWidths(rows, widths);
   const colW = (ci: number) => columnWidths[ci] ?? 100;
-  const startResize = (e: React.MouseEvent, ci: number) => {
+  const startResize = (e: React.PointerEvent<HTMLElement>, ci: number) => {
+    if (widthDrag.current || e.button !== 0 || ci < 0 || ci >= nCols) return;
+    const session = onBeginResize?.(ci);
+    if (!session) return;
     e.preventDefault(); e.stopPropagation();
-    const startX = e.clientX, base = colW(ci);
-    const move = (ev: MouseEvent) => onWidths?.(Array.from({ length: nCols }, (_, k) => (k === ci ? Math.max(70, Math.round(base + ev.clientX - startX)) : colW(k))));
-    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
-    window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+    const initial = [...columnWidths], target = e.currentTarget;
+    widthDrag.current = { pointer: e.pointerId, index: ci, startX: e.clientX, initial, next: initial, session, target };
+    target.setPointerCapture(e.pointerId);
+  };
+  const moveResize = (e: React.PointerEvent<HTMLElement>) => {
+    const drag = widthDrag.current;
+    if (!drag || drag.pointer !== e.pointerId) return;
+    e.preventDefault();
+    const value = Math.max(100, Math.min(100000, Math.round(drag.initial[drag.index] + e.clientX - drag.startX)));
+    drag.next = drag.initial.map((width, index) => index === drag.index ? value : width);
+    setWidthPreview(drag.next);
+  };
+  const endResize = (e: React.PointerEvent<HTMLElement>, cancelled = false) => {
+    const drag = widthDrag.current;
+    if (!drag || drag.pointer !== e.pointerId) return;
+    widthDrag.current = null; setWidthPreview(null);
+    if (cancelled || drag.initial.every((value, index) => value === drag.next[index])) drag.session.cancel();
+    else drag.session.commit(drag.next);
+    if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
@@ -226,7 +257,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
         if (!error) { setRange(null); setGrip(null); }
       }}>
-      {!readOnly && <div className="relative z-30 sm:absolute sm:top-1 sm:left-0 sm:-translate-y-full"><span className={cn("mb-1 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:mb-0", multi || moreOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="relative z-30 sm:h-8"><span className={cn("mb-1 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-1 sm:left-0 sm:mb-0", multi || moreOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
           <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => setMoreOpen((open) => !open)} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
@@ -337,7 +368,17 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
                     )}
                     {editable && ri === 0 && !span?.[1] && <button type="button" aria-label={`选择第 ${ci + 1} 列`} title="选择整列" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "col" && grip.index === ci && "bg-primary opacity-100")} data-table-col-grip={ci} />}
                     {editable && ci === 0 && !span?.[0] && <button type="button" aria-label={`选择第 ${ri + 1} 行`} title="选择整行" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "row" && grip.index === ri && "bg-primary opacity-100")} data-table-row-grip={ri} />}
-                    {!readOnly && ri === 0 && <div className="absolute -right-[3px] top-0 z-10 h-full w-[6px] cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, ci + (span?.[1] ?? 1) - 1)} data-table-resize={ci} />}
+                    {!readOnly && onBeginResize && ri === 0 && Array.from({ length: span?.[1] ?? 1 }, (_, offset) => {
+                      const index = ci + offset, trailing = columnWidths.slice(index + 1, ci + (span?.[1] ?? 1)).reduce((sum, width) => sum + width, 0);
+                      return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {
+                      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                      const session = onBeginResize(index);
+                      if (!session) return;
+                      e.preventDefault(); e.stopPropagation();
+                      const next = [...columnWidths]; next[index] = Math.max(100, Math.min(100000, next[index] + (e.key === "ArrowLeft" ? -10 : 10)));
+                      if (next[index] === columnWidths[index]) session.cancel(); else session.commit(next);
+                    }} data-table-resize={index} />;
+                    })}
                   </td>
                 );
               })}

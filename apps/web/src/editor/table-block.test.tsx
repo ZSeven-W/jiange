@@ -29,6 +29,13 @@ describe("Feishu table block", () => {
     expect(html.match(/<td/g)).toHaveLength(3);
     expect(html).not.toContain("data-table-row-grip");
   });
+  it("exposes a resize handle for each column under a merged first row", () => {
+    const html = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,2,2]]" onBeginResize={() => ({ commit: noop, cancel: noop })} onEdit={noop} onDelete={noop} readOnly={false} />);
+    expect((html.match(/data-table-resize=/g) ?? [])).toHaveLength(3);
+    for (const column of [0, 1, 2]) expect(html).toContain(`data-table-resize="${column}"`);
+    expect(html).toContain('aria-label="调整第 1 列宽"');
+    expect(html).toContain('aria-label="调整第 2 列宽"');
+  });
   it("disables deleting the last row or column", () => {
     expect(gripMenu({ kind: "row", index: 0 }, 1, 3).find((i) => i.op.kind === "deleteRow")?.disabled).toBe(true);
     expect(gripMenu({ kind: "col", index: 0 }, 2, 1).find((i) => i.op.kind === "deleteCol")?.disabled).toBe(true);

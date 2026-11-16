@@ -54,8 +54,9 @@ import { LinkCard } from "./link-card";
 import { FileCard, fmtSize } from "./file-card";
 import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./image-block";
-import { TableBlock } from "./table-block";
-import { parseTableWidths } from "./table-widths";
+import { TableBlock, type TableResizeSession } from "./table-block";
+import { parseTableWidths, updatedTableWidths } from "./table-widths";
+import { TableWidthHistory } from "./table-width-history";
 import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./table-ops";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
@@ -184,6 +185,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const columnAlignmentHistory = useMemo(() => new ColumnAlignmentHistory(), [sync.client]);
   const columnWidthHistory = useMemo(() => new ColumnWidthHistory(), [sync.client]);
   const columnMoveHistory = useMemo(() => new ColumnMoveHistory(), [sync.client]);
+  const tableWidthHistory = useMemo(() => new TableWidthHistory(), [sync.client]);
   const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
@@ -221,7 +223,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const currentUserId = useRef(userId); currentUserId.current = userId;
-  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory | ColumnMoveHistory } | null>(null);
+  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory | ColumnMoveHistory | TableWidthHistory } | null>(null);
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
   const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
@@ -302,7 +304,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
         if (!pending && pendingAlignmentPlan.current) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
         setPendingAlignment(pending);
-        setAlignmentMessage(pending ? "有一项分栏布局操作尚待核对。" : "");
+        setAlignmentMessage(pending ? "有一项布局操作尚待核对。" : "");
       }).catch(() => { if (alive && currentClient.current === sync.client && currentUserId.current === userId) { setPendingAlignment(true); setAlignmentMessage("无法读取本地操作记录，请检查浏览器存储后重试。"); } });
     };
     const changed = (event: StorageEvent) => { if (userId && (event.key === null || event.key === conditionalJournalStorageKey(userId, sync.client.docId))) check(); };
@@ -328,7 +330,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
         if (attempt.batch !== conditionalBatchBase64(encodeOps([pending.plan.op]))) return false;
         const d = sync.client.doc;
-        if (d === pending.doc && pending.history.finishConditional(d, um, pending.plan) === "ready") { pendingAlignmentPlan.current = null; return true; }
+        if (d === pending.doc && pending.history.finishConditional(d, um, pending.plan) === "ready") {
+          if (pending.key.startsWith("table-width:")) tableStructureHistory.afterEditStep(d, pending.plan.op.block, pending.key, pending.redo, [pending.plan.op]);
+          pendingAlignmentPlan.current = null; return true;
+        }
         if (um.peekMarker(pending.redo) === pending.key && um.discardMarker(pending.redo, pending.key, um.revision)) {
           pending.history.discard(pending.doc, pending.key, pending.redo); pendingAlignmentPlan.current = null; discarded = true; return true;
         }
@@ -338,7 +343,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (result === "committed" || result === "not_committed") {
         setPendingAlignment(false); pendingAlignmentPlan.current = null; releaseAlignmentOwner(); force((x) => x + 1);
         setAlignmentMessage("");
-        setColumnNotice(result === "not_committed" ? "文档已变化，分栏布局操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "分栏布局操作已保存。");
+        setColumnNotice(result === "not_committed" ? "文档已变化，布局操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "布局操作已保存。");
       } else if (result === "empty" && !pendingAlignmentPlan.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); }
       else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
       else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认操作结果，请保留当前记录并检查文档历史。");
@@ -346,7 +351,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       else setAlignmentMessage("操作结果尚未确认，可核对状态或重试相同操作。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("暂时无法核对操作，原请求仍保存在本地。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, releaseAlignmentOwner, setPendingAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment]);
 
   const retryAlignment = useCallback(async () => {
     if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
@@ -367,11 +372,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, reconcileAlignment]);
 
   const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
-    if (alignmentBusy.current || !mounted.current) return;
+    if (!mounted.current) return;
+    if (alignmentBusy.current) { setColumnNotice("上一项布局操作仍在核对，请稍后再试。"); return; }
     setColumnNotice(""); setTableHistoryConflict(null);
-    if (alignmentPendingRef.current) { setAlignmentMessage("请先核对尚未完成的分栏布局操作。"); void reconcileAlignment(); return; }
-    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交分栏布局撤销。"); return; }
-    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏布局。`); return; }
+    if (alignmentPendingRef.current) { setAlignmentMessage("请先核对尚未完成的布局操作。"); void reconcileAlignment(); return; }
+    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交布局撤销。"); return; }
+    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}布局。`); return; }
     if (sync.client.epoch === null) { setColumnNotice("当前服务端不支持安全撤销，请升级服务端后重试。"); return; }
     alignmentBusy.current = true;
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
@@ -380,7 +386,13 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setColumnNotice("另一页面正在处理该文档，或浏览器不支持跨页面锁。"); return; }
       const d = sync.client.doc, epoch = sync.client.epoch, head = sync.client.lastSeq;
       if (!d || !canStepFindBatch(sync.client) || epoch === null || readOnlyRef.current || controller.signal.aborted) { releaseAlignmentOwner(); return; }
-      const history = key.startsWith("column-move:") ? columnMoveHistory : key.startsWith("column-width:") ? columnWidthHistory : columnAlignmentHistory;
+      const history = key.startsWith("table-width:") ? tableWidthHistory : key.startsWith("column-move:") ? columnMoveHistory : key.startsWith("column-width:") ? columnWidthHistory : columnAlignmentHistory;
+      if (key.startsWith("table-width:")) {
+        const match = /^table-width:(\d+):(\d+):\d+$/.exec(key);
+        if (!match || tableStructureHistory.beforeEditStep(d, { client: Number(match[1]), clock: Number(match[2]) }, key, redo) === "conflict") {
+          releaseAlignmentOwner(); setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision }); return;
+        }
+      }
       const prepared = history.prepareConditional(d, um, key, redo);
       if (prepared.status !== "ready") {
         releaseAlignmentOwner();
@@ -389,10 +401,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }
       const { plan } = prepared;
       pendingAlignmentPlan.current = { plan, doc: d, key, redo, history };
-      setPendingAlignment(true); setAlignmentMessage("正在安全提交分栏布局操作…");
+      setPendingAlignment(true); setAlignmentMessage("正在安全提交布局操作…");
       const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === d && history.canSubmitConditional(d, um, plan));
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未执行分栏布局操作。"); }
+      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未执行布局操作。"); }
       else if (result === "occupied") { pendingAlignmentPlan.current = null; setAlignmentMessage("已有操作待核对，请先处理该记录。"); }
       else setAlignmentMessage(result === "sent" ? "操作已提交，正在核对同步结果。" : "操作结果尚未确认，可核对状态或重试相同操作。");
     } catch {
@@ -401,11 +413,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) {
         setPendingAlignment(pending);
         if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍保存在本地。");
-        else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交分栏布局操作，请检查浏览器存储。"); }
+        else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交布局操作，请检查浏览器存储。"); }
       }
     } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
 
   useEffect(() => {
     if (!alignmentPending) return;
@@ -1000,7 +1012,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:") || marker.startsWith("table-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -1977,7 +1989,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       return;
     }
     setTableHistoryConflict(null);
-    if (block) tableStructureHistory.afterEditStep(d, block, key, redo, result.ops);
+    if (block) {
+      tableStructureHistory.afterEditStep(d, block, key, redo, result.ops);
+      tableWidthHistory.rebaseData(d, block, result.rebase.logical, result.rebase.actual, result.ops);
+    }
     findBatchHistory.finishTableChange(d, key, redo, aliases);
     sync.client.push(result.ops);
     force((x) => x + 1);
@@ -1996,7 +2011,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       return;
     }
     const location = /^table-structure:(\d+):(\d+):/.exec(key);
-    if (location && result.rebase) tableHistory.rebaseStructure(sync.client, `table:${location[1]}:${location[2]}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
+    if (location && result.rebase) {
+      tableHistory.rebaseStructure(sync.client, `table:${location[1]}:${location[2]}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
+      tableWidthHistory.rebaseStructure(d, { client: Number(location[1]), clock: Number(location[2]) }, result.rebase.logicalSnapshot, result.rebase.actualSnapshot);
+    }
     setTableHistoryConflict(null); sync.client.push(result.ops); force((x) => x + 1); publish();
   };
   findBatchHistoryActionRef.current = (key, redo) => {
@@ -2022,6 +2040,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const tableKey = `table:${block.dataset.block}:-1:-1`;
     if (um.peekMarker(redo)?.startsWith("find-batch:")) findBatchHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo)?.startsWith(`table-structure:${block.dataset.block}:`)) tableStructureHistoryActionRef.current(um.peekMarker(redo)!, redo);
+    else if (um.peekMarker(redo)?.startsWith(`table-width:${block.dataset.block}:`)) columnAlignmentHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
     else if (um.peekMarker(redo) === tableKey) tableHistoryActionRef.current(tableKey, redo);
     else if (redo ? um.canRedo : um.canUndo) setColumnNotice("最近的操作不在当前单元格，请先从文档中撤销或重做该操作。");
@@ -2143,14 +2162,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对分栏布局操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对布局操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("column-width:")) { if (sync.client.doc) columnWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("table-width:")) { if (sync.client.doc) tableWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("column-move:")) { if (sync.client.doc) columnMoveHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
             else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
@@ -2283,7 +2303,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 syncStatus={sync.status}
                 onMoveColumn={readOnly ? undefined : (column, after) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return;
-                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
+                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
                   const parse = (value: string) => { const match = /^(\d+):(\d+)$/.exec(value); return match ? { client: Number(match[1]), clock: Number(match[2]) } : null; };
                   const target = parse(column), previous = after ? parse(after) : null;
                   if (!target || after && !previous) { setColumnNotice("分栏位置无效，未移动内容。"); return; }
@@ -2306,7 +2326,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onBeginColumnResize={readOnly ? undefined : (left, right) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return null;
-                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return null; }
+                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return null; }
                   const snapshot = captureColumnWidths(doc, b, left, right);
                   const before = columnWidthHistory.capture(doc, b);
                   if (!snapshot || !before) { setColumnNotice("分栏或栏宽数据已变化，无法调整。"); return null; }
@@ -2316,7 +2336,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     cancel: () => setColumnNotice("显示区域已变化，未调整栏宽，请重试。"),
                     commit: (fraction) => {
                       if (readOnlyRef.current || sync.client.doc !== doc) return;
-                      if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
+                      if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
                       const tx = new Tx(doc), result = applyColumnWidths(tx, snapshot, fraction);
                       if (result === "changed" || result === "invalid") { setColumnNotice("分栏或栏宽已变化，未应用调整，请重试。"); return; }
                       if (result === "applied") { columnWidthHistory.record(doc, um, b, before); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
@@ -2330,6 +2350,31 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   // collaborator may still send edits to it after undo.
                   if (requestColumnDeletion(doc, cid) === "unsupported") setColumnNotice("暂不支持安全删除分栏：协作者可能仍在编辑，栏内容已保留。");
                 }}
+                onBeginTableResize={readOnly ? undefined : (index) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return null;
+                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return null; }
+                  const before = tableWidthHistory.capture(doc, b);
+                  const structureBefore = tableStructureHistory.capture(doc, b, um);
+                  if (!before || !Number.isInteger(index) || index < 0 || index >= before.columns) { setColumnNotice("表格结构或列宽无效，无法调整。"); return null; }
+                  return {
+                    cancel: () => {},
+                    commit: (widths) => {
+                      if (readOnlyRef.current || sync.client.doc !== doc) return;
+                      if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
+                      const current = tableWidthHistory.capture(doc, b);
+                      if (!current || current.guard !== before.guard || current.version !== before.version || current.value !== before.value || widths.length !== before.columns || widths.some((width) => !Number.isFinite(width) || width < 100 || width > 100000)) {
+                        setColumnNotice("表格内容或列宽已变化，未应用调整；请重试。"); return;
+                      }
+                      // Preserve other automatic widths and any extra stored
+                      // widths which may have been removed by an old client.
+                      const value = updatedTableWidths(before.value, before.columns, index, widths[index]);
+                      if (value === null) { setColumnNotice("表格列宽无效，未应用调整。"); return; }
+                      if (value === before.value) return;
+                      const tx = new Tx(doc); tx.setProp(b, "tableWidths", value);
+                      if (tx.ops.length) { const key = tableWidthHistory.record(doc, um, b, before); tableStructureHistory.recordEdit(doc, b, key, structureBefore, false, um); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
+                    },
+                  };
+                }}
                 onTableEdit={readOnly ? undefined : (r, c, v, kind) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return;
                   const tx = new Tx(doc);
@@ -2339,6 +2384,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const old = before[r]?.[c];
                   if (r >= 0 && typeof old !== "string") return;
                   if (r >= 0 && old === v) return;
+                  const widthBefore = r >= 0 && !isCellTable(info.props) ? tableWidthHistory.capture(doc, b) : null;
                   const previousVersion = doc.propVersion(b, "tableData");
                   const historyGuard = tableHistoryGuard(doc, b);
                   const aliases = findBatchHistory.capture(doc, [b]);
@@ -2346,6 +2392,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const rows = applyTableEdit(before, r, c, v);
                   // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
                   writeTable(tx, b, info.props, rows, doc.client);
+                  if (widthBefore) tableWidthHistory.rebaseMigration(doc, b, widthBefore, info.props);
                   if (tx.ops.length) {
                     const next = doc.propVersion(b, "tableData");
                     const key = r < 0 ? `table:${idKey(b)}:-1:-1` : `table:${idKey(b)}:${r}:${c}`;
@@ -2519,7 +2566,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           } : undefined}
           onAlign={(a) => {
             const d = sync.client.doc, s = sel.current;
-            if (alignmentPendingRef.current && pendingAlignmentPlan.current && d && s && isColumnText(d, s.f.b)) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
+            if (alignmentPendingRef.current && pendingAlignmentPlan.current && d && s && isColumnText(d, s.f.b)) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
             run((tx, selection) => setSelectionAlignment(tx, selection, a), undefined, false, true);
           }}
           onClearFormat={() => run((tx, s) => {
@@ -2711,6 +2758,7 @@ interface BlockProps {
   onAddColumn?: (after: string | null) => void;
   onMoveColumn?: (column: string, after: string | null) => void;
   onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
+  onBeginTableResize?: (index: number) => TableResizeSession | null;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   commentThreads?: number[];
@@ -2763,7 +2811,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -3032,7 +3080,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           headerColumn={props.tableHeaderColumn === "column"}
           onHeader={onTableHeader ? (on) => onTableHeader("row", on) : undefined}
           onHeaderColumn={onTableHeader ? (on) => onTableHeader("column", on) : undefined}
-          onWidths={(w) => onSetProp?.("tableWidths", JSON.stringify(w))}
+          onBeginResize={onBeginTableResize}
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
           onPasteCells={onTablePaste}

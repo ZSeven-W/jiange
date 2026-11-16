@@ -4,7 +4,7 @@ import { applyTableEdit, parseTableData } from "./model";
 import type { TableCellHistory } from "./table-cell-history";
 import { tableDataOf, tableRowsOf, writeTable } from "./table-cells";
 
-type Result = { status: "ready"; ops: Op[] } | { status: "empty" | "conflict" };
+type Result = { status: "ready"; ops: Op[]; rebase: { logical: string | null; actual: string | null } } | { status: "empty" | "conflict" };
 
 /** Merge changes can make previously visible cells hidden without changing data. */
 export function tableHistoryGuard(doc: Doc, block: { client: number; clock: number }): string {
@@ -35,5 +35,5 @@ export function applyTableHistory<S>(doc: Doc, session: object, undo: UndoManage
   const logicalVersion = history.commit(session, key, redo, nextVersion);
   history.rebase(session, `table:${idKey(block)}:`, logicalVersion, nextVersion, guard);
   undo.moveMarker(redo, key);
-  return { status: "ready", ops: tx.ops };
+  return { status: "ready", ops: tx.ops, rebase: { logical: logicalVersion, actual: nextVersion } };
 }

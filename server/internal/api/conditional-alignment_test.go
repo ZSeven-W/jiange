@@ -184,6 +184,43 @@ func checkConditionalAlignment(t *testing.T, st store.Store) {
 			t.Fatalf("invalid move %d: %d", i, got)
 		}
 	}
+	tableValue := `[140,180.25,null]`
+	tableOp := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: table.ID, Key: "tableWidths", Value: &tableValue}
+	if got := do("12121212121212121212121212121212", finalHead, tableOp); got != http.StatusOK {
+		t.Fatalf("valid table widths: %d", got)
+	}
+	if got := do("12121212121212121212121212121212", finalHead, tableOp); got != http.StatusOK {
+		t.Fatalf("table width idempotent retry: %d", got)
+	}
+	actual, finalHead, err = StateAtHead(ctx, st, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tableOp.ID.Clock = actual.Clock() + 1
+	tableOp.Block = column.ID
+	if got := do("13131313131313131313131313131313", finalHead, tableOp); got != http.StatusBadRequest {
+		t.Fatalf("table width on paragraph: %d", got)
+	}
+	peerWidth := `[160,180.25,null]`
+	peerTable := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: uint64(remote), Clock: actual.Clock() + 1}, Block: table.ID, Key: "tableWidths", Value: &peerWidth}
+	peerBatch, _ := collab.EncodeOps([]collab.Op{peerTable})
+	if _, err := st.AppendOps(ctx, doc.ID, []store.RawOp{{ClientID: remote, Clock: int64(peerTable.ID.Clock), Bytes: peerBatch}}); err != nil {
+		t.Fatal(err)
+	}
+	old := `[100,180.25,null]`
+	tableOp.Block, tableOp.Value, tableOp.ID.Clock = table.ID, &old, actual.Clock()+2
+	if got := do("14141414141414141414141414141414", finalHead, tableOp); got != http.StatusConflict {
+		t.Fatalf("stale table width inverse: %d", got)
+	}
+	actual, _, err = StateAtHead(ctx, st, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range actual.View().Blocks {
+		if block.ID == table.ID.Key() && block.Props["tableWidths"] != peerWidth {
+			t.Fatal("peer table width overwritten")
+		}
+	}
 }
 
 func TestConditionalColumnWidthsValidation(t *testing.T) {
@@ -194,6 +231,19 @@ func TestConditionalColumnWidthsValidation(t *testing.T) {
 	}
 	for _, value := range []string{"null", "[]", "{", `{"__proto__":1}`, `{"1:2":0}`, `{"1:2":1.5}`, `{"1:2":true}`, `{"1:2":1000000000,"2:3":1}`, `{"9007199254740992:1":1}`} {
 		if conditionalColumnWidths(collab.Op{Key: "columnWidths", Value: &value}) {
+			t.Fatalf("accepted invalid width %q", value)
+		}
+	}
+}
+
+func TestConditionalTableWidthsValidation(t *testing.T) {
+	for _, value := range []string{"", "[]", `[100,null,180.25]`, `[1e3]`} {
+		if !conditionalTableWidths(collab.Op{Key: "tableWidths", Value: &value}) {
+			t.Fatalf("rejected valid width %q", value)
+		}
+	}
+	for _, value := range []string{"null", "{}", "[", `[0]`, `[-1]`, `[100001]`, `[true]`, `["text"]`, `[1e999]`, `[1] {}`} {
+		if conditionalTableWidths(collab.Op{Key: "tableWidths", Value: &value}) {
 			t.Fatalf("accepted invalid width %q", value)
 		}
 	}

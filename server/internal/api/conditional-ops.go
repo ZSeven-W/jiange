@@ -147,7 +147,42 @@ func conditionalColumnWidths(op collab.Op) bool {
 	return true
 }
 
-// commitConditionalOps accepts text changes, table-cell properties, bounded column layout updates, and same-parent column moves.
+// Table widths contain only bounded numbers or nulls; no document text can
+// be smuggled into a conditionally committed layout operation.
+func conditionalTableWidths(op collab.Op) bool {
+	if op.Key != "tableWidths" || op.Value == nil || len(*op.Value) > 32000 {
+		return false
+	}
+	if *op.Value == "" {
+		return true
+	}
+	decoder := json.NewDecoder(bytes.NewBufferString(*op.Value))
+	decoder.UseNumber()
+	var values []any
+	if decoder.Decode(&values) != nil || values == nil || len(values) > 1000 {
+		return false
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return false
+	}
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		number, ok := value.(json.Number)
+		if !ok {
+			return false
+		}
+		width, err := number.Float64()
+		if err != nil || math.IsNaN(width) || math.IsInf(width, 0) || width <= 0 || width > 100000 {
+			return false
+		}
+	}
+	return true
+}
+
+// commitConditionalOps accepts text changes, table-cell properties, bounded table/column widths, and same-parent column moves.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
 func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +267,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case collab.TBlockSet:
-			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) {
+			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
 				return
 			}
@@ -300,7 +335,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 			blockKinds[op.Block] = kind
 		}
-		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
+		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && (conditionalTableKey(op.Key) || conditionalTableWidths(op)) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
 			return
 		}

@@ -4,11 +4,12 @@ import { applyTableWrites, cellTableWrites, isCellTable, tableDataOf, tableRowsO
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
 import { TableStructureHistory } from "./table-structure-history";
+import { TableWidthHistory } from "./table-width-history";
 
 function setup() {
   const doc = new Doc(1), tx = new Tx(doc);
   const table = tx.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]), tableWidths: "[100,200]" });
-  return { doc, table, undo: new UndoManager(), history: new TableStructureHistory(), cells: new TableCellHistory(), session: {} };
+  return { doc, table, undo: new UndoManager(), history: new TableStructureHistory(), widths: new TableWidthHistory(), cells: new TableCellHistory(), session: {} };
 }
 
 function deleteFirstRow(ctx: ReturnType<typeof setup>) {
@@ -23,9 +24,11 @@ function deleteFirstRow(ctx: ReturnType<typeof setup>) {
 function editCell(ctx: ReturnType<typeof setup>, col: number, value: string) {
   const { doc, table, history, undo, cells, session } = ctx;
   const info = doc.blockInfo(table), rows = tableRowsOf(info.props), before = rows[0][col];
+  const widthBefore = !isCellTable(info.props) ? ctx.widths.capture(doc, table) : null;
   const snapshot = history.capture(doc, table, undo), previous = doc.propVersion(table, "tableData"), type = tableHistoryGuard(doc, table);
   const tx = new Tx(doc), nextRows = rows.map((row) => [...row]); nextRows[0][col] = value;
   writeTable(tx, table, info.props, nextRows, doc.client);
+  ctx.widths.rebaseMigration(doc, table, widthBefore, info.props);
   const next = doc.propVersion(table, "tableData"), key = `table:${idKey(table)}:0:${col}`;
   const merged = cells.record(session, key, before, value, previous ? idKey(previous) : null, next ? idKey(next) : null, type, "insertText", Date.now(), undo.peekMarker(false) === key);
   undo.recordMarker(key, merged); history.recordEdit(doc, table, key, snapshot, merged, undo);
@@ -46,17 +49,69 @@ function editGrid(ctx: ReturnType<typeof setup>, nextRows: string[][]) {
 function stepCell(ctx: ReturnType<typeof setup>, key: string, redo = false) {
   if (ctx.history.beforeEditStep(ctx.doc, ctx.table, key, redo) === "conflict") return "conflict";
   const result = applyTableHistory(ctx.doc, ctx.session, ctx.undo, ctx.cells, key, redo);
-  if (result.status === "ready") ctx.history.afterEditStep(ctx.doc, ctx.table, key, redo, result.ops);
+  if (result.status === "ready") {
+    ctx.history.afterEditStep(ctx.doc, ctx.table, key, redo, result.ops);
+    ctx.widths.rebaseData(ctx.doc, ctx.table, result.rebase.logical, result.rebase.actual, result.ops);
+  }
   return result.status;
 }
 
 function stepStructure(ctx: ReturnType<typeof setup>, key: string, redo = false) {
   const result = ctx.history.step(ctx.doc, ctx.undo, key, redo);
-  if (result.status === "ready" && result.rebase) ctx.cells.rebaseStructure(ctx.session, `table:${idKey(ctx.table)}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
+  if (result.status === "ready" && result.rebase) {
+    ctx.cells.rebaseStructure(ctx.session, `table:${idKey(ctx.table)}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
+    ctx.widths.rebaseStructure(ctx.doc, ctx.table, result.rebase.logicalSnapshot, result.rebase.actualSnapshot);
+  }
   return result.status;
 }
 
 describe("guarded table selection deletion history", () => {
+  it("can undo a later cell edit before undoing a resize", () => {
+    const ctx = setup(), info = ctx.doc.blockInfo(ctx.table), migrate = new Tx(ctx.doc);
+    applyTableWrites(migrate, ctx.table, info.props, cellTableWrites(info.props, tableRowsOf(info.props), ctx.doc.client));
+    const before = ctx.widths.capture(ctx.doc, ctx.table)!;
+    new Tx(ctx.doc).setProp(ctx.table, "tableWidths", "[150,200]");
+    const width = ctx.widths.record(ctx.doc, ctx.undo, ctx.table, before), cell = editCell(ctx, 0, "A!");
+    expect(stepCell(ctx, cell)).toBe("ready");
+    const result = ctx.widths.prepareConditional(ctx.doc, ctx.undo, width, false);
+    expect(result.status).toBe("ready"); if (result.status !== "ready") return;
+    ctx.doc.apply(result.plan.op);
+    expect(ctx.widths.finishConditional(ctx.doc, ctx.undo, result.plan)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableWidths).toBe("[100,200]");
+  });
+  it("preserves resize undo through the first edit and migration of a legacy table", () => {
+    const ctx = setup(), before = ctx.widths.capture(ctx.doc, ctx.table)!;
+    new Tx(ctx.doc).setProp(ctx.table, "tableWidths", "[150,200]");
+    const width = ctx.widths.record(ctx.doc, ctx.undo, ctx.table, before), cell = editCell(ctx, 0, "A!");
+    expect(isCellTable(ctx.doc.blockInfo(ctx.table).props)).toBe(true);
+    expect(stepCell(ctx, cell)).toBe("ready");
+    const result = ctx.widths.prepareConditional(ctx.doc, ctx.undo, width, false);
+    expect(result.status).toBe("ready"); if (result.status !== "ready") return;
+    ctx.doc.apply(result.plan.op);
+    expect(ctx.widths.finishConditional(ctx.doc, ctx.undo, result.plan)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableWidths).toBe("[100,200]");
+  });
+  it("keeps a resize and a preceding row deletion in undo and redo order", () => {
+    const ctx = setup(), structure = deleteFirstRow(ctx), widths = ctx.widths;
+    const before = widths.capture(ctx.doc, ctx.table)!, snapshot = ctx.history.capture(ctx.doc, ctx.table, ctx.undo);
+    new Tx(ctx.doc).setProp(ctx.table, "tableWidths", "[150,200]");
+    const key = widths.record(ctx.doc, ctx.undo, ctx.table, before);
+    ctx.history.recordEdit(ctx.doc, ctx.table, key, snapshot, false, ctx.undo);
+    const stepWidth = (redo = false) => {
+      if (ctx.history.beforeEditStep(ctx.doc, ctx.table, key, redo) === "conflict") return "conflict";
+      const result = widths.prepareConditional(ctx.doc, ctx.undo, key, redo);
+      if (result.status !== "ready") return result.status;
+      ctx.doc.apply(result.plan.op);
+      const status = widths.finishConditional(ctx.doc, ctx.undo, result.plan);
+      if (status === "ready") ctx.history.afterEditStep(ctx.doc, ctx.table, key, redo, [result.plan.op]);
+      return status;
+    };
+    expect(stepWidth()).toBe("ready");
+    expect(stepStructure(ctx, structure)).toBe("ready");
+    expect(stepStructure(ctx, structure, true)).toBe("ready");
+    expect(stepWidth(true)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableWidths).toBe("[150,200]");
+  });
   it("undoes and redoes successive independent header changes", () => {
     const ctx = setup();
     const change = (key: string, value: string) => {
