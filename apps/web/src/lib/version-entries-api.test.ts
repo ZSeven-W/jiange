@@ -3,6 +3,16 @@ import { docsApi } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("account-bound version entries", () => {
+  it("requests the selected version scope and binds previews to the account", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ versions: [] }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ seq: 3, view: { blocks: [] } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await docsApi.versionEntries(8, 4, "saved");
+    await docsApi.versionPreview(8, 3, 4);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/docs/8/version-entries?scope=saved");
+    expect(fetcher.mock.calls[0][1].headers).toMatchObject({ "X-Jiange-User-Id": "4" });
+    expect(fetcher.mock.calls[1][0]).toBe("/api/docs/8/versions/3");
+    expect(fetcher.mock.calls[1][1].headers).toMatchObject({ "X-Jiange-User-Id": "4" });
+  });
   it("sends account, request identity, expected head and epoch", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ versions: [] }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:1", seq: 3 }), { status: 201 }));
     vi.stubGlobal("fetch", fetcher);

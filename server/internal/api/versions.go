@@ -110,13 +110,67 @@ func (s *Server) postVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	scope, valid := versionScope(r)
+	if !valid {
+		httpx.Error(w, http.StatusBadRequest, "invalid_scope", "版本范围无效")
+		return
+	}
 	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok || !driveExpectedUser(w, r, guard.UserID) {
 		return
 	}
 	vs, err := s.Store.Versions(r.Context(), d.ID)
 	if err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	role, err := s.versionReadRole(r.Context(), guard, d.ID)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	editor := store.RoleRank(role) >= store.RoleRank(store.RoleEdit)
+	if scope == "history" && !editor {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "需要编辑权限查看历史记录")
+		return
+	}
+	if scope == "saved" || !editor {
+		if st, ok := s.Store.(versionEntryStore); ok {
+			entries, err := st.ListVersionEntries(r.Context(), guard, d.ID)
+			if err != nil {
+				s.versionReadError(w, r, err)
+				return
+			}
+			filtered, seen := make([]store.Version, 0, len(entries)), make(map[int64]bool)
+			for _, entry := range entries {
+				if entry.CreatedBy > 0 && !seen[entry.Seq] {
+					filtered = append(filtered, store.Version{Seq: entry.Seq, Label: entry.Label, CreatedBy: entry.CreatedBy, CreatedByName: entry.CreatedByName, CreatedAt: entry.CreatedAt})
+					seen[entry.Seq] = true
+				}
+			}
+			vs = filtered
+		} else {
+			filtered := make([]store.Version, 0, len(vs))
+			for _, version := range vs {
+				if version.CreatedBy > 0 {
+					filtered = append(filtered, version)
+				}
+			}
+			vs = filtered
+		}
+	}
+	currentRole, err := s.versionReadRole(r.Context(), guard, d.ID)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	if currentRole != role {
+		httpx.Error(w, http.StatusConflict, "version_access_changed", "文档权限已变化，请重试")
 		return
 	}
 	if vs == nil {
@@ -127,13 +181,27 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 
 // getVersion previews one version's materialized content (read-only).
 func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	d, ok := s.need(w, r, store.RoleView)
 	if !ok {
 		return
 	}
 	seq, err := strconv.ParseInt(r.PathValue("seq"), 10, 64)
-	if err != nil {
+	if err != nil || seq <= 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_seq", "bad seq")
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok || !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	_, allowed, err := s.mayReadVersion(r.Context(), guard, d.ID, seq)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	if !allowed {
+		httpx.Error(w, http.StatusNotFound, "not_found", "版本不存在或无权访问")
 		return
 	}
 	state, err := s.Store.VersionState(r.Context(), d.ID, seq)
@@ -146,10 +214,28 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	view := doc.View()
+	projected, projectionErr := publicTableView(view)
+	role, allowed, err := s.mayReadVersion(r.Context(), guard, d.ID, seq)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	if !allowed {
+		httpx.Error(w, http.StatusNotFound, "not_found", "版本不存在或无权访问")
+		return
+	}
 	if rejectUnsupportedTableView(w, doc) {
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"seq": seq, "view": doc.View()})
+	if store.RoleRank(role) < store.RoleRank(store.RoleEdit) {
+		if projectionErr != nil {
+			httpx.Error(w, http.StatusConflict, "table_unavailable", "表格数据暂无法安全显示，请联系文档所有者")
+			return
+		}
+		view = projected
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"seq": seq, "view": view})
 }
 
 // restoreVersionBound rejects an account switch and fails closed on older servers.

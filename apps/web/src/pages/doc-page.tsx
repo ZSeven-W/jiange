@@ -40,7 +40,7 @@ import { DocumentGlyph, displayDocumentIcon } from "@/components/document-glyph"
 import type { SearchGuardCapture } from "@/components/search-focus";
 import { publishDocumentIcon } from "@/components/document-icon-cache";
 import { ask, askText } from "@/components/ui/ask";
-import { VersionPanel } from "./version-panel";
+import { VersionPanel, type VersionMode } from "./version-panel";
 import { DocumentPresentation } from "./document-presentation";
 import { NamedVersionDialog } from "./named-version-dialog";
 import { namedVersionPoint } from "./named-version-safety";
@@ -218,7 +218,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   useEffect(() => { setInfoTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { setTitleCheckTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
-  const [history, setHistory] = useState(false);
+  const [history, setHistory] = useState<VersionMode | null>(null);
   const [presenting, setPresenting] = useState(false);
   const [mentionsTarget, setMentionsTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setMentionsTarget(null); }, [id, me.user.id, metadataVerified]);
@@ -606,6 +606,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   // Commenting and editing are separate capabilities: a viewer may comment
   // without ever gaining permission to modify the document.
   const canEditRole = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
+  useEffect(() => { if (!canEditRole) setHistory((mode) => mode === "history" ? null : mode); }, [canEditRole]);
   const canComment = sync.blocked !== "table_unsupported" && metadataVerified && canWriteComments(meta.data);
   // Keep the composer mounted while policy is being revalidated so the local
   // draft and selection survive, but do not submit using stale permissions.
@@ -625,7 +626,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       await docsApi.createVersionEntry(id, label, seq, epoch, requestId, me.user.id, controller.signal);
       await qc.invalidateQueries({ queryKey: ["versions", me.user.id, id] });
       const current = exportContext.current;
-      if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: "已保存文档版本，可在历史记录中查看。" });
+      if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: "已保存文档版本，可在已存版本中查看。" });
     } finally { clearTimeout(timeout); }
   };
   const findDoc = sync.client.doc;
@@ -946,7 +947,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   };
   const openPresentation = () => {
     if (commentsOpen) freezeCommentDrafts();
-    setFindOpen(false); setHistory(false); setSharing(false); setAiOpen(false); setTitleCheckTarget(null); setInfoTarget(null); setVersionTarget(null); setPreview(null); setPresenting(true);
+    setFindOpen(false); setHistory(null); setSharing(false); setAiOpen(false); setTitleCheckTarget(null); setInfoTarget(null); setVersionTarget(null); setPreview(null); setPresenting(true);
   };
   const closePresentation = () => {
     if (commentsOpen) freezeCommentDrafts();
@@ -1044,7 +1045,8 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           onToggleReading={() => setReadingMode((value) => !value)}
           onCreate={() => newDoc.mutate()}
           creating={newDoc.isPending}
-          onHistory={() => { setPresenting(false); setHistory((v) => !v); }}
+          onHistory={canEditRole ? () => { setPresenting(false); setHistory("history"); } : undefined}
+          onSavedVersions={() => { setPresenting(false); setHistory("saved"); }}
           onPresentation={metadataVerified && sync.client.doc ? openPresentation : undefined}
           onCreateVersion={canEditContent ? () => setVersionTarget({ doc: id, user: me.user.id }) : undefined}
           onTitleCheck={() => setTitleCheckTarget({ doc: id, user: me.user.id })}
@@ -1104,14 +1106,14 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full">
-          {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || history} onToggle={() => setOutlineOpen((value) => !value)} />}
+          {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history} onToggle={() => setOutlineOpen((value) => !value)} />}
           {outlineVisible && (
             <OutlinePanel
               id={outlinePanelId}
               items={outline}
               activeId={outlineActive}
               hostRef={scrollArea}
-              yieldToSidePanel={(commentsAvailable && commentsOpen) || history}
+              yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history}
               pinned={outlinePinned}
               onPinnedChange={(next) => { setOutlinePinned(next); saveOutlinePinned(next); }}
               allowCopy={contentCopyAllowed}
@@ -1143,7 +1145,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
               block={TITLE}
               me={presence}
               singleLine
-              readOnly={!canEditContent || history || presenting}
+              readOnly={!canEditContent || !!history || presenting}
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               findMatches={displayedMatches}
@@ -1162,7 +1164,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
                 activeFindMatch={activeMatch}
                 findNavigation={findNavigation}
                 me={presence}
-                readOnly={!canEditContent || history || presenting}
+                readOnly={!canEditContent || !!history || presenting}
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
@@ -1269,18 +1271,20 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       }} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
       {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
-      {metadataVerified && history && (
+      {metadataVerified && history && (history !== "history" || canEditRole) && (
         <VersionPanel
           key={`version-history:${me.user.id}:${id}`}
           id={id}
           userId={me.user.id}
           onCreateVersion={() => setVersionTarget({ doc: id, user: me.user.id })}
           canEdit={canEditContent}
+          canViewHistory={canEditRole}
+          mode={history}
           canRestore={!!namedVersionPoint(sync.client, canEditContent, permissionsVerified)}
           allowCopy={contentCopyAllowed}
           disableFileDownloads={!downloadAllowed}
           currentView={sync.client.doc?.view()}
-          onClose={() => setHistory(false)}
+          onClose={() => setHistory(null)}
         />
       )}
       {meta.data?.copyProtected && (
@@ -1336,6 +1340,7 @@ function TopBar({
   onCreate,
   creating,
   onHistory,
+  onSavedVersions,
   onPresentation,
   onCreateVersion,
   onTitleCheck,
@@ -1370,7 +1375,8 @@ function TopBar({
   onOutline: () => void;
   width: DocWidth;
   onWidthChange: (value: DocWidth) => void;
-  onHistory: () => void;
+  onHistory?: () => void;
+  onSavedVersions: () => void;
   onPresentation?: () => void;
   onCreateVersion?: () => void;
   onTitleCheck: () => void;
@@ -1434,7 +1440,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1533,6 +1539,7 @@ function DocMenu({
   userId,
   meta,
   onHistory,
+  onSavedVersions,
   onPresentation,
   onCreateVersion,
   onTitleCheck,
@@ -1553,6 +1560,7 @@ function DocMenu({
   userId: number;
   meta?: DocMeta;
   onHistory?: () => void;
+  onSavedVersions?: () => void;
   onPresentation?: () => void;
   onCreateVersion?: () => void;
   onTitleCheck?: () => void;
@@ -1692,7 +1700,8 @@ function DocMenu({
           <div className={group}>
             {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
             {onMentionedPeople && <button className={row} onClick={() => { close(); onMentionedPeople(); }} data-document-mentions><AtSign size={15} className={icon} />{t("提及的人")}</button>}
-            {onHistory && <button className={row} onClick={() => { close(); onHistory(); }}><History size={15} className={icon} />历史记录</button>}
+            {onSavedVersions && <button className={row} onClick={() => { close(); onSavedVersions(); }} data-view-saved-versions><FileText size={15} className={icon} />查看已存版本</button>}
+            {onHistory && <button className={row} onClick={() => { close(); onHistory(); }} data-doc-history><History size={15} className={icon} />历史记录</button>}
             {onCommentHistory && <button className={row} onClick={() => { close(); onCommentHistory(); }} data-comment-history-entry><MessageSquare size={15} className={icon} />{t("历史评论")}</button>}
             {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
             <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>

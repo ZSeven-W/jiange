@@ -26,12 +26,14 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
   </div>;
 }
 
-/** Full-screen history view with a timeline and a read-only document preview. */
-export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; canRestore: boolean; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
+export type VersionMode = "history" | "saved";
+
+/** History and explicitly saved versions have different visibility rules. */
+export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory = true, mode = "history", allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; canRestore: boolean; canViewHistory?: boolean; mode?: VersionMode; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
   const qc = useQueryClient();
   const list = useQuery({
-    queryKey: ["versions", userId, id],
-    queryFn: () => docsApi.versionEntries(id, userId),
+    queryKey: ["versions", userId, id, "list", mode, canViewHistory],
+    queryFn: () => docsApi.versionEntries(id, userId, mode),
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     retry: (count, error) => !(error instanceof ApiError && [401, 403, 404].includes(error.status)) && count < 2,
@@ -64,11 +66,11 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
   }, [listVisible, list.data, previewing]);
   const selectedIndex = listVisible && previewing ? list.data.findIndex((v) => v.id === previewing.id && v.seq === previewing.seq) : -1;
   const preview = useQuery({
-    queryKey: ["versions", userId, id, "preview", previewing?.seq],
-    queryFn: () => docsApi.versionPreview(id, previewing!.seq),
+    queryKey: ["versions", userId, id, "preview", previewing?.seq, canViewHistory],
+    queryFn: () => docsApi.versionPreview(id, previewing!.seq, userId),
     enabled: previewing !== null && selectedIndex >= 0,
   });
-  const previewReady = canRestore && listVerified && selectedIndex >= 0 && preview.isSuccess && !preview.isFetching;
+  const previewReady = mode === "history" && canRestore && listVerified && selectedIndex >= 0 && preview.isSuccess && !preview.isFetching;
   const latest = useRef({ id, userId, canRestore, previewing, previewReady });
   latest.current = { id, userId, canRestore, previewing, previewReady };
   const restore = useMutation({
@@ -112,19 +114,20 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
     const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return "昨天";
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
-  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label="历史记录" onKeyDown={onKeyDown} data-version-panel data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
+  const title = mode === "saved" ? "已存版本" : "历史记录";
+  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} data-version-panel data-version-mode={mode} data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
     <header className="flex h-14 shrink-0 items-center border-b sm:h-16">
       <button ref={back} type="button" onClick={onClose} disabled={restore.isPending} className="ml-3 flex h-9 items-center gap-1.5 rounded px-2 text-[14px] hover:bg-hover disabled:opacity-40 sm:ml-4"><ArrowLeft size={16}/><span>返回文档</span></button>
       <span className="mx-2 h-5 w-px bg-border sm:mx-3" />
       <span className="flex-1" />
-      {canEdit && <button type="button" disabled={restore.isPending || !previewReady} onClick={() => void startRestore()} className="h-9 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:text-[#BBBFC4]" data-restore-version>{restore.isPending ? "还原中…" : "还原此历史记录"}</button>}
+      {canEdit && mode === "history" && <button type="button" disabled={restore.isPending || !previewReady} onClick={() => void startRestore()} className="h-9 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:text-[#BBBFC4]" data-restore-version>{restore.isPending ? "还原中…" : "还原此历史记录"}</button>}
       <div className="hidden items-center gap-1 px-2 text-[13px] sm:flex">
         <button type="button" aria-label="上一个版本" disabled={!listVisible || selectedIndex <= 0 || restore.isPending} onClick={() => { if (listVisible && selectedIndex > 0) selectVersion(list.data[selectedIndex - 1]); }} className="rounded p-1 text-subtle hover:bg-hover disabled:opacity-30"><ChevronUp size={16}/></button>
         <span className="min-w-8 text-center">{selectedIndex >= 0 ? selectedIndex + 1 : 0}/{listVisible ? list.data.length : 0}</span>
         <button type="button" aria-label="下一个版本" disabled={!listVisible || selectedIndex < 0 || selectedIndex >= list.data.length - 1 || restore.isPending} onClick={() => { if (listVisible && selectedIndex >= 0 && selectedIndex + 1 < list.data.length) selectVersion(list.data[selectedIndex + 1]); }} className="rounded p-1 text-subtle hover:bg-hover disabled:opacity-30"><ChevronDown size={16}/></button>
       </div>
       <button ref={mobileToggle} type="button" onClick={() => setMobilePreview((v) => !v)} className="mr-2 rounded px-2 py-2 text-[13px] text-[#1456F0] hover:bg-hover md:hidden">{mobilePreview ? "版本列表" : "预览"}</button>
-      <div className="hidden h-full w-[294px] shrink-0 items-center gap-2 border-l px-4 text-[16px] font-medium md:flex"><span>历史记录</span><HelpCircle size={14} className="text-subtle" aria-label="命名版本与历史快照"/>{canEdit && <button type="button" onClick={onCreateVersion} aria-label="创建当前版本" title="创建当前版本" className="ml-auto grid size-8 place-items-center rounded text-muted-foreground hover:bg-hover" data-create-version><Plus size={17}/></button>}</div>
+      <div className="hidden h-full w-[294px] shrink-0 items-center gap-2 border-l px-4 text-[16px] font-medium md:flex"><span>{title}</span><HelpCircle size={14} className="text-subtle" aria-label="命名版本与历史快照"/>{canEdit && <button type="button" onClick={onCreateVersion} aria-label="创建当前版本" title="创建当前版本" className="ml-auto grid size-8 place-items-center rounded text-muted-foreground hover:bg-hover" data-create-version><Plus size={17}/></button>}</div>
     </header>
     <div className="flex min-h-0 flex-1">
       <main className={`${mobilePreview ? "flex" : "hidden"} min-w-0 flex-1 flex-col overflow-y-auto md:flex`} data-version-preview data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
@@ -132,13 +135,13 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
         <div className="mx-auto w-full max-w-[960px] px-7 pb-24 pt-12 sm:px-16 sm:pt-14">
           {!listVisible || selectedIndex < 0 ? <p className="text-[14px] text-subtle">{list.isError ? "版本列表不可用。" : list.isFetching ? "正在加载版本…" : "创建版本后可在这里查看。"}</p> : preview.isError ? <p role="alert" className="text-[14px] text-destructive">版本预览加载失败，请检查文档权限。</p> : !preview.data || preview.isFetching ? <p className="text-[14px] text-subtle">正在加载版本…</p> : <>
             <h1 className="mb-8 break-words text-[32px] font-medium leading-[1.3]" data-version-title>{savedTitle}</h1>
-            {diffMode && currentView && <section className="mb-6 rounded-md border p-4" aria-label="与当前内容对比"><div className="mb-2 text-[13px] text-muted-foreground">按块比较文本，不包含格式、图片与附件的变化。</div>{canDiffViews(preview.data.view, currentView) ? <VersionDiffView oldView={preview.data.view} newView={currentView} /> : <p className="text-[13px] text-subtle">文档过长，暂无法在浏览器中比较；下方仍可查看完整版本。</p>}</section>}
+            {mode === "history" && diffMode && currentView && <section className="mb-6 rounded-md border p-4" aria-label="与当前内容对比"><div className="mb-2 text-[13px] text-muted-foreground">按块比较文本，不包含格式、图片与附件的变化。</div>{canDiffViews(preview.data.view, currentView) ? <VersionDiffView oldView={preview.data.view} newView={currentView} /> : <p className="text-[13px] text-subtle">文档过长，暂无法在浏览器中比较；下方仍可查看完整版本。</p>}</section>}
             <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing!.seq} />
           </>}
         </div>
       </main>
-      <aside className={`${mobilePreview ? "hidden" : "flex"} min-h-0 w-full shrink-0 flex-col md:flex md:w-[294px] md:border-l`} aria-label="历史版本列表">
-        <div className="flex h-12 shrink-0 items-center border-b px-4 text-[15px] font-medium md:hidden"><span>历史记录</span>{canEdit && <button type="button" onClick={onCreateVersion} className="ml-auto flex items-center gap-1 text-[13px] text-[#1456F0]" data-create-version><Plus size={16}/>创建版本</button>}</div>
+      <aside className={`${mobilePreview ? "hidden" : "flex"} min-h-0 w-full shrink-0 flex-col md:flex md:w-[294px] md:border-l`} aria-label={mode === "saved" ? "已存版本列表" : "历史版本列表"}>
+        <div className="flex h-12 shrink-0 items-center border-b px-4 text-[15px] font-medium md:hidden"><span>{title}</span>{canEdit && <button type="button" onClick={onCreateVersion} className="ml-auto flex items-center gap-1 text-[13px] text-[#1456F0]" data-create-version><Plus size={16}/>创建版本</button>}</div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {list.isLoading && <p className="px-4 py-8 text-center text-[13px] text-subtle">正在加载版本…</p>}
           {list.isError && <p role="alert" className="px-4 py-8 text-center text-[13px] text-destructive">无法加载版本，请确认文档权限并重试。 <button type="button" className="underline" onClick={() => void list.refetch()}>重试</button></p>}
@@ -152,7 +155,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, allowCopy = true
             </button>
           </Fragment>)}
         </div>
-        <div className="flex h-12 shrink-0 items-center justify-between border-t px-4 text-[13px]"><span>对比当前</span><button type="button" role="switch" aria-label="对比当前" aria-checked={diffMode} disabled={!currentView || selectedIndex < 0} onClick={() => setDiffMode((v) => !v)} className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${diffMode ? "bg-[#1456F0]" : "bg-[#BBBFC4]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform ${diffMode ? "left-[18px]" : "left-0.5"}`}/></button></div>
+        {mode === "history" && <div className="flex h-12 shrink-0 items-center justify-between border-t px-4 text-[13px]"><span>对比当前</span><button type="button" role="switch" aria-label="对比当前" aria-checked={diffMode} disabled={!currentView || selectedIndex < 0} onClick={() => setDiffMode((v) => !v)} className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${diffMode ? "bg-[#1456F0]" : "bg-[#BBBFC4]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform ${diffMode ? "left-[18px]" : "left-0.5"}`}/></button></div>}
       </aside>
     </div>
   </div>;

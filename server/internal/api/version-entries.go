@@ -45,12 +45,45 @@ func (s *Server) versionEntryAccess(w http.ResponseWriter, r *http.Request, role
 
 func (s *Server) listVersionEntries(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
+	scope, valid := versionScope(r)
+	if !valid {
+		httpx.Error(w, http.StatusBadRequest, "invalid_scope", "版本范围无效")
+		return
+	}
 	d, guard, st, ok := s.versionEntryAccess(w, r, store.RoleView)
 	if !ok {
 		return
 	}
 	entries, err := st.ListVersionEntries(r.Context(), guard, d.ID)
 	if driveWriteErr(w, err, "list version entries") {
+		return
+	}
+	role, err := s.versionReadRole(r.Context(), guard, d.ID)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	editor := store.RoleRank(role) >= store.RoleRank(store.RoleEdit)
+	if scope == "history" && !editor {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "需要编辑权限查看历史记录")
+		return
+	}
+	if scope == "saved" || !editor {
+		filtered := make([]store.VersionEntry, 0, len(entries))
+		for _, entry := range entries {
+			if entry.CreatedBy > 0 {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
+	}
+	currentRole, err := s.versionReadRole(r.Context(), guard, d.ID)
+	if err != nil {
+		s.versionReadError(w, r, err)
+		return
+	}
+	if currentRole != role {
+		httpx.Error(w, http.StatusConflict, "version_access_changed", "文档权限已变化，请重试")
 		return
 	}
 	if entries == nil {
