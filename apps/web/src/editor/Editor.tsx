@@ -1864,7 +1864,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       const href = a.getAttribute("href") ?? "";
       const from = domToPos(r, a, 0), to = domToPos(r, a, a.childNodes.length), current = sync.client.doc;
       if (!from || !to || !current) return;
-      const range = captureLinkRange(current, from, to, href);
+      const range = captureLinkRange(current, from, to, href, a.hasAttribute("data-link"));
       if (!range) return;
       if (linkCard && sameLinkRange(linkCard.range, range)) return;
       if (editingLinkCard.current) return;
