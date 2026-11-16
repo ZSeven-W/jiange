@@ -5,7 +5,7 @@ import type { SyncDoc } from "@/lib/useSyncDoc";
 import { Editor, setSelectionAlignment } from "./Editor";
 import { deleteRange, joinBackward, joinForward, normalize, splitBlock, toggleMark } from "./model";
 import { selectionContainsColumns } from "./model";
-import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
+import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { captureCompositionAnchor, captureCompositionSelection, resolveCompositionAnchor, resolveCompositionSelection } from "./compositionAnchor";
 
 function setup() {
@@ -24,6 +24,45 @@ function setup() {
 }
 
 describe("column text scope", () => {
+  it("inserts a column between existing columns without changing their content", () => {
+    const { doc, columns, left, right } = setup();
+    const tx = new Tx(doc);
+    expect(insertColumnAfter(tx, columns, left)).toBe("created");
+    const children = doc.children(columns);
+    expect(children).toHaveLength(3);
+    expect(children[0]).toEqual(left); expect(children[2]).toEqual(right);
+    expect(doc.text(children[1])).toBe("");
+    expect(doc.text(left)).toBe("左栏😀"); expect(doc.text(right)).toBe("右栏");
+  });
+
+  it("refuses local inserts at the ten-column limit or after stale anchors", () => {
+    const { doc, columns, left, right } = setup();
+    while (doc.children(columns).length < MAX_COLUMNS) {
+      const tx = new Tx(doc);
+      expect(insertColumnAfter(tx, columns, doc.children(columns).at(-1)!)).toBe("created");
+    }
+    const full = new Tx(doc);
+    expect(insertColumnAfter(full, columns, right)).toBe("limit"); expect(full.ops).toHaveLength(0);
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const html = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} />);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-add-column/);
+    expect(html).not.toContain("data-insert-column-after");
+    doc.deleteBlock(left);
+    const stale = new Tx(doc);
+    expect(insertColumnAfter(stale, columns, left)).toBe("changed"); expect(stale.ops).toHaveLength(0);
+  });
+
+  it("preserves concurrent inserts even if they collectively exceed the local limit", () => {
+    const { doc, columns } = setup();
+    while (doc.children(columns).length < MAX_COLUMNS - 1) insertColumnAfter(new Tx(doc), columns, doc.children(columns).at(-1)!);
+    const peer = Doc.fromState(2, doc.encodeState());
+    const a = new Tx(doc), b = new Tx(peer);
+    expect(insertColumnAfter(a, columns, doc.children(columns).at(-1)!)).toBe("created");
+    expect(insertColumnAfter(b, columns, peer.children(columns).at(-1)!)).toBe("created");
+    for (const op of b.ops) doc.apply(op);
+    expect(doc.children(columns)).toHaveLength(MAX_COLUMNS + 1);
+  });
+
   it("aligns only the selected column, supports undo and renders the saved value", () => {
     const { doc, left, right } = setup();
     const peer = Doc.fromState(2, doc.encodeState());
@@ -210,6 +249,8 @@ describe("column text scope", () => {
     expect((html.match(/data-column=/g) ?? [])).toHaveLength(2);
     expect((html.match(/contentEditable="true"/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(html).toContain('href="/api/files/7"');
+    expect(html).toContain('aria-label="在第 1 栏后添加分栏"');
+    expect(html).toContain("data-column-scroll");
     const protectedHTML = view(true, true);
     expect(protectedHTML).not.toContain('href="/api/files/7"');
     expect(protectedHTML).toContain("下载已关闭");

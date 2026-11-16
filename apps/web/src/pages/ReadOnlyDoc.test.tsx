@@ -74,6 +74,8 @@ describe("read-only document snapshots", () => {
     expect(html).toMatch(/style="text-align:center"[^>]*>.*居中/);
     expect(html).toMatch(/style="text-align:right"[^>]*>.*靠右/);
     expect(html).toMatch(/style="text-align:left"[^>]*>.*默认/);
+    expect(html).toContain("data-column-scroll");
+    expect(html).not.toContain("bg-sidebar/40");
   });
 
   it("uses the current public link for shared media and hides protected downloads", () => {

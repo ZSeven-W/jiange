@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { encodeOps, eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
@@ -68,7 +68,7 @@ import { askArea } from "@/components/ui/ask";
 import { AddIcon } from "@/components/FeishuIcons";
 import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
-import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
+import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
 import { ColumnAlignmentHistory, type ConditionalAlignmentPlan } from "./columnAlignmentHistory";
 import { ColumnAlignmentCommit } from "./columnAlignmentCommit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./columnAlignmentOwner";
@@ -2240,11 +2240,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 columnRemount={remount}
                 syncVersion={sync.version}
                 syncStatus={sync.status}
-                onAddColumn={readOnly ? undefined : () => {
-                  if (readOnlyRef.current) return;
+                onAddColumn={readOnly ? undefined : (after) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
                   const tx = new Tx(doc);
-                  const children = doc.children(b);
-                  createColumn(tx, b, children.at(-1) ?? null);
+                  const anchor = after ? { client: Number(after.split(":")[0]), clock: Number(after.split(":")[1]) } : null;
+                  const result = insertColumnAfter(tx, b, anchor);
+                  if (result !== "created") { setColumnNotice(result === "limit" ? "每组分栏最多支持 10 栏。" : "分栏已变化，请重新操作。"); return; }
                   um.record(safeColumnUndo(tx), sel.current, sel.current, "column");
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
@@ -2613,7 +2614,7 @@ interface BlockProps {
   columnRemount?: Record<string, number>;
   syncVersion: number;
   syncStatus: SyncDoc["status"];
-  onAddColumn?: () => void;
+  onAddColumn?: (after: string | null) => void;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   commentThreads?: number[];
@@ -2795,11 +2796,11 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       ) : type === "math" ? (
         <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
       ) : type === "columns" ? (
-        <div contentEditable={false} className="group/cols relative my-2 rounded-lg border p-2" data-columns>
-          <div className="flex gap-2">
-            {(childBlocks ?? []).map((ch) => {
+        <div contentEditable={false} className="group/cols relative my-2" data-columns>
+          <div className="overflow-x-auto" data-column-scroll><div className="flex w-full">
+            {(childBlocks ?? []).map((ch, index, columns) => {
               const threads = ch.commentThreads ?? [];
-              return <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col relative min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
+              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" data-column={ch.id} data-block={ch.id}>
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none" style={{ textAlign: blockAlign(ch.props.align) }}>
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
@@ -2813,10 +2814,15 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                 >
                   ✕
                 </button>}
-              </div>;
+              </div>{index < columns.length - 1 && <div className="relative w-8 shrink-0" contentEditable={false}>
+                  {onAddColumn && columns.length < MAX_COLUMNS && <button type="button" aria-label={`在第 ${index + 1} 栏后添加分栏`} title="添加分栏" onMouseDown={(event) => event.preventDefault()} onClick={() => onAddColumn(ch.id)} className="group/gutter absolute inset-0 z-10 hidden w-full outline-none sm:block [@media(hover:none)]:hidden" data-insert-column-after={ch.id}>
+                    <span className="absolute inset-y-0 left-1/2 w-px bg-transparent group-hover/gutter:bg-[#3370ff] group-focus-visible/gutter:bg-[#3370ff]" />
+                    <span className="absolute left-1/2 top-0 grid size-5 -translate-x-1/2 place-items-center rounded-full bg-[#3370ff] text-white opacity-0 shadow-sm group-hover/gutter:opacity-100 group-focus-visible/gutter:opacity-100"><AddIcon className="size-3.5" /></span>
+                  </button>}
+                </div>}</Fragment>;
             })}
-          </div>
-          {onAddColumn && <button className="mt-1 px-1 text-[12px] text-subtle hover:text-primary" onClick={onAddColumn} data-add-column>
+          </div></div>
+          {onAddColumn && <button type="button" disabled={(childBlocks?.length ?? 0) >= MAX_COLUMNS} title={(childBlocks?.length ?? 0) >= MAX_COLUMNS ? "每组分栏最多支持 10 栏" : "添加分栏"} className="mt-1 px-1 text-[12px] text-subtle enabled:hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:opacity-0 sm:group-hover/cols:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => onAddColumn(childBlocks?.at(-1)?.id ?? null)} data-add-column>
             + 添加一栏
           </button>}
         </div>
