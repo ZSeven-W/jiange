@@ -13,4 +13,4 @@
 
 复现脚本为 `scripts/verify-document-table-header.mjs`，仅接受 `JIANGE_TABLE_TEST_URL` 和 `JIANGE_TABLE_CDP_URL` 指向的隔离本地服务，会创建合成账号、文档和匿名链接；`JIANGE_TABLE_SCREENSHOT_DIR` 可指定截图目录。
 
-本次未完成飞书页面的逐像素对照。飞书标题行的滚动吸顶效果仍未实现；完整单元格对齐、背景、富文本/图片、多格触屏选择及其并发安全仍未完成。
+本次未完成飞书页面的逐像素对照。标题行吸顶随后已补充，见 `document-table-sticky-header-report-20261116.md`；完整单元格对齐、背景、富文本/图片、多格触屏选择及其并发安全仍未完成。

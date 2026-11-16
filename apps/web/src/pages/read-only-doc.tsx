@@ -6,7 +6,7 @@ import { codeLangLabel } from "@/editor/code-block-header";
 import { imageAlign } from "@/editor/image-block";
 import { FileCard } from "@/editor/file-card";
 import { coverMap, parseMerges } from "@/editor/table-ops";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Comment, DocView } from "@/lib/api";
 import { parseKey, type Doc } from "@jiange/collab";
 import { projectCommentAnchors } from "@/editor/comment-anchor";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { safeURL } from "@/lib/safe-url";
 import { BlockHandle } from "@/editor/block-handle";
 import { columnWeights, COLUMN_WIDTHS } from "@/editor/column-widths";
+import { useTableStickyHeader } from "@/editor/table-sticky-header";
 
 type Block = DocView["blocks"][number];
 type Span = Block["spans"][number];
@@ -76,7 +77,9 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
 function ReadOnlyTable({ data, merges, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {
   const rows = parseTableData(data);
   const cover = coverMap(parseMerges(merges, rows.length, rows[0]?.length ?? 0));
-  return <div className={cn("my-2 w-fit max-w-full overflow-x-auto", activeComment && "rounded-[2px] outline outline-2 outline-offset-2 outline-[#F0B400]")} data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri}>{Array.isArray(row) && row.map((cell, ci) => {
+  const root = useRef<HTMLDivElement>(null);
+  useTableStickyHeader(root, header);
+  return <div ref={root} className={cn("my-2 w-fit max-w-full overflow-x-auto", activeComment && "rounded-[2px] outline outline-2 outline-offset-2 outline-[#F0B400]")} data-table-block><table className="border-collapse text-[14px] leading-[1.6]"><tbody>{rows.map((row, ri) => <tr key={ri} data-table-title-row={ri === 0 ? "true" : undefined}>{Array.isArray(row) && row.map((cell, ci) => {
     const cov = cover.get(`${ri}:${ci}`);
     if (cov === "hidden") return null;
     return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar")}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;

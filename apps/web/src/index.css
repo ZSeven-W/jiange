@@ -120,6 +120,17 @@
   body:has([data-document-print-restricted="true"]) aside:not([data-comments-panel]) { display: none !important; }
 }
 
+/* A pinned title row is the original row; its desktop-only resize handles
+   should not float over the document header while scrolling. */
+[data-table-header-stuck="true"] [data-table-col-grip],
+[data-table-header-stuck="true"] [data-table-resize] {
+  visibility: hidden !important;
+}
+@media print {
+  [data-table-title-row] { transform: none !important; position: static !important; }
+  [data-table-title-row] td { clip-path: none !important; }
+}
+
 /* 导出 PDF：打印当前文档（⋯ 菜单触发 window.print()）。隐藏侧栏/顶栏/
    面板/覆盖层，正文转为白底黑字单栏，媒体块不跨页截断。 */
 @media print {

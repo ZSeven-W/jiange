@@ -19,6 +19,7 @@ describe("read-only document snapshots", () => {
     for (const publicToken of [undefined, "example-token"]) {
       const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken={publicToken} />);
       expect((html.match(/bg-\[#F5F6F7\]/g) ?? [])).toHaveLength(2);
+      expect((html.match(/data-table-title-row="true"/g) ?? [])).toHaveLength(1);
       expect(html).toContain(">A</td>"); expect(html).toContain(">C</td>");
     }
   });

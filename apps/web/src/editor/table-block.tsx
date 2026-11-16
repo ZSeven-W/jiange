@@ -6,6 +6,7 @@ import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, pa
 import { formatTableTSV } from "./table-clipboard";
 import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
+import { useTableStickyHeader } from "./table-sticky-header";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
@@ -80,6 +81,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
   const [clipboardNotice, setClipboardNotice] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  useTableStickyHeader(root, header);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
   const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean } | null>(null);
   const lastFindNavigation = useRef<number | null>(null);
@@ -246,7 +248,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri} className="group/row">
+            <tr key={ri} className="group/row" data-table-title-row={ri === 0 ? "true" : undefined}>
               {row.map((cell, ci) => {
                 const cov = cover.get(`${ri}:${ci}`);
                 if (cov === "hidden") return null;
