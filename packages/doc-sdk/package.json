@@ -10,6 +10,7 @@
     "./model": "./src/model.ts",
     "./tableCells": "./src/tableCells.ts",
     "./blockStyles": "./src/blockStyles.ts",
+    "./columnWidths": "./src/columnWidths.ts",
     "./docx": "./src/docx.ts",
     "./markdown": "./src/markdown.ts",
     "./zip": "./src/zip.ts",
@@ -38,6 +39,10 @@
       "./blockStyles": {
         "types": "./dist/blockStyles.d.ts",
         "import": "./dist/blockStyles.js"
+      },
+      "./columnWidths": {
+        "types": "./dist/columnWidths.d.ts",
+        "import": "./dist/columnWidths.js"
       },
       "./docx": {
         "types": "./dist/docx.d.ts",

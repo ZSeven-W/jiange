@@ -44,6 +44,15 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional column alignment request", () => {
+  it("accepts bounded width metadata but refuses arbitrary text as a layout operation", async () => {
+    const ctx = setup();
+    const widths: Extract<Op, {t:"bset"}> = {...op, key:"columnWidths", value:'{"3:2":1400,"3:3":600}'};
+    expect(await ctx.commit.start(widths,2,3,signal())).toBe("sent");
+    expect(ctx.send.mock.calls[0][1]).toEqual(encodeOps([widths]));
+    const invalid = setup();
+    await expect(invalid.commit.start({...widths, value:'{"3:2":"正文"}'},2,3,signal())).rejects.toThrow(/invalid column layout/);
+    expect(invalid.send).not.toHaveBeenCalled(); expect(await invalid.journal.read()).toBeNull();
+  });
   it("finishes the captured undo history only after its receipt and operation are observed", async () => {
     const ctx = setup(), doc = new Doc(9), init = new Tx(doc);
     const parent = init.create("columns", null, ROOT), block = init.create("paragraph", null, parent);

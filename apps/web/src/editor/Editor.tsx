@@ -69,7 +69,9 @@ import { AddIcon } from "@/components/FeishuIcons";
 import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
 import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
+import { applyColumnWidths, captureColumnWidths, columnWeights, COLUMN_WIDTHS } from "./columnWidths";
 import { ColumnAlignmentHistory, type ConditionalAlignmentPlan } from "./columnAlignmentHistory";
+import { ColumnWidthHistory } from "./columnWidthHistory";
 import { ColumnAlignmentCommit } from "./columnAlignmentCommit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./columnAlignmentOwner";
 import { browserConditionalJournalEnvironment, ConditionalJournal, conditionalJournalStorageKey } from "@/lib/conditionalJournal";
@@ -175,6 +177,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
   const columnAlignmentHistory = useMemo(() => new ColumnAlignmentHistory(), [sync.client]);
+  const columnWidthHistory = useMemo(() => new ColumnWidthHistory(), [sync.client]);
   const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
@@ -212,7 +215,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const currentUserId = useRef(userId); currentUserId.current = userId;
-  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean } | null>(null);
+  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory } | null>(null);
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
   const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
@@ -293,7 +296,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
         if (!pending && pendingAlignmentPlan.current) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
         setPendingAlignment(pending);
-        setAlignmentMessage(pending ? "有一项分栏对齐操作尚待核对。" : "");
+        setAlignmentMessage(pending ? "有一项分栏布局操作尚待核对。" : "");
       }).catch(() => { if (alive && currentClient.current === sync.client && currentUserId.current === userId) { setPendingAlignment(true); setAlignmentMessage("无法读取本地操作记录，请检查浏览器存储后重试。"); } });
     };
     const changed = (event: StorageEvent) => { if (userId && (event.key === null || event.key === conditionalJournalStorageKey(userId, sync.client.docId))) check(); };
@@ -319,9 +322,9 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
         if (attempt.batch !== conditionalBatchBase64(encodeOps([pending.plan.op]))) return false;
         const d = sync.client.doc;
-        if (d === pending.doc && columnAlignmentHistory.finishConditional(d, um, pending.plan) === "ready") { pendingAlignmentPlan.current = null; return true; }
+        if (d === pending.doc && pending.history.finishConditional(d, um, pending.plan) === "ready") { pendingAlignmentPlan.current = null; return true; }
         if (um.peekMarker(pending.redo) === pending.key && um.discardMarker(pending.redo, pending.key, um.revision)) {
-          columnAlignmentHistory.discard(pending.doc, pending.key, pending.redo); pendingAlignmentPlan.current = null; discarded = true; return true;
+          pending.history.discard(pending.doc, pending.key, pending.redo); pendingAlignmentPlan.current = null; discarded = true; return true;
         }
         return false;
       });
@@ -329,7 +332,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (result === "committed" || result === "not_committed") {
         setPendingAlignment(false); pendingAlignmentPlan.current = null; releaseAlignmentOwner(); force((x) => x + 1);
         setAlignmentMessage("");
-        setColumnNotice(result === "not_committed" ? "文档已变化，分栏对齐操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "分栏对齐操作已保存。");
+        setColumnNotice(result === "not_committed" ? "文档已变化，分栏布局操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "分栏布局操作已保存。");
       } else if (result === "empty" && !pendingAlignmentPlan.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); }
       else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
       else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认操作结果，请保留当前记录并检查文档历史。");
@@ -349,7 +352,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
       const result = await conditionalAlignment.retry(controller.signal, () => {
         const pending = pendingAlignmentPlan.current;
-        return !pending || sync.client.doc === pending.doc && columnAlignmentHistory.canSubmitConditional(pending.doc, um, pending.plan);
+        return !pending || sync.client.doc === pending.doc && pending.history.canSubmitConditional(pending.doc, um, pending.plan);
       });
       if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("重试失败，原请求仍保存在本地。"); }
@@ -360,9 +363,9 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
     if (alignmentBusy.current || !mounted.current) return;
     setColumnNotice(""); setTableHistoryConflict(null);
-    if (alignmentPendingRef.current) { setAlignmentMessage("请先核对尚未完成的分栏对齐操作。"); void reconcileAlignment(); return; }
-    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交分栏对齐撤销。"); return; }
-    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏对齐。`); return; }
+    if (alignmentPendingRef.current) { setAlignmentMessage("请先核对尚未完成的分栏布局操作。"); void reconcileAlignment(); return; }
+    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交分栏布局撤销。"); return; }
+    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏布局。`); return; }
     if (sync.client.epoch === null) { setColumnNotice("当前服务端不支持安全撤销，请升级服务端后重试。"); return; }
     alignmentBusy.current = true;
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
@@ -371,18 +374,19 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setColumnNotice("另一页面正在处理该文档，或浏览器不支持跨页面锁。"); return; }
       const d = sync.client.doc, epoch = sync.client.epoch, head = sync.client.lastSeq;
       if (!d || !canStepFindBatch(sync.client) || epoch === null || readOnlyRef.current || controller.signal.aborted) { releaseAlignmentOwner(); return; }
-      const prepared = columnAlignmentHistory.prepareConditional(d, um, key, redo);
+      const history = key.startsWith("column-width:") ? columnWidthHistory : columnAlignmentHistory;
+      const prepared = history.prepareConditional(d, um, key, redo);
       if (prepared.status !== "ready") {
         releaseAlignmentOwner();
         if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, ...(prepared.status === "unsupported" ? { reason: "unsupported" } : {}) });
         return;
       }
       const { plan } = prepared;
-      pendingAlignmentPlan.current = { plan, doc: d, key, redo };
-      setPendingAlignment(true); setAlignmentMessage("正在安全提交分栏对齐操作…");
-      const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === d && columnAlignmentHistory.canSubmitConditional(d, um, plan));
+      pendingAlignmentPlan.current = { plan, doc: d, key, redo, history };
+      setPendingAlignment(true); setAlignmentMessage("正在安全提交分栏布局操作…");
+      const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === d && history.canSubmitConditional(d, um, plan));
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未执行分栏对齐操作。"); }
+      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未执行分栏布局操作。"); }
       else if (result === "occupied") { pendingAlignmentPlan.current = null; setAlignmentMessage("已有操作待核对，请先处理该记录。"); }
       else setAlignmentMessage(result === "sent" ? "操作已提交，正在核对同步结果。" : "操作结果尚未确认，可核对状态或重试相同操作。");
     } catch {
@@ -391,11 +395,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) {
         setPendingAlignment(pending);
         if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍保存在本地。");
-        else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交分栏对齐操作，请检查浏览器存储。"); }
+        else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交分栏布局操作，请检查浏览器存储。"); }
       }
     } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
 
   useEffect(() => {
     if (!alignmentPending) return;
@@ -989,7 +993,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -2104,13 +2108,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对分栏对齐操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对分栏布局操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏对齐无法安全处理" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏布局无法安全处理" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("column-width:")) { if (sync.client.doc) columnWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
             else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
             else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
@@ -2250,6 +2255,25 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();
+                }}
+                onBeginColumnResize={readOnly ? undefined : (left, right) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return null;
+                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return null; }
+                  const snapshot = captureColumnWidths(doc, b, left, right);
+                  const before = columnWidthHistory.capture(doc, b);
+                  if (!snapshot || !before) { setColumnNotice("分栏或栏宽数据已变化，无法调整。"); return null; }
+                  const index = snapshot.ids.indexOf(left);
+                  return {
+                    leftWeight: snapshot.weights[index], rightWeight: snapshot.weights[index + 1],
+                    cancel: () => setColumnNotice("显示区域已变化，未调整栏宽，请重试。"),
+                    commit: (fraction) => {
+                      if (readOnlyRef.current || sync.client.doc !== doc) return;
+                      if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
+                      const tx = new Tx(doc), result = applyColumnWidths(tx, snapshot, fraction);
+                      if (result === "changed" || result === "invalid") { setColumnNotice("分栏或栏宽已变化，未应用调整，请重试。"); return; }
+                      if (result === "applied") { columnWidthHistory.record(doc, um, b, before); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
+                    },
+                  };
                 }}
                 onDeleteColumn={readOnly ? undefined : (col) => {
                   if (readOnlyRef.current) return;
@@ -2430,7 +2454,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           } : undefined}
           onAlign={(a) => {
             const d = sync.client.doc, s = sel.current;
-            if (alignmentPendingRef.current && pendingAlignmentPlan.current && d && s && isColumnText(d, s.f.b)) { setColumnNotice("请先核对尚未完成的分栏对齐操作。"); return; }
+            if (alignmentPendingRef.current && pendingAlignmentPlan.current && d && s && isColumnText(d, s.f.b)) { setColumnNotice("请先核对尚未完成的分栏布局操作。"); return; }
             run((tx, selection) => setSelectionAlignment(tx, selection, a), undefined, false, true);
           }}
           onClearFormat={() => run((tx, s) => {
@@ -2615,6 +2639,7 @@ interface BlockProps {
   syncVersion: number;
   syncStatus: SyncDoc["status"];
   onAddColumn?: (after: string | null) => void;
+  onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   commentThreads?: number[];
@@ -2666,9 +2691,17 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onBeginColumnResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
+  const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
+  const [resizePreview, setResizePreview] = useState<{ left: string; right: string; first: number; second: number } | null>(null);
+  const widthIds = childBlocks?.map((child) => child.id) ?? [];
+  const weights = columnWeights(props[COLUMN_WIDTHS], widthIds);
+  const cancelResize = () => {
+    const active = resize.current; resize.current = null; setResizePreview(null);
+    if (active?.target.hasPointerCapture(active.pointer)) active.target.releasePointerCapture(active.pointer);
+  };
   const checked = props.checked === "true";
   const commentBadge = commentThreads?.length ?? 0;
   const firstThread = commentThreads?.includes(activeThread ?? -1) ? activeThread : (commentThreads?.[0] ?? null);
@@ -2800,7 +2833,8 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           <div className="overflow-x-auto" data-column-scroll><div className="flex w-full">
             {(childBlocks ?? []).map((ch, index, columns) => {
               const threads = ch.commentThreads ?? [];
-              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" data-column={ch.id} data-block={ch.id}>
+              const weight = resizePreview?.left === ch.id ? resizePreview.first : resizePreview?.right === ch.id ? resizePreview.second : weights[index];
+              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" style={{ flexGrow: weight, flexBasis: "0%" }} data-column={ch.id} data-block={ch.id}>
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none" style={{ textAlign: blockAlign(ch.props.align) }}>
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
@@ -2814,11 +2848,43 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                 >
                   ✕
                 </button>}
-              </div>{index < columns.length - 1 && <div className="relative w-8 shrink-0" contentEditable={false}>
-                  {onAddColumn && columns.length < MAX_COLUMNS && <button type="button" aria-label={`在第 ${index + 1} 栏后添加分栏`} title="添加分栏" onMouseDown={(event) => event.preventDefault()} onClick={() => onAddColumn(ch.id)} className="group/gutter absolute inset-0 z-10 hidden w-full outline-none sm:block [@media(hover:none)]:hidden" data-insert-column-after={ch.id}>
-                    <span className="absolute inset-y-0 left-1/2 w-px bg-transparent group-hover/gutter:bg-[#3370ff] group-focus-visible/gutter:bg-[#3370ff]" />
-                    <span className="absolute left-1/2 top-0 grid size-5 -translate-x-1/2 place-items-center rounded-full bg-[#3370ff] text-white opacity-0 shadow-sm group-hover/gutter:opacity-100 group-focus-visible/gutter:opacity-100"><AddIcon className="size-3.5" /></span>
-                  </button>}
+              </div>{index < columns.length - 1 && <div className="group/gutter relative w-8 shrink-0" contentEditable={false}>
+                  {onBeginColumnResize && <div role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 栏和第 ${index + 2} 栏宽度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(100 * weight / (weight + (resizePreview?.right === columns[index + 1].id ? resizePreview.second : weights[index + 1])))} title="拖动调整栏宽" data-column-resize={ch.id} className="absolute inset-0 z-10 hidden cursor-col-resize outline-none sm:block [@media(hover:none)]:hidden"
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || resize.current) return;
+                      const gap = event.currentTarget.parentElement, left = gap?.previousElementSibling, right = gap?.nextElementSibling, scroller = gap?.closest("[data-column-scroll]");
+                      if (!(left instanceof HTMLElement) || !(right instanceof HTMLElement) || !(scroller instanceof HTMLElement)) return;
+                      const firstPixels = left.getBoundingClientRect().width, pairPixels = firstPixels + right.getBoundingClientRect().width;
+                      const operation = onBeginColumnResize(ch.id, columns[index + 1].id);
+                      if (!operation || pairPixels < 20) return;
+                      event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+                      resize.current = { pointer: event.pointerId, startX: event.clientX, firstPixels, pairPixels, left: ch.id, right: columns[index + 1].id, operation, target: event.currentTarget, scroller, viewport: scroller.clientWidth, scrollLeft: scroller.scrollLeft };
+                    }}
+                    onPointerMove={(event) => {
+                      const active = resize.current; if (!active || active.pointer !== event.pointerId) return;
+                      const fraction = Math.max(0.1, Math.min(0.9, (active.firstPixels + event.clientX - active.startX) / active.pairPixels));
+                      const total = active.operation.leftWeight + active.operation.rightWeight;
+                      setResizePreview({ left: active.left, right: active.right, first: total * fraction, second: total * (1 - fraction) });
+                    }}
+                    onPointerUp={(event) => {
+                      const active = resize.current; if (!active || active.pointer !== event.pointerId) return;
+                      const delta = event.clientX - active.startX, fraction = Math.max(0.1, Math.min(0.9, (active.firstPixels + delta) / active.pairPixels));
+                      const movedViewport = !active.scroller.isConnected || active.scroller.clientWidth !== active.viewport || active.scroller.scrollLeft !== active.scrollLeft;
+                      cancelResize(); if (movedViewport) active.operation.cancel(); else if (Math.abs(delta) >= 1) active.operation.commit(fraction);
+                    }}
+                    onPointerCancel={cancelResize}
+                    onLostPointerCapture={() => { if (resize.current) cancelResize(); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape" && resize.current) { event.preventDefault(); event.stopPropagation(); cancelResize(); return; }
+                      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                      event.preventDefault(); event.stopPropagation();
+                      const operation = onBeginColumnResize(ch.id, columns[index + 1].id); if (!operation) return;
+                      const fraction = operation.leftWeight / (operation.leftWeight + operation.rightWeight);
+                      operation.commit(Math.max(0.1, Math.min(0.9, fraction + (event.key === "ArrowLeft" ? -0.05 : 0.05))));
+                    }}>
+                    <span className="absolute inset-y-0 left-1/2 w-px bg-transparent group-hover/gutter:bg-[#3370ff] group-focus-within/gutter:bg-[#3370ff]" />
+                  </div>}
+                  {onAddColumn && columns.length < MAX_COLUMNS && <button type="button" aria-label={`在第 ${index + 1} 栏后添加分栏`} title="添加分栏" onMouseDown={(event) => event.preventDefault()} onClick={() => onAddColumn(ch.id)} className="absolute left-1/2 top-0 z-20 hidden size-4 -translate-x-1/2 place-items-center rounded-full bg-[#3370ff] text-white opacity-0 shadow-sm group-hover/gutter:opacity-100 group-focus-visible/gutter:opacity-100 sm:grid [@media(hover:none)]:hidden" data-insert-column-after={ch.id}><AddIcon className="size-3" /></button>}
                 </div>}</Fragment>;
             })}
           </div></div>

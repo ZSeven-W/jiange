@@ -151,6 +151,33 @@ func checkConditionalAlignment(t *testing.T, st store.Store) {
 			t.Fatal(err)
 		}
 	}
+	widths := fmt.Sprintf(`{"%s":1400}`, column.ID.Key())
+	widthOp := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: uint64(owner), Clock: actual.Clock() + 1}, Block: columns.ID, Key: "columnWidths", Value: &widths}
+	if got := do("cccccccccccccccccccccccccccccccc", finalHead, widthOp); got != http.StatusOK {
+		t.Fatalf("valid column widths: %d", got)
+	}
+	actual, finalHead, err = StateAtHead(ctx, st, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	widthOp.ID.Clock = actual.Clock() + 1
+	widthOp.Block = column.ID
+	if got := do("dddddddddddddddddddddddddddddddd", finalHead, widthOp); got != http.StatusBadRequest {
+		t.Fatalf("width on paragraph: %d", got)
+	}
+}
+
+func TestConditionalColumnWidthsValidation(t *testing.T) {
+	for _, value := range []string{"", "{}", `{"1:2":1400,"0:4":600}`, `{"1:2":1e3}`} {
+		if !conditionalColumnWidths(collab.Op{Key: "columnWidths", Value: &value}) {
+			t.Fatalf("rejected valid width %q", value)
+		}
+	}
+	for _, value := range []string{"null", "[]", "{", `{"__proto__":1}`, `{"1:2":0}`, `{"1:2":1.5}`, `{"1:2":true}`, `{"1:2":1000000000,"2:3":1}`, `{"9007199254740992:1":1}`} {
+		if conditionalColumnWidths(collab.Op{Key: "columnWidths", Value: &value}) {
+			t.Fatalf("accepted invalid width %q", value)
+		}
+	}
 }
 
 func TestConditionalAlignment(t *testing.T) { checkConditionalAlignment(t, store.NewMemory()) }

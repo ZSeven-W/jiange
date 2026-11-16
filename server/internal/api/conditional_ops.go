@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -18,6 +22,7 @@ const conditionalMaxOps = 100000
 const conditionalSafeInteger = 1<<53 - 1
 
 var conditionalCellKey = regexp.MustCompile(`^tbl\.c\.[A-Za-z0-9_-]{1,40}\.[A-Za-z0-9_-]{1,40}$`)
+var conditionalColumnID = regexp.MustCompile(`^\d+:\d+$`)
 
 type conditionalOpsInput struct {
 	Epoch     int64  `json:"historyEpoch"`
@@ -96,7 +101,52 @@ func conditionalAlignableBlock(kind string) bool {
 	return kind != "code" && conditionalTextBlock(kind)
 }
 
-// commitConditionalOps accepts text changes, table-cell properties, and text alignment.
+func conditionalColumnWidths(op collab.Op) bool {
+	if op.Key != "columnWidths" || op.Value == nil || len(*op.Value) > 32000 {
+		return false
+	}
+	if *op.Value == "" {
+		return true
+	}
+	decoder := json.NewDecoder(bytes.NewBufferString(*op.Value))
+	decoder.UseNumber()
+	var values map[string]any
+	if decoder.Decode(&values) != nil || values == nil || len(values) > 1000 {
+		return false
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return false
+	}
+	var total float64
+	for key, value := range values {
+		if !conditionalColumnID.MatchString(key) {
+			return false
+		}
+		parts := strings.Split(key, ":")
+		for _, part := range parts {
+			id, err := strconv.ParseUint(part, 10, 64)
+			if err != nil || id > conditionalSafeInteger {
+				return false
+			}
+		}
+		number, ok := value.(json.Number)
+		if !ok {
+			return false
+		}
+		weight, err := number.Float64()
+		if err != nil || math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 1 || weight > 1_000_000_000 || math.Trunc(weight) != weight {
+			return false
+		}
+		total += weight
+		if total > 1_000_000_000 {
+			return false
+		}
+	}
+	return true
+}
+
+// commitConditionalOps accepts text changes, table-cell properties, text alignment, and bounded column widths.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
 func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +226,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 		case collab.TMark:
 		case collab.TBlockSet:
-			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) {
+			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
 				return
 			}
@@ -241,7 +291,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 			blockKinds[op.Block] = kind
 		}
-		if op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op)) || op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
+		if op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
 			return
 		}

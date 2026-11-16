@@ -1,6 +1,7 @@
 import { decodeOps, encodeOps, type Op } from "@jiange/collab";
 import { commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditionalJournal";
+import { COLUMN_WIDTHS, validColumnWidths } from "./columnWidths";
 
 type AlignmentOp = Extract<Op, { t: "bset" }>;
 type Transport = {
@@ -15,16 +16,17 @@ type Context = { active: () => boolean; observe: () => ConditionalObservation | 
 type SendResult = "sent" | "pending" | "blocked" | "occupied" | "needs_resolution";
 type FinishResult = ConditionalResolution | "empty" | "blocked" | "needs_finalize";
 
-function alignmentOp(bytes: Uint8Array): AlignmentOp | null {
+function columnLayoutOp(bytes: Uint8Array): AlignmentOp | null {
   try {
     const ops = decodeOps(bytes), op = ops[0];
-    if (ops.length !== 1 || op.t !== "bset" || op.key !== "align" || !["", "left", "center", "right"].includes(op.value)) return null;
+    if (ops.length !== 1 || op.t !== "bset") return null;
+    if (!(op.key === "align" && ["", "left", "center", "right"].includes(op.value) || op.key === COLUMN_WIDTHS && validColumnWidths(op.value))) return null;
     if (![op.id.client, op.id.clock, op.block.client, op.block.clock].every(Number.isSafeInteger) || op.id.client <= 0 || op.id.clock <= 0 || op.block.client < 0 || op.block.clock < 0 || op.block.client === 0 && op.block.clock <= 1) return null;
     return op;
   } catch { return null; }
 }
 
-/** Persistence and retry are scoped to one document/account and one alignment-only operation. */
+/** Persistence and retry are scoped to one document/account and one bounded layout operation. */
 export class ColumnAlignmentCommit {
   constructor(private readonly journal: ConditionalJournal, private readonly context: Context, private readonly transport: Transport = alignmentTransport) {}
 
@@ -40,7 +42,7 @@ export class ColumnAlignmentCommit {
   /** Save the exact request before sending; an uncertain response remains recoverable. */
   async start(op: AlignmentOp, epoch: number, head: number, signal: AbortSignal, stillValid: () => boolean = () => true): Promise<SendResult> {
     const bytes = encodeOps([op]);
-    if (!alignmentOp(bytes)) throw new Error("invalid alignment operation");
+    if (!columnLayoutOp(bytes)) throw new Error("invalid column layout operation");
     return this.journal.run(async (lease) => {
       if (await lease.read()) return "occupied";
       const initial = this.context.observe();
@@ -62,7 +64,7 @@ export class ColumnAlignmentCommit {
       if (!attempt) return "blocked";
       if (attempt.redacted || !this.context.active() || signal.aborted) return "pending";
       const bytes = await lease.batch(attempt);
-      if (!alignmentOp(bytes)) return "occupied";
+      if (!columnLayoutOp(bytes)) return "occupied";
       let status: ConditionalOpsStatus;
       try { status = await this.transport.status(attempt, signal); } catch { return "pending"; }
       if (!this.validStatus(attempt, status) || !this.context.active()) return "pending";
@@ -78,7 +80,7 @@ export class ColumnAlignmentCommit {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
       if (attempt.redacted || !this.context.active() || signal.aborted) return "blocked";
-      if (!alignmentOp(await lease.batch(attempt))) return "blocked";
+      if (!columnLayoutOp(await lease.batch(attempt))) return "blocked";
       let status: ConditionalOpsStatus;
       try { status = await this.transport.status(attempt, signal); } catch { return "pending"; }
       const observed = this.context.observe();

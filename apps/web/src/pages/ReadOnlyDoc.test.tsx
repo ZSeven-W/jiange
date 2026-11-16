@@ -71,11 +71,18 @@ describe("read-only document snapshots", () => {
   it("shows each column's alignment in read-only and public views", () => {
     const view: DocView = { blocks: [b("1:1", "columns"), b("1:2", "paragraph", "居中", { align: "center" }, "1:1"), b("1:3", "paragraph", "靠右", { align: "right" }, "1:1"), b("1:4", "paragraph", "默认", { align: "unknown" }, "1:1")] };
     const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
-    expect(html).toMatch(/style="text-align:center"[^>]*>.*居中/);
-    expect(html).toMatch(/style="text-align:right"[^>]*>.*靠右/);
-    expect(html).toMatch(/style="text-align:left"[^>]*>.*默认/);
+    expect(html).toMatch(/style="[^"]*text-align:center"[^>]*>.*居中/);
+    expect(html).toMatch(/style="[^"]*text-align:right"[^>]*>.*靠右/);
+    expect(html).toMatch(/style="[^"]*text-align:left"[^>]*>.*默认/);
     expect(html).toContain("data-column-scroll");
     expect(html).not.toContain("bg-sidebar/40");
+  });
+
+  it("projects saved column weights in presentation and public views", () => {
+    const view: DocView = { blocks: [b("1:1", "columns", "", { columnWidths: JSON.stringify({"1:2":1400,"1:3":600}) }), b("1:2", "paragraph", "宽栏", {}, "1:1"), b("1:3", "paragraph", "窄栏", {}, "1:1")] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
+    expect(html).toMatch(/style="flex-grow:1400;flex-basis:0%;text-align:left"[^>]*>.*宽栏/);
+    expect(html).toMatch(/style="flex-grow:600;flex-basis:0%;text-align:left"[^>]*>.*窄栏/);
   });
 
   it("uses the current public link for shared media and hides protected downloads", () => {

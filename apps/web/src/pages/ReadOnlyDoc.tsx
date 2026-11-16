@@ -16,6 +16,7 @@ import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
 import { safeURL } from "@/lib/safeURL";
 import { BlockHandle } from "@/editor/BlockHandle";
+import { columnWeights, COLUMN_WIDTHS } from "@/editor/columnWidths";
 
 type Block = DocView["blocks"][number];
 type Span = Block["spans"][number];
@@ -142,7 +143,11 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
         case "flowchart": { const g = readFlow(block.props); content = <div data-flowchart className="my-2 overflow-hidden rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height: Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360)) }}>{g.nodes.length ? <FlowSvg graph={g} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, imageVersionSeq) ?? ""} /> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>; break; }
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} header={block.props.tableHeader !== "none"} activeComment={activeBlockComment} />; break;
-        case "columns": content = <div data-columns className="my-2 overflow-x-auto" data-column-scroll><div className="flex w-full gap-8">{(children.get(block.id) ?? []).map((child) => <div key={child.id} data-public-block={onCopyBlockLink ? child.id : undefined} onPointerDown={(event) => touch(event, child.id)} className={cn("min-w-[132px] flex-1 whitespace-pre-wrap break-words sm:min-w-0", onCopyBlockLink && "group/public-block relative")} style={{ textAlign: child.props.align === "center" || child.props.align === "right" ? child.props.align : "left" }}>{actions(child)}{richText(child)}{renderChildren(child.id)}</div>)}</div></div>; break;
+        case "columns": {
+          const columns = children.get(block.id) ?? [], weights = columnWeights(block.props[COLUMN_WIDTHS], columns.map((child) => child.id));
+          content = <div data-columns className="my-2 overflow-x-auto" data-column-scroll><div className="flex w-full gap-8">{columns.map((child, index) => <div key={child.id} data-public-block={onCopyBlockLink ? child.id : undefined} onPointerDown={(event) => touch(event, child.id)} className={cn("min-w-[132px] flex-1 whitespace-pre-wrap break-words sm:min-w-0", onCopyBlockLink && "group/public-block relative")} style={{ flexGrow: weights[index], flexBasis: "0%", textAlign: child.props.align === "center" || child.props.align === "right" ? child.props.align : "left" }}>{actions(child)}{richText(child)}{renderChildren(child.id)}</div>)}</div></div>;
+          break;
+        }
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {

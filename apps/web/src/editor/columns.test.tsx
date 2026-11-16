@@ -251,9 +251,12 @@ describe("column text scope", () => {
     expect(html).toContain('href="/api/files/7"');
     expect(html).toContain('aria-label="在第 1 栏后添加分栏"');
     expect(html).toContain("data-column-scroll");
+    expect(html).toContain('aria-label="调整第 1 栏和第 2 栏宽度"');
+    expect(html).toContain('aria-valuenow="50"');
     const protectedHTML = view(true, true);
     expect(protectedHTML).not.toContain('href="/api/files/7"');
     expect(protectedHTML).toContain("下载已关闭");
     expect(protectedHTML).not.toContain('contentEditable="true"');
+    expect(protectedHTML).not.toContain("data-column-resize");
   });
 });
