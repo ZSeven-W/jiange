@@ -205,7 +205,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
   return (
-    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "pb-4 pr-4")} data-table-block
+    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block
       onKeyDown={(event) => { if (event.key === "Escape" && moreOpen) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
@@ -223,24 +223,24 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
         if (!error) { setRange(null); setGrip(null); }
       }}>
-      {!readOnly && <div className="absolute -top-1 left-0 z-30 -translate-y-full"><span className={cn("flex w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)]", multi || moreOpen ? "visible" : "invisible group-hover/t:visible group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="relative z-30 sm:absolute sm:-top-1 sm:left-0 sm:-translate-y-full"><span className={cn("mb-1 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:mb-0", multi || moreOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
-          <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-7 place-items-center rounded hover:bg-hover hover:text-foreground", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => setMoreOpen((open) => !open)} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
+          <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => setMoreOpen((open) => !open)} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
             {multi && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); merge(); }} data-table-merge><Combine size={15} strokeWidth={1.7} />合并单元格</button>}
             {!multi && focusMerge && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); split(); }} data-table-split><SquareSplitHorizontal size={15} strokeWidth={1.7} />拆分单元格</button>}
           </span>}
         </span>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
-        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} />插入行</button>
-        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover hover:text-foreground" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} />插入列</button>
-        {onHeader && <button type="button" title="标题行" aria-pressed={header} className={cn("flex h-7 items-center gap-1 rounded px-1.5 text-[12px] hover:bg-hover", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header>标题行</button>}
+        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} />插入行</button>
+        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} />插入列</button>
+        {onHeader && <button type="button" title="标题行" aria-pressed={header} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header>标题行</button>}
         {!multi && <><span className="mx-0.5 h-4 w-px bg-border" />
-        <button type="button" title="删除表格" aria-label="删除表格" className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button></>}
+        <button type="button" title="删除表格" aria-label="删除表格" className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button></>}
         {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
-        <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
+        <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
-      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")} data-table-scroll>
+      <div className={cn("max-w-full overflow-x-auto", editable && "sm:-ml-4 sm:-mt-4 sm:pl-4 sm:pt-4")} data-table-scroll>
       <table className="border-collapse text-[14px] leading-[22px]">
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
         <tbody>
