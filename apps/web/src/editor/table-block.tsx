@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { formatTableTSV } from "./table-clipboard";
+import { parseTableRichHTML, tableRichHTML, type RichTableClipboard } from "./table-rich-clipboard";
 import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
@@ -63,7 +64,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => void;
-  onPasteCells?: (r: number, c: number, text: string, literal?: boolean) => string | null;
+  onPasteCells?: (r: number, c: number, text: string, literal?: boolean, rich?: RichTableClipboard) => string | null;
   onCutCells?: (range: CellRange) => string | null;
   onClearCells?: (range: CellRange) => string | null;
   onAppendRow?: () => string | null;
@@ -327,14 +328,23 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
         if (!multi || !selected) return;
-        event.preventDefault(); event.stopPropagation(); event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges));
+        event.preventDefault(); event.stopPropagation();
+        try { event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges)); }
+        catch { setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"); return; }
+        const html = tableRichHTML(rows, fillProps, selected, merges);
+        if (html) { try { event.clipboardData.setData("text/html", html); } catch { setClipboardNotice("已复制纯文本"); } }
+        else setClipboardNotice("已复制纯文本");
       }}
       onCut={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
         if (!multi || !selected) return;
         event.preventDefault(); event.stopPropagation();
         if (!onCutCells) { setClipboardNotice("当前无法剪切选区，表格未修改。"); return; }
-        try { event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges)); }
+        try {
+          event.clipboardData.setData("text/plain", formatTableTSV(rows, selected, merges));
+          const html = tableRichHTML(rows, fillProps, selected, merges);
+          if (html) event.clipboardData.setData("text/html", html);
+        }
         catch { setClipboardNotice("无法写入剪贴板，表格未修改。"); return; }
         const error = onCutCells(selected);
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
@@ -347,10 +357,18 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
             {multi && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); merge(); }} data-table-merge><Combine size={15} strokeWidth={1.7} />合并单元格</button>}
             {!multi && focusMerge && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); split(); }} data-table-split><SquareSplitHorizontal size={15} strokeWidth={1.7} />拆分单元格</button>}
             {touchSelecting && multi && selected && canCopy && <button type="button" role="menuitem" className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => {
-              const text = formatTableTSV(rows, selected, merges); setMoreOpen(false);
+              const text = formatTableTSV(rows, selected, merges), html = tableRichHTML(rows, fillProps, selected, merges); setMoreOpen(false);
+              const plain = () => {
+                try {
+                  if (!navigator.clipboard?.writeText) { setClipboardNotice("无法使用剪贴板，请检查浏览器权限。"); return; }
+                  void navigator.clipboard.writeText(text).then(() => setClipboardNotice(html ? "已复制纯文本" : "已复制选区"), () => setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"));
+                } catch { setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"); }
+              };
               try {
-                if (!navigator.clipboard?.writeText) { setClipboardNotice("无法使用剪贴板，请检查浏览器权限。"); return; }
-                void navigator.clipboard.writeText(text).then(() => setClipboardNotice("已复制选区"), () => setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"));
+                if (html && typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+                  const item = new ClipboardItem({ "text/plain": new Blob([text], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) });
+                  void navigator.clipboard.write([item]).then(() => setClipboardNotice("已复制选区"), plain);
+                } else plain();
               } catch { setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"); }
             }} data-table-copy-selection><Copy size={15} strokeWidth={1.7} />复制选区</button>}
             {touchSelecting && multi && selected && onClearCells && <button type="button" role="menuitem" className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { setMoreOpen(false); setClipboardNotice(onClearCells(selected) ?? ""); }} data-table-clear-selection><Eraser size={15} strokeWidth={1.7} />清空选区</button>}
@@ -445,13 +463,14 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                         }}
                         onPaste={(e) => {
                           const text = e.clipboardData.getData("text/plain");
+                          const rich = parseTableRichHTML(e.clipboardData.getData("text/html"), text);
                           const structured = /[\t\r\n]/.test(text);
-                          if (!multi && (!onPasteCells || !structured)) return;
+                          if (!multi && (!onPasteCells || !structured && !rich)) return;
                           e.preventDefault(); e.stopPropagation();
-                          if (!e.clipboardData.types.includes("text/plain") || !text) return;
+                          if (!e.clipboardData.types.includes("text/plain") || (!text && !rich)) return;
                           if (!onPasteCells) { setClipboardNotice("当前无法粘贴到选区，表格未修改。"); return; }
                           const start = multi && selected ? { r: selected.r0, c: selected.c0 } : { r: ri, c: ci };
-                          const error = onPasteCells(start.r, start.c, text, !structured);
+                          const error = onPasteCells(start.r, start.c, text, !structured, rich ?? undefined);
                           setClipboardNotice(error ?? "");
                           if (!error) {
                             setRange(null); setGrip(null); setTouchSelecting(false); setMoreOpen(false);
@@ -510,7 +529,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
           {gripMenu(grip, rows.length, nCols, rows, merges).map((it) => <Fragment key={it.label}>{(it.danger || it.op.kind === "moveRow" && it.label === "上移一行" || it.op.kind === "moveCol" && it.label === "左移一列") && <div className="my-1 border-t" />}<button type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button></Fragment>)}
         </div>
       )}
-      {clipboardNotice && <div role="status" className={cn("mt-2 flex items-start gap-2 text-[12px]", clipboardNotice === "已复制选区" ? "text-primary" : "text-[#b54a23]")}><span>{clipboardNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setClipboardNotice("")}><X size={14} /></button></div>}
+      {clipboardNotice && <div role="status" className={cn("mt-2 flex items-start gap-2 text-[12px]", clipboardNotice === "已复制选区" || clipboardNotice === "已复制纯文本" ? "text-primary" : "text-[#b54a23]")}><span>{clipboardNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setClipboardNotice("")}><X size={14} /></button></div>}
       {!readOnly && <>
         <button type="button" title="添加一行" aria-label="添加一行" className="absolute bottom-0 left-4 right-10 hidden h-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertRow", at: rows.length }) : onEdit(-1, nCols, ""))} data-table-add-row><Plus size={11} strokeWidth={2.2} /></button>
         <button type="button" title="添加一列" aria-label="添加一列" className="absolute bottom-4 right-0 top-4 hidden w-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertCol", at: nCols }) : onEdit(-2, nCols, ""))} data-table-add-col><Plus size={11} strokeWidth={2.2} /></button>

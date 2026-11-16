@@ -57,9 +57,10 @@ import { ImageBlock } from "./image-block";
 import { TableBlock, type TableResizeSession } from "./table-block";
 import { parseTableWidths, updatedTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
-import { parseMerges, planSelectionDelete, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { coverMap, parseMerges, planSelectionDelete, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills } from "./table-fill";
-import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
+import { planTableAppendRow, planTableClear, planTableCut, planTablePaste, planTablePasteGrid } from "./table-clipboard";
+import type { RichTableClipboard } from "./table-rich-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
 import { MemberCard, type MemberInfo } from "./member-card";
 import { ask, askText } from "@/components/ui/ask";
@@ -2306,14 +2307,32 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
             const info = doc.blockInfo(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
             const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), widths: version("tableWidths"), type: version("type") } : null;
-            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string; literal?: boolean } | { kind: "cut" | "clear"; range: CellRange } | { kind: "append" }): string | null => {
+            const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string; literal?: boolean; rich?: RichTableClipboard } | { kind: "cut" | "clear"; range: CellRange } | { kind: "append" }): string | null => {
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b);
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
               const beforeRows = tableRowsOf(current.props);
               const merges = parseMerges(current.props.tableMerges, beforeRows.length, beforeRows[0]?.length ?? 0);
-              const result = operation.kind === "paste" ? planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text, operation.literal) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : operation.kind === "clear" ? planTableClear(beforeRows, merges, operation.range) : planTableAppendRow(beforeRows);
+              const result = operation.kind === "paste" ? operation.rich ? planTablePasteGrid(beforeRows, merges, operation.row, operation.col, operation.rich.cells.map(row => row.map(cell => cell.text))) : planTablePaste(beforeRows, merges, operation.row, operation.col, operation.text, operation.literal) : operation.kind === "cut" ? planTableCut(beforeRows, merges, operation.range) : operation.kind === "clear" ? planTableClear(beforeRows, merges, operation.range) : planTableAppendRow(beforeRows);
               if (!result.ok) return result.message;
+              if (operation.kind === "paste" && operation.rich) {
+                if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
+                const migration = new Tx(doc);
+                if (!isCellTable(current.props)) applyTableWrites(migration, b, current.props, cellTableWrites(current.props, beforeRows, doc.client));
+                const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
+                writeTable(tx, b, doc.blockInfo(b).props, result.rows, doc.client);
+                const covered = coverMap(merges), fills: { row: number; col: number; fill: string }[] = [], alignments: { row: number; col: number; axis: TableAlignAxis; align: TableAlign }[] = [];
+                operation.rich.cells.forEach((row, dr) => row.forEach((cell, dc) => {
+                  const r = operation.row + dr, c = operation.col + dc;
+                  if (covered.get(`${r}:${c}`) === "hidden") return;
+                  fills.push({ row: r, col: c, fill: cell.fill });
+                  alignments.push({ row: r, col: c, axis: "horizontal", align: cell.horizontal }, { row: r, col: c, axis: "vertical", align: cell.vertical });
+                }));
+                setTableCellFills(tx, b, fills); setTableCellAlignments(tx, b, alignments);
+                if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
+                else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
+                return null;
+              }
               if (!result.changed) return null;
               const aliases = findBatchHistory.capture(doc, [b]);
               const structureBefore = tableStructureHistory.capture(doc, b, um);
@@ -2533,7 +2552,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onTableFill={readOnly ? undefined : (range, value) => tableFormat(range, { kind: "fill", value })}
                 onTableAlign={readOnly ? undefined : (range, axis, value) => tableFormat(range, { kind: "align", axis, value })}
-                onTablePaste={readOnly ? undefined : (row, col, text, literal) => tableClipboard({ kind: "paste", row, col, text, literal })}
+                onTablePaste={readOnly ? undefined : (row, col, text, literal, rich) => tableClipboard({ kind: "paste", row, col, text, literal, rich })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
                 onTableAppendRow={readOnly ? undefined : () => tableClipboard({ kind: "append" })}
@@ -2898,7 +2917,7 @@ interface BlockProps {
   onTableHeader?: (axis: "row" | "column", enabled: boolean) => void;
   onTableFill?: (range: CellRange, fill: string) => string | null;
   onTableAlign?: (range: CellRange, axis: TableAlignAxis, align: TableAlign) => string | null;
-  onTablePaste?: (r: number, c: number, text: string, literal?: boolean) => string | null;
+  onTablePaste?: (r: number, c: number, text: string, literal?: boolean, rich?: RichTableClipboard) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;
   onTableAppendRow?: () => string | null;

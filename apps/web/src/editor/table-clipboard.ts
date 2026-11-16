@@ -55,6 +55,12 @@ export function planTableAppendRow(rows: string[][]): TablePasteResult {
 export function planTablePaste(rows: string[][], merges: Merge[], startRow: number, startCol: number, text: string, literal = false): TablePasteResult {
   const grid = literal ? (text.length && text.length <= MAX_TEXT ? [[text]] : null) : parseTableTSV(text);
   if (!grid?.length) return { ok: false, message: "粘贴内容格式无效或过大，表格未修改。" };
+  return planTablePasteGrid(rows, merges, startRow, startCol, grid);
+}
+
+/** Accept a bounded clipboard grid, including empty trailing rows. */
+export function planTablePasteGrid(rows: string[][], merges: Merge[], startRow: number, startCol: number, grid: string[][]): TablePasteResult {
+  if (!Array.isArray(grid) || !grid.length || grid.length > MAX_ROWS || grid.some(row => !Array.isArray(row) || !row.length || row.length > MAX_COLS || row.some(value => typeof value !== "string")) || grid.reduce((sum, row) => sum + row.length, 0) > MAX_PASTE_CELLS || grid.reduce((sum, row) => sum + row.reduce((n, value) => n + value.length, 0), 0) > MAX_TEXT) return { ok: false, message: "粘贴内容格式无效或过大，表格未修改。" };
   if (!Number.isInteger(startRow) || !Number.isInteger(startCol) || startRow < 0 || startCol < 0 || startRow >= rows.length || startCol >= (rows[0]?.length ?? 0)) return { ok: false, message: "表格位置已变化，请重新选择单元格。" };
   const width = Math.max(...grid.map((r) => r.length));
   const nr = Math.max(rows.length, startRow + grid.length), nc = Math.max(rows[0].length, startCol + width);
