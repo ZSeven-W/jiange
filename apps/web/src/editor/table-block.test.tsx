@@ -36,6 +36,14 @@ describe("Feishu table block", () => {
     expect(html).toContain('aria-label="调整第 1 列宽"');
     expect(html).toContain('aria-label="调整第 2 列宽"');
   });
+  it("keeps grips for moving a row or column with a perpendicular merge", () => {
+    const horizontal = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,1,2]]" onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
+    expect(horizontal).toContain('data-table-row-grip="0"');
+    expect(horizontal).not.toContain('data-table-col-grip="0"');
+    const vertical = renderToStaticMarkup(<TableBlock data={data} merges="[[0,0,2,1]]" onEdit={noop} onChange={noop} onDelete={noop} readOnly={false} />);
+    expect(vertical).toContain('data-table-col-grip="0"');
+    expect(vertical).not.toContain('data-table-row-grip="0"');
+  });
   it("disables deleting the last row or column", () => {
     expect(gripMenu({ kind: "row", index: 0 }, 1, 3).find((i) => i.op.kind === "deleteRow")?.disabled).toBe(true);
     expect(gripMenu({ kind: "col", index: 0 }, 2, 1).find((i) => i.op.kind === "deleteCol")?.disabled).toBe(true);

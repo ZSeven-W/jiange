@@ -54,10 +54,10 @@ import { LinkCard } from "./link-card";
 import { FileCard, fmtSize } from "./file-card";
 import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./image-block";
-import { TableBlock, type TableResizeSession } from "./table-block";
-import { parseTableWidths, updatedTableWidths } from "./table-widths";
+import { TableBlock, type TableReorderSession, type TableResizeSession } from "./table-block";
+import { parseTableWidths, updatedTableWidths, validTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
-import { coverMap, parseMerges, planSelectionDelete, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { coverMap, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills } from "./table-fill";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipboard";
@@ -1756,6 +1756,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (isNativeControl(e.target)) {
       const key = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && !readOnlyRef.current && e.target instanceof Element && e.target.closest("[data-column-move-handle]")) { e.preventDefault(); undo(key === "y" || e.shiftKey); return; }
+      if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && !readOnlyRef.current && e.target instanceof Element && e.target.closest("[data-table-row-grip], [data-table-col-grip]")) { e.preventDefault(); undo(key === "y" || e.shiftKey); return; }
       if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y") && !e.nativeEvent.isComposing && tableCellUndoRef.current(e.target, key === "y" || e.shiftKey)) e.preventDefault();
       return;
     }
@@ -2373,6 +2374,27 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
               return null;
             };
+            const applyTableStructure = (rows: string[][], merges: Merge[], widths?: Widths, operation?: TableOp) => {
+              if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
+              const current = doc.blockInfo(b).props, previous = tableRowsOf(current);
+              const fills = operation ? remapTableFills(readTableFills(current, previous.length, previous[0]?.length ?? 0), operation) : null;
+              const horizontal = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "horizontal"), operation) : null;
+              const vertical = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "vertical"), operation) : null;
+              if (!isCellTable(current) && Object.entries(current).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未修改表格，请等待同步后重试。"); return; }
+              const migration = new Tx(doc);
+              if (!isCellTable(current)) applyTableWrites(migration, b, current, cellTableWrites(current, previous, doc.client));
+              const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
+              writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
+              if (fills) setTableCellFills(tx, b, fillCells(fills));
+              if (horizontal && vertical) setTableCellAlignments(tx, b, [...alignmentCells(horizontal, "horizontal"), ...alignmentCells(vertical, "vertical")]);
+              tx.setProp(b, "tableMerges", JSON.stringify(merges));
+              if (widths) tx.setProp(b, "tableWidths", JSON.stringify(widths));
+              um.seal();
+              const marker = tableStructureHistory.record(doc, b, tx, um, before);
+              if (marker) um.recordMarker(marker);
+              sync.client.push([...migration.ops, ...tx.ops]);
+              um.seal(); force((x) => x + 1); publish();
+            };
             const commentProjection = projectCommentAnchors(doc, b, comments, activeThread);
             return (
               <Block
@@ -2503,6 +2525,30 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     },
                   };
                 }}
+                onBeginTableReorder={readOnly ? undefined : () => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || !tableSnapshot) return null;
+                  if (alignmentPendingRef.current || alignmentBusy.current) { setColumnNotice("上一项布局操作仍在核对，请稍后再试。"); return null; }
+                  const current = doc.blockInfo(b);
+                  if (current.type !== "table" || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("tableWidths") !== tableSnapshot.widths || tableDataOf(current.props) !== tableDataOf(info.props)) { setColumnNotice("表格已变化，请重新拖动。"); return null; }
+                  const before = tableStructureHistory.snapshot(doc, b), location = doc.blockLocation(b);
+                  const locationKey = `${idKey(location.parent)}:${idKey(location.version)}`;
+                  return { cancel: () => {}, commit: (op) => {
+                    if (alignmentPendingRef.current || alignmentBusy.current) return "上一项布局操作仍在核对，未移动行列；请稍后重试。";
+                    if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || tableStructureHistory.snapshot(doc, b) !== before) return "表格内容或格式已变化，未移动行列；请重试。";
+                    const now = doc.blockLocation(b);
+                    if (`${idKey(now.parent)}:${idKey(now.version)}` !== locationKey) return "表格位置已变化，未移动行列；请重试。";
+                    const props = doc.blockInfo(b).props, rows = tableRowsOf(props), merges = parseMergesStrict(props.tableMerges, rows.length, rows[0]?.length ?? 0);
+                    if (!merges || !validTableWidths(props.tableWidths ?? "")) return "表格合并或列宽数据无效，未移动行列。";
+                    if (!isCellTable(props) && Object.entries(props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，未移动行列。";
+                    const plan = planTableReorder(rows, merges, op);
+                    if (!plan) return "无法拆开合并单元格，请调整选区或目标位置。";
+                    if (plan.order.every((old,index) => old === index)) return null;
+                    const originalWidths = parseTableWidths(props.tableWidths), mappedWidths = remapWidths(originalWidths, op, rows[0].length);
+                    const widths = mappedWidths && originalWidths ? [...mappedWidths, ...originalWidths.slice(rows[0].length)] : mappedWidths;
+                    applyTableStructure(plan.rows, plan.merges, widths, op);
+                    return null;
+                  } };
+                }}
                 onTableEdit={readOnly ? undefined : (r, c, v, kind) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return;
                   const tx = new Tx(doc);
@@ -2628,29 +2674,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   // No publish(): it would drop the flowchart pointer/selection presence.
                   return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? Object.keys(intent.writes) : [] };
                 }}
-                onTableChange={readOnly ? undefined : (rows, merges, widths, operation) => {
-                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
-                  const current = doc.blockInfo(b).props, previous = tableRowsOf(current);
-                  const fills = operation ? remapTableFills(readTableFills(current, previous.length, previous[0]?.length ?? 0), operation) : null;
-                  const horizontal = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "horizontal"), operation) : null;
-                  const vertical = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "vertical"), operation) : null;
-                  if (!isCellTable(current) && Object.entries(current).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未修改表格，请等待同步后重试。"); return; }
-                  const migration = new Tx(doc);
-                  if (!isCellTable(current)) applyTableWrites(migration, b, current, cellTableWrites(current, previous, doc.client));
-                  const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
-                  writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
-                  if (fills) setTableCellFills(tx, b, fillCells(fills));
-                  if (horizontal && vertical) setTableCellAlignments(tx, b, [...alignmentCells(horizontal, "horizontal"), ...alignmentCells(vertical, "vertical")]);
-                  tx.setProp(b, "tableMerges", JSON.stringify(merges));
-                  if (widths) tx.setProp(b, "tableWidths", JSON.stringify(widths));
-                  um.seal(); // 不与此前的列宽拖拽等属性修改合并为同一步撤销
-                  const marker = tableStructureHistory.record(doc, b, tx, um, before);
-                  if (marker) um.recordMarker(marker);
-                  sync.client.push([...migration.ops, ...tx.ops]);
-                  um.seal();
-                  force((x) => x + 1);
-                  publish();
-                }}
+                onTableChange={readOnly ? undefined : applyTableStructure}
                 uploadNotice={uploading?.anchor === k ? uploading : null}
               />
             );
@@ -2904,6 +2928,7 @@ interface BlockProps {
   onMoveColumn?: (column: string, after: string | null) => void;
   onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
   onBeginTableResize?: (index: number) => TableResizeSession | null;
+  onBeginTableReorder?: () => TableReorderSession | null;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
   commentThreads?: number[];
@@ -2958,7 +2983,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -3229,6 +3254,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onHeader={onTableHeader ? (on) => onTableHeader("row", on) : undefined}
           onHeaderColumn={onTableHeader ? (on) => onTableHeader("column", on) : undefined}
           onBeginResize={onBeginTableResize}
+          onBeginReorder={onBeginTableReorder}
           merges={props.tableMerges}
           onEdit={(r, c, v, kind) => onTableEdit?.(r, c, v, kind)}
           onPasteCells={onTablePaste}

@@ -11,7 +11,9 @@ export type TableOp =
   | { kind: "clearRow"; index: number }
   | { kind: "clearCol"; index: number }
   | { kind: "moveRow"; index: number; to: number }
-  | { kind: "moveCol"; index: number; to: number };
+  | { kind: "moveCol"; index: number; to: number }
+  | { kind: "reorderRows"; indices: number[]; before: number }
+  | { kind: "reorderCols"; indices: number[]; before: number };
 /** 列宽：null 表示按内容自动。 */
 export type Widths = (number | null)[];
 export interface CellRange { r0: number; c0: number; r1: number; c1: number }
@@ -32,6 +34,16 @@ export function parseMerges(raw: string | undefined, rows: number, cols: number)
     out.push([r, c, rs, cs]);
   }
   return out;
+}
+
+/** Structural moves must not silently discard malformed merge metadata. */
+export function parseMergesStrict(raw: string | undefined, rows: number, cols: number): Merge[] | null {
+  if (!raw) return [];
+  if (raw.length > 256 * 1024) return null;
+  try {
+    const value:unknown=JSON.parse(raw);if(!Array.isArray(value))return null;
+    const parsed=parseMerges(raw,rows,cols);return parsed.length===value.length?parsed:null;
+  } catch { return null; }
 }
 
 const overlaps = (a: Merge, b: Merge) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
@@ -75,6 +87,35 @@ export function mergeCells(rows: string[][], merges: Merge[], range: CellRange):
 export function splitCell(merges: Merge[], r: number, c: number): Merge[] | null {
   const i = merges.findIndex(([mr, mc, rs, cs]) => r >= mr && r < mr + rs && c >= mc && c < mc + cs);
   return i < 0 ? null : merges.filter((_, k) => k !== i);
+}
+
+/** Move selected indices, preserving their order, before an original boundary. */
+export function reorderIndices(count: number, indices: readonly number[], before: number): number[] | null {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 5000 || !Number.isSafeInteger(before) || before < 0 || before > count || !indices.length || indices.some(i => !Number.isSafeInteger(i) || i < 0 || i >= count) || new Set(indices).size !== indices.length) return null;
+  const selected=[...indices].sort((a,b)=>a-b), chosen=new Set(selected);
+  const remaining=Array.from({length:count},(_,i)=>i).filter(i=>!chosen.has(i));
+  const at=remaining.filter(i=>i<before).length;
+  return [...remaining.slice(0,at),...selected,...remaining.slice(at)];
+}
+
+/** Reject permutations that split or reverse an existing merged region. */
+export function planTableReorder(rows: string[][], merges: Merge[], op: Extract<TableOp,{kind:"reorderRows"|"reorderCols"}>): {rows:string[][];merges:Merge[];order:number[]} | null {
+  const cols=rows[0]?.length??0;
+  if(!rows.length || !cols || rows.length>200 || cols>50 || rows.length*cols>5000 || rows.some(row=>!Array.isArray(row)||row.length!==cols||row.some(cell=>typeof cell!=="string")))return null;
+  const byRow=op.kind==='reorderRows', order=reorderIndices(byRow?rows.length:cols,op.indices,op.before);
+  if(!order)return null;
+  const inverse=Array.from({length:order.length},()=>0);order.forEach((old,index)=>{inverse[old]=index;});
+  const mapped:Merge[]=[];
+  for(const [r,c,rs,cs] of merges){
+    if(![r,c,rs,cs].every(Number.isSafeInteger)||r<0||c<0||rs<1||cs<1||r+rs>rows.length||c+cs>cols)return null;
+    const start=byRow?r:c, span=byRow?rs:cs;
+    if(!Number.isSafeInteger(start)||!Number.isSafeInteger(span)||start<0||span<1||start+span>order.length)return null;
+    const next=inverse[start];
+    for(let i=1;i<span;i++)if(inverse[start+i]!==next+i)return null;
+    mapped.push(byRow?[next,c,rs,cs]:[r,next,rs,cs]);
+  }
+  const reordered=byRow?order.map(i=>[...rows[i]]):rows.map(row=>order.map(i=>row[i]));
+  return {rows:reordered,merges:mapped,order};
 }
 
 /** 结构操作；合并块随行列插入平移/扩展，删除行列时收缩，失效者丢弃。 */
@@ -128,6 +169,11 @@ export function applyTableOp(rows: string[][], merges: Merge[], op: TableOp): { 
       const next = rows.map((row) => row.map((_, j) => row[swap(j)]));
       return { rows: next, merges: merges.map(([r, c, rs, cs]): Merge => [r, cs === 1 ? swap(c) : c, rs, cs]) };
     }
+    case "reorderRows":
+    case "reorderCols": {
+      const result=planTableReorder(rows,merges,op);
+      return result?{rows:result.rows,merges:result.merges}:{rows,merges};
+    }
     case "clearRow":
       return { rows: rows.map((row, i) => (i === op.index ? blank(row.length) : row)), merges };
     case "clearCol":
@@ -151,6 +197,7 @@ export function remapWidths(widths: Widths | undefined, op: TableOp, cols: numbe
     case "insertCol": { const at = Math.max(0, Math.min(cols, op.at)); return [...w.slice(0, at), null, ...w.slice(at)]; }
     case "deleteCol": return cols <= 1 ? undefined : w.filter((_, i) => i !== op.index);
     case "moveCol": { const next = [...w]; [next[op.index], next[op.to]] = [next[op.to], next[op.index]]; return next; }
+    case "reorderCols": { const order=reorderIndices(cols,op.indices,op.before);return order?.map(i=>w[i]); }
     default: return undefined;
   }
 }

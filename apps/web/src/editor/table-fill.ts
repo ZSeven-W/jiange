@@ -1,5 +1,5 @@
 import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from './table-cells';
-import type { CellRange, TableOp } from './table-ops';
+import { reorderIndices, type CellRange, type TableOp } from './table-ops';
 
 export type FillGrid = string[][];
 export function readTableFills(props: Record<string, string>, rows: number, cols: number): FillGrid {
@@ -19,6 +19,8 @@ export function remapTableFills(grid: FillGrid, op: TableOp): FillGrid {
     case 'deleteCol': if (cols > 1) for (const row of next) row.splice(op.index, 1); break;
     case 'moveRow': [next[op.index], next[op.to]] = [next[op.to], next[op.index]]; break;
     case 'moveCol': for (const row of next) [row[op.index], row[op.to]] = [row[op.to], row[op.index]]; break;
+    case 'reorderRows': { const order=reorderIndices(rows,op.indices,op.before);return order?order.map(i=>[...next[i]]):next; }
+    case 'reorderCols': { const order=reorderIndices(cols,op.indices,op.before);return order?next.map(row=>order.map(i=>row[i])):next; }
   }
   return next;
 }

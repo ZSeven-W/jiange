@@ -15,4 +15,9 @@ describe('table fill structure changes', () => {
     expect(deleteSelectionFills(three, 'rows', { r0: 0, r1: 1, c0: 0, c1: 2 })).toEqual([['G','H','I']]);
     expect(deleteSelectionFills(three, 'cols', { r0: 0, r1: 2, c0: 1, c1: 2 })).toEqual([['A'], ['D'], ['G']]);
   });
+  it('moves formatting by the same permutation as nonadjacent rows and columns', () => {
+    const values=[['a','b','c','d'],['e','f','g','h'],['i','j','k','l']];
+    expect(remapTableFills(values,{kind:'reorderRows',indices:[0,2],before:1})).toEqual([values[0],values[2],values[1]]);
+    expect(remapTableFills(values,{kind:'reorderCols',indices:[1,3],before:0})).toEqual([['b','d','a','c'],['f','h','e','g'],['j','l','i','k']]);
+  });
 });

@@ -1,9 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, planSelectionDelete, remapWidths, splitCell, type Merge } from "./table-ops";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, reorderIndices, splitCell, type Merge } from "./table-ops";
 
 const grid = () => [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]];
 
 describe("table structure ops", () => {
+  it("reorders contiguous and nonadjacent axes without changing their relative order", () => {
+    expect(reorderIndices(5,[1,3],0)).toEqual([1,3,0,2,4]);
+    expect(reorderIndices(5,[1,2],5)).toEqual([0,3,4,1,2]);
+    expect(reorderIndices(4,[1],2)).toEqual([0,1,2,3]);
+    expect(reorderIndices(4,[1,1],0)).toBeNull();expect(reorderIndices(4,[4],0)).toBeNull();
+    const rows=[['A','B','C','D'],['a','b','c','d']];
+    expect(planTableReorder(rows,[],{kind:'reorderCols',indices:[1,3],before:0})?.rows).toEqual([['B','D','A','C'],['b','d','a','c']]);
+    expect(remapWidths([100,110,120,130],{kind:'reorderCols',indices:[1,3],before:0},4)).toEqual([110,130,100,120]);
+  });
+  it("moves intact merges and refuses to split or reverse them", () => {
+    const rows=[['A','B'],['','C'],['D','E'],['F','G']], merges:Merge[]=[[0,0,2,1]];
+    expect(planTableReorder(rows,merges,{kind:'reorderRows',indices:[0,1],before:4})).toMatchObject({rows:[['D','E'],['F','G'],['A','B'],['','C']],merges:[[2,0,2,1]]});
+    expect(planTableReorder(rows,merges,{kind:'reorderRows',indices:[0],before:4})).toBeNull();
+    expect(planTableReorder(rows,merges,{kind:'reorderRows',indices:[2],before:1})).toBeNull();
+    expect(rows[0][0]).toBe('A');
+    expect(parseMergesStrict('[[0,0,4,1]]',3,2)).toBeNull();
+    expect(parseMergesStrict('[[0,0,2,1]]',3,2)).toEqual([[0,0,2,1]]);
+  });
   it("inserts and deletes rows/columns and clears them", () => {
     expect(applyTableOp(grid(), [], { kind: "insertRow", at: 1 }).rows).toEqual([["a", "b", "c"], ["", "", ""], ["d", "e", "f"], ["g", "h", "i"]]);
     expect(applyTableOp(grid(), [], { kind: "insertCol", at: 0 }).rows[0]).toEqual(["", "a", "b", "c"]);

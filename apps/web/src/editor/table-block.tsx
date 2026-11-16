@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, Copy, Eraser, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, planTableReorder, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { formatTableTSV } from "./table-clipboard";
 import { parseTableRichHTML, tableRichHTML, type RichTableClipboard } from "./table-rich-clipboard";
 import { parseExternalTableHTML } from "./table-external-clipboard";
@@ -13,7 +13,11 @@ import { visibleTableWidths } from "./table-widths";
 import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
 
 type GripSel = { kind: "row" | "col"; index: number };
+type AxisSelection = { kind: "row" | "col"; indices: number[] };
+type ReorderGuide = { left: number; top: number; width: number; height: number; valid: boolean };
 export type TableResizeSession = { commit: (widths: number[]) => void | Promise<void>; cancel: () => void };
+export type TableReorderOp = Extract<TableOp, { kind: "reorderRows" | "reorderCols" }>;
+export type TableReorderSession = { commit: (op: TableReorderOp) => string | null; cancel: () => void };
 
 /** 行/列菜单项（飞书：上方/下方插入行、左侧/右侧插入列、删除、清空）。 */
 export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string[][] = [], merges: Merge[] = []): { label: string; op: TableOp; danger?: boolean; disabled?: boolean }[] {
@@ -57,11 +61,12 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onEdit, onChange, onFill, onAlign, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onBeginReorder, onEdit, onChange, onFill, onAlign, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
   fillProps?: Record<string, string>; onFill?: (range: CellRange, fill: string) => string | null;
   onAlign?: (range: CellRange, axis: TableAlignAxis, align: TableAlign) => string | null;
   onBeginResize?: (index: number) => TableResizeSession | null;
+  onBeginReorder?: () => TableReorderSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
   onChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => void;
@@ -82,6 +87,8 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const cover = useMemo(() => coverMap(merges), [merges]);
   const findByCell = useMemo(() => new Map(findCells.map((item) => [`${item.row}:${item.col}`, item])), [findCells]);
   const [grip, setGrip] = useState<GripSel | null>(initialGrip);
+  const [axisSelection, setAxisSelection] = useState<AxisSelection | null>(null);
+  const [reorderGuide, setReorderGuide] = useState<ReorderGuide | null>(null);
   const [gripMenuHidden, setGripMenuHidden] = useState(false);
   const [range, setRange] = useState<CellRange | null>(null);
   const [touchSelecting, setTouchSelecting] = useState(false);
@@ -93,13 +100,22 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [alignOpen, setAlignOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
   const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
+  const reorderDrag = useRef<{ pointer: number; kind: "row" | "col"; indices: number[]; startX: number; startY: number; x: number; y: number; active: boolean; before: number | null; valid: boolean; session: TableReorderSession | null; target: HTMLElement; frame: number } | null>(null);
+  const suppressGripClick = useRef(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !widthDrag.current) return;
-      event.preventDefault();
-      const drag = widthDrag.current; widthDrag.current = null; setWidthPreview(null); drag.session.cancel();
-      if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
+      if (event.key !== "Escape") return;
+      if (widthDrag.current) {
+        event.preventDefault();
+        const drag = widthDrag.current; widthDrag.current = null; setWidthPreview(null); drag.session.cancel();
+        if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
+      } else if (reorderDrag.current) {
+        event.preventDefault();
+        const drag=reorderDrag.current;reorderDrag.current=null;if(drag.frame)cancelAnimationFrame(drag.frame);drag.session?.cancel();
+        if(drag.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);
+        setReorderGuide(null);setAxisSelection(null);
+      }
     };
     window.addEventListener("keydown", escape);
     return () => { window.removeEventListener("keydown", escape); widthDrag.current?.session.cancel(); widthDrag.current = null; };
@@ -112,12 +128,19 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   useLayoutEffect(() => {
     if (previousSelectionSignature.current === selectionSignature) return;
     previousSelectionSignature.current = selectionSignature;
-    if (!touchSelecting) return;
+    if (!touchSelecting && !reorderDrag.current && !axisSelection) return;
     const drag = dragSelection.current;
     dragSelection.current = null;
     if (drag?.kind === "touch" && root.current?.hasPointerCapture(drag.pointerId)) root.current.releasePointerCapture(drag.pointerId);
+    const reorder = reorderDrag.current;
+    if (reorder) {
+      reorderDrag.current = null; if (reorder.frame) cancelAnimationFrame(reorder.frame); reorder.session?.cancel();
+      if (reorder.target.hasPointerCapture(reorder.pointer)) reorder.target.releasePointerCapture(reorder.pointer);
+      if (reorder.active) setClipboardNotice("拖动时表格已变化，未移动行列；请重试。");
+    }
+    setAxisSelection(null); setReorderGuide(null);
     setRange(null); setTouchSelecting(false); setFillOpen(false); setAlignOpen(false); setMoreOpen(false);
-  }, [selectionSignature, touchSelecting]);
+  }, [selectionSignature, touchSelecting, axisSelection]);
   const lastFindNavigation = useRef<number | null>(null);
   useLayoutEffect(() => {
     const pending = pendingTab.current;
@@ -208,6 +231,16 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
       capturedRoot?.removeEventListener("lostpointercapture", lostCapture);
     };
   }, []);
+  useEffect(() => {
+    const cancel = () => {
+      const drag=reorderDrag.current;if(!drag)return;
+      reorderDrag.current=null;if(drag.frame)cancelAnimationFrame(drag.frame);drag.session?.cancel();
+      if(drag.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);
+      setReorderGuide(null);
+    };
+    window.addEventListener("blur",cancel);
+    return () => { window.removeEventListener("blur",cancel); const drag=reorderDrag.current;reorderDrag.current=null;if(drag?.frame)cancelAnimationFrame(drag.frame);drag?.session?.cancel(); };
+  }, []);
   useLayoutEffect(() => {
     if (!findCells.length) return;
     root.current?.querySelectorAll<HTMLTextAreaElement>('[data-find-match="true"] [data-table-cell]').forEach(syncFindOverlay);
@@ -224,23 +257,30 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   }, [findCells, editing, findNavigation]);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const openGrip = (e: React.MouseEvent<HTMLElement>, g: GripSel) => {
+    if (suppressGripClick.current) { e.preventDefault(); e.stopPropagation(); suppressGripClick.current=false; return; }
     setMoreOpen(false);
     setFillOpen(false);
     setAlignOpen(false);
     setGripMenuHidden(false);
     setTouchSelecting(false);
     setRange(null);
+    if(e.metaKey || e.ctrlKey) {
+      const base=axisSelection?.kind===g.kind?axisSelection.indices:grip?.kind===g.kind?[grip.index]:[];
+      const next=base.includes(g.index)?base.filter(index=>index!==g.index):[...base,g.index].sort((a,b)=>a-b);
+      setGrip(null);setFocus(null);setAxisSelection(next.length?{kind:g.kind,indices:next}:null);e.currentTarget.focus({preventScroll:true});return;
+    }
+    setAxisSelection(null);
     const same = grip?.kind === g.kind && grip?.index === g.index;
     const box = root.current?.getBoundingClientRect(), b = e.currentTarget.getBoundingClientRect();
     if (box) setMenuAt(g.kind === "col" ? { x: b.left - box.left, y: b.bottom - box.top + 4 } : { x: b.right - box.left + 4, y: b.top - box.top });
     setGrip(same ? null : g);
   };
   useEffect(() => {
-    if (!grip && !range && !moreOpen && !fillOpen && !alignOpen) return;
-    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setRange(null); setTouchSelecting(false); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
+    if (!grip && !axisSelection && !range && !moreOpen && !fillOpen && !alignOpen) return;
+    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setAxisSelection(null); setRange(null); setTouchSelecting(false); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
-  }, [grip, range, moreOpen, fillOpen, alignOpen]);
+  }, [grip, axisSelection, range, moreOpen, fillOpen, alignOpen]);
   const columnWidths = widthPreview ?? visibleTableWidths(rows, widths);
   const colW = (ci: number) => columnWidths[ci] ?? 100;
   const startResize = (e: React.PointerEvent<HTMLElement>, ci: number) => {
@@ -276,6 +316,86 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     if (cancelled || drag.initial.every((value, index) => value === drag.next[index])) { setWidthPreview(null); drag.session.cancel(); }
     else commitResize(drag.session, drag.next);
     if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
+  };
+  const updateReorder = (drag: NonNullable<typeof reorderDrag.current>) => {
+    const container=root.current, scroller=container?.querySelector<HTMLElement>("[data-table-scroll]"), table=scroller?.querySelector("table");
+    if(!container||!scroller||!table)return;
+    const sr=scroller.getBoundingClientRect(),tr=table.getBoundingClientRect(),rr=container.getBoundingClientRect();
+    const vertical=tableVerticalScrollParent(container),vr=vertical&&vertical!==document.scrollingElement?vertical.getBoundingClientRect():{top:0,bottom:window.innerHeight};
+    const left=Math.max(0,sr.left,tr.left),right=Math.min(window.innerWidth,sr.right,tr.right),top=Math.max(0,vr.top,tr.top),bottom=Math.min(window.innerHeight,vr.bottom,tr.bottom);
+    if(right<=left+2||bottom<=top+2)return;
+    const x=Math.max(left+1,Math.min(right-1,drag.x)),y=Math.max(top+1,Math.min(bottom-1,drag.y));
+    const cell=document.elementFromPoint(x,y)?.closest<HTMLElement>("[data-table-position]");
+    if(!cell||!container.contains(cell))return;
+    const [r,c]=(cell.dataset.tablePosition??"").split(":").map(Number);if(!Number.isInteger(r)||!Number.isInteger(c))return;
+    const rect=cell.getBoundingClientRect(),span=cover.get(`${r}:${c}`),extent=span&&span!=="hidden"?span.span:[1,1];
+    const after=drag.kind==="row"?y>=rect.top+rect.height/2:x>=rect.left+rect.width/2;
+    const before=drag.kind==="row"?r+(after?extent[0]:0):c+(after?extent[1]:0);
+    const op:TableReorderOp={kind:drag.kind==="row"?"reorderRows":"reorderCols",indices:drag.indices,before};
+    const plan=planTableReorder(rows,merges,op),valid=!!plan;
+    drag.before=before;drag.valid=valid;
+    const guide=drag.kind==="row"?{left:left-rr.left,top:(after?rect.bottom:rect.top)-rr.top-1,width:right-left,height:2,valid}:{left:(after?rect.right:rect.left)-rr.left-1,top:top-rr.top,width:2,height:bottom-top,valid};
+    setReorderGuide(guide);
+  };
+  const scrollReorder = (drag: NonNullable<typeof reorderDrag.current>) => {
+    drag.frame=0;
+    const container=root.current,scroller=container?.querySelector<HTMLElement>("[data-table-scroll]"),vertical=container&&tableVerticalScrollParent(container);
+    if(!container||!scroller||!vertical||reorderDrag.current!==drag||!drag.active)return;
+    const h=scroller.getBoundingClientRect(),v=vertical===document.scrollingElement?{top:0,bottom:window.innerHeight}:vertical.getBoundingClientRect();
+    const dx=scroller.scrollWidth>scroller.clientWidth?tableSelectionScrollSpeed(drag.x,Math.max(0,h.left),Math.min(window.innerWidth,h.right)):0;
+    const dy=vertical.scrollHeight>vertical.clientHeight?tableSelectionScrollSpeed(drag.y,Math.max(0,v.top),Math.min(window.innerHeight,v.bottom)):0;
+    const oldX=scroller.scrollLeft,oldY=vertical.scrollTop;if(dx)scroller.scrollLeft+=dx;if(dy)vertical.scrollTop+=dy;
+    if(oldX!==scroller.scrollLeft||oldY!==vertical.scrollTop){updateReorder(drag);drag.frame=requestAnimationFrame(()=>scrollReorder(drag));}
+  };
+  const selectedAxes = (g: GripSel): number[] => {
+    if(axisSelection?.kind===g.kind && axisSelection.indices.includes(g.index))return [...axisSelection.indices];
+    const full=range?expandRange(range,merges):null;
+    if(full && g.kind==='row' && full.c0===0 && full.c1===nCols-1 && g.index>=full.r0 && g.index<=full.r1)return Array.from({length:full.r1-full.r0+1},(_,i)=>full.r0+i);
+    if(full && g.kind==='col' && full.r0===0 && full.r1===rows.length-1 && g.index>=full.c0 && g.index<=full.c1)return Array.from({length:full.c1-full.c0+1},(_,i)=>full.c0+i);
+    return [g.index];
+  };
+  const beginReorder = (event: React.PointerEvent<HTMLButtonElement>, g: GripSel) => {
+    if(!onBeginReorder||readOnly||event.button!==0||reorderDrag.current||dragSelection.current||widthDrag.current)return;
+    const indices=selectedAxes(g);
+    try {event.currentTarget.setPointerCapture(event.pointerId);} catch {return;}
+    reorderDrag.current={pointer:event.pointerId,kind:g.kind,indices:[...indices],startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,active:false,before:null,valid:false,session:null,target:event.currentTarget,frame:0};
+  };
+  const moveReorder = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag=reorderDrag.current;if(!drag||drag.pointer!==event.pointerId)return;
+    drag.x=event.clientX;drag.y=event.clientY;
+    if(!drag.active){
+      if(Math.hypot(drag.x-drag.startX,drag.y-drag.startY)<6)return;
+      const session=onBeginReorder?.();if(!session){reorderDrag.current=null;if(drag.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);suppressGripClick.current=true;setTimeout(()=>{suppressGripClick.current=false;},0);return;}
+      drag.active=true;drag.session=session;
+      if(document.activeElement instanceof HTMLElement && root.current?.contains(document.activeElement))document.activeElement.blur();
+      setGrip(null);setRange(null);setTouchSelecting(false);setFocus(null);setMoreOpen(false);setFillOpen(false);setAlignOpen(false);setAxisSelection({kind:drag.kind,indices:drag.indices});
+    }
+    event.preventDefault();event.stopPropagation();updateReorder(drag);if(!drag.frame)drag.frame=requestAnimationFrame(()=>scrollReorder(drag));
+  };
+  const endReorder = (event: React.PointerEvent<HTMLButtonElement>,cancelled=false) => {
+    const drag=reorderDrag.current;if(!drag||drag.pointer!==event.pointerId)return;
+    reorderDrag.current=null;if(drag.frame)cancelAnimationFrame(drag.frame);
+    if(drag.active){
+      event.preventDefault();event.stopPropagation();suppressGripClick.current=true;setTimeout(()=>{suppressGripClick.current=false;},0);
+      if(!cancelled&&drag.before!==null&&drag.valid&&drag.session){const op:TableReorderOp={kind:drag.kind==="row"?"reorderRows":"reorderCols",indices:drag.indices,before:drag.before};setClipboardNotice(drag.session.commit(op)??"");}
+      else {drag.session?.cancel();if(!cancelled)setClipboardNotice("无法拆开合并单元格，请调整选区或目标位置。");}
+      setAxisSelection(null);setReorderGuide(null);
+      if(!cancelled)requestAnimationFrame(()=>{if(drag.target.isConnected && document.activeElement===document.body)drag.target.focus({preventScroll:true});});
+    }
+    if(drag.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);
+  };
+  const keyReorder = (event: React.KeyboardEvent<HTMLButtonElement>,g:GripSel) => {
+    const negative=g.kind==="row"?"ArrowUp":"ArrowLeft",positive=g.kind==="row"?"ArrowDown":"ArrowRight";
+    if(!event.altKey||event.metaKey||event.ctrlKey||event.shiftKey||![negative,positive].includes(event.key)||!onBeginReorder)return;
+    event.preventDefault();event.stopPropagation();
+    const indices=selectedAxes(g);
+    const count=g.kind==="row"?rows.length:nCols,before=event.key===negative?Math.max(0,Math.min(...indices)-1):Math.min(count,Math.max(...indices)+2);
+    const op:TableReorderOp={kind:g.kind==="row"?"reorderRows":"reorderCols",indices:[...indices],before};
+    const plan=planTableReorder(rows,merges,op);
+    if(!plan){setClipboardNotice("无法拆开合并单元格，请调整选区或目标位置。");return;}
+    if(plan.order.every((old,index)=>old===index))return;
+    const session=onBeginReorder();if(!session)return;
+    setClipboardNotice(session.commit(op)??"");setGrip(null);setAxisSelection(null);setRange(null);
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
@@ -324,7 +444,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
   return (
-    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined}
+    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined} data-table-axis-selection={axisSelection ? `${axisSelection.kind}:${axisSelection.indices.join(',')}` : undefined}
       onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
@@ -409,7 +529,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                 const cov = cover.get(`${ri}:${ci}`);
                 if (cov === "hidden") return null;
                 const span = cov?.span;
-                const sel = inRange(selected, ri, ci);
+                const sel = inRange(selected, ri, ci) || !!axisSelection?.indices.some(index => axisSelection.kind === "row" ? index >= ri && index < ri + (span?.[0] ?? 1) : index >= ci && index < ci + (span?.[1] ?? 1));
                 const candidate = findByCell.get(`${ri}:${ci}`);
                 const found = candidate?.value === cell ? candidate : undefined;
                 const activeFind = found?.ranges.some((range) => range.active) ?? false;
@@ -489,6 +609,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           setFillOpen(false);
                           setAlignOpen(false);
                           setGrip(null);
+                          setAxisSelection(null);
                           setTouchSelecting(false);
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
@@ -504,8 +625,8 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                       const handle = (corner: "start" | "end") => <button key={corner} type="button" aria-label={corner === "start" ? "调整选区起点" : "调整选区终点"} title="拖动或使用方向键调整选区" className={cn("absolute z-20 hidden size-8 touch-none items-center justify-center [@media(pointer:coarse)]:flex", corner === "start" ? "-left-4 -top-4" : "bottom-0 right-0")} onPointerDown={e => beginTouchSelection(e, corner)} onKeyDown={e => moveTouchSelectionWithKey(e, corner)} data-table-touch-handle={corner}><span className={cn("size-3 rounded-full border-2 border-white bg-primary shadow", corner === "end" && "absolute bottom-0 right-0")} /></button>;
                       return <>{touchSelecting && first && handle("start")}{last && handle("end")}</>;
                     })()}
-                    {editable && ri === 0 && !span?.[1] && <button type="button" aria-label={`选择第 ${ci + 1} 列`} title="选择整列" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "col" && grip.index === ci && "bg-primary opacity-100")} data-table-col-grip={ci} />}
-                    {editable && ci === 0 && !span?.[0] && <button type="button" aria-label={`选择第 ${ri + 1} 行`} title="选择整行" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "row" && grip.index === ri && "bg-primary opacity-100")} data-table-row-grip={ri} />}
+                    {editable && ri === 0 && (!span || span[1] === 1) && <button type="button" aria-label={`选择第 ${ci + 1} 列`} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" aria-pressed={grip?.kind === "col" && grip.index === ci || axisSelection?.kind === "col" && axisSelection.indices.includes(ci)} title="选择或拖动列，按住 Ctrl 或 Command 多选" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} onKeyDown={e=>keyReorder(e,{kind:"col",index:ci})} onPointerDown={e=>beginReorder(e,{kind:"col",index:ci})} onPointerMove={moveReorder} onPointerUp={e=>endReorder(e)} onPointerCancel={e=>endReorder(e,true)} onLostPointerCapture={e=>endReorder(e,true)} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:-top-4 [@media(pointer:coarse)]:h-4 [@media(pointer:coarse)]:opacity-100", (grip?.kind === "col" && grip.index === ci || axisSelection?.kind === "col" && axisSelection.indices.includes(ci)) && "bg-primary opacity-100")} data-table-col-grip={ci} />}
+                    {editable && ci === 0 && (!span || span[0] === 1) && <button type="button" aria-label={`选择第 ${ri + 1} 行`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-pressed={grip?.kind === "row" && grip.index === ri || axisSelection?.kind === "row" && axisSelection.indices.includes(ri)} title="选择或拖动行，按住 Ctrl 或 Command 多选" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} onKeyDown={e=>keyReorder(e,{kind:"row",index:ri})} onPointerDown={e=>beginReorder(e,{kind:"row",index:ri})} onPointerMove={moveReorder} onPointerUp={e=>endReorder(e)} onPointerCancel={e=>endReorder(e,true)} onLostPointerCapture={e=>endReorder(e,true)} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:-left-4 [@media(pointer:coarse)]:w-4 [@media(pointer:coarse)]:opacity-100", (grip?.kind === "row" && grip.index === ri || axisSelection?.kind === "row" && axisSelection.indices.includes(ri)) && "bg-primary opacity-100")} data-table-row-grip={ri} />}
                     {!readOnly && onBeginResize && ri === 0 && Array.from({ length: span?.[1] ?? 1 }, (_, offset) => {
                       const index = ci + offset, trailing = columnWidths.slice(index + 1, ci + (span?.[1] ?? 1)).reduce((sum, width) => sum + width, 0);
                       return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", span && offset < span[1] - 1 && "[@media(pointer:coarse)]:h-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {
@@ -528,6 +649,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         </tbody>
       </table>
       </div>
+      {reorderGuide && <div aria-hidden="true" className={cn("pointer-events-none absolute z-40 rounded-full",reorderGuide.valid?"bg-primary":"bg-destructive")} style={{left:reorderGuide.left,top:reorderGuide.top,width:reorderGuide.width,height:reorderGuide.height}} data-table-reorder-guide data-valid={reorderGuide.valid ? "true" : "false"} />}
       {editable && grip && !gripMenuHidden && (
         <div role="menu" style={{ left: menuAt?.x ?? 16, top: menuAt?.y ?? 16 }} className="absolute z-40 w-36 rounded-lg border bg-surface p-1 text-[13px] font-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-table-grip-menu={grip.kind}>
           {gripMenu(grip, rows.length, nCols, rows, merges).map((it) => <Fragment key={it.label}>{(it.danger || it.op.kind === "moveRow" && it.label === "上移一行" || it.op.kind === "moveCol" && it.label === "左移一列") && <div className="my-1 border-t" />}<button type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button></Fragment>)}
