@@ -3552,7 +3552,20 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
   const draggingColumn = useRef<string | null>(null);
   const [columnDrop, setColumnDrop] = useState<{ id: string; side: "before" | "after" } | null>(null);
   const [columnMenu, setColumnMenu] = useState<{ id: string; left: number; top: number } | null>(null);
+  const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedColumn) return;
+    if (!onDeleteColumn || !(childBlocks ?? []).some((child) => child.id === selectedColumn)) { setSelectedColumn(null); return; }
+    const keep = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      const handle = target.closest<HTMLElement>("[data-column-move-handle]")?.dataset.columnMoveHandle;
+      return !!handle && (childBlocks ?? []).some((child) => child.id === handle) || !!columnMenuRef.current?.contains(target);
+    };
+    const changed = (event: Event) => { if (!keep(event.target)) setSelectedColumn(null); };
+    document.addEventListener("pointerdown", changed); document.addEventListener("focusin", changed);
+    return () => { document.removeEventListener("pointerdown", changed); document.removeEventListener("focusin", changed); };
+  }, [selectedColumn, childBlocks, onDeleteColumn]);
   useEffect(() => {
     if (!columnMenu) return;
     const outside = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest("[data-column-move-menu], [data-column-move-handle]")) setColumnMenu(null); };
@@ -3726,7 +3739,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             {(childBlocks ?? []).map((ch, index, columns) => {
               const threads = ch.commentThreads ?? [];
               const weight = resizePreview?.left === ch.id ? resizePreview.first : resizePreview?.right === ch.id ? resizePreview.second : weights[index];
-              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className="group/col relative min-w-[132px] flex-1 sm:min-w-0" style={{ flexGrow: weight, flexBasis: "0%" }} data-column={ch.id} data-block={ch.id}
+              return <Fragment key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`}><div className={cn("group/col relative min-w-[132px] flex-1 sm:min-w-0", selectedColumn === ch.id && "rounded-[4px] bg-[#E6ECFD] dark:bg-primary/15")} style={{ flexGrow: weight, flexBasis: "0%" }} data-column={ch.id} data-block={ch.id} data-column-selected={selectedColumn === ch.id ? "true" : undefined}
                 onDragOver={(event) => {
                   if (!draggingColumn.current) return;
                   event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move";
@@ -3735,11 +3748,16 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                 }}
                 onDrop={(event) => { if (!draggingColumn.current) return; event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); dropColumn(ch.id, event.clientX < rect.left + rect.width / 2 ? "before" : "after"); }}>
                 {columnDrop?.id === ch.id && <span aria-hidden className={cn("pointer-events-none absolute bottom-0 top-0 z-20 w-0.5 rounded bg-[#3370ff]", columnDrop.side === "before" ? "-left-1" : "-right-1")} />}
-                {onMoveColumn && <button type="button" draggable aria-label={`第 ${index + 1} 栏菜单`} aria-haspopup="menu" aria-expanded={columnMenu?.id === ch.id} title="拖动或使用菜单移动分栏" data-column-move-handle={ch.id} className="pointer-events-none absolute -left-6 top-0 z-20 grid h-7 w-5 cursor-grab place-items-center rounded text-[#8f959e] opacity-0 hover:bg-[#eff0f1] hover:text-[#3370ff] active:cursor-grabbing focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/col:pointer-events-auto group-hover/col:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
-                  onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); setColumnMenu((current) => current?.id === ch.id ? null : { id: ch.id, left: Math.max(8, Math.min(rect.left, window.innerWidth - 180)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 120)) }); }}
-                  onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("text/plain", ""); event.dataTransfer.effectAllowed = "move"; draggingColumn.current = ch.id; setColumnMenu(null); }}
+                {onMoveColumn && <button type="button" draggable aria-label={`第 ${index + 1} 栏菜单`} aria-haspopup="menu" aria-expanded={columnMenu?.id === ch.id} aria-keyshortcuts={onDeleteColumn ? "Backspace Delete" : undefined} title="拖动或使用菜单移动分栏；选中后按 Backspace 删除" data-column-move-handle={ch.id} className="pointer-events-none absolute -left-6 top-0 z-20 grid h-7 w-5 cursor-grab place-items-center rounded text-[#8f959e] opacity-0 hover:bg-[#eff0f1] hover:text-[#3370ff] active:cursor-grabbing focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/col:pointer-events-auto group-hover/col:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+                  onFocus={() => setSelectedColumn(ch.id)}
+                  onClick={(event) => { event.stopPropagation(); setSelectedColumn(ch.id); const rect = event.currentTarget.getBoundingClientRect(); setColumnMenu((current) => current?.id === ch.id ? null : { id: ch.id, left: Math.max(8, Math.min(rect.left, window.innerWidth - 180)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 120)) }); }}
+                  onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("text/plain", ""); event.dataTransfer.effectAllowed = "move"; draggingColumn.current = ch.id; setColumnMenu(null); setSelectedColumn(null); }}
                   onDragEnd={(event) => { event.stopPropagation(); draggingColumn.current = null; setColumnDrop(null); }}
-                  onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); moveColumnBy(ch.id, event.key === "ArrowLeft" ? -1 : 1); } }}><GripDots /></button>}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && selectedColumn === ch.id && !columnMenu) { event.preventDefault(); event.stopPropagation(); setSelectedColumn(null); event.currentTarget.blur(); return; }
+                    if ((event.key === "Backspace" || event.key === "Delete") && onDeleteColumn) { event.preventDefault(); event.stopPropagation(); if (!event.repeat && !event.nativeEvent.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && selectedColumn === ch.id) { setSelectedColumn(null); onDeleteColumn(ch.id); } return; }
+                    if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); moveColumnBy(ch.id, event.key === "ArrowLeft" ? -1 : 1); }
+                  }}><GripDots /></button>}
                 <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none" style={{ textAlign: blockAlign(ch.props.align) }}>
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
@@ -3793,7 +3811,9 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           {columnMenu && onMoveColumn && typeof document !== "undefined" && createPortal((() => {
             const index = (childBlocks ?? []).findIndex((child) => child.id === columnMenu.id), count = childBlocks?.length ?? 0;
             const action = (direction: -1 | 1) => { const id = columnMenu.id; setColumnMenu(null); moveColumnBy(id, direction); focusColumnHandle(id); };
-            return <div ref={columnMenuRef} role="menu" aria-label="分栏操作" data-column-move-menu style={{ position: "fixed", left: columnMenu.left, top: columnMenu.top }} className="z-[70] w-40 rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]">
+            return <div ref={columnMenuRef} role="menu" aria-label="分栏操作" data-column-move-menu style={{ position: "fixed", left: columnMenu.left, top: columnMenu.top }} className="z-[70] w-40 rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]" onKeyDown={(event) => {
+              if ((event.key === "Backspace" || event.key === "Delete") && onDeleteColumn && selectedColumn === columnMenu.id) { event.preventDefault(); event.stopPropagation(); if (!event.repeat && !event.nativeEvent.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { const id = columnMenu.id; setColumnMenu(null); setSelectedColumn(null); onDeleteColumn(id); } }
+            }}>
               <button type="button" role="menuitem" disabled={index <= 0} onClick={() => action(-1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowLeft size={15} />向左移动</button>
               <button type="button" role="menuitem" disabled={index < 0 || index >= count - 1} onClick={() => action(1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowRight size={15} />向右移动</button>
               {onDeleteColumn && <button type="button" role="menuitem" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />删除分栏</button>}
