@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseHash } from "./route";
-import { savedVersionLink, validVersionEntryId, versionFromHash, withoutVersionHash } from "./version-link";
+import { savedVersionLink, validVersionEntryId, versionFromHash, withoutVersionHash, withVersionHash } from "./version-link";
 
 describe("saved version links", () => {
   it("opens a specific entry without carrying unrelated URL parameters", () => {
@@ -9,6 +9,8 @@ describe("saved version links", () => {
     expect(parseHash(new URL(link!).hash)).toEqual({ page: "doc", id: 7, versionId: "n:42" });
     expect(parseHash("#/doc/7?block=123")).toEqual({ page: "doc", id: 7 });
     expect(withoutVersionHash("#/doc/7?version=n%3A42&block=123")).toBe("#/doc/7?block=123");
+    expect(withVersionHash("#/doc/7?version=n%3A42&block=123", "n:43")).toBe("#/doc/7?version=n%3A43&block=123");
+    expect(withVersionHash("#/base/7", "n:43")).toBeNull();
   });
   it("rejects malformed, ambiguous and unsafe IDs without silently selecting another version", () => {
     for (const value of ["n:0", "n:01", "n:9007199254740992", "s:-1", "other:1"]) expect(validVersionEntryId(value)).toBe(false);

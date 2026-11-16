@@ -59,7 +59,7 @@ func (m *Memory) ManageVersionEntry(ctx context.Context, guard RestoreGuard, doc
 		return ErrNotFound
 	}
 	entry := &d.namedVersions[index]
-	if entry.deleted || entry.CreatedBy == 0 {
+	if entry.deletedAt != nil || entry.CreatedBy == 0 {
 		return ErrNotFound
 	}
 	if entry.Revision == 0 {
@@ -75,7 +75,8 @@ func (m *Memory) ManageVersionEntry(ctx context.Context, guard RestoreGuard, doc
 		return ErrUnauthenticated
 	}
 	if label == nil {
-		entry.deleted = true
+		now := guard.currentTime()
+		entry.deletedAt = &now
 	} else {
 		entry.Label = *label
 	}
@@ -144,7 +145,7 @@ func (p *Postgres) ManageVersionEntry(ctx context.Context, guard RestoreGuard, d
 			return ErrUnauthenticated
 		}
 		if label == nil {
-			_, e = tx.Exec(ctx, `UPDATE doc_version_entries SET deleted_at=now(),revision=revision+1 WHERE id=$1`, rowID)
+			_, e = tx.Exec(ctx, `UPDATE doc_version_entries SET deleted_at=$2,revision=revision+1 WHERE id=$1`, rowID, guard.currentTime())
 		} else {
 			_, e = tx.Exec(ctx, `UPDATE doc_version_entries SET label=$2,revision=revision+1 WHERE id=$1`, rowID, *label)
 		}

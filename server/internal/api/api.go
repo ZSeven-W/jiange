@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/versions":                        s.postVersion,
 		"POST /api/docs/{id}/named-version":                   s.createNamedVersion,
 		"GET /api/docs/{id}/version-entries":                  s.listVersionEntries,
+		"GET /api/docs/{id}/version-entries/trash":            s.listDeletedVersionEntries,
 		"POST /api/docs/{id}/version-entries":                 s.createVersionEntry,
 		"GET /api/docs/{id}/version-entries/{entry}/preview":  s.getSavedVersionEntry,
 		"PATCH /api/docs/{id}/version-entries/{entry}":        s.manageSavedVersionEntry,

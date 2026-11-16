@@ -85,6 +85,38 @@ func TestManageSavedVersionEntry(t *testing.T) {
 	if status, body := get(two.ID); status != 200 || !bytes.Contains(body, []byte("只属于这个版本")) {
 		t.Fatalf("other entry: %d %s", status, body)
 	}
+	trash := func(client *http.Client, user int64) (int, []byte) {
+		req, _ := http.NewRequest("GET", e.url()+"/version-entries/trash", nil)
+		req.Header.Set("X-Jiange-User-Id", strconv.FormatInt(user, 10))
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, b
+	}
+	if status, _ := trash(e.guest, e.guestUser.ID); status != 403 && status != 404 {
+		t.Fatalf("viewer trash %d", status)
+	}
+	if status, body := trash(e.owner, e.ownerUser.ID); status != 200 || !bytes.Contains(body, []byte("新名称")) {
+		t.Fatalf("trash: %d %s", status, body)
+	}
+	if got := manage(e.guest, e.guestUser.ID, one.ID, map[string]any{"action": "restore", "expectedRevision": 3}); got != 403 && got != 404 {
+		t.Fatalf("viewer restore: %d", got)
+	}
+	if got := manage(e.owner, e.ownerUser.ID, one.ID, map[string]any{"action": "restore", "expectedRevision": 2}); got != 409 {
+		t.Fatalf("stale restore: %d", got)
+	}
+	if got := manage(e.owner, e.ownerUser.ID, one.ID, map[string]any{"action": "restore", "expectedRevision": 3}); got != 204 {
+		t.Fatalf("restore: %d", got)
+	}
+	if status, body := get(one.ID); status != 200 || !bytes.Contains(body, []byte("只属于这个版本")) {
+		t.Fatalf("restored link: %d %s", status, body)
+	}
+	if status, body := trash(e.owner, e.ownerUser.ID); status != 200 || bytes.Contains(body, []byte("新名称")) {
+		t.Fatalf("restored still trashed: %d %s", status, body)
+	}
 	for _, body := range []map[string]any{{"action": "rename", "expectedRevision": 1, "label": " "}, {"action": "delete", "expectedRevision": 1, "label": "bad"}, {"action": "delete", "expectedRevision": 0}} {
 		if got := manage(e.owner, e.ownerUser.ID, two.ID, body); got != 400 {
 			t.Fatalf("invalid body %v: %d", body, got)

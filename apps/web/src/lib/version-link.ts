@@ -29,3 +29,14 @@ export function withoutVersionHash(hash: string): string {
   const rest = params.toString();
   return hash.slice(0, index) + (rest ? `?${rest}` : "");
 }
+
+/** Preserve other document anchors while navigating between named versions. */
+export function withVersionHash(hash: string, entryId: string): string | null {
+  if (!validVersionEntryId(entryId)) return null;
+  const index = hash.indexOf("?");
+  const path = index < 0 ? hash : hash.slice(0, index);
+  if (!/^#\/doc\/\d+\/?$/.test(path)) return null;
+  const params = new URLSearchParams(index < 0 ? "" : hash.slice(index + 1));
+  params.set("version", entryId);
+  return `${path}?${params.toString()}`;
+}

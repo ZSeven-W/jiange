@@ -24,9 +24,9 @@ type VersionEntry struct {
 }
 type memoryVersionEntry struct {
 	VersionEntry
-	request string
-	epoch   int64
-	deleted bool
+	request   string
+	epoch     int64
+	deletedAt *time.Time
 }
 
 var versionRequestPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -60,7 +60,7 @@ func (m *Memory) CreateVersionEntry(ctx context.Context, guard RestoreGuard, doc
 	}
 	for _, entry := range d.namedVersions {
 		if entry.CreatedBy == guard.UserID && entry.request == request {
-			if entry.deleted {
+			if entry.deletedAt != nil {
 				return VersionEntry{}, ErrConflict
 			}
 			if entry.Seq != head || entry.epoch != epoch || entry.Label != label {
@@ -125,7 +125,7 @@ func (m *Memory) ListVersionEntries(ctx context.Context, guard RestoreGuard, doc
 	represented := map[int64]bool{}
 	for _, entry := range d.namedVersions {
 		represented[entry.Seq] = true
-		if entry.deleted {
+		if entry.deletedAt != nil {
 			continue
 		}
 		value := entry.VersionEntry

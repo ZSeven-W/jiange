@@ -20,6 +20,8 @@ type versionEntryTestStore interface {
 	CreateVersionEntry(context.Context, RestoreGuard, int64, int64, int64, []byte, string, string) (VersionEntry, error)
 	ListVersionEntries(context.Context, RestoreGuard, int64) ([]VersionEntry, error)
 	ManageVersionEntry(context.Context, RestoreGuard, int64, string, int64, *string) error
+	DeletedVersionEntries(context.Context, RestoreGuard, int64) ([]DeletedVersionEntry, error)
+	RestoreVersionEntry(context.Context, RestoreGuard, int64, string, int64) error
 }
 
 func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
@@ -187,6 +189,37 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	if _, err = st.CreateVersionEntry(ctx, og, d.ID, epoch, head, state, "A", request1); !errors.Is(err, ErrConflict) {
 		t.Fatalf("deleted request resurrected: %v", err)
 	}
+	deleted, err := st.DeletedVersionEntries(ctx, og, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var removed *DeletedVersionEntry
+	for i := range deleted {
+		if deleted[i].ID == first.ID {
+			removed = &deleted[i]
+		}
+	}
+	if removed == nil || removed.Revision != 3 {
+		t.Fatalf("deleted list: %+v", deleted)
+	}
+	if err = st.RestoreVersionEntry(ctx, og, d.ID, first.ID, 2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale restore: %v", err)
+	}
+	restoreErrs := make([]error, 2)
+	for i := range restoreErrs {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); restoreErrs[i] = st.RestoreVersionEntry(ctx, og, d.ID, first.ID, 3) }(i)
+	}
+	wg.Wait()
+	if !((restoreErrs[0] == nil && errors.Is(restoreErrs[1], ErrNotFound)) || (restoreErrs[1] == nil && errors.Is(restoreErrs[0], ErrNotFound))) {
+		t.Fatalf("concurrent restore: %v", restoreErrs)
+	}
+	if err = st.RestoreVersionEntry(ctx, og, d.ID, first.ID, 3); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("repeat restore: %v", err)
+	}
+	if err = st.ManageVersionEntry(ctx, og, d.ID, first.ID, 4, nil); err != nil {
+		t.Fatalf("delete after restore: %v", err)
+	}
 	entries, err = st.ListVersionEntries(ctx, og, d.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -225,6 +258,34 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	if err != nil || len(legacyEntries) != 0 {
 		t.Fatalf("legacy fallback resurrected: %+v %v", legacyEntries, err)
 	}
+	// The retention boundary is enforced in both list and restore.
+	oldDoc, err := st.CreateDoc(ctx, ws.ID, owner.ID, nil, "Expired", InitialDocOps("Expired"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldEpoch, oldHead, err := st.HeadVersion(ctx, oldDoc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldVersion, err := st.CreateVersionEntry(ctx, og, oldDoc.ID, oldEpoch, oldHead, state, "Expired", "88888888888888888888888888888888")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Now()
+	oldGuard := og
+	oldGuard.Now = func() time.Time { return fixed.Add(-30 * 24 * time.Hour) }
+	nowGuard := og
+	nowGuard.Now = func() time.Time { return fixed }
+	if err = st.ManageVersionEntry(ctx, oldGuard, oldDoc.ID, oldVersion.ID, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := st.DeletedVersionEntries(ctx, nowGuard, oldDoc.ID)
+	if err != nil || len(expired) != 0 {
+		t.Fatalf("expired list: %+v %v", expired, err)
+	}
+	if err = st.RestoreVersionEntry(ctx, nowGuard, oldDoc.ID, oldVersion.ID, 2); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired restore: %v", err)
+	}
 	if _, err = st.CreateVersionEntry(ctx, og, legacyDoc.ID, legacyEpoch, legacyHead, state, "New", "77777777777777777777777777777777"); err != nil {
 		t.Fatalf("create after legacy deletion: %v", err)
 	}
@@ -243,6 +304,12 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	}
 	if err = st.ManageVersionEntry(ctx, gg, d.ID, second.ID, 1, nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer delete: %v", err)
+	}
+	if _, err = st.DeletedVersionEntries(ctx, gg, d.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer trash: %v", err)
+	}
+	if err = st.RestoreVersionEntry(ctx, gg, d.ID, first.ID, 5); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer restore: %v", err)
 	}
 	if err = st.SetShare(ctx, d.ID, guest.ID, ""); err != nil {
 		t.Fatal(err)

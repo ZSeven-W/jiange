@@ -13,6 +13,15 @@ describe("account-bound version entries", () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ action: "rename", expectedRevision: 2, label: "交付版" });
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ action: "delete", expectedRevision: 3 });
   });
+  it("reads the account-bound recycle bin and restores a specific revision", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ versions: [{ id: "n:9", revision: 2, deletedAt: "2026-11-17T00:00:00Z" }] }), { status: 200 })).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await docsApi.deletedVersionEntries(8, 4))[0].id).toBe("n:9");
+    await docsApi.manageVersionEntry(8, "n:9", 2, "restore", 4);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/docs/8/version-entries/trash");
+    expect(fetcher.mock.calls[0][1].headers).toMatchObject({ "X-Jiange-User-Id": "4" });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ action: "restore", expectedRevision: 2 });
+  });
   it("addresses and verifies the specific saved entry", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:2", seq: 3, view: { blocks: [] } }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:1", seq: 3, view: { blocks: [] } }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);

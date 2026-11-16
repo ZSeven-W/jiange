@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, ChevronUp, HelpCircle, Link, MoreHorizontal, Plus, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, HelpCircle, Link, MoreHorizontal, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocView, type VersionEntry } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
 import { canDiffViews, diffViews, type DiffRow } from "./version-diff";
 import { formatEditTime } from "./doc-header-meta";
 import { ReadOnlyDoc } from "./read-only-doc";
-import { savedVersionLink } from "@/lib/version-link";
+import { savedVersionLink, withVersionHash } from "@/lib/version-link";
+import { VersionTrashDialog } from "./version-trash-dialog";
 
 export function restoreErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status !== 408 && error.status !== 429 && error.status < 500) {
@@ -47,6 +48,8 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [menuVersion, setMenuVersion] = useState<string | null>(null);
+  const [versionPicker, setVersionPicker] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<VersionEntry | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [manageError, setManageError] = useState("");
@@ -69,6 +72,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   useEffect(() => {
     if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches) mobileToggle.current?.focus();
   }, [mobilePreview]);
+  useEffect(() => { if (!copyStatus) return; const timer = window.setTimeout(() => setCopyStatus(""), 2000); return () => window.clearTimeout(timer); }, [copyStatus]);
   useEffect(() => {
     if (!listVisible) return;
     if (requested !== undefined) {
@@ -111,7 +115,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
     setManaging(true); setManageError("");
     try {
       await docsApi.manageVersionEntry(id, v.id, v.revision, action, userId, label);
-      if (mounted.current) { setRenameTarget(null); setMenuVersion(null); }
+      if (mounted.current) { setRenameTarget(null); setMenuVersion(null); if (action === "delete") onClose(); }
     } catch (error) {
       if (mounted.current) setManageError(error instanceof ApiError && error.status === 409 ? "版本已变化，请关闭并重新操作。" : "无法确认操作结果，请刷新版本列表后检查。 ");
     } finally {
@@ -122,12 +126,13 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   const deleteVersion = async (v: VersionEntry) => {
     if (!canManage(v) || confirming.current || managing) return;
     confirming.current = true; setMenuVersion(null);
-    try { if (await ask("删除该版本？", "删除后，该版本的分享链接将失效，文档当前内容不会改变。")) { if (mounted.current && canManage(v)) await manage(v, "delete"); } }
+    try { if (await ask("删除该版本？", "删除后，版本链接将失效，可在 30 天内通过版本回收站恢复。")) { if (mounted.current && canManage(v)) await manage(v, "delete"); } }
     finally { confirming.current = false; if (mounted.current) back.current?.focus(); }
   };
   const selectVersion = (v: { id: string; seq: number }) => {
     if (restore.isPending) return;
-    restore.reset(); setRequested(undefined); setPreviewing({ id: v.id, seq: v.seq }); setMobilePreview(true); setShareLink(null);
+    restore.reset(); setRequested(undefined); setPreviewing({ id: v.id, seq: v.seq }); setMobilePreview(true); setShareLink(null); setCopyStatus(""); setMenuVersion(null);
+    if (mode === "saved") { const hash = withVersionHash(location.hash, v.id); if (hash && hash !== location.hash) location.hash = hash; }
   };
   const startRestore = async () => {
     const target = latest.current;
@@ -143,6 +148,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   };
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (confirming.current) return;
+    if (event.key === "Escape" && versionPicker) { event.preventDefault(); setVersionPicker(false); root.current?.querySelector<HTMLButtonElement>("[data-version-picker-trigger]")?.focus(); return; }
     if (event.key === "Escape" && menuVersion) { event.preventDefault(); setMenuVersion(null); root.current?.querySelector<HTMLButtonElement>(`[data-version-menu="${menuVersion}"]`)?.focus(); return; }
     if (event.key === "Escape" && !confirming.current && !restore.isPending) { event.preventDefault(); onClose(); return; }
     if (event.key !== "Tab" || !root.current) return;
@@ -159,19 +165,33 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
   const title = mode === "saved" ? "已存版本" : "历史记录";
-  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} onMouseDown={(event) => { if (menuVersion && !(event.target as HTMLElement).closest("[data-version-menu], [data-version-management-menu]")) setMenuVersion(null); }} data-version-panel data-version-mode={mode} data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
+  const selected = selectedIndex >= 0 && listVisible ? list.data[selectedIndex] : null;
+  const copyLink = () => {
+    if (!selected) return;
+    const target = selected.id;
+    const link = savedVersionLink(location.href, id, selected.id); if (!link) return;
+    if (!navigator.clipboard) { setCopyStatus(""); setShareLink(link); return; }
+    void navigator.clipboard.writeText(link).then(() => { if (mounted.current && latest.current.previewing?.id === target) setCopyStatus("已复制"); }, () => { if (mounted.current && latest.current.previewing?.id === target) { setCopyStatus(""); setShareLink(link); } });
+  };
+  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} onMouseDown={(event) => { if (menuVersion && !(event.target as HTMLElement).closest("[data-version-menu], [data-version-management-menu]")) setMenuVersion(null); if (versionPicker && !(event.target as HTMLElement).closest("[data-version-picker]")) setVersionPicker(false); }} data-version-panel data-version-mode={mode} data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
     <header className="flex h-14 shrink-0 items-center border-b sm:h-16">
-      <button ref={back} type="button" onClick={onClose} disabled={restore.isPending} className="ml-3 flex h-9 items-center gap-1.5 rounded px-2 text-[14px] hover:bg-hover disabled:opacity-40 sm:ml-4"><ArrowLeft size={16}/><span>返回文档</span></button>
+      <button ref={back} type="button" aria-label="返回文档" onClick={onClose} disabled={restore.isPending} className="ml-2 flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-2 text-[14px] hover:bg-hover disabled:opacity-40 sm:ml-4"><ArrowLeft size={16}/><span className="hidden sm:inline">返回文档</span></button>
       <span className="mx-2 h-5 w-px bg-border sm:mx-3" />
+      {mode === "saved" && <div className="relative min-w-0" data-version-picker><button type="button" data-version-picker-trigger aria-expanded={versionPicker} aria-label="切换版本" disabled={!listVisible || !list.data.length} onClick={() => setVersionPicker((open) => !open)} className="flex max-w-[110px] items-center gap-1 rounded px-2 py-2 text-[13px] hover:bg-hover disabled:opacity-40 sm:max-w-[230px]"><span className="truncate">{selected?.label || "已存版本"}</span><ChevronDown size={14} className="shrink-0"/></button>
+        {versionPicker && listVisible && <div role="menu" className="absolute left-0 top-full z-30 max-h-[min(360px,60dvh)] w-[240px] overflow-y-auto rounded-md border bg-surface py-1 shadow-lg">{list.data.map((version) => <button key={version.id} type="button" role="menuitem" onClick={() => { selectVersion(version); setVersionPicker(false); }} className={`block w-full truncate px-3 py-2 text-left text-[13px] hover:bg-hover ${selected?.id === version.id ? "text-[#1456F0]" : ""}`}>{version.label}</button>)}</div>}
+      </div>}
       <span className="flex-1" />
-      {mode === "saved" && <button ref={shareButton} type="button" disabled={!listVerified || selectedIndex < 0 || !preview.isSuccess || preview.isFetching} onClick={() => { if (!previewing) return; setCopyStatus(""); setShareLink(savedVersionLink(location.href, id, previewing.id)); }} className="flex h-9 items-center gap-1.5 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:opacity-40" data-share-version><Link size={15}/>分享版本</button>}
+      {mode === "saved" && <button ref={shareButton} type="button" aria-label={copyStatus || "复制版本链接"} title={copyStatus || "复制版本链接"} disabled={!listVerified || selectedIndex < 0 || !preview.isSuccess || preview.isFetching} onClick={copyLink} className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:opacity-40" data-share-version>{copyStatus ? <Check size={15}/> : <Link size={15}/>}<span className="hidden sm:inline">{copyStatus || "复制版本链接"}</span></button>}
+      {mode === "saved" && canEdit && selected && <div className="relative"><button type="button" aria-label="版本更多操作" aria-expanded={menuVersion === selected.id} disabled={!listVerified || managing} onClick={() => setMenuVersion((open) => open === selected.id ? null : selected.id)} className="grid size-9 place-items-center rounded text-muted-foreground hover:bg-hover disabled:opacity-40" data-version-menu={selected.id}><MoreHorizontal size={18}/></button>
+        {menuVersion === selected.id && <div role="menu" data-version-management-menu className="absolute right-0 top-10 z-30 w-36 rounded-md border bg-surface py-1 text-[13px] shadow-lg"><button type="button" role="menuitem" className="block w-full px-3 py-2 text-left hover:bg-hover" onClick={() => { setManageError(""); setRenameTarget(selected); setRenameValue(selected.label); setMenuVersion(null); }} data-rename-version>重命名</button><button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-destructive hover:bg-hover" onClick={() => void deleteVersion(selected)} data-delete-version>删除</button></div>}
+      </div>}
       {canEdit && mode === "history" && <button type="button" disabled={restore.isPending || !previewReady} onClick={() => void startRestore()} className="h-9 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:text-[#BBBFC4]" data-restore-version>{restore.isPending ? "还原中…" : "还原此历史记录"}</button>}
       <div className="hidden items-center gap-1 px-2 text-[13px] sm:flex">
         <button type="button" aria-label="上一个版本" disabled={!listVisible || selectedIndex <= 0 || restore.isPending} onClick={() => { if (listVisible && selectedIndex > 0) selectVersion(list.data[selectedIndex - 1]); }} className="rounded p-1 text-subtle hover:bg-hover disabled:opacity-30"><ChevronUp size={16}/></button>
         <span className="min-w-8 text-center">{selectedIndex >= 0 ? selectedIndex + 1 : 0}/{listVisible ? list.data.length : 0}</span>
         <button type="button" aria-label="下一个版本" disabled={!listVisible || selectedIndex < 0 || selectedIndex >= list.data.length - 1 || restore.isPending} onClick={() => { if (listVisible && selectedIndex >= 0 && selectedIndex + 1 < list.data.length) selectVersion(list.data[selectedIndex + 1]); }} className="rounded p-1 text-subtle hover:bg-hover disabled:opacity-30"><ChevronDown size={16}/></button>
       </div>
-      <button ref={mobileToggle} type="button" onClick={() => setMobilePreview((v) => !v)} className="mr-2 rounded px-2 py-2 text-[13px] text-[#1456F0] hover:bg-hover md:hidden">{mobilePreview ? "版本列表" : "预览"}</button>
+      <button ref={mobileToggle} type="button" onClick={() => setMobilePreview((v) => !v)} className="mr-2 shrink-0 whitespace-nowrap rounded px-2 py-2 text-[13px] text-[#1456F0] hover:bg-hover md:hidden">{mobilePreview ? "版本列表" : "预览"}</button>
       <div className="hidden h-full w-[294px] shrink-0 items-center gap-2 border-l px-4 text-[16px] font-medium md:flex"><span>{title}</span><HelpCircle size={14} className="text-subtle" aria-label="命名版本与历史快照"/>{canEdit && <button type="button" onClick={onCreateVersion} aria-label="创建当前版本" title="创建当前版本" className="ml-auto grid size-8 place-items-center rounded text-muted-foreground hover:bg-hover" data-create-version><Plus size={17}/></button>}</div>
     </header>
     {manageError && !renameTarget && <p role="alert" className="mx-4 mt-3 rounded border border-red-200 bg-red-50 p-3 text-[13px] text-destructive">{manageError}</p>}
@@ -200,18 +220,14 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
               <span className="mt-1 block truncate text-foreground">{v.label || "历史版本"}</span>
               <span className="mt-1 flex items-center gap-2 text-[12px] text-muted-foreground"><span className="size-1.5 shrink-0 rounded-full bg-[#8D52E9]"/>{v.createdByName || "系统"}</span>
             </button>
-            {mode === "saved" && canEdit && <><button type="button" aria-label={`版本操作：${v.label}`} aria-expanded={menuVersion === v.id} disabled={!listVerified || managing} onClick={() => setMenuVersion((open) => open === v.id ? null : v.id)} className="absolute right-3 top-3 grid size-8 place-items-center rounded text-muted-foreground hover:bg-white/70 disabled:opacity-40" data-version-menu={v.id}><MoreHorizontal size={17}/></button>
-              {menuVersion === v.id && <div role="menu" data-version-management-menu className="absolute right-3 top-11 z-20 w-32 rounded-md border bg-surface py-1 text-[13px] shadow-lg">
-                <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left hover:bg-hover" onClick={() => { setManageError(""); setRenameTarget(v); setRenameValue(v.label); setMenuVersion(null); }} data-rename-version>重命名</button>
-                <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-destructive hover:bg-hover" onClick={() => void deleteVersion(v)} data-delete-version>删除版本</button>
-              </div>}
-            </>}
             </div>
           </Fragment>)}
         </div>
+        {mode === "saved" && canEdit && <button type="button" onClick={() => setTrashOpen(true)} className="flex h-12 shrink-0 items-center border-t px-4 text-left text-[13px] text-muted-foreground hover:bg-hover" data-version-trash>版本回收站</button>}
         {mode === "history" && <div className="flex h-12 shrink-0 items-center justify-between border-t px-4 text-[13px]"><span>对比当前</span><button type="button" role="switch" aria-label="对比当前" aria-checked={diffMode} disabled={!currentView || selectedIndex < 0} onClick={() => setDiffMode((v) => !v)} className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${diffMode ? "bg-[#1456F0]" : "bg-[#BBBFC4]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform ${diffMode ? "left-[18px]" : "left-0.5"}`}/></button></div>}
       </aside>
     </div>
+    {trashOpen && canEdit && <VersionTrashDialog id={id} userId={userId} canEdit={canEdit} onClose={() => setTrashOpen(false)} />}
     {renameTarget && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4" onKeyDown={(event) => { if (event.key === "Escape" && !managing) { event.preventDefault(); event.stopPropagation(); setRenameTarget(null); } else if (event.key === "Tab") { event.stopPropagation(); const items = [...event.currentTarget.querySelectorAll<HTMLElement>("input:not([disabled]),button:not([disabled])")]; const i = items.indexOf(document.activeElement as HTMLElement); if (items.length && (i < 0 || event.shiftKey && i === 0 || !event.shiftKey && i === items.length - 1)) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); } } }}>
       <form role="dialog" aria-modal="true" aria-label="重命名版本" className="w-full max-w-[420px] rounded-lg bg-surface p-5 shadow-xl" onSubmit={(event) => { event.preventDefault(); const name = renameValue.trim(); if (name && name !== renameTarget.label) void manage(renameTarget, "rename", name); }}>
         <h2 className="text-[16px] font-medium">重命名版本</h2><label htmlFor="version-rename" className="mt-5 block text-[13px]">版本名称</label>
