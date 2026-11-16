@@ -66,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/docs/{id}", s.requireUser(http.HandlerFunc(s.getDoc)))
 	mux.Handle("PATCH /api/docs/{id}", s.requireUser(http.HandlerFunc(s.patchDoc)))
 	mux.Handle("DELETE /api/docs/{id}", s.requireUser(http.HandlerFunc(s.trashDoc)))
+	mux.Handle("POST /api/docs/{id}/conditional-ops/{requestId}/cancel", s.requireUser(http.HandlerFunc(s.cancelConditionalOps)))
 	for pat, h := range map[string]http.HandlerFunc{
 		"GET /api/docs/{id}/shares":                           s.getShares,
 		"GET /api/docs/{id}/shares-account":                   s.getSharesForAccount,

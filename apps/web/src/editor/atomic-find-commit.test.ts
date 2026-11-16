@@ -26,19 +26,41 @@ function fixture() {
   const env: ConditionalJournalEnvironment = { storage: new StorageMock(), locks: new LocksMock() as unknown as Pick<LockManager, "request">, random: () => "a".repeat(32), digest: hash };
   const journal = new ConditionalJournal(env, 7, 2); let active = true;
   let observation: ConditionalObservation | null = { docId: 7, userId: 2, epoch: 1, lastSeq: 5, caughtUp: true, blocked: null, unacked: 0 };
-  let state: "unknown" | "committed" = "unknown", head = 5;
+  let state: "unknown" | "committed" | "cancelled" = "unknown", head = 5;
   const send = vi.fn(async (_attempt: ConditionalAttempt, _bytes: Uint8Array, _signal: AbortSignal) => {});
   const status = vi.fn(async (attempt: ConditionalAttempt) => {
-    const payload = state === "unknown" ? { state, docId: 7, userId: 2, requestId: attempt.requestId, currentEpoch: 1, currentHead: head } : { state, docId: 7, userId: 2, requestId: attempt.requestId, currentEpoch: 1, currentHead: head, historyEpoch: 1, expectedSeq: 5, firstSeq: 6, opCount: attempt.opCount, digest: attempt.digest };
+    const payload = state === "unknown" ? { state, docId: 7, userId: 2, requestId: attempt.requestId, currentEpoch: 1, currentHead: head } : { state, docId: 7, userId: 2, requestId: attempt.requestId, currentEpoch: 1, currentHead: head, historyEpoch: 1, expectedSeq: 5, firstSeq: 6, opCount: attempt.opCount, digest: attempt.digest, ...(state === "cancelled" ? { clientId: attempt.clientId } : {}) };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })));
     return queryConditionalOpsStatus({ docId: 7, userId: 2, requestId: attempt.requestId, signal: signal() });
   });
-  const commit = new AtomicFindCommit(journal, { active: () => active, observe: () => observation }, { send, status });
-  return { plan: prep.plan, env, journal, commit, send, status, setActive: (value: boolean) => { active = value; }, setObservation: (value: ConditionalObservation | null) => { observation = value; }, setStatus: (value: "unknown" | "committed", newHead: number) => { state = value; head = newHead; } };
+  const cancel = vi.fn(async (attempt: ConditionalAttempt) => { if (state === "unknown") state = "cancelled"; return status(attempt); });
+  const commit = new AtomicFindCommit(journal, { active: () => active, observe: () => observation }, { send, status, cancel });
+  return { plan: prep.plan, env, journal, commit, send, status, cancel, setActive: (value: boolean) => { active = value; }, setObservation: (value: ConditionalObservation | null) => { observation = value; }, setStatus: (value: "unknown" | "committed" | "cancelled", newHead: number) => { state = value; head = newHead; } };
 }
 afterEach(() => vi.unstubAllGlobals());
 
 describe("durable conditional find batches", () => {
+  it("can fence a redacted uncertain request without recovering its content", async () => {
+    const f = fixture(); f.send.mockRejectedValueOnce(new Error("network"));
+    expect(await f.commit.start(f.plan.ops, 1, 5, signal(), () => true, () => {}, false)).toBe("pending");
+    expect(await f.commit.cancel(signal())).toBe("cancelled");
+    expect(await f.journal.read()).toBeNull(); expect(f.cancel.mock.calls[0][0].redacted).toBe(true);
+  });
+
+  it("keeps an already committed request for normal history finalization", async () => {
+    const f = fixture(); await f.commit.start(f.plan.ops, 1, 5, signal());
+    f.setStatus("committed", 5 + f.plan.ops.length); f.setObservation({ docId: 7, userId: 2, epoch: 1, lastSeq: 5 + f.plan.ops.length, caughtUp: true, blocked: null, unacked: 0 });
+    expect(await f.commit.cancel(signal())).toBe("needs_resolution"); expect(await f.journal.read()).not.toBeNull();
+    expect(await f.commit.finish(signal(), async () => true)).toBe("committed");
+  });
+
+  it("recovers a lost fence response without pretending the request committed", async () => {
+    const f = fixture(); await f.commit.start(f.plan.ops, 1, 5, signal(), () => true, () => {}, false);
+    f.cancel.mockImplementationOnce(async () => { f.setStatus("cancelled", 5); throw new Error("lost response"); });
+    expect(await f.commit.cancel(signal())).toBe("pending"); expect(await f.journal.read()).not.toBeNull();
+    const finalize = vi.fn(async () => true); expect(await f.commit.finish(signal(), finalize)).toBe("cancelled");
+    expect(finalize).not.toHaveBeenCalled(); expect(await f.journal.read()).toBeNull();
+  });
   it("accepts title and text edits but refuses unrelated layout and title marks", () => {
     const { plan } = fixture(); expect(atomicFindBatchOps(encodeOps([...plan.ops]))).toHaveLength(plan.ops.length);
     const bad: Op = { t: "bset", id: { client: 19, clock: 100 }, block: { client: 2, clock: 1 }, key: "align", value: "center" };

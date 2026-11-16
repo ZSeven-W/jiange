@@ -1,10 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, commitConditionalOps, conditionalBatchBase64, queryConditionalOpsStatus } from "./api";
+import { ApiError, cancelConditionalOps, commitConditionalOps, conditionalBatchBase64, queryConditionalOpsStatus } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 const base = { docId: 8, userId: 4, historyEpoch: 2, expectedSeq: 3, requestId: "a".repeat(32), batch: new Uint8Array([0, 1, 254, 255]), opCount: 2, signal: new AbortController().signal };
 
 describe("conditional operation client", () => {
+  it("sends only identifiers and digest when fencing an uncertain request", async () => {
+    const input = { docId: 8, userId: 4, historyEpoch: 2, expectedSeq: 3, requestId: "a".repeat(32), opCount: 2, clientId: 9, digest: "b".repeat(64), signal: new AbortController().signal };
+    const receipt = { docId: 8, userId: 4, requestId: input.requestId, state: "cancelled", currentEpoch: 2, currentHead: 3, historyEpoch: 2, expectedSeq: 3, firstSeq: 4, opCount: 2, clientId: 9, digest: input.digest };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt), { status: 200 })); vi.stubGlobal("fetch", fetcher);
+    expect((await cancelConditionalOps(input)).state).toBe("cancelled");
+    expect(fetcher.mock.calls[0][0]).toBe(`/api/docs/8/conditional-ops/${input.requestId}/cancel`);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ historyEpoch: 2, expectedSeq: 3, opCount: 2, clientId: 9, digest: input.digest });
+    expect(fetcher.mock.calls[0][1].headers["X-Jiange-User-Id"]).toBe("4");
+  });
+
+  it("rejects malformed or cross-account cancellation receipts", async () => {
+    const input = { docId: 8, userId: 4, historyEpoch: 2, expectedSeq: 3, requestId: "a".repeat(32), opCount: 2, clientId: 9, digest: "b".repeat(64), signal: new AbortController().signal };
+    const good = { docId: 8, userId: 4, requestId: input.requestId, state: "cancelled", currentEpoch: 2, currentHead: 3, historyEpoch: 2, expectedSeq: 3, firstSeq: 4, opCount: 2, clientId: 9, digest: input.digest };
+    for (const bad of [{ ...good, userId: 5 }, { ...good, clientId: 0 }, { ...good, clientId: 10 }, { ...good, currentEpoch: 3 }, { ...good, state: "unknown" }]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(bad), { status: 200 })));
+      await expect(cancelConditionalOps(input)).rejects.toMatchObject({ code: "invalid_receipt" });
+    }
+  });
   it("sends the exact batch, account and version and validates the receipt", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ sequences: [4, 5] }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);

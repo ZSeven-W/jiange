@@ -91,7 +91,7 @@ export class ColumnAlignmentCommit {
       if (!observed || !this.context.active() || !this.validStatus(attempt, status)) return "blocked";
       const resolution = conditionalResolution(attempt, status, observed);
       if (resolution === "committed" && !finalizeCommitted(attempt)) return "needs_finalize";
-      if (resolution !== "committed" && resolution !== "not_committed") return resolution;
+      if (resolution !== "committed" && resolution !== "cancelled" && resolution !== "not_committed") return resolution;
       if (!this.context.active() || signal.aborted) return "pending";
       return lease.settle(status, observed);
     });

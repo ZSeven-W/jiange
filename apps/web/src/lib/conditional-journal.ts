@@ -5,7 +5,7 @@ type LockProvider = Pick<LockManager, "request">;
 export type ConditionalJournalEnvironment = { storage: Storage; locks?: LockProvider; random: () => string; digest: (bytes: Uint8Array) => Promise<Uint8Array> };
 type AttemptBase = { version: 1; docId: number; userId: number; requestId: string; historyEpoch: number; expectedSeq: number; opCount: number; clientId: number; digest: string };
 export type ConditionalAttempt = AttemptBase & ({ batch: string; redacted?: never; purpose?: never } | { redacted: true; batch?: never; purpose?: "atomic-find" });
-export type ConditionalResolution = "committed" | "not_committed" | "pending" | "history_changed" | "mismatch";
+export type ConditionalResolution = "committed" | "cancelled" | "not_committed" | "pending" | "history_changed" | "mismatch";
 export type ConditionalObservation = { docId: number; userId: number; epoch: number | null; lastSeq: number; caughtUp: boolean; blocked: string | null; unacked: number };
 
 const safe = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
@@ -68,6 +68,10 @@ async function parseAttempt(raw: string, docId: number, userId: number, digest: 
 export function conditionalResolution(attempt: ConditionalAttempt, status: ConditionalOpsStatus, observed: ConditionalObservation): ConditionalResolution {
   if (!isVerifiedConditionalStatus(status) || status.docId !== attempt.docId || status.userId !== attempt.userId || status.requestId !== attempt.requestId || !safe(status.currentEpoch) || status.currentEpoch <= 0 || !safe(status.currentHead) || status.currentHead < 0) return "mismatch";
   if (status.currentEpoch !== attempt.historyEpoch || status.state === "history_changed") return "history_changed";
+  if (status.state === "cancelled") {
+    if (status.historyEpoch !== attempt.historyEpoch || status.expectedSeq !== attempt.expectedSeq || status.firstSeq !== attempt.expectedSeq + 1 || status.opCount !== attempt.opCount || status.clientId !== attempt.clientId || status.digest !== attempt.digest) return "mismatch";
+    return observed.docId === attempt.docId && observed.userId === attempt.userId && observed.epoch === attempt.historyEpoch && observed.caughtUp && !observed.blocked && observed.unacked === 0 ? "cancelled" : "pending";
+  }
   // A redacted record no longer has the bytes needed to authenticate its base
   // metadata; only a matching server receipt can settle it automatically.
   if (status.state === "unknown") return !attempt.redacted && status.currentHead > attempt.expectedSeq ? "not_committed" : "pending";
@@ -160,7 +164,7 @@ export class ConditionalJournalLease {
   async settle(status: ConditionalOpsStatus, observed: ConditionalObservation): Promise<ConditionalResolution> {
     const row = await this.row(); if (!row) return "mismatch";
     const { raw, attempt } = row, outcome = conditionalResolution(attempt, status, observed);
-    if (outcome !== "committed" && outcome !== "not_committed") return outcome;
+    if (outcome !== "committed" && outcome !== "cancelled" && outcome !== "not_committed") return outcome;
     this.ensure(); if (this.env.storage.getItem(this.key) !== raw) throw new Error("conditional attempt changed");
     this.env.storage.removeItem(this.key);
     if (this.env.storage.getItem(this.key) !== null) throw new Error("conditional attempt could not be cleared");

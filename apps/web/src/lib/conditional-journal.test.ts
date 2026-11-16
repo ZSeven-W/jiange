@@ -38,6 +38,20 @@ const committed = (attempt: ConditionalAttempt, epoch = 2) => ({ docId: 7, userI
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional operation journal", () => {
+  it("clears a redacted attempt only after a matching cancellation fence is verified", async () => {
+    const journal = new ConditionalJournal(environment(), 7, 2);
+    await journal.run(async (lease) => {
+      const attempt = await lease.prepare({ historyEpoch: 2, expectedSeq: 3, batch: bytes, allowPersist: false, redactInstead: true, redactedPurpose: "atomic-find" });
+      lease.markSubmitting(attempt);
+      const body = { docId: 7, userId: 2, requestId, state: "cancelled", currentEpoch: 2, currentHead: 3, historyEpoch: 2, expectedSeq: 3, firstSeq: 4, opCount: 1, clientId: attempt.clientId, digest: attempt.digest };
+      const fence = await status(body);
+      expect(conditionalResolution(attempt, fence, { ...observed, caughtUp: false })).toBe("pending");
+      const wrong = await status({ ...body, clientId: attempt.clientId + 1 });
+      expect(conditionalResolution(attempt, wrong, observed)).toBe("mismatch");
+      expect(await lease.settle(fence, observed)).toBe("cancelled");
+      expect(await lease.read()).toBeNull();
+    });
+  });
   it("only discards the creating lease's attempt before transport starts", async () => {
     const journal = new ConditionalJournal(environment(), 7, 2);
     await journal.run(async (lease) => {

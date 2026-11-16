@@ -61,6 +61,7 @@ const verifiedConditionalStatus = Symbol("verified conditional status");
 export type ConditionalOpsStatus = (
   | { state: "unknown"; docId: number; userId: number; requestId: string; currentEpoch: number; currentHead: number }
   | { state: "committed" | "history_changed"; docId: number; userId: number; requestId: string; currentEpoch: number; currentHead: number; historyEpoch: number; expectedSeq: number; firstSeq: number; opCount: number; digest: string }
+  | { state: "cancelled"; docId: number; userId: number; requestId: string; currentEpoch: number; currentHead: number; historyEpoch: number; expectedSeq: number; firstSeq: number; opCount: number; clientId: number; digest: string }
 ) & { readonly [verifiedConditionalStatus]: true };
 
 export function isVerifiedConditionalStatus(value: ConditionalOpsStatus): boolean { return value?.[verifiedConditionalStatus] === true; }
@@ -69,22 +70,39 @@ function verifiedStatus<T extends object>(value: T): T & { readonly [verifiedCon
   return Object.freeze(value) as T & { readonly [verifiedConditionalStatus]: true };
 }
 
-/** "unknown" is not a rejection: an earlier request may still be in flight. */
-export async function queryConditionalOpsStatus(input: { docId: number; userId: number; requestId: string; signal: AbortSignal }): Promise<ConditionalOpsStatus> {
-  const { docId, userId, requestId, signal } = input;
-  if (![docId, userId].every(Number.isSafeInteger) || docId <= 0 || userId <= 0 || !/^[0-9a-f]{32}$/.test(requestId)) throw new ApiError(400, "invalid_request", "条件提交查询参数无效");
-  const response = await fetch(`/api/docs/${docId}/conditional-ops/${requestId}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Jiange-User-Id": String(userId) }, signal });
-  const value: unknown = await response.json().catch(() => null);
-  if (!response.ok) { const error = value as { error?: string; message?: string } | null; throw new ApiError(response.status, error?.error ?? "error", error?.message ?? response.statusText); }
+function parseConditionalStatus(value: unknown, docId: number, userId: number, requestId: string): ConditionalOpsStatus {
   const invalid = () => { throw new ApiError(502, "invalid_receipt", "无法确认提交结果，请稍后重试"); };
   if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
   const result = value as Record<string, unknown>;
   if (result.docId !== docId || result.userId !== userId || result.requestId !== requestId || !Number.isSafeInteger(result.currentEpoch) || (result.currentEpoch as number) <= 0 || !Number.isSafeInteger(result.currentHead) || (result.currentHead as number) < 0) return invalid();
   const common = { docId, userId, requestId, currentEpoch: result.currentEpoch as number, currentHead: result.currentHead as number };
   if (result.state === "unknown") return verifiedStatus({ ...common, state: "unknown" as const });
-  if (result.state !== "committed" && result.state !== "history_changed" || !Number.isSafeInteger(result.historyEpoch) || (result.historyEpoch as number) <= 0 || !Number.isSafeInteger(result.expectedSeq) || (result.expectedSeq as number) < 0 || !Number.isSafeInteger(result.firstSeq) || result.firstSeq !== (result.expectedSeq as number) + 1 || !Number.isSafeInteger(result.opCount) || (result.opCount as number) <= 0 || (result.opCount as number) > 100000 || (result.expectedSeq as number) + (result.opCount as number) > Number.MAX_SAFE_INTEGER || typeof result.digest !== "string" || !/^[0-9a-f]{64}$/.test(result.digest)) return invalid();
-  if (result.state === "committed" && (common.currentEpoch !== result.historyEpoch || common.currentHead < (result.expectedSeq as number) + (result.opCount as number)) || result.state === "history_changed" && common.currentEpoch === result.historyEpoch) return invalid();
+  if (result.state !== "committed" && result.state !== "history_changed" && result.state !== "cancelled" || !Number.isSafeInteger(result.historyEpoch) || (result.historyEpoch as number) <= 0 || !Number.isSafeInteger(result.expectedSeq) || (result.expectedSeq as number) < 0 || !Number.isSafeInteger(result.firstSeq) || result.firstSeq !== (result.expectedSeq as number) + 1 || !Number.isSafeInteger(result.opCount) || (result.opCount as number) <= 0 || (result.opCount as number) > 100000 || (result.expectedSeq as number) + (result.opCount as number) > Number.MAX_SAFE_INTEGER || typeof result.digest !== "string" || !/^[0-9a-f]{64}$/.test(result.digest)) return invalid();
+  if (result.state === "committed" && (common.currentEpoch !== result.historyEpoch || common.currentHead < (result.expectedSeq as number) + (result.opCount as number)) || result.state === "history_changed" && common.currentEpoch === result.historyEpoch || result.state === "cancelled" && (common.currentEpoch !== result.historyEpoch || !Number.isSafeInteger(result.clientId) || (result.clientId as number) <= 0)) return invalid();
+  if (result.state === "cancelled") return verifiedStatus({ ...common, state: "cancelled" as const, historyEpoch: result.historyEpoch as number, expectedSeq: result.expectedSeq as number, firstSeq: result.firstSeq as number, opCount: result.opCount as number, clientId: result.clientId as number, digest: result.digest });
   return verifiedStatus({ ...common, state: result.state, historyEpoch: result.historyEpoch as number, expectedSeq: result.expectedSeq as number, firstSeq: result.firstSeq as number, opCount: result.opCount as number, digest: result.digest });
+}
+
+/** "unknown" is not a rejection: an earlier submission may still be in flight. */
+export async function queryConditionalOpsStatus(input: { docId: number; userId: number; requestId: string; signal: AbortSignal }): Promise<ConditionalOpsStatus> {
+  const { docId, userId, requestId, signal } = input;
+  if (![docId, userId].every(Number.isSafeInteger) || docId <= 0 || userId <= 0 || !/^[0-9a-f]{32}$/.test(requestId)) throw new ApiError(400, "invalid_request", "条件提交查询参数无效");
+  const response = await fetch(`/api/docs/${docId}/conditional-ops/${requestId}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Jiange-User-Id": String(userId) }, signal });
+  const value: unknown = await response.json().catch(() => null);
+  if (!response.ok) { const error = value as { error?: string; message?: string } | null; throw new ApiError(response.status, error?.error ?? "error", error?.message ?? response.statusText); }
+  return parseConditionalStatus(value, docId, userId, requestId);
+}
+
+/** Fence an uncertain request without sending its potentially restricted content. */
+export async function cancelConditionalOps(input: { docId: number; userId: number; requestId: string; historyEpoch: number; expectedSeq: number; opCount: number; clientId: number; digest: string; signal: AbortSignal }): Promise<ConditionalOpsStatus> {
+  const { docId, userId, requestId, historyEpoch, expectedSeq, opCount, clientId, digest, signal } = input;
+  if (![docId, userId, historyEpoch, expectedSeq, opCount, clientId].every(Number.isSafeInteger) || docId <= 0 || userId <= 0 || historyEpoch <= 0 || expectedSeq < 0 || opCount <= 0 || opCount > 100000 || expectedSeq + opCount > Number.MAX_SAFE_INTEGER || clientId <= 0 || !/^[0-9a-f]{32}$/.test(requestId) || !/^[0-9a-f]{64}$/.test(digest)) throw new ApiError(400, "invalid_request", "条件提交停止参数无效");
+  const response = await fetch(`/api/docs/${docId}/conditional-ops/${requestId}/cancel`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json", "X-Jiange-User-Id": String(userId) }, body: JSON.stringify({ historyEpoch, expectedSeq, opCount, clientId, digest }), signal });
+  const value: unknown = await response.json().catch(() => null);
+  if (!response.ok) { const error = value as { error?: string; message?: string } | null; throw new ApiError(response.status, error?.error ?? "error", error?.message ?? response.statusText); }
+  const status = parseConditionalStatus(value, docId, userId, requestId);
+  if ((status.state !== "committed" && status.state !== "cancelled") || status.historyEpoch !== historyEpoch || status.expectedSeq !== expectedSeq || status.opCount !== opCount || status.digest !== digest || status.state === "cancelled" && status.clientId !== clientId) throw new ApiError(502, "invalid_receipt", "无法确认停止结果，请稍后重试");
+  return status;
 }
 
 export const api = {

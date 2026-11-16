@@ -53,10 +53,20 @@ func (m *Memory) ConditionalOpsStatus(ctx context.Context, guard RestoreGuard, d
 		epoch = 1
 	}
 	var receipt *conditionalOpsReceipt
-	if value, ok := d.conditionalOps[conditionalOpsKey{doc: doc, user: guard.UserID, request: request}]; ok {
+	key := conditionalOpsKey{doc: doc, user: guard.UserID, request: request}
+	if value, ok := d.conditionalOps[key]; ok {
 		receipt = &value
 	}
-	out, err := conditionalStatus(doc, guard.UserID, request, epoch, int64(len(d.ops)), receipt)
+	cancel, cancelled := d.conditionalCancels[key]
+	if cancelled && receipt != nil {
+		return ConditionalOpsStatus{}, ErrConflict
+	}
+	var out ConditionalOpsStatus
+	if cancelled {
+		out, err = cancellationStatus(doc, guard.UserID, request, epoch, int64(len(d.ops)), cancel)
+	} else {
+		out, err = conditionalStatus(doc, guard.UserID, request, epoch, int64(len(d.ops)), receipt)
+	}
 	if err != nil {
 		return ConditionalOpsStatus{}, err
 	}
@@ -115,7 +125,22 @@ func (p *Postgres) ConditionalOpsStatus(ctx context.Context, guard RestoreGuard,
 			copy(value.digest[:], digest)
 			receipt = &value
 		}
-		out, e = conditionalStatus(doc, guard.UserID, request, epoch, head, receipt)
+		var cancel conditionalCancellation
+		var cancelDigest []byte
+		e = tx.QueryRow(ctx, `SELECT history_epoch,base_seq,op_count,client_id,digest FROM doc_conditional_ops_cancellations WHERE doc_id=$1 AND user_id=$2 AND request_id=$3`, doc, guard.UserID, request).Scan(&cancel.epoch, &cancel.head, &cancel.count, &cancel.client, &cancelDigest)
+		cancelled := e == nil
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+		if cancelled {
+			if receipt != nil || len(cancelDigest) != len(cancel.digest) {
+				return ErrConflict
+			}
+			copy(cancel.digest[:], cancelDigest)
+			out, e = cancellationStatus(doc, guard.UserID, request, epoch, head, cancel)
+		} else {
+			out, e = conditionalStatus(doc, guard.UserID, request, epoch, head, receipt)
+		}
 		if e != nil {
 			return e
 		}

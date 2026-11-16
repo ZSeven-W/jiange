@@ -304,19 +304,19 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const findInputs = useRef({ query: findQuery, replacement: findReplacement });
   findInputs.current = { query: findQuery, replacement: findReplacement };
   const onAtomicFindStatus = useCallback((status: AtomicFindStatusEvent) => {
-    if (status === "undone" || status === "redone" || status === "undo_failed" || status === "redo_failed" || status === "history_lost" && !atomicFindMessage.current) {
+    if (status === "undone" || status === "redone" || status === "undo_failed" || status === "redo_failed" || status === "step_cancelled" || status === "history_lost" && !atomicFindMessage.current) {
       if (!findAtomicHistoryRef.current) return false;
       setAtomicFindBusy(false);
       if (status === "undone" || status === "redone") { const next = status === "undone" ? "redo" : "undo"; findAtomicHistoryRef.current = next; setFindAtomicHistory(next); setFindMessage(status === "undone" ? "已撤销本次替换。" : "已重做本次替换。"); }
       else if (status === "history_lost") { findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setFindMessage("操作已保存，但本次撤销记录不可用。"); }
-      else setFindMessage("文档或历史已变化，未执行该操作。");
+      else setFindMessage(status === "step_cancelled" ? "已停止未提交的撤销或重做。" : "文档或历史已变化，未执行该操作。");
       return true;
     }
     const pending = atomicFindMessage.current;
     if (!pending || pending.query !== findInputs.current.query || pending.replacement !== findInputs.current.replacement) return false;
     atomicFindMessage.current = null;
     const skipped = pending.skipped ? `，跳过 ${pending.skipped} 处提及内容` : "";
-    setFindMessage(status === "not_committed" ? "文档已变化，本次替换未执行，请重新查找。" : status === "history_lost" ? `替换已保存${skipped}，但本次撤销记录不可用。` : `替换已保存${skipped}。`);
+    setFindMessage(status === "cancelled" ? "已停止未提交的替换。" : status === "not_committed" ? "文档已变化，本次替换未执行，请重新查找。" : status === "history_lost" ? `替换已保存${skipped}，但本次撤销记录不可用。` : `替换已保存${skipped}。`);
     findAtomicHistoryRef.current = status === "saved" ? "undo" : null; setFindAtomicHistory(findAtomicHistoryRef.current);
     return true;
   }, []);

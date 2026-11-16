@@ -35,6 +35,7 @@ type memDoc struct {
 	versions           map[int64]memVersion
 	namedVersions      []memoryVersionEntry
 	conditionalOps     map[conditionalOpsKey]conditionalOpsReceipt
+	conditionalCancels map[conditionalOpsKey]conditionalCancellation
 	opAt               []time.Time // arrival time per op (auto-version sweep)
 }
 

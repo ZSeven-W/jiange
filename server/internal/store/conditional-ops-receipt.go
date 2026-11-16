@@ -31,18 +31,26 @@ type ConditionalOpsStatus struct {
 	DocID        int64  `json:"docId"`
 	UserID       int64  `json:"userId"`
 	RequestID    string `json:"requestId"`
-	State        string `json:"state"` // unknown | committed | history_changed
+	State        string `json:"state"` // unknown | committed | cancelled | history_changed
 	CurrentEpoch int64  `json:"currentEpoch"`
 	CurrentHead  int64  `json:"currentHead"`
 	Epoch        int64  `json:"historyEpoch"`
 	BaseHead     int64  `json:"expectedSeq"`
 	First        int64  `json:"firstSeq"`
 	Count        int64  `json:"opCount"`
+	ClientID     int64  `json:"clientId,omitempty"`
 	Digest       string `json:"digest,omitempty"`
 }
 
 type ConditionalOpsStatusReader interface {
 	ConditionalOpsStatus(context.Context, RestoreGuard, int64, string) (ConditionalOpsStatus, error)
+}
+
+// ConditionalOpsCanceller atomically fences a request ID or observes its
+// existing receipt. A delayed submission with the same ID cannot commit after
+// the cancellation transaction succeeds.
+type ConditionalOpsCanceller interface {
+	CancelConditionalOps(context.Context, RestoreGuard, int64, int64, int64, int64, int64, string, [32]byte) (ConditionalOpsStatus, error)
 }
 
 type conditionalOpsKey struct {
@@ -52,6 +60,10 @@ type conditionalOpsKey struct {
 type conditionalOpsReceipt struct {
 	epoch, head, first, count int64
 	digest                    [32]byte
+}
+type conditionalCancellation struct {
+	epoch, head, count, client int64
+	digest                     [32]byte
 }
 
 func conditionalDigest(epoch, head int64, request string, ops []RawOp) ([32]byte, error) {

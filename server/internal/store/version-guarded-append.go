@@ -86,6 +86,10 @@ func (m *Memory) appendVersionGuarded(ctx context.Context, guard RestoreGuard, d
 	if request != nil {
 		key := conditionalOpsKey{doc: doc, user: guard.UserID, request: request.request}
 		if old, ok := d.conditionalOps[key]; ok {
+			if _, cancelled := d.conditionalCancels[key]; cancelled {
+				m.mu.Unlock()
+				return nil, ErrConflict
+			}
 			if old.epoch != expectedEpoch || old.head != expectedHead || old.digest != request.digest || old.count != int64(len(ops)) || int64(len(d.ops)) < old.first+old.count-1 {
 				m.mu.Unlock()
 				return nil, ErrConflict
@@ -96,6 +100,10 @@ func (m *Memory) appendVersionGuarded(ctx context.Context, guard RestoreGuard, d
 			}
 			m.mu.Unlock()
 			return conditionalSequences(old), nil
+		}
+		if _, cancelled := d.conditionalCancels[key]; cancelled {
+			m.mu.Unlock()
+			return nil, ErrConflict
 		}
 		if request.probe {
 			if err := driveMemoryEnd(ctx, guard, expires); err != nil {
@@ -242,6 +250,13 @@ func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard,
 				return err
 			}
 			if err == nil {
+				var cancelled bool
+				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM doc_conditional_ops_cancellations WHERE doc_id=$1 AND user_id=$2 AND request_id=$3)`, doc, guard.UserID, request.request).Scan(&cancelled); err != nil {
+					return err
+				}
+				if cancelled {
+					return ErrConflict
+				}
 				if len(digest) != len(old.digest) {
 					return ErrConflict
 				}
@@ -251,6 +266,13 @@ func (p *Postgres) appendVersionGuarded(ctx context.Context, guard RestoreGuard,
 				}
 				seqs = conditionalSequences(old)
 				return drivePGEnd(ctx, guard, expires)
+			}
+			var cancelled bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM doc_conditional_ops_cancellations WHERE doc_id=$1 AND user_id=$2 AND request_id=$3)`, doc, guard.UserID, request.request).Scan(&cancelled); err != nil {
+				return err
+			}
+			if cancelled {
+				return ErrConflict
 			}
 			if request.probe {
 				if err := drivePGEnd(ctx, guard, expires); err != nil {

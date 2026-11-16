@@ -131,7 +131,7 @@ export type ExternalUndoRecorder = (tx: Tx, options?: ExternalUndoOptions) => vo
 export type TableFindReplacer = (match: FindMatch, replacement: string) => TableFindResult;
 export type FindBatchReplacer = (matches: readonly FindMatch[], replacement: string) => { status: BatchStatus; count: number };
 export type AtomicFindReplacer = (matches: readonly FindMatch[], replacement: string, directoryTitle: string) => Promise<{ status: AtomicFindStatus | "submitted" | "pending" | "busy"; count: number }>;
-export type AtomicFindStatusEvent = "saved" | "not_committed" | "history_lost" | "undone" | "redone" | "undo_failed" | "redo_failed";
+export type AtomicFindStatusEvent = "saved" | "cancelled" | "step_cancelled" | "not_committed" | "history_lost" | "undone" | "redone" | "undo_failed" | "redo_failed";
 export type AtomicFindHistoryControl = { step: (redo: boolean) => boolean; available: () => "undo" | "redo" | null };
 
 interface Props {
@@ -269,6 +269,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const sensitiveFindTransport = useRef(false);
   const alignmentPendingRef = useRef(false);
   const [alignmentPending, setAlignmentPending] = useState(false);
+  const [canCancelFind, setCanCancelFind] = useState(false);
   const [alignmentMessage, setAlignmentMessage] = useState("");
   const [waitingResizeSync, setWaitingResizeSync] = useState(false);
   const setPendingAlignment = useCallback((pending: boolean) => { alignmentPendingRef.current = pending; setAlignmentPending(pending); }, []);
@@ -358,7 +359,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalAlignment, sync.client, userId, releaseAlignmentOwner]);
   useEffect(() => {
     let alive = true;
-    pendingAlignmentPlan.current = null; pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); setWaitingResizeSync(false);
+    pendingAlignmentPlan.current = null; pendingAtomicFind.current = null; setPendingAlignment(false); setCanCancelFind(false); setAlignmentMessage(""); setWaitingResizeSync(false);
     const check = () => {
       if (conditionalAlignment) void conditionalAlignment.hasPending().then((pending) => {
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
@@ -407,8 +408,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在核对该操作，或浏览器不支持跨页面锁。"); return; }
       const pendingKind = conditionalFind ? await conditionalFind.pendingKind() : "other";
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
       if (pendingKind === "empty" && pendingAtomicFind.current) { setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
       if (conditionalFind && (pendingKind === "find" || pendingKind === "redacted")) {
+        setCanCancelFind(true);
         if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalFind;
         if (pendingKind === "find" && copyBlockedRef.current) { await conditionalFind.redactPending(); setAlignmentMessage("正在核对受限文档操作。"); return; }
         sensitiveFindTransport.current = pendingKind === "find";
@@ -436,11 +439,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           return false;
         });
         if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-        if (result === "committed" || result === "not_committed") {
-          setPendingAlignment(false); pendingAtomicFind.current = null; releaseAlignmentOwner(); force((x) => x + 1); setAlignmentMessage("");
-          const event: AtomicFindStatusEvent | null = original?.kind === "initial" ? result === "not_committed" ? "not_committed" : lostHistory ? "history_lost" : "saved" : original?.kind === "step" ? result === "not_committed" ? original.redo ? "redo_failed" : "undo_failed" : lostHistory ? "history_lost" : original.redo ? "redone" : "undone" : null;
+        if (result === "committed" || result === "cancelled" || result === "not_committed") {
+          setPendingAlignment(false); setCanCancelFind(false); pendingAtomicFind.current = null; releaseAlignmentOwner(); force((x) => x + 1); setAlignmentMessage("");
+          const event: AtomicFindStatusEvent | null = original?.kind === "initial" ? result === "cancelled" ? "cancelled" : result === "not_committed" ? "not_committed" : lostHistory ? "history_lost" : "saved" : original?.kind === "step" ? result === "cancelled" ? "step_cancelled" : result === "not_committed" ? original.redo ? "redo_failed" : "undo_failed" : lostHistory ? "history_lost" : original.redo ? "redone" : "undone" : null;
           const handled = event ? atomicFindStatusRef.current?.(event) === true : false;
-          if (result === "not_committed") { if (!handled) setColumnNotice("文档已变化，本次替换未执行，请重新查找。"); }
+          if (result === "cancelled") { if (!handled) setColumnNotice("未提交的操作已停止。"); }
+          else if (result === "not_committed") { if (!handled) setColumnNotice("文档已变化，本次替换未执行，请重新查找。"); }
           else if (lostHistory || recovered) { if (!handled) setColumnNotice("操作已保存，但本次撤销记录不可用。"); }
           else if (!handled) setToast(original?.kind === "step" ? original.redo ? "已重做" : "已撤销" : "替换已保存");
         } else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
@@ -449,6 +453,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         else setAlignmentMessage(pendingKind === "redacted" ? "替换结果尚未确认；受限内容未保存在本地，请稍后核对。" : "替换结果尚未确认，可核对状态或重试相同操作。");
         return;
       }
+      setCanCancelFind(false);
       const result = await conditionalAlignment.finish(controller.signal, (attempt) => {
         const pending = pendingAlignmentPlan.current;
         if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
@@ -476,10 +481,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         return false;
       });
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-      if (result === "committed" || result === "not_committed") {
+      if (result === "committed" || result === "cancelled" || result === "not_committed") {
         setPendingAlignment(false); pendingAlignmentPlan.current = null; releaseAlignmentOwner(); force((x) => x + 1);
         setAlignmentMessage("");
-        setColumnNotice(result === "not_committed" ? "文档已变化，布局操作未执行；请重新操作。" : superseded ? "列宽调整已提交，但随后被其他修改覆盖；请检查表格。" : historyConflict ? "列宽调整已保存；后续表格修改可能影响这次撤销。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : initialResize ? "" : "布局操作已保存。");
+        setColumnNotice(result === "cancelled" ? "未提交的操作已停止。" : result === "not_committed" ? "文档已变化，布局操作未执行；请重新操作。" : superseded ? "列宽调整已提交，但随后被其他修改覆盖；请检查表格。" : historyConflict ? "列宽调整已保存；后续表格修改可能影响这次撤销。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : initialResize ? "" : "布局操作已保存。");
       } else if (result === "empty" && !pendingAlignmentPlan.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); }
       else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
       else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认操作结果，请保留当前记录并检查文档历史。");
@@ -498,6 +503,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
       let kind = conditionalFind ? await conditionalFind.pendingKind() : "other";
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
       if (conditionalFind && (kind === "find" || kind === "redacted")) {
         if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalFind;
         if (kind === "find" && copyBlockedRef.current) { await conditionalFind.redactPending(); kind = "redacted"; }
@@ -522,6 +528,34 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     void reconcileAlignment();
   }, [conditionalAlignment, conditionalFind, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, atomicFindHistory, um, setAlignmentBusy, reconcileAlignment]);
 
+  const cancelAtomicFind = useCallback(async () => {
+    if (!conditionalFind || alignmentBusy.current || !mounted.current) return;
+    if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能停止该操作。"); return; }
+    setAlignmentBusy(true);
+    const client = sync.client, controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalFind };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
+      const kind = await conditionalFind.pendingKind();
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || controller.signal.aborted) return;
+      if (kind !== "find" && kind !== "redacted") { setAlignmentMessage("待处理记录已变化，请重新核对。"); return; }
+      // The stop request contains only a digest and identifiers, not the batch.
+      const result = await conditionalFind.cancel(controller.signal);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
+      if (result === "cancelled") {
+        const original = pendingAtomicFind.current; pendingAtomicFind.current = null;
+        setPendingAlignment(false); setCanCancelFind(false); setAlignmentMessage(""); releaseAlignmentOwner(); force((x) => x + 1);
+        const handled = original ? atomicFindStatusRef.current?.(original.kind === "initial" ? "cancelled" : "step_cancelled") === true : false;
+        if (!handled) setColumnNotice("未提交的操作已停止。");
+      } else if (result === "needs_resolution" || result === "committed") {
+        setAlignmentMessage("操作已提交，正在核对保存结果。"); window.setTimeout(() => void reconcileAlignment(), 0);
+      } else if (result === "history_changed" || result === "mismatch") setAlignmentMessage("文档历史已变化，无法安全停止，请检查文档历史。");
+      else if (result === "blocked") setAlignmentMessage("暂时无法停止，请检查账号权限和同步状态。");
+      else setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。");
+    } catch { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。"); }
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); } }
+  }, [conditionalFind, ensureAlignmentOwner, sync.client, userId, setAlignmentBusy, setPendingAlignment, releaseAlignmentOwner, reconcileAlignment]);
+
   const startAtomicFind = useCallback<AtomicFindReplacer>(async (matches, replacement, directoryTitle) => {
     const client = sync.client, d = client.doc;
     if (!conditionalFind || !conditionalAlignment || !d || !userId || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) return { status: "unavailable", count: 0 };
@@ -539,12 +573,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const anchor = um.markInsertionPoint(), head = client.lastSeq, epoch = client.epoch;
       const tableBlocks = prepared.plan.tables.map((table) => table.block);
       pendingAtomicFind.current = { kind: "initial", plan: prepared.plan, doc: d, anchor, atomicAliases: atomicFindHistory.capture(d, tableBlocks), batchAliases: findBatchHistory.capture(d, tableBlocks) };
-      setPendingAlignment(true); setAlignmentMessage("正在安全提交替换…");
+      setPendingAlignment(true); setCanCancelFind(true); setAlignmentMessage("正在安全提交替换…");
       const persist = !copyBlockedRef.current;
       const result = await conditionalFind.start(prepared.plan.ops, epoch, head, controller.signal, () => client.doc === d && !readOnlyRef.current && (!persist || !copyBlockedRef.current) && atomicFindPlanIsCurrent(prepared.plan, d), () => { sensitiveFindTransport.current = persist; }, persist);
       if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return { status: "pending", count: matches.length };
-      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); return { status: "stale", count: 0 }; }
-      if (result === "occupied") { pendingAtomicFind.current = null; setAlignmentMessage("已有操作待核对，请先处理。"); return { status: "busy", count: 0 }; }
+      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setCanCancelFind(false); setAlignmentMessage(""); releaseAlignmentOwner(); return { status: "stale", count: 0 }; }
+      if (result === "occupied") { pendingAtomicFind.current = null; setCanCancelFind(false); setAlignmentMessage("已有操作待核对，请先处理。"); return { status: "busy", count: 0 }; }
       setAlignmentMessage(result === "sent" ? "替换已提交，正在核对同步结果。" : "替换结果尚未确认，请核对状态。");
       return { status: result === "sent" ? "submitted" : "pending", count: matches.length };
     } catch {
@@ -552,7 +586,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (mounted.current && currentClient.current === client && currentUserId.current === userId) {
         setPendingAlignment(pending);
         if (pending) setAlignmentMessage("替换结果尚未确认，原请求仍待核对。");
-        else { pendingAtomicFind.current = null; releaseAlignmentOwner(); setAlignmentMessage(""); }
+        else { pendingAtomicFind.current = null; setCanCancelFind(false); releaseAlignmentOwner(); setAlignmentMessage(""); }
       }
       return { status: pending ? "pending" : "unavailable", count: 0 };
     } finally {
@@ -580,19 +614,19 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const prepared = atomicFindHistory.prepare(d, um, key, redo, replica.author, snapshot.directoryTitle);
       if (prepared.status !== "ready") { releaseAlignmentOwner(); if (um.peekMarker(redo) === key) setTableHistoryConflict({ client, key, redo, revision: um.revision, ...(prepared.status === "size" ? { reason: "size" } : {}) }); failed(); return; }
       pendingAtomicFind.current = { kind: "step", plan: prepared.plan, doc: d, key, redo, batchAliases: findBatchHistory.capture(d, atomicFindHistory.tableBlocks(key)) };
-      setPendingAlignment(true); setAlignmentMessage(`正在安全提交${redo ? "重做" : "撤销"}…`);
+      setPendingAlignment(true); setCanCancelFind(true); setAlignmentMessage(`正在安全提交${redo ? "重做" : "撤销"}…`);
       const persist = !copyBlockedRef.current;
       const result = await conditionalFind.start(prepared.plan.ops, client.epoch, client.lastSeq, controller.signal, () => client.doc === d && !readOnlyRef.current && (!persist || !copyBlockedRef.current) && atomicFindHistory.canSubmit(d, um, prepared.plan), () => { sensitiveFindTransport.current = persist; }, persist);
       if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
-      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("文档状态已变化，未执行该操作。"); failed(); }
-      else if (result === "occupied") { pendingAtomicFind.current = null; setAlignmentMessage("已有操作待核对，请先处理。"); failed(); }
+      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setCanCancelFind(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("文档状态已变化，未执行该操作。"); failed(); }
+      else if (result === "occupied") { pendingAtomicFind.current = null; setCanCancelFind(false); setAlignmentMessage("已有操作待核对，请先处理。"); failed(); }
       else setAlignmentMessage(result === "sent" ? "操作已提交，正在核对同步结果。" : "操作结果尚未确认，请核对状态。");
     } catch {
       let pending = true; try { pending = await conditionalAlignment.hasPending(); } catch { /* Preserve an unreadable journal. */ }
       if (mounted.current && currentClient.current === client && currentUserId.current === userId) {
         setPendingAlignment(pending);
         if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍待核对。");
-        else { pendingAtomicFind.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交，请检查文档状态后重试。"); failed(); }
+        else { pendingAtomicFind.current = null; setCanCancelFind(false); releaseAlignmentOwner(); setColumnNotice("无法安全提交，请检查文档状态后重试。"); failed(); }
       }
     } finally {
       window.clearTimeout(timer);
@@ -2555,7 +2589,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {mentionNavigationNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{mentionNavigationNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setMentionNavigationNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button></>}</div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button>{canCancelFind && <><button type="button" disabled={alignmentWorking || !!readOnly} className="text-primary disabled:opacity-50" onClick={() => void cancelAtomicFind()}>停止未确认操作</button><span className="basis-full text-xs text-subtle">停止只阻止尚未提交的请求；已提交的内容会保留。</span></>}</>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
