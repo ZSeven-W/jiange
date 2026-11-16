@@ -82,6 +82,9 @@ describe("findMatches", () => {
     expect(planFindReplacement(matches, matches[0], false)).toMatchObject({ selected: [], skippedTitles: 1, skippedMentions: 0 });
     expect(planFindReplacement(matches, matches[2], false)).toMatchObject({ selected: [], skippedTitles: 0, skippedMentions: 1 });
     expect(planFindReplacement(matches, matches[3], false).selected).toEqual([matches[3]]);
+    const atomic = planFindReplacement(matches, matches[0], true, { allowTitle: true });
+    expect(atomic.selected).toEqual([matches[0], matches[1], matches[3]]);
+    expect(atomic).toMatchObject({ skippedTitles: 0, skippedMentions: 1 });
   });
 
   it("finds columns in canvas order, excludes hidden child source, and resolves Unicode offsets", () => {

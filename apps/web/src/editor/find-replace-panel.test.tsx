@@ -62,4 +62,11 @@ describe("FindReplacePanel", () => {
     expect(html).toContain("仅查找普通正文，暂不包含表格和公式。");
     expect(html).toMatch(/<p role="status" aria-live="polite"[^>]*>已替换 2 处，跳过 1 处冲突。<\/p>/);
   });
+
+  it("exposes a touch history action and disables it while a request is pending", () => {
+    const html = renderToStaticMarkup(<FindReplacePanel {...base} historyAction={{ label: "撤销本次替换", disabled: true, onClick: vi.fn() }} />);
+    expect(html).toContain("撤销本次替换");
+    expect(html).toContain("min-[480px]:hidden");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>撤销本次替换<\/button>/);
+  });
 });

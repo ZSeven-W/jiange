@@ -7,7 +7,7 @@ import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from
 import { colorFor, type Presence } from "@/lib/presence";
 import { useSyncDoc, type RemotePeer } from "@/lib/use-sync-doc";
 import { CollabText } from "@/components/collab-text";
-import { Editor, type ExternalUndoRecorder, type FindBatchReplacer, type TableFindReplacer } from "@/editor/editor";
+import { Editor, type AtomicFindHistoryControl, type AtomicFindReplacer, type AtomicFindStatusEvent, type ExternalUndoRecorder, type FindBatchReplacer, type TableFindReplacer } from "@/editor/editor";
 import { planFindReplacement, replaceMatches } from "@/editor/find-replace";
 import { FindScrollIntent } from "@/editor/find-navigation";
 import { preflightFindReplace } from "@/editor/find-replace-safety";
@@ -203,6 +203,10 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const onTableFindRegistrar = useCallback((replace: TableFindReplacer | null) => { tableFindReplace.current = replace; }, []);
   const findBatchReplace = useRef<FindBatchReplacer | null>(null);
   const onFindBatchRegistrar = useCallback((replace: FindBatchReplacer | null) => { findBatchReplace.current = replace; }, []);
+  const atomicFindReplace = useRef<AtomicFindReplacer | null>(null);
+  const onAtomicFindRegistrar = useCallback((replace: AtomicFindReplacer | null) => { atomicFindReplace.current = replace; }, []);
+  const atomicFindHistoryControl = useRef<AtomicFindHistoryControl | null>(null);
+  const onAtomicFindHistoryRegistrar = useCallback((control: AtomicFindHistoryControl | null) => { atomicFindHistoryControl.current = control; }, []);
   const canEditRef = useRef(false);
   useLayoutEffect(() => {
     if (!onSearchGuardRegistrar) return;
@@ -292,6 +296,30 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const [findReplacement, setFindReplacement] = useState("");
   const [findIndex, setFindIndex] = useState(0);
   const [findMessage, setFindMessage] = useState("");
+  const [atomicFindBusy, setAtomicFindBusy] = useState(false);
+  const [findAtomicHistory, setFindAtomicHistory] = useState<"undo" | "redo" | null>(null);
+  const findAtomicHistoryRef = useRef<"undo" | "redo" | null>(null);
+  const setFindAtomicAction = (value: "undo" | "redo" | null) => { findAtomicHistoryRef.current = value; setFindAtomicHistory(value); };
+  const atomicFindMessage = useRef<{ query: string; replacement: string; skipped: number } | null>(null);
+  const findInputs = useRef({ query: findQuery, replacement: findReplacement });
+  findInputs.current = { query: findQuery, replacement: findReplacement };
+  const onAtomicFindStatus = useCallback((status: AtomicFindStatusEvent) => {
+    if (status === "undone" || status === "redone" || status === "undo_failed" || status === "redo_failed" || status === "history_lost" && !atomicFindMessage.current) {
+      if (!findAtomicHistoryRef.current) return false;
+      setAtomicFindBusy(false);
+      if (status === "undone" || status === "redone") { const next = status === "undone" ? "redo" : "undo"; findAtomicHistoryRef.current = next; setFindAtomicHistory(next); setFindMessage(status === "undone" ? "已撤销本次替换。" : "已重做本次替换。"); }
+      else if (status === "history_lost") { findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setFindMessage("操作已保存，但本次撤销记录不可用。"); }
+      else setFindMessage("文档或历史已变化，未执行该操作。");
+      return true;
+    }
+    const pending = atomicFindMessage.current;
+    if (!pending || pending.query !== findInputs.current.query || pending.replacement !== findInputs.current.replacement) return false;
+    atomicFindMessage.current = null;
+    const skipped = pending.skipped ? `，跳过 ${pending.skipped} 处提及内容` : "";
+    setFindMessage(status === "not_committed" ? "文档已变化，本次替换未执行，请重新查找。" : status === "history_lost" ? `替换已保存${skipped}，但本次撤销记录不可用。` : `替换已保存${skipped}。`);
+    findAtomicHistoryRef.current = status === "saved" ? "undo" : null; setFindAtomicHistory(findAtomicHistoryRef.current);
+    return true;
+  }, []);
   const [findPending, setFindPending] = useState<ReplacementNotice | null>(null);
   const [findNavigation, setFindNavigation] = useState(0);
   const [findResult, setFindResult] = useState<FindSnapshot | null>(null);
@@ -699,15 +727,16 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   // Large result sets remain fully navigable without creating tens of thousands
   // of markup nodes inside the contenteditable document.
   const displayedMatches = matches.length > 500 ? (activeMatch ? [activeMatch] : []) : matches;
-  const findCanReplace = !findUpdating && canEditContent && sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0;
+  const findCanReplace = !atomicFindBusy && !findUpdating && canEditContent && sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0;
   const activeIsTitle = !!activeMatch && idKey(activeMatch.block) === idKey(TITLE);
-  const replacementPlan = planFindReplacement(matches, activeMatch, true);
+  const replacementPlan = planFindReplacement(matches, activeMatch, true, { allowTitle: true });
   const requestFindScroll = useCallback(() => setFindNavigation(findScrollIntent.current.request()), []);
   const openFind = useCallback((mode: FindReplaceMode) => {
     setFindMode(mode);
     setFindOpen(true);
     setFindMessage("");
     setFindPending(null);
+    const history = atomicFindHistoryControl.current?.available() ?? null; findAtomicHistoryRef.current = history; setFindAtomicHistory(history);
     requestFindScroll();
     // Focus an already-open panel for repeated keyboard shortcuts; the panel
     // itself handles initial desktop focus and avoids summoning a phone keyboard.
@@ -725,6 +754,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   }, [openFind, presenting, history]);
   useEffect(() => {
     setFindOpen(false);
+    atomicFindMessage.current = null; findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setAtomicFindBusy(false);
     setFindQuery("");
     setFindReplacement("");
     setFindIndex(0);
@@ -817,6 +847,22 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
 
   const live = sync.client.doc?.hasBlock(TITLE) ? sync.client.doc : null;
   const title = live ? live.text(TITLE) : (meta.data?.title ?? "");
+  const invalidateDocumentNames = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) });
+    for (const key of ["docs", "drive", "drive-nav", "recent", "pins", "favorites"]) void qc.invalidateQueries({ queryKey: [key] });
+  }, [qc, id, me.user.id]);
+  const observedTitle = useRef<{ id: number; user: number; title: string } | null>(null);
+  useEffect(() => {
+    if (!live) { observedTitle.current = null; return; }
+    const previous = observedTitle.current;
+    observedTitle.current = { id, user: me.user.id, title };
+    if (!previous || previous.id !== id || previous.user !== me.user.id || previous.title === title) return;
+    // A remote title operation can update metadata atomically. Refresh the
+    // directory-backed lists after a short quiet period instead of displaying
+    // a stale sidebar name until the periodic refresh.
+    const timer = window.setTimeout(invalidateDocumentNames, 500);
+    return () => window.clearTimeout(timer);
+  }, [id, me.user.id, title, live, invalidateDocumentNames]);
   const [titleSyncRevision, setTitleSyncRevision] = useState(0);
   const [titleSyncNotice, setTitleSyncNotice] = useState<TitleSyncOutcome | null>(null);
   const titleSync = useMemo(() => {
@@ -830,8 +876,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     }, {
       commit: async (snapshot, signal) => (await fetch(`/api/docs/${id}/title-consistency`, { method: "POST", credentials: "same-origin", cache: "no-store", headers, body: JSON.stringify(snapshot), signal })).status,
       read: async (signal) => { const res = await fetch(`/api/docs/${id}/title-consistency`, { credentials: "same-origin", cache: "no-store", headers, signal }); if (!res.ok) throw new TitleSyncReadError(res.status); return parseTitleConsistency(await res.json()); },
-    }, () => { if (current()) { void qc.invalidateQueries({ queryKey: docMetaKey(id, account) }); void qc.invalidateQueries({ queryKey: ["docs"] }); } });
-  }, [id, me.user.id, qc, sync.client]);
+    }, () => { if (current()) invalidateDocumentNames(); });
+  }, [id, me.user.id, invalidateDocumentNames, sync.client]);
   useEffect(() => { titleSync.activate(); setTitleSyncNotice(null); return () => titleSync.dispose(); }, [titleSync]);
   useEffect(() => {
     if (!titleSync.hasPending) return;
@@ -974,17 +1020,39 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
     </div>
   </div>;
-  const replaceFound = (all: boolean) => {
+  const replaceFound = async (all: boolean) => {
     setFindPending(null);
     const doc = sync.client.doc;
     if (!doc || findUpdating || !currentFindResult || currentFindResult.doc !== doc || !canEditRef.current || sync.client.blocked || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !recordExternalUndo.current) {
       setFindMessage("请等待文档同步完成并确认有编辑权限后重试。");
       return;
     }
-    const { selected, skippedTitles, skippedMentions } = planFindReplacement(matches, activeMatch, all);
+    const { selected, skippedTitles, skippedMentions } = planFindReplacement(matches, activeMatch, all, { allowTitle: true });
     if (!selected.length && (skippedMentions || skippedTitles)) { setFindMessage(skippedTitles ? "标题暂不支持替换。" : "提及成员和文档的内容不能替换。"); return; }
     if (!selected.length) return;
     const skippedMessage = `${skippedTitles ? `，跳过 ${skippedTitles} 处标题` : ""}${skippedMentions ? `，跳过 ${skippedMentions} 处提及内容` : ""}`;
+    if (selected.some((match) => idKey(match.block) === idKey(TITLE))) {
+      if (titleSync.hasPending || !meta.data || !atomicFindReplace.current) { setFindMessage("请先等待标题及目录名称同步后重试。"); return; }
+      setFindAtomicAction(null);
+      const message = { query: findQuery, replacement: findReplacement, skipped: skippedMentions }; atomicFindMessage.current = message;
+      setAtomicFindBusy(true); setFindMessage("正在准备安全替换…");
+      try {
+        const result = await atomicFindReplace.current(selected, findReplacement, meta.data.title);
+        const current = exportContext.current;
+        if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client) return;
+        if (result.status === "submitted" || result.status === "pending") { if (atomicFindMessage.current === message) setFindMessage(`${result.status === "submitted" ? "替换已提交，正在核对保存结果" : "替换结果尚未确认，请核对状态"}${skippedMessage}。`); }
+        else if (result.status === "unchanged") setFindMessage(`${result.count} 处已是目标内容${skippedMessage}，文档未修改。`);
+        else if (result.status === "invalid_title") setFindMessage("替换后的标题不能有首尾空白、换行或超过 200 字；文档未修改。");
+        else if (result.status === "invalid_text") setFindMessage("替换内容包含无效字符；文档未修改。");
+        else if (result.status === "unsupported_title") setFindMessage("标题含有暂不支持的格式；文档未修改。");
+        else if (result.status === "stale") setFindMessage("内容或目录名称已变化，请检查名称并重新查找；文档未修改。");
+        else if (result.status === "size" || result.status === "work") setFindMessage("替换内容或范围过大，请缩小范围；文档未修改。");
+        else setFindMessage("当前无法安全替换，请检查同步状态或先核对待处理操作。");
+        if (result.status !== "submitted" && result.status !== "pending" && atomicFindMessage.current === message) atomicFindMessage.current = null;
+        if (result.status === "submitted" || result.status === "pending" || result.status === "unchanged") requestFindScroll();
+      } finally { const current = exportContext.current; if (current.mounted && current.id === id && current.user === me.user.id && current.client === sync.client) setAtomicFindBusy(false); }
+      return;
+    }
     if (all && selected.some((match) => match.table)) {
       const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
       if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容${skippedMessage}，文档未修改。`); requestFindScroll(); }
@@ -1240,6 +1308,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onUndoRegistrar={onUndoRegistrar}
                 onTableFindRegistrar={onTableFindRegistrar}
                 onFindBatchRegistrar={onFindBatchRegistrar}
+                onAtomicFindRegistrar={onAtomicFindRegistrar}
+                onAtomicFindStatus={onAtomicFindStatus}
+                onAtomicFindHistoryRegistrar={onAtomicFindHistoryRegistrar}
                 findMatches={displayedMatches}
                 activeFindMatch={activeMatch}
                 findNavigation={findNavigation}
@@ -1300,18 +1371,19 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             replacement={findReplacement}
             matchCount={matches.length}
             activeIndex={activeFindIndex}
-            canReplace={findCanReplace && !activeIsTitle && !activeMatch?.mention}
-            canReplaceAll={findCanReplace && replacementPlan.selected.length > 0}
+            canReplace={findCanReplace && !activeMatch?.mention && (!activeIsTitle || !titleSync.hasPending)}
+            canReplaceAll={findCanReplace && replacementPlan.selected.length > 0 && (!replacementPlan.selected.some((match) => idKey(match.block) === idKey(TITLE)) || !titleSync.hasPending)}
             scopeNotice="搜索标题、正文、分栏和表格；公式不在范围内。"
             warningMessage={`${replacementPlan.skippedTitles && findMode === "replace" ? `标题中的 ${replacementPlan.skippedTitles} 处结果暂不支持替换，全部替换时将跳过。` : ""}${replacementPlan.skippedMentions && findMode === "replace" ? `提及成员或文档的 ${replacementPlan.skippedMentions} 处结果不可替换，全部替换时将跳过。` : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
+            historyAction={findAtomicHistory ? { label: findAtomicHistory === "undo" ? "撤销本次替换" : "重做本次替换", disabled: atomicFindBusy, onClick: () => { const redo = findAtomicHistory === "redo"; setAtomicFindBusy(true); setFindMessage(redo ? "正在重做…" : "正在撤销…"); if (!atomicFindHistoryControl.current?.step(redo)) { setAtomicFindBusy(false); setFindMessage("最近操作已变化，请先处理较新的文档操作。"); } } } : undefined}
             onModeChange={setFindMode}
-            onQueryChange={(value) => { setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
-            onReplacementChange={(value) => { setFindReplacement(value); setFindMessage(""); setFindPending(null); }}
+            onQueryChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
+            onReplacementChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindReplacement(value); setFindMessage(""); setFindPending(null); }}
             onNavigate={(direction) => { if (matches.length) { setFindIndex((current) => (Math.max(0, Math.min(current, matches.length - 1)) + direction + matches.length) % matches.length); requestFindScroll(); } }}
-            onReplace={() => replaceFound(false)}
-            onReplaceAll={() => replaceFound(true)}
-            onClose={() => setFindOpen(false)}
+            onReplace={() => void replaceFound(false)}
+            onReplaceAll={() => void replaceFound(true)}
+            onClose={() => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindOpen(false); }}
           />
         </div>}
       </div>

@@ -96,7 +96,12 @@ import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommen
 import { searchableLocations, type FindMatch } from "./find-replace";
 import { readTableFindState, resolveTableFindMatch } from "./table-find";
 import { applyTableFindReplace, type TableFindResult } from "./table-find-apply";
-import { applyFindBatch, canStepFindBatch, FindBatchHistory, type BatchStatus } from "./find-batch";
+import { applyFindBatch, canStepFindBatch, FindBatchHistory, type BatchStatus, type FindBatchAlias } from "./find-batch";
+import { atomicFindPlanIsCurrent, prepareAtomicFindBatch, type AtomicFindPlan, type AtomicFindStatus } from "./atomic-find-batch";
+import { AtomicFindCommit } from "./atomic-find-commit";
+import { AtomicFindHistory, type AtomicFindAlias, type AtomicFindStep } from "./atomic-find-history";
+import { allocateAtomicFindReplica } from "./atomic-find-replica";
+import { parseTitleConsistency } from "@/pages/title-consistency";
 import { validEditorSelection } from "./selection-safety";
 import { editorClipboardRoute, isNativeControl } from "./native-control";
 import { TableCellHistory } from "./table-cell-history";
@@ -125,6 +130,9 @@ export interface ExternalUndoOptions {
 export type ExternalUndoRecorder = (tx: Tx, options?: ExternalUndoOptions) => void;
 export type TableFindReplacer = (match: FindMatch, replacement: string) => TableFindResult;
 export type FindBatchReplacer = (matches: readonly FindMatch[], replacement: string) => { status: BatchStatus; count: number };
+export type AtomicFindReplacer = (matches: readonly FindMatch[], replacement: string, directoryTitle: string) => Promise<{ status: AtomicFindStatus | "submitted" | "pending" | "busy"; count: number }>;
+export type AtomicFindStatusEvent = "saved" | "not_committed" | "history_lost" | "undone" | "redone" | "undo_failed" | "redo_failed";
+export type AtomicFindHistoryControl = { step: (redo: boolean) => boolean; available: () => "undo" | "redo" | null };
 
 interface Props {
   sync: SyncDoc;
@@ -135,6 +143,9 @@ interface Props {
   onUndoRegistrar?: (record: ExternalUndoRecorder | null) => void;
   onTableFindRegistrar?: (replace: TableFindReplacer | null) => void;
   onFindBatchRegistrar?: (replace: FindBatchReplacer | null) => void;
+  onAtomicFindRegistrar?: (replace: AtomicFindReplacer | null) => void;
+  onAtomicFindStatus?: (status: AtomicFindStatusEvent) => boolean;
+  onAtomicFindHistoryRegistrar?: (control: AtomicFindHistoryControl | null) => void;
   /** Search results are an ephemeral view; they never alter the document. */
   findMatches?: readonly FindMatch[];
   activeFindMatch?: FindMatch | null;
@@ -180,7 +191,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const pastedLinkSerial = useRef(0);
   const wrap = useRef<HTMLDivElement>(null);
@@ -197,6 +208,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const tableStructureFocus = useMemo(() => new Map<string, { block: string; row: number; col: number; fallback: HTMLTextAreaElement }>(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
+  const atomicFindHistory = useMemo(() => new AtomicFindHistory(), [sync.client]);
+  const atomicFindBatchAliases = useMemo(() => new Map<string, { before: FindBatchAlias[]; after: FindBatchAlias[] }>(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const columnAlignmentHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
@@ -204,8 +217,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
   const findBatchActionRef = useRef<FindBatchReplacer>(() => ({ status: "unavailable", count: 0 }));
   const findBatchHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
+  const atomicFindActionRef = useRef<AtomicFindReplacer>(async () => ({ status: "unavailable", count: 0 }));
+  const atomicFindHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const replaceTableFind = useCallback<TableFindReplacer>((match, replacement) => tableFindActionRef.current(match, replacement), []);
   const replaceFindBatch = useCallback<FindBatchReplacer>((matches, replacement) => findBatchActionRef.current(matches, replacement), []);
+  const replaceAtomicFind = useCallback<AtomicFindReplacer>((matches, replacement, title) => atomicFindActionRef.current(matches, replacement, title), []);
+  const atomicFindControl = useMemo<AtomicFindHistoryControl>(() => ({
+    step: (redo) => { const marker = um.peekMarker(redo); if (!marker?.startsWith("atomic-find:")) return false; atomicFindHistoryActionRef.current(marker, redo); return true; },
+    available: () => um.peekMarker(true)?.startsWith("atomic-find:") ? "redo" : um.peekMarker(false)?.startsWith("atomic-find:") ? "undo" : null,
+  }), [um]);
   const readOnlyRef = useRef(!!readOnly);
   const copyBlockedRef = useRef(!!onCopyBlock);
   copyBlockedRef.current = !!onCopyBlock;
@@ -224,6 +244,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   onShareBlockRef.current = onShareBlock;
   const onSaveTemplateRef = useRef(onSaveTemplate);
   onSaveTemplateRef.current = onSaveTemplate;
+  const atomicFindStatusRef = useRef(onAtomicFindStatus); atomicFindStatusRef.current = onAtomicFindStatus;
   readOnlyRef.current = !!readOnly;
   const commentAllowedRef = useRef(!!onComment);
   commentAllowedRef.current = !!onComment;
@@ -237,10 +258,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     | { kind: "table-resize"; plan: ConditionalAlignmentPlan; doc: Doc; structureBefore: string | null }
     | null
   >(null);
+  const pendingAtomicFind = useRef<{ kind: "initial"; plan: AtomicFindPlan; doc: Doc; anchor: object; atomicAliases: AtomicFindAlias[]; batchAliases: FindBatchAlias[] } | { kind: "step"; plan: AtomicFindStep; doc: Doc; key: string; redo: boolean; batchAliases: FindBatchAlias[] } | null>(null);
+  const atomicTableBusy = (block: OpId) => { const pending = pendingAtomicFind.current; return !!pending && (pending.kind === "initial" ? pending.plan.tables.map((table) => table.block) : atomicFindHistory.tableBlocks(pending.key)).some((item) => eqId(item, block)); };
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
-  const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
+  const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit | AtomicFindCommit } | null>(null);
   const alignmentBusy = useRef(false);
+  const [alignmentWorking, setAlignmentWorking] = useState(false);
+  const setAlignmentBusy = useCallback((value: boolean) => { alignmentBusy.current = value; if (mounted.current) setAlignmentWorking(value); }, []);
+  const sensitiveFindTransport = useRef(false);
   const alignmentPendingRef = useRef(false);
   const [alignmentPending, setAlignmentPending] = useState(false);
   const [alignmentMessage, setAlignmentMessage] = useState("");
@@ -257,9 +283,20 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       });
     } catch { return null; }
   }, [sync.client, userId]);
+  const conditionalFind = useMemo(() => {
+    if (typeof window === "undefined" || !Number.isSafeInteger(userId) || !userId || userId < 1) return null;
+    try {
+      const client = sync.client, account = userId;
+      return new AtomicFindCommit(new ConditionalJournal(browserConditionalJournalEnvironment(), client.docId, account), {
+        active: () => mounted.current && currentClient.current === client && currentUserId.current === account && !readOnlyRef.current,
+        observe: () => ({ docId: client.docId, userId: account, epoch: client.epoch, lastSeq: client.lastSeq, caughtUp: client.caughtUp, blocked: client.blocked, unacked: client.unacked }),
+      });
+    } catch { return null; }
+  }, [sync.client, userId]);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number; initialText?: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
+  const [toast, setToast] = useState("");
   const [mentionNavigationNotice, setMentionNavigationNotice] = useState("");
   const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
   const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" | "unsupported" } | null>(null);
@@ -296,6 +333,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     onFindBatchRegistrar?.(replaceFindBatch);
     return () => onFindBatchRegistrar?.(null);
   }, [onFindBatchRegistrar, replaceFindBatch]);
+  useLayoutEffect(() => {
+    onAtomicFindRegistrar?.(replaceAtomicFind);
+    return () => onAtomicFindRegistrar?.(null);
+  }, [onAtomicFindRegistrar, replaceAtomicFind]);
+  useLayoutEffect(() => {
+    onAtomicFindHistoryRegistrar?.(atomicFindControl);
+    return () => onAtomicFindHistoryRegistrar?.(null);
+  }, [onAtomicFindHistoryRegistrar, atomicFindControl]);
   const [, force] = useState(0);
   const releaseAlignmentOwner = useCallback(() => { const owner = alignmentOwner.current; alignmentOwner.current = null; if (owner) alignmentOwnerRelease.current = owner.lease.release(); }, []);
   const ensureAlignmentOwner = useCallback(async () => {
@@ -313,34 +358,97 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalAlignment, sync.client, userId, releaseAlignmentOwner]);
   useEffect(() => {
     let alive = true;
-    pendingAlignmentPlan.current = null; setPendingAlignment(false); setAlignmentMessage(""); setWaitingResizeSync(false);
+    pendingAlignmentPlan.current = null; pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); setWaitingResizeSync(false);
     const check = () => {
       if (conditionalAlignment) void conditionalAlignment.hasPending().then((pending) => {
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-        if (alignmentBusy.current && !pendingAlignmentPlan.current && !pending) return;
-        if (!pending && pendingAlignmentPlan.current) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
+        if (alignmentBusy.current && !pendingAlignmentPlan.current && !pendingAtomicFind.current && !pending) return;
+        if (!pending && (pendingAlignmentPlan.current || pendingAtomicFind.current)) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
         setPendingAlignment(pending);
-        setAlignmentMessage(pending ? "有一项布局操作尚待核对。" : "");
+        setAlignmentMessage(pending ? "有一项文档操作尚待核对。" : "");
       }).catch(() => { if (alive && currentClient.current === sync.client && currentUserId.current === userId) { setPendingAlignment(true); setAlignmentMessage("无法读取本地操作记录，请检查浏览器存储后重试。"); } });
     };
     const changed = (event: StorageEvent) => { if (userId && (event.key === null || event.key === conditionalJournalStorageKey(userId, sync.client.docId))) check(); };
     check(); window.addEventListener("storage", changed);
     return () => {
       alive = false; window.removeEventListener("storage", changed);
-      if (alignmentRequest.current?.owner === conditionalAlignment) { alignmentRequest.current.controller.abort(); alignmentRequest.current = null; alignmentBusy.current = false; }
+      if (alignmentRequest.current?.owner === conditionalAlignment || alignmentRequest.current?.owner === conditionalFind) { alignmentRequest.current.controller.abort(); alignmentRequest.current = null; setAlignmentBusy(false); sensitiveFindTransport.current = false; }
       if (alignmentOwner.current?.client === sync.client && alignmentOwner.current.userId === userId) releaseAlignmentOwner();
     };
-  }, [conditionalAlignment, setPendingAlignment, releaseAlignmentOwner, sync.client, userId]);
+  }, [conditionalAlignment, conditionalFind, setPendingAlignment, setAlignmentBusy, releaseAlignmentOwner, sync.client, userId]);
+  useEffect(() => {
+    if (!conditionalFind || !alignmentPending || !onCopyBlock && !readOnly) return;
+    let stopped = false, running = false, timer: number | undefined;
+    const redact = async () => {
+      if (stopped || running) return;
+      // A request can hold the journal lease while the network stalls. Abort
+      // that transport so the lease can be released and its payload redacted;
+      // the server outcome remains uncertain until the receipt is checked.
+      if (alignmentRequest.current?.owner === conditionalFind && sensitiveFindTransport.current) alignmentRequest.current.controller.abort();
+      if (alignmentBusy.current) return;
+      running = true;
+      try { await conditionalFind.redactPending(); if (!stopped && timer !== undefined) { window.clearInterval(timer); timer = undefined; } }
+      catch { /* Another tab or request may temporarily hold the journal. */ }
+      finally { running = false; }
+    };
+    const schedule = () => { if (timer === undefined) timer = window.setInterval(() => void redact(), 500); void redact(); };
+    const changed = (event: StorageEvent) => { if (userId && (event.key === null || event.key === conditionalJournalStorageKey(userId, sync.client.docId))) schedule(); };
+    schedule(); window.addEventListener("storage", changed);
+    return () => { stopped = true; if (timer !== undefined) window.clearInterval(timer); window.removeEventListener("storage", changed); };
+  }, [conditionalFind, alignmentPending, onCopyBlock, readOnly, sync.client, userId]);
 
   const reconcileAlignment = useCallback(async () => {
     if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
     if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能核对该操作。"); return; }
-    alignmentBusy.current = true;
+    setAlignmentBusy(true);
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
     const timer = window.setTimeout(() => controller.abort(), 10_000);
     let discarded = false, superseded = false, historyConflict = false, initialResize = false;
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在核对该操作，或浏览器不支持跨页面锁。"); return; }
+      const pendingKind = conditionalFind ? await conditionalFind.pendingKind() : "other";
+      if (pendingKind === "empty" && pendingAtomicFind.current) { setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
+      if (conditionalFind && (pendingKind === "find" || pendingKind === "redacted")) {
+        if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalFind;
+        if (pendingKind === "find" && copyBlockedRef.current) { await conditionalFind.redactPending(); setAlignmentMessage("正在核对受限文档操作。"); return; }
+        sensitiveFindTransport.current = pendingKind === "find";
+        const original = pendingAtomicFind.current;
+        let lostHistory = false, recovered = !original;
+        const result = await conditionalFind.finish(controller.signal, async (attempt, status, observe) => {
+          const pending = pendingAtomicFind.current, d = sync.client.doc;
+          if (!pending) return true;
+          if (d !== pending.doc) return false;
+          const proof = { attempt, status, observe, active: () => mounted.current && currentClient.current === sync.client && currentUserId.current === userId && !readOnlyRef.current && !controller.signal.aborted, digest: browserConditionalJournalEnvironment().digest };
+          if (pending.kind === "initial") {
+            const record = await atomicFindHistory.install(pending.plan, d, um, pending.anchor, proof, pending.atomicAliases);
+            if (record.status === "unobserved" || record.status === "conflict") return false;
+            if (record.status === "recorded" && !atomicFindBatchAliases.has(record.key)) { for (const key of atomicFindBatchAliases.keys()) if (!um.hasMarker(key)) atomicFindBatchAliases.delete(key); atomicFindBatchAliases.set(record.key, { before: pending.batchAliases, after: [] }); }
+            lostHistory = record.status === "no-history"; pendingAtomicFind.current = null; return true;
+          }
+          const finished = await atomicFindHistory.finish(d, um, pending.plan, proof);
+          if (finished === "ready") {
+            const rebases = atomicFindHistory.rebases(pending.plan), aliases = atomicFindBatchAliases.get(pending.key);
+            for (const rebase of rebases) tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+            if (aliases) { findBatchHistory.rebaseCaptured(d, pending.redo ? aliases.after : aliases.before, new Set(rebases.map((item) => idKey(item.block)))); if (pending.redo) aliases.before = pending.batchAliases; else aliases.after = pending.batchAliases; }
+            pendingAtomicFind.current = null; return true;
+          }
+          if (finished === "conflict" && um.peekMarker(pending.redo) === pending.key && um.discardMarker(pending.redo, pending.key, um.revision)) { atomicFindHistory.discard(pending.key); atomicFindBatchAliases.delete(pending.key); pendingAtomicFind.current = null; lostHistory = true; return true; }
+          return false;
+        });
+        if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+        if (result === "committed" || result === "not_committed") {
+          setPendingAlignment(false); pendingAtomicFind.current = null; releaseAlignmentOwner(); force((x) => x + 1); setAlignmentMessage("");
+          const event: AtomicFindStatusEvent | null = original?.kind === "initial" ? result === "not_committed" ? "not_committed" : lostHistory ? "history_lost" : "saved" : original?.kind === "step" ? result === "not_committed" ? original.redo ? "redo_failed" : "undo_failed" : lostHistory ? "history_lost" : original.redo ? "redone" : "undone" : null;
+          const handled = event ? atomicFindStatusRef.current?.(event) === true : false;
+          if (result === "not_committed") { if (!handled) setColumnNotice("文档已变化，本次替换未执行，请重新查找。"); }
+          else if (lostHistory || recovered) { if (!handled) setColumnNotice("操作已保存，但本次撤销记录不可用。"); }
+          else if (!handled) setToast(original?.kind === "step" ? original.redo ? "已重做" : "已撤销" : "替换已保存");
+        } else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
+        else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认替换结果，请保留当前记录并检查文档历史。");
+        else if (result === "blocked") setAlignmentMessage("暂时无法核对替换，请检查账号权限和浏览器存储。");
+        else setAlignmentMessage(pendingKind === "redacted" ? "替换结果尚未确认；受限内容未保存在本地，请稍后核对。" : "替换结果尚未确认，可核对状态或重试相同操作。");
+        return;
+      }
       const result = await conditionalAlignment.finish(controller.signal, (attempt) => {
         const pending = pendingAlignmentPlan.current;
         if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
@@ -378,26 +486,122 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       else if (result === "blocked") setAlignmentMessage("暂时无法核对操作，请检查账号权限和浏览器存储。");
       else setAlignmentMessage("操作结果尚未确认，可核对状态或重试相同操作。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("暂时无法核对操作，原请求仍保存在本地。"); }
-    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment]);
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); } }
+  }, [conditionalAlignment, conditionalFind, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, tableStructureHistory, tableHistory, findBatchHistory, atomicFindHistory, atomicFindBatchAliases, um, releaseAlignmentOwner, setPendingAlignment, setAlignmentBusy]);
 
   const retryAlignment = useCallback(async () => {
     if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
     if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能重试该操作。"); return; }
-    alignmentBusy.current = true;
+    setAlignmentBusy(true);
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
     const timer = window.setTimeout(() => controller.abort(), 10_000);
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
+      let kind = conditionalFind ? await conditionalFind.pendingKind() : "other";
+      if (conditionalFind && (kind === "find" || kind === "redacted")) {
+        if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalFind;
+        if (kind === "find" && copyBlockedRef.current) { await conditionalFind.redactPending(); kind = "redacted"; }
+        const memory = pendingAtomicFind.current;
+        if (kind === "redacted" && !memory) { setAlignmentMessage("受限内容未保存在本地，无法重试原请求；请核对状态。"); return; }
+        sensitiveFindTransport.current = kind === "find";
+        const result = await conditionalFind.retry(controller.signal, () => {
+          const pending = pendingAtomicFind.current;
+          return !pending || sync.client.doc === pending.doc && (pending.kind === "initial" ? atomicFindPlanIsCurrent(pending.plan, pending.doc) : atomicFindHistory.canSubmit(pending.doc, um, pending.plan));
+        }, memory?.plan.ops);
+        if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
+        window.setTimeout(() => void reconcileAlignment(), 0);
+        return;
+      }
       const result = await conditionalAlignment.retry(controller.signal, () => {
         const pending = pendingAlignmentPlan.current;
         return !pending || sync.client.doc === pending.doc && (pending.kind === "table-resize" ? tableWidthHistory.canSubmitInitial(pending.doc, um, pending.plan) : pending.history.canSubmitConditional(pending.doc, um, pending.plan));
       });
       if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("重试失败，原请求仍保存在本地。"); }
-    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, um, reconcileAlignment]);
+  }, [conditionalAlignment, conditionalFind, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, atomicFindHistory, um, setAlignmentBusy, reconcileAlignment]);
+
+  const startAtomicFind = useCallback<AtomicFindReplacer>(async (matches, replacement, directoryTitle) => {
+    const client = sync.client, d = client.doc;
+    if (!conditionalFind || !conditionalAlignment || !d || !userId || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) return { status: "unavailable", count: 0 };
+    if (alignmentBusy.current || alignmentPendingRef.current) return { status: "busy", count: 0 };
+    setAlignmentBusy(true);
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalFind };
+    const timer = window.setTimeout(() => controller.abort(), 25_000);
+    try {
+      if (!await ensureAlignmentOwner()) return { status: "busy", count: 0 };
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || readOnlyRef.current || client.doc !== d || !canStepFindBatch(client) || client.epoch === null || controller.signal.aborted) { releaseAlignmentOwner(); return { status: "unavailable", count: 0 }; }
+      const replica = await allocateAtomicFindReplica(client.docId, controller.signal);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || readOnlyRef.current || client.doc !== d || !canStepFindBatch(client) || client.epoch !== replica.epoch || controller.signal.aborted) { releaseAlignmentOwner(); return { status: "stale", count: 0 }; }
+      const prepared = prepareAtomicFindBatch(d, replica.author, matches, replacement, directoryTitle);
+      if (prepared.status !== "ready") { releaseAlignmentOwner(); return { status: prepared.status, count: prepared.status === "unchanged" ? matches.length : 0 }; }
+      const anchor = um.markInsertionPoint(), head = client.lastSeq, epoch = client.epoch;
+      const tableBlocks = prepared.plan.tables.map((table) => table.block);
+      pendingAtomicFind.current = { kind: "initial", plan: prepared.plan, doc: d, anchor, atomicAliases: atomicFindHistory.capture(d, tableBlocks), batchAliases: findBatchHistory.capture(d, tableBlocks) };
+      setPendingAlignment(true); setAlignmentMessage("正在安全提交替换…");
+      const persist = !copyBlockedRef.current;
+      const result = await conditionalFind.start(prepared.plan.ops, epoch, head, controller.signal, () => client.doc === d && !readOnlyRef.current && (!persist || !copyBlockedRef.current) && atomicFindPlanIsCurrent(prepared.plan, d), () => { sensitiveFindTransport.current = persist; }, persist);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return { status: "pending", count: matches.length };
+      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); return { status: "stale", count: 0 }; }
+      if (result === "occupied") { pendingAtomicFind.current = null; setAlignmentMessage("已有操作待核对，请先处理。"); return { status: "busy", count: 0 }; }
+      setAlignmentMessage(result === "sent" ? "替换已提交，正在核对同步结果。" : "替换结果尚未确认，请核对状态。");
+      return { status: result === "sent" ? "submitted" : "pending", count: matches.length };
+    } catch {
+      let pending = true; try { pending = await conditionalAlignment.hasPending(); } catch { /* Preserve an unreadable journal. */ }
+      if (mounted.current && currentClient.current === client && currentUserId.current === userId) {
+        setPendingAlignment(pending);
+        if (pending) setAlignmentMessage("替换结果尚未确认，原请求仍待核对。");
+        else { pendingAtomicFind.current = null; releaseAlignmentOwner(); setAlignmentMessage(""); }
+      }
+      return { status: pending ? "pending" : "unavailable", count: 0 };
+    } finally {
+      window.clearTimeout(timer);
+      if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); }
+      if (alignmentPendingRef.current) window.setTimeout(() => void reconcileAlignment(), 0);
+    }
+  }, [conditionalFind, conditionalAlignment, ensureAlignmentOwner, releaseAlignmentOwner, sync.client, userId, atomicFindHistory, findBatchHistory, um, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
+
+  const startAtomicFindStep = useCallback(async (key: string, redo: boolean) => {
+    const client = sync.client, d = client.doc;
+    const failed = () => { atomicFindStatusRef.current?.(redo ? "redo_failed" : "undo_failed"); };
+    if (!conditionalFind || !conditionalAlignment || !d || !userId || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}。`); failed(); return; }
+    if (alignmentBusy.current || alignmentPendingRef.current) { setColumnNotice("请先核对尚未完成的文档操作。"); failed(); return; }
+    setAlignmentBusy(true);
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalFind };
+    const timer = window.setTimeout(() => controller.abort(), 25_000);
+    try {
+      if (!await ensureAlignmentOwner()) { setColumnNotice("另一页面正在处理文档操作。"); failed(); return; }
+      const replica = await allocateAtomicFindReplica(client.docId, controller.signal);
+      const response = await fetch(`/api/docs/${client.docId}/title-consistency`, { credentials: "same-origin", cache: "no-store", headers: { "X-Jiange-User-Id": String(userId) }, signal: controller.signal });
+      if (!response.ok) throw new Error("title check failed");
+      const snapshot = parseTitleConsistency(await response.json());
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || readOnlyRef.current || client.doc !== d || !canStepFindBatch(client) || client.epoch !== replica.epoch || snapshot.historyEpoch !== client.epoch || snapshot.head !== client.lastSeq || controller.signal.aborted) { releaseAlignmentOwner(); setColumnNotice("文档状态已变化，请重新操作。"); failed(); return; }
+      const prepared = atomicFindHistory.prepare(d, um, key, redo, replica.author, snapshot.directoryTitle);
+      if (prepared.status !== "ready") { releaseAlignmentOwner(); if (um.peekMarker(redo) === key) setTableHistoryConflict({ client, key, redo, revision: um.revision, ...(prepared.status === "size" ? { reason: "size" } : {}) }); failed(); return; }
+      pendingAtomicFind.current = { kind: "step", plan: prepared.plan, doc: d, key, redo, batchAliases: findBatchHistory.capture(d, atomicFindHistory.tableBlocks(key)) };
+      setPendingAlignment(true); setAlignmentMessage(`正在安全提交${redo ? "重做" : "撤销"}…`);
+      const persist = !copyBlockedRef.current;
+      const result = await conditionalFind.start(prepared.plan.ops, client.epoch, client.lastSeq, controller.signal, () => client.doc === d && !readOnlyRef.current && (!persist || !copyBlockedRef.current) && atomicFindHistory.canSubmit(d, um, prepared.plan), () => { sensitiveFindTransport.current = persist; }, persist);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
+      if (result === "blocked") { pendingAtomicFind.current = null; setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("文档状态已变化，未执行该操作。"); failed(); }
+      else if (result === "occupied") { pendingAtomicFind.current = null; setAlignmentMessage("已有操作待核对，请先处理。"); failed(); }
+      else setAlignmentMessage(result === "sent" ? "操作已提交，正在核对同步结果。" : "操作结果尚未确认，请核对状态。");
+    } catch {
+      let pending = true; try { pending = await conditionalAlignment.hasPending(); } catch { /* Preserve an unreadable journal. */ }
+      if (mounted.current && currentClient.current === client && currentUserId.current === userId) {
+        setPendingAlignment(pending);
+        if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍待核对。");
+        else { pendingAtomicFind.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交，请检查文档状态后重试。"); failed(); }
+      }
+    } finally {
+      window.clearTimeout(timer);
+      if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); }
+      if (alignmentPendingRef.current) window.setTimeout(() => void reconcileAlignment(), 0);
+    }
+  }, [conditionalFind, conditionalAlignment, ensureAlignmentOwner, releaseAlignmentOwner, sync.client, userId, atomicFindHistory, findBatchHistory, um, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
+  atomicFindActionRef.current = startAtomicFind;
+  atomicFindHistoryActionRef.current = (key, redo) => { void startAtomicFindStep(key, redo); };
 
   const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
     if (!mounted.current) return;
@@ -407,7 +611,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交布局撤销。"); return; }
     if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}布局。`); return; }
     if (sync.client.epoch === null) { setColumnNotice("当前服务端不支持安全撤销，请升级服务端后重试。"); return; }
-    alignmentBusy.current = true;
+    setAlignmentBusy(true);
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
     const timer = window.setTimeout(() => controller.abort(), 10_000);
     try {
@@ -443,9 +647,9 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍保存在本地。");
         else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交布局操作，请检查浏览器存储。"); }
       }
-    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
+    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
 
   /** Submit an online resize against a confirmed server head; keep uncertain requests recoverable. */
   const startTableResize = useCallback(async (doc: Doc, block: OpId, before: TableWidthBefore, value: string, structureBefore: string | null, fallback: () => boolean) => {
@@ -453,7 +657,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (alignmentBusy.current || alignmentPendingRef.current) { setColumnNotice("上一项布局操作仍在核对，请稍后再试。"); return; }
     if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交列宽调整。"); return; }
     setColumnNotice("");
-    alignmentBusy.current = true;
+    setAlignmentBusy(true);
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
     const timer = window.setTimeout(() => controller.abort(), 10_000);
     let submitted = false;
@@ -500,13 +704,13 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           else setColumnNotice("无法安全提交列宽调整，请检查浏览器存储。");
         }
       }
-    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; if (mounted.current) setWaitingResizeSync(false); } }
+    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); if (mounted.current) setWaitingResizeSync(false); } }
     await reconcileAlignment();
     for (let attempt = 0; attempt < 4 && alignmentPendingRef.current && mounted.current; attempt++) {
       await new Promise((resolve) => window.setTimeout(resolve, 250));
       await reconcileAlignment();
     }
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, tableWidthHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, tableWidthHistory, um, releaseAlignmentOwner, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
 
   useEffect(() => {
     if (!alignmentPending) return;
@@ -544,7 +748,6 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const [selBlocks, setSelBlocks] = useState<string[]>([]);
   const selBlocksRef = useRef(selBlocks);
   selBlocksRef.current = selBlocks;
-  const [toast, setToast] = useState("");
   /** 正在上传的附件：在插入位置的块下方显示占位与进度（不写入文档）。 */
   const [uploading, setUploading] = useState<{ anchor: string; name: string; percent: number; index: number; total: number } | null>(null);
   const [memberCard, setMemberCard] = useState<{ id: number; name: string; x: number; y: number } | null>(null);
@@ -1119,7 +1322,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:") || marker.startsWith("table-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("atomic-find:")) atomicFindHistoryActionRef.current(marker, redo); else if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:") || marker.startsWith("table-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -2084,15 +2287,19 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const d = sync.client.doc;
     if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !match.table) return "unavailable";
     const aliases = findBatchHistory.capture(d, [match.block]);
+    const atomicAliases = atomicFindHistory.capture(d, [match.block]);
     const result = applyTableFindReplace(d, sync.client, um, tableHistory, match, replacement);
-    if (result.status === "replaced") findBatchHistory.recordTableChange(`table:${idKey(match.block)}:${match.table.row}:${match.table.col}`, aliases, false);
+    if (result.status === "replaced") { const key = `table:${idKey(match.block)}:${match.table.row}:${match.table.col}`; findBatchHistory.recordTableChange(key, aliases, false); atomicFindHistory.recordTableChange(key, atomicAliases, false); }
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return result.status;
   };
   findBatchActionRef.current = (matches, replacement) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0) return { status: "unavailable", count: 0 };
+    const atomicAliases = atomicFindHistory.capture(d, matches.filter((match) => !!match.table).map((match) => match.block));
     const result = applyFindBatch(d, um, findBatchHistory, matches, replacement);
+    const marker = um.peekMarker(false);
+    if (result.status === "replaced" && marker?.startsWith("find-batch:")) atomicFindHistory.recordTableChange(marker, atomicAliases, false);
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return { status: result.status, count: result.count };
   };
@@ -2130,6 +2337,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const location = /^table:(\d+):(\d+):/.exec(key);
     const block = location ? { client: Number(location[1]), clock: Number(location[2]) } : null;
     const aliases = block ? findBatchHistory.capture(d, [block]) : [];
+    const atomicAliases = block ? atomicFindHistory.capture(d, [block]) : [];
     if (block && tableStructureHistory.beforeEditStep(d, block, key, redo) === "conflict") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
       return;
@@ -2145,6 +2353,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       tableWidthHistory.rebaseData(d, block, result.rebase.logical, result.rebase.actual, result.ops);
     }
     findBatchHistory.finishTableChange(d, key, redo, aliases);
+    atomicFindHistory.finishTableChange(d, key, redo, atomicAliases);
     sync.client.push(result.ops);
     force((x) => x + 1);
     publish();
@@ -2202,6 +2411,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!d || readOnlyRef.current) return;
     if (!canStepFindBatch(sync.client)) { setBatchSyncNotice(redo ? "redo" : "undo"); return; }
     setBatchSyncNotice(null);
+    const atomicAliases = atomicFindHistory.capture(d, findBatchHistory.tableBlocks(key));
     const result = findBatchHistory.step(d, um, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, reason: result.status === "size" ? "size" : undefined });
@@ -2209,6 +2419,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     }
     setTableHistoryConflict(null);
     for (const rebase of result.rebases) tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+    atomicFindHistory.finishTableChange(d, key, redo, atomicAliases);
     sync.client.push(result.ops); force((x) => x + 1); publish();
   };
   tableCellUndoRef.current = (target, redo) => {
@@ -2218,7 +2429,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!cell || !block?.dataset.block) return true;
     const key = `table:${block.dataset.block}:${cell[1]}:${cell[2]}`;
     const tableKey = `table:${block.dataset.block}:-1:-1`;
-    if (um.peekMarker(redo)?.startsWith("find-batch:")) findBatchHistoryActionRef.current(um.peekMarker(redo)!, redo);
+    if (um.peekMarker(redo)?.startsWith("atomic-find:")) atomicFindHistoryActionRef.current(um.peekMarker(redo)!, redo);
+    else if (um.peekMarker(redo)?.startsWith("find-batch:")) findBatchHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo)?.startsWith(`table-structure:${block.dataset.block}:`)) tableStructureHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo)?.startsWith(`table-width:${block.dataset.block}:`)) columnAlignmentHistoryActionRef.current(um.peekMarker(redo)!, redo);
     else if (um.peekMarker(redo) === key) tableHistoryActionRef.current(key, redo);
@@ -2343,7 +2555,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {mentionNavigationNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{mentionNavigationNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setMentionNavigationNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对布局操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></>}</div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button></>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
@@ -2353,9 +2565,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
             else if (tableHistoryConflict.key.startsWith("column-width:")) { if (sync.client.doc) columnWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("table-width:")) { if (sync.client.doc) tableWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("column-move:")) { if (sync.client.doc) columnMoveHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
-            else if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
+            else if (tableHistoryConflict.key.startsWith("find-batch:")) { findBatchHistory.discard(tableHistoryConflict.key); atomicFindHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("atomic-find:")) { atomicFindHistory.discard(tableHistoryConflict.key); atomicFindBatchAliases.delete(tableHistoryConflict.key); }
             else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
-            else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); atomicFindHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
           }
           else setColumnNotice("撤销记录已变化，未跳过任何记录，请重新操作。");
           setTableHistoryConflict(null);
@@ -2367,7 +2580,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         <textarea aria-label="未应用的草稿" readOnly value={conflictDraft.text} className="mt-2 w-full resize-y rounded border bg-surface p-2" rows={3} />
         <button type="button" className="mt-2 rounded border px-2 py-1 hover:bg-hover" onClick={() => setConflictDraft(null)}>关闭</button>
       </div>}
-      {conflictDraft === null && doc && !readOnly && blocks.length === 1 && doc.blockInfo(blocks[0]).type === "paragraph" && doc.richChars(blocks[0]).length === 0 && <span aria-hidden="true" data-editor-placeholder className="pointer-events-none absolute left-0 top-[2px] text-[16px] leading-7 text-subtle">输入“/”快速插入内容</span>}
+      <div className="relative">
+      {conflictDraft === null && doc && !readOnly && blocks.length === 1 && doc.blockInfo(blocks[0]).type === "paragraph" && doc.richChars(blocks[0]).length === 0 && <span aria-hidden="true" data-editor-placeholder className={cn("pointer-events-none absolute left-0 text-[16px] leading-7 text-subtle", (columnNotice || mentionNavigationNotice || alignmentPending || batchSyncNotice || tableHistoryConflict) ? "top-[42px]" : "top-[2px]")}>输入“/”快速插入内容</span>}
       <div
         ref={root}
         contentEditable={!!doc && !readOnly}
@@ -2405,9 +2619,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           blocks.map((b) => {
             const k = idKey(b);
             const info = doc.blockInfo(b);
+            const atomicTableLocked = alignmentPending && atomicTableBusy(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
             const tableSnapshot = info.type === "table" ? { data: version("tableData"), merges: version("tableMerges"), widths: version("tableWidths"), type: version("type"), rows: version("tbl.rows"), cols: version("tbl.cols") } : null;
             const tableClipboard = (operation: { kind: "paste"; row: number; col: number; text: string; literal?: boolean; rich?: RichTableClipboard } | { kind: "cut" | "clear"; range: CellRange } | { kind: "append" }): string | null => {
+              if (atomicTableBusy(b)) return "请等待替换操作确认后再编辑表格。";
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b);
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
@@ -2438,6 +2654,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               }
               if (!result.changed) return null;
               const aliases = findBatchHistory.capture(doc, [b]);
+              const atomicAliases = atomicFindHistory.capture(doc, [b]);
               const structureBefore = tableStructureHistory.capture(doc, b, um);
               const tx = new Tx(doc);
               writeTable(tx, b, current.props, result.rows, doc.client);
@@ -2446,6 +2663,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               const key = `table:${idKey(b)}:-1:-1`;
               tableHistory.record(sync.client, key, JSON.stringify(beforeRows), tableDataOf(doc.blockInfo(b).props), tableSnapshot.data, next ? idKey(next) : null, tableHistoryGuard(doc, b), operation.kind, Date.now(), false);
               findBatchHistory.recordTableChange(key, aliases, false);
+              atomicFindHistory.recordTableChange(key, atomicAliases, false);
               um.seal();
               um.recordMarker(key, false);
               tableStructureHistory.recordEdit(doc, b, key, structureBefore, false, um);
@@ -2456,6 +2674,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               return null;
             };
             const tableFormat = (target: TableFormatTarget, format: { kind: "fill"; value: string } | { kind: "align"; axis: TableAlignAxis; value: TableAlign }): string | null => {
+              if (atomicTableBusy(b)) return "请等待替换操作确认后再编辑表格。";
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b), rows = tableRowsOf(current.props), cols = rows[0]?.length ?? 0;
               if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
@@ -2476,6 +2695,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               return null;
             };
             const applyTableStructure = (rows: string[][], merges: Merge[], widths?: Widths, operation?: TableOp): string | null => {
+              if (atomicTableBusy(b)) return "请等待替换操作确认后再编辑表格。";
               if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b).props, previous = tableRowsOf(current);
               let stableMove: Extract<TableOp, { kind: "reorderRows" | "reorderCols" }> | null = null;
@@ -2708,7 +2928,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     return applyTableStructure(plan.rows, plan.merges, widths, op);
                   } };
                 }}
-                onTableEdit={readOnly ? undefined : (r, c, v, kind) => {
+                onTableEdit={readOnly || atomicTableLocked ? undefined : (r, c, v, kind) => {
+                  if (atomicTableBusy(b)) { setColumnNotice("请等待替换操作确认后再编辑表格。"); return; }
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return;
                   const tx = new Tx(doc);
                   const info = doc.blockInfo(b);
@@ -2721,6 +2942,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const previousVersion = doc.propVersion(b, "tableData");
                   const historyGuard = tableHistoryGuard(doc, b);
                   const aliases = findBatchHistory.capture(doc, [b]);
+                  const atomicAliases = atomicFindHistory.capture(doc, [b]);
                   const structureBefore = tableStructureHistory.capture(doc, b, um);
                   const rows = applyTableEdit(before, r, c, v);
                   // 单元格级写入：只写变动的单元格（+ 兼容镜像），不覆盖协作者的其他单元格。
@@ -2733,6 +2955,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     const afterValue = r < 0 ? tableDataOf(doc.blockInfo(b).props) : v;
                     const merged = tableHistory.record(sync.client, key, beforeValue, afterValue, previousVersion ? idKey(previousVersion) : null, next ? idKey(next) : null, historyGuard, kind, Date.now(), um.peekMarker(false) === key);
                     findBatchHistory.recordTableChange(key, aliases, merged);
+                    atomicFindHistory.recordTableChange(key, atomicAliases, merged);
                     um.recordMarker(key, merged);
                     tableStructureHistory.recordEdit(doc, b, key, structureBefore, merged, um);
                   }
@@ -2740,7 +2963,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   force((x) => x + 1);
                   publish();
                 }}
-                onTableHeader={readOnly ? undefined : (axis, enabled) => {
+                onTableHeader={readOnly || atomicTableLocked ? undefined : (axis, enabled) => {
+                  if (atomicTableBusy(b)) { setColumnNotice("请等待替换操作确认后再编辑表格。"); return; }
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
                   // A legacy grid is migrated independently of the visible header
                   // change. Undo must not remove its axes: offline collaborators may
@@ -2757,13 +2981,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (marker) um.recordMarker(marker);
                   sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force((x) => x + 1); publish();
                 }}
-                onTableFill={readOnly ? undefined : (range, value) => tableFormat(range, { kind: "fill", value })}
-                onTableAlign={readOnly ? undefined : (range, axis, value) => tableFormat(range, { kind: "align", axis, value })}
-                onTablePaste={readOnly ? undefined : (row, col, text, literal, rich) => tableClipboard({ kind: "paste", row, col, text, literal, rich })}
-                onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
-                onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
-                onTableAppendRow={readOnly ? undefined : () => tableClipboard({ kind: "append" })}
-                onTableDeleteSelection={readOnly ? undefined : (range) => {
+                onTableFill={readOnly || atomicTableLocked ? undefined : (range, value) => tableFormat(range, { kind: "fill", value })}
+                onTableAlign={readOnly || atomicTableLocked ? undefined : (range, axis, value) => tableFormat(range, { kind: "align", axis, value })}
+                onTablePaste={readOnly || atomicTableLocked ? undefined : (row, col, text, literal, rich) => tableClipboard({ kind: "paste", row, col, text, literal, rich })}
+                onTableCut={readOnly || onCopyBlock || atomicTableLocked ? undefined : (range) => tableClipboard({ kind: "cut", range })}
+                onTableClear={readOnly || atomicTableLocked ? undefined : (range) => tableClipboard({ kind: "clear", range })}
+                onTableAppendRow={readOnly || atomicTableLocked ? undefined : () => tableClipboard({ kind: "append" })}
+                onTableDeleteSelection={readOnly || atomicTableLocked ? undefined : (range) => {
+                  if (atomicTableBusy(b)) return "请等待替换操作确认后再编辑表格。";
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
                   const current = doc.blockInfo(b);
                   if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("tableWidths") !== tableSnapshot.widths || version("type") !== tableSnapshot.type || version("tbl.rows") !== tableSnapshot.rows || version("tbl.cols") !== tableSnapshot.cols || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
@@ -2839,11 +3064,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   // No publish(): it would drop the flowchart pointer/selection presence.
                   return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? Object.keys(intent.writes) : [] };
                 }}
-                onTableChange={readOnly ? undefined : applyTableStructure}
+                onTableChange={readOnly || atomicTableLocked ? undefined : applyTableStructure}
                 uploadNotice={uploading?.anchor === k ? uploading : null}
               />
             );
           })}
+      </div>
       </div>
       <input
         ref={fileInput}

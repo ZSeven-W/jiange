@@ -8,8 +8,9 @@ import { tableHistoryGuard } from "./table-history-undo";
 const STATE_LIMIT = 16 << 20;
 type State = NonNullable<ReturnType<typeof readTableFindState>>;
 type Cell = { row: number; col: number };
-type TablePlan = { block: OpId; state: State; before: string[][]; after: string[][]; cells: Cell[] };
-type Alias = { key: string; block: string; expected: string; versions: (string | null)[] };
+export type TablePlan = { block: OpId; state: State; before: string[][]; after: string[][]; cells: Cell[] };
+export type FindBatchAlias = { key: string; block: string; expected: string; versions: (string | null)[] };
+type Alias = FindBatchAlias;
 type TableHistory = { block: OpId; before: string[][]; after: string[][]; cells: Cell[]; expected: string; versions: (string | null)[]; beforeData: string | null; afterData: string | null; guard: string };
 type TextBlock = { block: OpId; parent: OpId };
 type Entry = { doc: Doc; text: UndoManager<null>; textBlocks: TextBlock[]; tables: TableHistory[]; beforeAliases: Alias[]; afterAliases: Alias[] };
@@ -23,7 +24,7 @@ export function canStepFindBatch(state: { caughtUp: boolean; status: string; una
   return state.caughtUp && state.status === "synced" && state.unacked === 0 && !state.blocked;
 }
 
-function plans(doc: Doc, matches: readonly FindMatch[], replacement: string): { text: FindMatch[]; tables: TablePlan[] } | null {
+export function planFindBatch(doc: Doc, matches: readonly FindMatch[], replacement: string): { text: FindMatch[]; tables: TablePlan[] } | null {
   const text: FindMatch[] = [], tables = new Map<string, TablePlan>(), cells = new Map<string, FindMatch[]>();
   for (const match of matches) {
     if (match.doc !== doc) return null;
@@ -58,7 +59,7 @@ function plans(doc: Doc, matches: readonly FindMatch[], replacement: string): { 
 }
 
 const withinFrame = (ops: readonly Op[], limit = FIND_FRAME_LIMIT) => !ops.length || encodeClientMsg({ type: "ops", batch: encodeOps([...ops]) }).byteLength <= Math.min(FIND_FRAME_LIMIT, limit);
-function writePlans(doc: Doc, tables: readonly { block: OpId; rows: string[][] }[]): Op[] {
+export function writeFindBatchTables(doc: Doc, tables: readonly { block: OpId; rows: string[][] }[]): Op[] {
   const tx = new Tx(doc);
   for (const table of tables) {
     const state = readTableFindState(doc, table.block);
@@ -73,7 +74,7 @@ export function applyFindBatch<S>(doc: Doc, undo: UndoManager<S>, history: FindB
   if (!matches.length || !matches.some((match) => match.table)) return { status: "unavailable", ops: [], count: 0 };
   if (replacement.length * matches.length > FIND_REPLACEMENT_BYTES_LIMIT || new TextEncoder().encode(replacement).length * matches.length > FIND_REPLACEMENT_BYTES_LIMIT) return { status: "size", ops: [], count: 0 };
   if (([...replacement].length * matches.length) + matches.reduce((n, match) => n + [...match.text].length, 0) > FIND_CHANGED_CODEPOINT_LIMIT) return { status: "size", ops: [], count: 0 };
-  const original = plans(doc, matches, replacement);
+  const original = planFindBatch(doc, matches, replacement);
   if (!original) return { status: "stale", ops: [], count: 0 };
   const work = original.tables.reduce((sum, table) => sum + table.before.reduce((n, row) => n + row.length + row.reduce((total, cell) => total + cell.length, 0), 0), 0);
   if (work > FIND_WORK_LIMIT) return { status: "work", ops: [], count: 0 };
@@ -82,27 +83,27 @@ export function applyFindBatch<S>(doc: Doc, undo: UndoManager<S>, history: FindB
   try {
     const encoded = doc.encodeState();
     if (encoded.byteLength > STATE_LIMIT) return { status: "work", ops: [], count: 0 };
-    const copy = Doc.fromState(doc.client, encoded), rebound = matches.map((match) => ({ ...match, doc: copy })), test = plans(copy, rebound, replacement);
+    const copy = Doc.fromState(doc.client, encoded), rebound = matches.map((match) => ({ ...match, doc: copy })), test = planFindBatch(copy, rebound, replacement);
     if (!test) return { status: "stale", ops: [], count: 0 };
     const textTx = new Tx(copy), textResult = replaceMatches(textTx, test.text, replacement);
     if (textResult.skipped) return { status: "stale", ops: [], count: 0 };
-    const tableOps = writePlans(copy, test.tables.map((table) => ({ block: table.block, rows: table.after })));
+    const tableOps = writeFindBatchTables(copy, test.tables.map((table) => ({ block: table.block, rows: table.after })));
     if (!withinFrame([...textTx.ops, ...tableOps], frameLimit)) return { status: "size", ops: [], count: 0 };
     // Also bound the immediate inverse, which may restore longer cell values.
     const previewHistory = new UndoManager<null>(); previewHistory.record(textTx, null, null);
     const reverseText = previewHistory.undo(copy)?.ops ?? [];
-    const reverseTables = writePlans(copy, test.tables.map((table) => ({ block: table.block, rows: table.before })));
+    const reverseTables = writeFindBatchTables(copy, test.tables.map((table) => ({ block: table.block, rows: table.before })));
     if (!withinFrame([...reverseText, ...reverseTables], frameLimit)) return { status: "size", ops: [], count: 0 };
   } catch { return { status: "preflight", ops: [], count: 0 }; }
 
   // No asynchronous work occurs between validation and applying this batch.
-  const plan = plans(doc, matches, replacement);
+  const plan = planFindBatch(doc, matches, replacement);
   if (!plan) return { status: "stale", ops: [], count: 0 };
   const beforeAliases = history.capture(doc, plan.tables.map((table) => table.block));
   const beforeData = new Map(plan.tables.map((table) => { const version = doc.propVersion(table.block, "tableData"); return [idKey(table.block), version ? idKey(version) : null]; }));
   const textTx = new Tx(doc), textResult = replaceMatches(textTx, plan.text, replacement);
   if (textResult.skipped) throw new Error("find snapshot changed during synchronous application");
-  const tableOps = writePlans(doc, plan.tables.map((table) => ({ block: table.block, rows: table.after })));
+  const tableOps = writeFindBatchTables(doc, plan.tables.map((table) => ({ block: table.block, rows: table.after })));
   const ops = [...textTx.ops, ...tableOps];
   if (!ops.length) return { status: "unchanged", ops: [], count: matches.length };
   const textHistory = new UndoManager<null>(); textHistory.shareRemappings(undo); textHistory.record(textTx, null, null);
@@ -141,6 +142,8 @@ export class FindBatchHistory {
       table.expected = state.snapshot; table.versions = table.cells.map((cell) => state.cellVersion(cell.row, cell.col));
     }
   }
+  rebaseCaptured(doc: Doc, aliases: readonly FindBatchAlias[], allowed: ReadonlySet<string>) { this.rebase(doc, aliases.filter((alias) => allowed.has(alias.block))); }
+  tableBlocks(key: string): OpId[] { return this.entries.get(key)?.tables.map((table) => table.block) ?? []; }
   /** Track guarded cell actions interleaved with a mixed replacement. */
   recordTableChange(key: string, before: Alias[], merged: boolean) {
     if (!before.length && !this.tableActions.has(key)) return;
@@ -183,12 +186,12 @@ export class FindBatchHistory {
     try {
       const state = doc.encodeState(); if (state.byteLength > STATE_LIMIT) return { status: "size" };
       const copy = Doc.fromState(doc.client, state), text = entry.text.preview(copy, redo)?.ops ?? [];
-      const tables = writePlans(copy, entry.tables.map((table) => ({ block: table.block, rows: redo ? table.after : table.before })));
+      const tables = writeFindBatchTables(copy, entry.tables.map((table) => ({ block: table.block, rows: redo ? table.after : table.before })));
       if (!withinFrame([...text, ...tables])) return { status: "size" };
     } catch { return { status: "conflict" }; }
     const aliases = this.capture(doc, entry.tables.map((table) => table.block), key);
     const text = (redo ? entry.text.redo(doc) : entry.text.undo(doc))?.ops ?? [];
-    const tables = writePlans(doc, entry.tables.map((table) => ({ block: table.block, rows: redo ? table.after : table.before })));
+    const tables = writeFindBatchTables(doc, entry.tables.map((table) => ({ block: table.block, rows: redo ? table.after : table.before })));
     for (const table of entry.tables) {
       const state = readTableFindState(doc, table.block)!;
       table.expected = state.snapshot; table.versions = table.cells.map((cell) => state.cellVersion(cell.row, cell.col));

@@ -33,13 +33,13 @@ export interface FindOptions {
   caseSensitive?: boolean;
 }
 
-/** Partition immutable search results before replacing. Title writes need a
- * separate atomic directory-name commit, and mentions must remain intact. */
-export function planFindReplacement(matches: readonly FindMatch[], active: FindMatch | null, all: boolean): { selected: FindMatch[]; skippedTitles: number; skippedMentions: number } {
+/** Partition immutable search results before replacing. Title matches may be
+ * selected only by a caller that uses the guarded title-and-directory commit. */
+export function planFindReplacement(matches: readonly FindMatch[], active: FindMatch | null, all: boolean, options: { allowTitle?: boolean } = {}): { selected: FindMatch[]; skippedTitles: number; skippedMentions: number } {
   const selected: FindMatch[] = [];
   let skippedTitles = 0, skippedMentions = 0;
   for (const match of all ? matches : active ? [active] : []) {
-    if (eqId(match.block, TITLE)) skippedTitles++;
+    if (eqId(match.block, TITLE) && !options.allowTitle) skippedTitles++;
     else if (match.mention) skippedMentions++;
     else selected.push(match);
   }
@@ -146,9 +146,9 @@ function sharedMarks(marks: Record<string, string>[]): Record<string, string> {
 
 /**
  * Replaces snapshots from the end of the current document towards the start.
- * Title matches are deliberately skipped until metadata and collaborative
- * title writes share a safe commit path. All other operations go into the
- * caller's one Tx for one undo step. Stale, moved
+ * Title matches remain disabled by default; callers opting in must use an
+ * isolated replica and a guarded title-and-directory commit. Operations go
+ * into the caller's one Tx for one undo step. Stale, moved
  * outside the body, overlapping or wrong-document snapshots are skipped.
  * Remote inserts arriving later are not deleted: Tx deletes only captured IDs.
  * This function is synchronous: it validates one snapshot of each affected
@@ -156,7 +156,7 @@ function sharedMarks(marks: Record<string, string>[]): Record<string, string> {
  * between that validation and application. Non-overlapping ranges are then
  * applied backwards, keeping their original offsets valid.
  */
-export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacement: string): { replaced: number; skipped: number } {
+export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacement: string, options: { allowTitle?: boolean } = {}): { replaced: number; skipped: number } {
   const doc = tx.doc;
   const order = new Map(searchableLocations(doc).map(({ block, parent }, i) => [idKey(block), { index: i, parent }]));
   type BlockSnapshot = { ids: OpId[]; positions: Map<string, number>; chars: ReturnType<Doc["richChars"]> };
@@ -168,7 +168,7 @@ export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacemen
     const location = order.get(key);
     if (match.doc !== doc || !match.ids.length || !location || !eqId(location.parent, match.parent)) { skipped++; continue; }
     if (!snapshots.has(key)) {
-      if (!doc.hasBlock(match.block) || !isSearchableBlockType(doc.blockInfo(match.block).type)) snapshots.set(key, null);
+      if (!doc.hasBlock(match.block) || !(isSearchableBlockType(doc.blockInfo(match.block).type) || options.allowTitle && eqId(match.block, TITLE) && doc.blockInfo(match.block).type === "title")) snapshots.set(key, null);
       else {
         const ids = doc.visibleIds(match.block);
         snapshots.set(key, { ids, positions: new Map(ids.map((id, i) => [idKey(id), i])), chars: doc.richChars(match.block) });
@@ -181,7 +181,9 @@ export function replaceMatches(tx: Tx, matches: readonly FindMatch[], replacemen
     const end = start + match.ids.length;
     const chars = state.chars.slice(start, end);
     if (chars.some((char) => !!char.marks.math || isMention(char.marks)) || chars.map((char) => char.ch).join("") !== match.text) { skipped++; continue; }
-    planned.push({ match, start, end, marks: sharedMarks(chars.map((char) => char.marks)), order: location.index });
+    // The title is a plain-text control; title operations must not attach
+    // formatting marks, which conditional title commits do not accept.
+    planned.push({ match, start, end, marks: eqId(match.block, TITLE) ? {} : sharedMarks(chars.map((char) => char.marks)), order: location.index });
   }
   planned.sort((a, b) => {
     return b.order - a.order || b.start - a.start || b.end - a.end;

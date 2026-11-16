@@ -18,6 +18,8 @@ export interface FindReplacePanelProps {
   warningMessage?: string;
   /** Result, conflict, or limit feedback from the caller. */
   statusMessage?: string;
+  /** Touch-accessible history for a confirmed replacement. */
+  historyAction?: { label: string; disabled: boolean; onClick: () => void };
   className?: string;
   onModeChange: (mode: FindReplaceMode) => void;
   onQueryChange: (value: string) => void;
@@ -30,7 +32,7 @@ export interface FindReplacePanelProps {
 
 /** Controlled document find/replace panel. The caller owns matching and edits. */
 export function FindReplacePanel({
-  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, warningMessage, statusMessage, className,
+  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, warningMessage, statusMessage, historyAction, className,
   onModeChange, onQueryChange, onReplacementChange, onNavigate, onReplace, onReplaceAll, onClose,
 }: FindReplacePanelProps) {
   const id = useId();
@@ -113,6 +115,7 @@ export function FindReplacePanel({
         {scopeNotice && <p id={`${id}-scope`} className={scopeOpen ? "mt-3 text-[12px] leading-5 text-subtle" : "sr-only"}>{scopeNotice}</p>}
         {warningMessage && <p role="status" className="mt-3 text-[12px] leading-5 text-muted-foreground">{warningMessage}</p>}
         {statusMessage && <p role="status" aria-live="polite" className="mt-2 text-[12px] leading-5 text-muted-foreground">{statusMessage}</p>}
+        {historyAction && <button type="button" disabled={historyAction.disabled} onClick={historyAction.onClick} className="mt-2 text-[13px] text-primary hover:underline disabled:opacity-50 min-[480px]:hidden">{historyAction.label}</button>}
         <div className={cn("mt-6 grid gap-3", replaceMode ? "grid-cols-2 min-[480px]:grid-cols-4" : "grid-cols-[80px_80px] justify-end")}>
           {replaceMode && <>
             <button type="button" className={cn(action, "border-[#1456f0] bg-[#1456f0] text-white hover:bg-[#0f4dd6] disabled:border-[#b6bbc1] disabled:bg-[#b6bbc1] disabled:text-white disabled:hover:bg-[#b6bbc1]")} disabled={!hasMatch || !canReplaceAll} onClick={onReplaceAll}>全部替换</button>
