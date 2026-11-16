@@ -3227,10 +3227,10 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       }}
     >
       {dropLine && <div className={cn("pointer-events-none absolute inset-x-0 h-[2px] rounded bg-primary", dropLine === "before" ? "-top-px" : "-bottom-px")} />}
-      <span className={cn("absolute -left-7 items-center sm:-left-[62px]", type === "columns" ? "top-[11px]" : "top-[2px]", alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false} data-block-controls>
+      <span className={cn("absolute items-center", alwaysShowInsert ? "-left-[26px] sm:-left-[36px] top-[5px] sm:top-[2px]" : "-left-7 sm:-left-[62px]", !alwaysShowInsert && (type === "columns" ? "top-[11px]" : "top-[2px]"), alwaysShowInsert || handleOpen || (selectionCount ?? 0) > 1 ? "flex" : "hidden group-hover:flex group-focus-within:flex", touchActive && "[@media(hover:none)]:flex")} contentEditable={false} data-block-controls>
         {onInsertAfter && (emptyText || (!onDragStart && !onDeleteBlock && !onBlockAction)) && !((selectionCount ?? 0) > 1) ? (
           <button
-            className="relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']"
+            className={cn("relative grid size-7 place-items-center rounded-md text-subtle hover:bg-hover hover:text-foreground before:absolute before:-inset-1 before:content-['']", alwaysShowInsert && "size-[22px] border border-[#DEE0E3] bg-surface sm:size-7")}
             title="插入内容"
             aria-label="插入内容"
             onMouseDown={(event) => event.preventDefault()}

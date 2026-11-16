@@ -16,6 +16,7 @@ describe("starter template previews", () => {
 
   it("reserves room for the library entry at narrow widths", () => {
     expect(starterTemplateCount(150)).toBe(0);
+    expect(starterTemplateCount(264)).toBe(1);
     expect(starterTemplateCount(316)).toBe(1);
     expect(starterTemplateCount(482)).toBe(2);
     expect(starterTemplateCount(814)).toBe(4);

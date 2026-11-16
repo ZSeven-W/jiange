@@ -558,6 +558,8 @@ export const en: Record<string, string> = {
   "没有找到相关文档": "No matching docs",
   "没有符合筛选条件的文档": "No docs match the filters",
   "没有通知": "No notifications",
+  "链接分享范围": "Link access scope",
+  "按协作者权限": "Collaborator access",
   "无法加载通知": "Unable to load notifications",
   "注册并进入": "Register and continue",
   "流程名称": "Workflow name",

@@ -9,6 +9,7 @@ import { t, useI18n } from "@/lib/i18n";
 import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "@/components/share-link";
 import { invitationConflict, inviteCandidates } from "@/components/share-invite";
 import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "@/components/share-permissions";
+import { ShareLinkAccessSelect, ShareLinkScopeSelect } from "@/components/share-link-controls";
 
 export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭" };
 
@@ -126,7 +127,6 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   const linkRole = info.data?.link.role ?? "none";
   const verified = !info.isFetching && !info.isError && !busy;
   const url = verifiedShareUrl(info.data, location.origin, verified) || verifiedDirectShareUrl(info.data, meta, location.origin, location.pathname, verified);
-  const linkTitle = linkRole === "none" ? t("仅限已有权限的人") : linkRole === "anon" ? t("互联网上任何人") : t("已登录用户");
   const linkDescription = linkRole === "none" ? t("已有文档访问权限的人可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
   const permissions = contentPermissions(settings.data);
   const settingsReady = manage && !info.isFetching && !settings.isError && !settings.isFetching && settings.data?.role === "manage" && !!permissions;
@@ -203,8 +203,8 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
             <p className="mb-4 font-medium">{t("链接分享")}</p>
             <div className="flex items-center gap-3">
               <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#1456f0] text-white"><BuildingIcon className="size-[15px]" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate leading-5">{linkTitle}</span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
-              {manage ? <RoleSelect label={t("链接分享权限")} disabled={busy || info.isFetching} value={linkRole} onChange={(r) => { void update(async () => { await docsApi.setLink(meta.id, r as "none" | "anon" | "view" | "edit"); }, "link"); }} options={meta.kind === "base" || meta.kind === "slides" || meta.kind === "file" ? ["none", "view", "edit"] : ["none", "anon", "view", "edit"]} /> : <span className="text-[13px] text-muted-foreground">{t(ROLE_LABEL[linkRole])}</span>}
+              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!manage || busy || info.isFetching} onChange={(next) => { if (manage && next !== linkRole) void update(async () => { await docsApi.setLink(meta.id, next); }, "link"); }} /></span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
+              <ShareLinkAccessSelect role={linkRole} disabled={!manage || busy || info.isFetching} onChange={(next) => { if (manage && next !== linkRole) void update(async () => { await docsApi.setLink(meta.id, next); }, "link"); }} />
             </div>
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
           </div>

@@ -33,7 +33,8 @@ function MoreTemplatesIcon() {
 
 /** Reserve one 150px card for the library entry, with 16px gaps. */
 export function starterTemplateCount(width: number): number {
-  return Math.max(0, Math.min(4, Math.floor((width + 16) / 166) - 1));
+  const fitted = Math.max(0, Math.min(4, Math.floor((width + 16) / 166) - 1));
+  return width >= 200 ? Math.max(1, fitted) : fitted;
 }
 
 /** Real starter documents shown only while the collaborative body is empty. */
@@ -41,11 +42,12 @@ export function StarterTemplates({ onChoose, onHide, disabled = false }: { onCho
   const [query, setQuery] = useState("");
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(4);
+  const [cardWidth, setCardWidth] = useState(150);
   const section = useRef<HTMLElement>(null);
   useEffect(() => {
     const node = section.current;
     if (!node) return;
-    const measure = () => { const width = node.getBoundingClientRect().width; if (width > 0) setVisibleCount(starterTemplateCount(width)); };
+    const measure = () => { const width = node.getBoundingClientRect().width; if (width > 0) { setVisibleCount(starterTemplateCount(width)); setCardWidth(Math.min(150, width >= 200 ? (width - 16) / 2 : width)); } };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(node);
@@ -64,13 +66,13 @@ export function StarterTemplates({ onChoose, onHide, disabled = false }: { onCho
     </div>
     <div className="flex gap-4 overflow-x-auto pb-1">
       {visible.map((t) => <span key={t.id} className="group relative shrink-0">
-        <button type="button" disabled={disabled} onClick={() => onChoose(t)} className="h-[162px] w-[150px] overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={t.id}>
+        <button type="button" disabled={disabled} onClick={() => onChoose(t)} style={{ width: cardWidth }} className="h-[162px] overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={t.id}>
           <span className="flex items-center gap-1 px-2.5 pt-2 text-[12px] font-medium"><span className="truncate">{t.name}</span>{"userTemplateId" in t && <span className="shrink-0 rounded bg-[#e1eaff] px-1 text-[10px] font-normal text-primary">我的</span>}</span>
           <TemplatePreview template={t} />
         </button>
         {"userTemplateId" in t && <button type="button" aria-label={`删除模板「${t.name}」`} title="删除模板" onClick={() => { void templatesApi.remove((t as { userTemplateId: number }).userTemplateId).then(() => qc.invalidateQueries({ queryKey: ["my-templates"] })); }} className="absolute right-1.5 top-1.5 hidden size-5 place-items-center rounded bg-surface text-[12px] text-muted-foreground shadow group-hover:grid hover:text-destructive" data-delete-template>×</button>}
       </span>)}
-      {!query.trim() && <button type="button" disabled={disabled} onClick={() => setLibraryOpen(true)} className="flex h-[162px] w-[150px] max-w-full shrink-0 flex-col items-center justify-center gap-2 rounded-lg border bg-surface text-[13px] text-muted-foreground shadow-[0_2px_10px_rgba(31,35,41,0.05)] hover:bg-hover/40"><MoreTemplatesIcon />更多模板</button>}
+      {!query.trim() && <button type="button" disabled={disabled} onClick={() => setLibraryOpen(true)} style={{ width: cardWidth }} className="flex h-[162px] max-w-full shrink-0 flex-col items-center justify-center gap-2 rounded-lg border bg-surface text-[13px] text-muted-foreground shadow-[0_2px_10px_rgba(31,35,41,0.05)] hover:bg-hover/40"><MoreTemplatesIcon />更多模板</button>}
       {items.length === 0 && <p className="py-8 text-[13px] text-subtle">没有找到匹配的模板</p>}
     </div>
     {libraryOpen && <TemplateLibrary onChoose={onChoose} onClose={() => setLibraryOpen(false)} disabled={disabled}/>}
