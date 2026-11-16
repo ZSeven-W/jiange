@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, Copy, Eraser, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
@@ -82,6 +82,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [grip, setGrip] = useState<GripSel | null>(initialGrip);
   const [gripMenuHidden, setGripMenuHidden] = useState(false);
   const [range, setRange] = useState<CellRange | null>(null);
+  const [touchSelecting, setTouchSelecting] = useState(false);
   const [focus, setFocus] = useState<{ r: number; c: number } | null>(null);
   const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState("");
@@ -103,7 +104,18 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   }, []);
   useTableStickyHeader(root, header);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
-  const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean } | null>(null);
+  const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean; kind: "mouse" | "touch"; previousRange?: CellRange | null; previousTouch?: boolean } | null>(null);
+  const selectionSignature = JSON.stringify([data, rawMerges ?? "", fillProps["tbl.rows"] ?? "", fillProps["tbl.cols"] ?? "", readOnly]);
+  const previousSelectionSignature = useRef(selectionSignature);
+  useLayoutEffect(() => {
+    if (previousSelectionSignature.current === selectionSignature) return;
+    previousSelectionSignature.current = selectionSignature;
+    if (!touchSelecting) return;
+    const drag = dragSelection.current;
+    dragSelection.current = null;
+    if (drag?.kind === "touch" && root.current?.hasPointerCapture(drag.pointerId)) root.current.releasePointerCapture(drag.pointerId);
+    setRange(null); setTouchSelecting(false); setFillOpen(false); setAlignOpen(false); setMoreOpen(false);
+  }, [selectionSignature, touchSelecting]);
   const lastFindNavigation = useRef<number | null>(null);
   useLayoutEffect(() => {
     const pending = pendingTab.current;
@@ -156,27 +168,42 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
       updateSelection(drag, drag.x, drag.y);
       if (drag.active && !frame) frame = requestAnimationFrame(tick);
     };
-    const stop = (event: PointerEvent) => {
+    const stop = (event: PointerEvent, cancelled = false) => {
       const drag = dragSelection.current;
       if (drag?.pointerId !== event.pointerId) return;
       dragSelection.current = null;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
+      if (cancelled && drag.kind === "touch") { setRange(drag.previousRange ?? null); setTouchSelecting(!!drag.previousTouch); }
       if (drag.active && drag.restoreFocus) requestAnimationFrame(() => {
         if (!dragSelection.current && drag.source.isConnected && document.activeElement === document.body) drag.source.focus({ preventScroll: true });
       });
     };
-    const blur = () => { dragSelection.current = null; if (frame) cancelAnimationFrame(frame); frame = 0; };
+    const pointerUp = (event: PointerEvent) => stop(event);
+    const pointerCancel = (event: PointerEvent) => stop(event, true);
+    const capturedRoot = root.current;
+    const lostCapture = (event: PointerEvent) => { if (event.target === capturedRoot) stop(event, true); };
+    const clear = (restore: boolean) => {
+      const drag = dragSelection.current;
+      dragSelection.current = null;
+      if (drag?.kind === "touch" && capturedRoot?.hasPointerCapture(drag.pointerId)) capturedRoot.releasePointerCapture(drag.pointerId);
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (restore && drag?.kind === "touch") { setRange(drag.previousRange ?? null); setTouchSelecting(!!drag.previousTouch); }
+    };
+    const blur = () => clear(true);
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
+    window.addEventListener("pointerup", pointerUp);
+    window.addEventListener("pointercancel", pointerCancel);
     window.addEventListener("blur", blur);
+    capturedRoot?.addEventListener("lostpointercapture", lostCapture);
     return () => {
-      blur();
+      clear(false);
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("pointerup", pointerUp);
+      window.removeEventListener("pointercancel", pointerCancel);
       window.removeEventListener("blur", blur);
+      capturedRoot?.removeEventListener("lostpointercapture", lostCapture);
     };
   }, []);
   useLayoutEffect(() => {
@@ -199,6 +226,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     setFillOpen(false);
     setAlignOpen(false);
     setGripMenuHidden(false);
+    setTouchSelecting(false);
     setRange(null);
     const same = grip?.kind === g.kind && grip?.index === g.index;
     const box = root.current?.getBoundingClientRect(), b = e.currentTarget.getBoundingClientRect();
@@ -207,7 +235,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   useEffect(() => {
     if (!grip && !range && !moreOpen && !fillOpen && !alignOpen) return;
-    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setRange(null); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
+    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setRange(null); setTouchSelecting(false); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [grip, range, moreOpen, fillOpen, alignOpen]);
@@ -249,6 +277,37 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
+  const touchRange = touchSelecting && selected ? selected : focus ? expandRange({ r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c }, merges) : null;
+  const beginTouchSelection = (event: React.PointerEvent<HTMLButtonElement>, corner: "start" | "end") => {
+    if (readOnly || dragSelection.current || !touchRange || !root.current) return;
+    const anchor = corner === "start" ? { r: touchRange.r1, c: touchRange.c1 } : { r: touchRange.r0, c: touchRange.c0 };
+    const source = root.current.querySelector<HTMLTextAreaElement>(`[data-table-cell="${focus?.r ?? touchRange.r0}:${focus?.c ?? touchRange.c0}"]`) ?? root.current.querySelector<HTMLTextAreaElement>("[data-table-cell]");
+    if (!source) return;
+    event.preventDefault(); event.stopPropagation();
+    try { root.current.setPointerCapture(event.pointerId); } catch { return; }
+    dragSelection.current = { pointerId: event.pointerId, r: anchor.r, c: anchor.c, active: true, x: event.clientX, y: event.clientY, source, restoreFocus: false, kind: "touch", previousRange: range, previousTouch: touchSelecting };
+    if (document.activeElement instanceof HTMLElement && root.current.contains(document.activeElement)) document.activeElement.blur();
+    window.getSelection()?.removeAllRanges();
+    setGrip(null); setMoreOpen(false); setFillOpen(false); setAlignOpen(false);
+    if (!touchSelecting) setRange({ ...touchRange });
+    setTouchSelecting(true);
+  };
+  const moveTouchSelectionWithKey = (event: React.KeyboardEvent<HTMLButtonElement>, corner: "start" | "end") => {
+    if (!touchRange || readOnly || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const moving = corner === "start" ? { r: touchRange.r0, c: touchRange.c0 } : { r: touchRange.r1, c: touchRange.c1 };
+    const anchor = corner === "start" ? { r: touchRange.r1, c: touchRange.c1 } : { r: touchRange.r0, c: touchRange.c0 };
+    if (event.key === "ArrowUp") moving.r--;
+    if (event.key === "ArrowDown") moving.r++;
+    if (event.key === "ArrowLeft") moving.c--;
+    if (event.key === "ArrowRight") moving.c++;
+    moving.r = Math.max(0, Math.min(rows.length - 1, moving.r)); moving.c = Math.max(0, Math.min(nCols - 1, moving.c));
+    moving.r = corner === "start" ? Math.min(moving.r, anchor.r) : Math.max(moving.r, anchor.r);
+    moving.c = corner === "start" ? Math.min(moving.c, anchor.c) : Math.max(moving.c, anchor.c);
+    setGrip(null); setMoreOpen(false); setFillOpen(false); setAlignOpen(false);
+    setRange(normRange({ r0: anchor.r, c0: anchor.c, r1: moving.r, c1: moving.c })); setTouchSelecting(true);
+    requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>(`[data-table-touch-handle="${corner}"]`)?.focus({ preventScroll: true }));
+  };
   const formatTarget = selected ?? (focus ? expandRange({ r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c }, merges) : null);
   const allAligned = (axis: TableAlignAxis, value: TableAlign) => {
     if (!formatTarget) return false;
@@ -258,12 +317,12 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
-  const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols), op); setGrip(null); setRange(null); };
-  const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); };
+  const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols), op); setGrip(null); setRange(null); setTouchSelecting(false); };
+  const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); setTouchSelecting(false); };
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const editable = !readOnly && !!onChange;
   return (
-    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block
+    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined}
       onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
@@ -279,14 +338,22 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         catch { setClipboardNotice("无法写入剪贴板，表格未修改。"); return; }
         const error = onCutCells(selected);
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
-        if (!error) { setRange(null); setGrip(null); }
+        if (!error) { setRange(null); setGrip(null); setTouchSelecting(false); }
       }}>
-      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || moreOpen || fillOpen || alignOpen ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || moreOpen || fillOpen || alignOpen || touchSelecting ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
           <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setFillOpen(false); setAlignOpen(false); setGripMenuHidden(true); setMoreOpen((open) => !open); }} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
             {multi && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); merge(); }} data-table-merge><Combine size={15} strokeWidth={1.7} />合并单元格</button>}
             {!multi && focusMerge && <button type="button" role="menuitem" className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); split(); }} data-table-split><SquareSplitHorizontal size={15} strokeWidth={1.7} />拆分单元格</button>}
+            {touchSelecting && multi && selected && canCopy && <button type="button" role="menuitem" className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => {
+              const text = formatTableTSV(rows, selected, merges); setMoreOpen(false);
+              try {
+                if (!navigator.clipboard?.writeText) { setClipboardNotice("无法使用剪贴板，请检查浏览器权限。"); return; }
+                void navigator.clipboard.writeText(text).then(() => setClipboardNotice("已复制选区"), () => setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"));
+              } catch { setClipboardNotice("无法写入剪贴板，请检查浏览器权限。"); }
+            }} data-table-copy-selection><Copy size={15} strokeWidth={1.7} />复制选区</button>}
+            {touchSelecting && multi && selected && onClearCells && <button type="button" role="menuitem" className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { setMoreOpen(false); setClipboardNotice(onClearCells(selected) ?? ""); }} data-table-clear-selection><Eraser size={15} strokeWidth={1.7} />清空选区</button>}
           </span>}
         </span>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
@@ -304,16 +371,16 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
             {([ ["horizontal", "横向对齐", [["left", "左对齐", AlignLeft], ["center", "水平居中", AlignCenter], ["right", "右对齐", AlignRight]]], ["vertical", "纵向对齐", [["top", "顶部对齐", AlignStartHorizontal], ["middle", "垂直居中", AlignCenterHorizontal], ["bottom", "底部对齐", AlignEndHorizontal]]] ] as const).map(([axis, label, choices]) => <span key={axis} className="block"><span className="block px-1 py-1 text-xs text-muted-foreground">{label}</span><span className="flex gap-1">{choices.map(([value, title, Icon]) => <button key={value} type="button" role="menuitemradio" aria-checked={allAligned(axis, value)} aria-label={title} title={title} className={cn("grid size-10 place-items-center rounded hover:bg-hover", allAligned(axis, value) && "bg-[#E1EAFF] text-primary")} onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onAlign(formatTarget, axis, value) ?? ""); setAlignOpen(false); }} data-table-align-option={`${axis}:${value}`}><Icon size={16} strokeWidth={1.7} /></button>)}</span></span>)}
           </span>}
         </span>}
-        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} /><span className="max-[360px]:sr-only">插入行</span></button>
-        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} /><span className="max-[360px]:sr-only">插入列</span></button>
-        {onHeader && <button type="button" title="标题行" aria-label="标题行" aria-pressed={header} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header><Rows3 size={14} className="min-[361px]:hidden" /><span className="max-[360px]:sr-only">标题行</span></button>}
-        {onHeaderColumn && <button type="button" title="标题列" aria-label="标题列" aria-pressed={headerColumn} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", headerColumn ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeaderColumn(!headerColumn)} data-table-header-column><Columns3 size={14} className="min-[361px]:hidden" /><span className="max-[360px]:sr-only">标题列</span></button>}
+        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入行</span></button>
+        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入列</span></button>
+        {onHeader && <button type="button" title="标题行" aria-label="标题行" aria-pressed={header} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header><Rows3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题行</span></button>}
+        {onHeaderColumn && <button type="button" title="标题列" aria-label="标题列" aria-pressed={headerColumn} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", headerColumn ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeaderColumn(!headerColumn)} data-table-header-column><Columns3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题列</span></button>}
         {!multi && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title="删除表格" aria-label="删除表格" className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onClick={onDelete} data-table-del><Trash2 size={14} strokeWidth={1.7} /></button></>}
         {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
-        <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
+        <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); setTouchSelecting(false); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
-      <div className={cn("max-w-full overflow-x-auto", editable && "-mt-4 pt-4 sm:-ml-4 sm:pl-4")} data-table-scroll>
+      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")} data-table-scroll>
       <table className="table-fixed border-collapse text-[14px] leading-[22px]" style={{ width: columnWidths.reduce((total, width) => total + width, readOnly ? 0 : 24) }}>
         <colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} />)}{!readOnly && <col style={{ width: 24 }} />}</colgroup>
         <tbody>
@@ -348,7 +415,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                         onScroll={(event) => syncFindOverlay(event.currentTarget)}
                         onPointerDown={(event) => {
                           if (event.pointerType === "mouse" && event.button === 0 && !event.shiftKey) {
-                            dragSelection.current = { pointerId: event.pointerId, r: ri, c: ci, active: false, x: event.clientX, y: event.clientY, source: event.currentTarget, restoreFocus: false };
+                            dragSelection.current = { pointerId: event.pointerId, r: ri, c: ci, active: false, x: event.clientX, y: event.clientY, source: event.currentTarget, restoreFocus: false, kind: "mouse" };
                           }
                         }}
                         onKeyDown={(e) => {
@@ -363,7 +430,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           const intent = tableTabIntent(cells.indexOf(e.currentTarget), cells.length, e.shiftKey);
                           e.preventDefault(); e.stopPropagation();
                           if (intent.kind === "focus") {
-                            setRange(null); setGrip(null); setMoreOpen(false);
+                            setRange(null); setGrip(null); setTouchSelecting(false); setMoreOpen(false);
                             const next = cells[intent.index]; next.focus();
                             const at = intent.caret === "start" ? 0 : next.value.length;
                             next.setSelectionRange(at, at);
@@ -372,7 +439,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                             pendingTab.current = { source: e.currentTarget, row: rows.length, cols: nCols };
                             const error = onAppendRow();
                             if (error) pendingTab.current = null;
-                            else { setRange(null); setGrip(null); setMoreOpen(false); }
+                            else { setRange(null); setGrip(null); setTouchSelecting(false); setMoreOpen(false); }
                             setClipboardNotice(error ?? "");
                           }
                         }}
@@ -387,7 +454,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           const error = onPasteCells(start.r, start.c, text, !structured);
                           setClipboardNotice(error ?? "");
                           if (!error) {
-                            setRange(null); setGrip(null); setMoreOpen(false);
+                            setRange(null); setGrip(null); setTouchSelecting(false); setMoreOpen(false);
                             if (multi) {
                               const target = root.current?.querySelector<HTMLTextAreaElement>(`[data-table-cell="${start.r}:${start.c}"]`);
                               if (target) { target.focus(); requestAnimationFrame(() => { if (document.activeElement === target) target.setSelectionRange(target.value.length, target.value.length); }); }
@@ -399,6 +466,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           setFillOpen(false);
                           setAlignOpen(false);
                           setGrip(null);
+                          setTouchSelecting(false);
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
@@ -407,11 +475,17 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                       />
                       </div>
                     )}
+                    {editable && touchRange && (touchSelecting || editing) && (() => {
+                      const first = ri === touchRange.r0 && ci === touchRange.c0;
+                      const last = ri + (span?.[0] ?? 1) - 1 === touchRange.r1 && ci + (span?.[1] ?? 1) - 1 === touchRange.c1;
+                      const handle = (corner: "start" | "end") => <button key={corner} type="button" aria-label={corner === "start" ? "调整选区起点" : "调整选区终点"} title="拖动或使用方向键调整选区" className={cn("absolute z-20 hidden size-8 touch-none items-center justify-center [@media(pointer:coarse)]:flex", corner === "start" ? "-left-4 -top-4" : "bottom-0 right-0")} onPointerDown={e => beginTouchSelection(e, corner)} onKeyDown={e => moveTouchSelectionWithKey(e, corner)} data-table-touch-handle={corner}><span className={cn("size-3 rounded-full border-2 border-white bg-primary shadow", corner === "end" && "absolute bottom-0 right-0")} /></button>;
+                      return <>{touchSelecting && first && handle("start")}{last && handle("end")}</>;
+                    })()}
                     {editable && ri === 0 && !span?.[1] && <button type="button" aria-label={`选择第 ${ci + 1} 列`} title="选择整列" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "col", index: ci })} className={cn("absolute -top-[14px] left-0 right-0 h-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "col" && grip.index === ci && "bg-primary opacity-100")} data-table-col-grip={ci} />}
                     {editable && ci === 0 && !span?.[0] && <button type="button" aria-label={`选择第 ${ri + 1} 行`} title="选择整行" onMouseDown={(e) => e.preventDefault()} onClick={(e) => openGrip(e, { kind: "row", index: ri })} className={cn("absolute -left-[14px] bottom-0 top-0 w-[10px] rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover", grip?.kind === "row" && grip.index === ri && "bg-primary opacity-100")} data-table-row-grip={ri} />}
                     {!readOnly && onBeginResize && ri === 0 && Array.from({ length: span?.[1] ?? 1 }, (_, offset) => {
                       const index = ci + offset, trailing = columnWidths.slice(index + 1, ci + (span?.[1] ?? 1)).reduce((sum, width) => sum + width, 0);
-                      return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {
+                      return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", span && offset < span[1] - 1 && "[@media(pointer:coarse)]:h-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {
                       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
                       const session = onBeginResize(index);
                       if (!session) return;
@@ -436,7 +510,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
           {gripMenu(grip, rows.length, nCols, rows, merges).map((it) => <Fragment key={it.label}>{(it.danger || it.op.kind === "moveRow" && it.label === "上移一行" || it.op.kind === "moveCol" && it.label === "左移一列") && <div className="my-1 border-t" />}<button type="button" role="menuitem" disabled={it.disabled} onMouseDown={(e) => e.preventDefault()} onClick={() => apply(it.op)} className={cn("block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-40", it.danger && "text-destructive")} data-table-op={it.op.kind}>{it.label}</button></Fragment>)}
         </div>
       )}
-      {clipboardNotice && <div role="status" className="mt-2 flex items-start gap-2 text-[12px] text-[#b54a23]"><span>{clipboardNotice}</span><button type="button" aria-label="关闭粘贴提示" onClick={() => setClipboardNotice("")}><X size={14} /></button></div>}
+      {clipboardNotice && <div role="status" className={cn("mt-2 flex items-start gap-2 text-[12px]", clipboardNotice === "已复制选区" ? "text-primary" : "text-[#b54a23]")}><span>{clipboardNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setClipboardNotice("")}><X size={14} /></button></div>}
       {!readOnly && <>
         <button type="button" title="添加一行" aria-label="添加一行" className="absolute bottom-0 left-4 right-10 hidden h-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertRow", at: rows.length }) : onEdit(-1, nCols, ""))} data-table-add-row><Plus size={11} strokeWidth={2.2} /></button>
         <button type="button" title="添加一列" aria-label="添加一列" className="absolute bottom-4 right-0 top-4 hidden w-3.5 place-items-center rounded-[3px] bg-[#EFF0F1] text-subtle hover:bg-primary/15 hover:text-primary group-hover/t:grid dark:bg-hover" onClick={() => (onChange ? apply({ kind: "insertCol", at: nCols }) : onEdit(-2, nCols, ""))} data-table-add-col><Plus size={11} strokeWidth={2.2} /></button>
