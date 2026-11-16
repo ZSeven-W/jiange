@@ -19,6 +19,7 @@ import { Avatar } from "@/components/brand";
 import { AddIcon, BuildingIcon, DownBoldIcon, EditIcon, MoreIcon, SearchIcon } from "@/components/feishu-icons";
 import { StarterTemplates, type StarterTemplate } from "./starter-templates";
 import { TitleConsistency } from "./title-consistency";
+import { DocumentReferencesPanel } from "./document-references";
 import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starter-template-ops";
 import { peekStarter, takeStarter } from "./pending-starter";
 import { clearPendingWord, loadPendingWord, type PendingWord } from "./pending-word";
@@ -1225,6 +1226,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
+            {metadataVerified && !history && !presenting && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} />}
           </article>}</DocumentCover>
           </div>
           </div>

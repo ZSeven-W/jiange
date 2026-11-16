@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/account-duplicate":               s.accountDuplicate,
 		"GET /api/docs/{id}/account-metadata":                 s.accountDoc,
 		"GET /api/docs/{id}/paste-target":                     s.pasteDocumentTarget,
+		"GET /api/docs/{id}/references":                       s.documentReferences,
 		"GET /api/docs/{id}/members":                          s.docMembers,
 		"GET /api/notifications":                              s.listNotifications,
 		"POST /api/notifications/read":                        s.markNotificationsRead,
