@@ -166,6 +166,14 @@ func validLinkRole(role, candidate string) bool {
 }
 
 func (m *Memory) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string) (Link, error) {
+	return m.changeLinkRoleGuarded(ctx, guard, docID, role, candidate, nil)
+}
+
+func (m *Memory) ChangeLinkRoleAtRevision(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string, revision int64) (Link, error) {
+	return m.changeLinkRoleGuarded(ctx, guard, docID, role, candidate, &revision)
+}
+
+func (m *Memory) changeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string, revision *int64) (Link, error) {
 	if !validLinkRole(role, candidate) {
 		return Link{}, ErrConflict
 	}
@@ -176,11 +184,24 @@ func (m *Memory) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, 
 		return Link{}, err
 	}
 	old := m.sh.links[docID]
-	next := Link{Role: role, Token: old.Token}
+	if revision != nil && (*revision < 0 || *revision > 9007199254740991 || old.Revision != *revision) {
+		return Link{}, ErrConflict
+	}
+	next := Link{Role: role, Token: old.Token, Revision: old.Revision}
 	if role == "none" {
 		next.Token = ""
 	} else if old.Role == "" || old.Role == "none" || old.Token == "" {
 		next.Token = candidate
+	}
+	oldRole := old.Role
+	if oldRole == "" {
+		oldRole = "none"
+	}
+	if next.Role != oldRole || next.Token != old.Token {
+		if old.Revision >= 9007199254740991 {
+			return Link{}, ErrConflict
+		}
+		next.Revision++
 	}
 	if !guard.currentTime().Before(expiry) {
 		return Link{}, ErrUnauthenticated
@@ -199,6 +220,14 @@ func (m *Memory) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, 
 }
 
 func (p *Postgres) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string) (next Link, err error) {
+	return p.changeLinkRoleGuarded(ctx, guard, docID, role, candidate, nil)
+}
+
+func (p *Postgres) ChangeLinkRoleAtRevision(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string, revision int64) (Link, error) {
+	return p.changeLinkRoleGuarded(ctx, guard, docID, role, candidate, &revision)
+}
+
+func (p *Postgres) changeLinkRoleGuarded(ctx context.Context, guard RestoreGuard, docID int64, role, candidate string, revision *int64) (next Link, err error) {
 	if !validLinkRole(role, candidate) {
 		return Link{}, ErrConflict
 	}
@@ -208,9 +237,13 @@ func (p *Postgres) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard
 			return err
 		}
 		var oldRole string
+		var oldRevision int64
 		var oldToken *string
-		if err := tx.QueryRow(ctx, `SELECT link_role,link_token FROM nodes WHERE id=$1`, docID).Scan(&oldRole, &oldToken); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT link_role,link_token,link_revision FROM nodes WHERE id=$1`, docID).Scan(&oldRole, &oldToken, &oldRevision); err != nil {
 			return err
+		}
+		if revision != nil && (*revision < 0 || *revision > 9007199254740991 || oldRevision != *revision) {
+			return ErrConflict
 		}
 		next = Link{Role: role}
 		if oldToken != nil {
@@ -226,7 +259,7 @@ func (p *Postgres) ChangeLinkRoleGuarded(ctx context.Context, guard RestoreGuard
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE nodes SET link_role=$2,link_token=NULLIF($3,'') WHERE id=$1`, docID, next.Role, next.Token); err != nil {
+		if err := tx.QueryRow(ctx, `UPDATE nodes SET link_role=$2,link_token=NULLIF($3,'') WHERE id=$1 RETURNING link_revision`, docID, next.Role, next.Token).Scan(&next.Revision); err != nil {
 			return err
 		}
 		if !guard.currentTime().Before(expiry) {

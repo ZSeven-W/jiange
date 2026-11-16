@@ -40,8 +40,9 @@ type Share struct {
 
 // Link is a doc's link-sharing setting.
 type Link struct {
-	Role  string `json:"role"` // none | view | edit
-	Token string `json:"token,omitempty"`
+	Role     string `json:"role"` // none | view | edit
+	Token    string `json:"token,omitempty"`
+	Revision int64  `json:"revision"`
 }
 
 // ManagedDocPatch is applied atomically when changing copy protection. Move

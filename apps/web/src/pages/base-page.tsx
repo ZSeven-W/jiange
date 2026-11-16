@@ -492,7 +492,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       </div>
       {autoOpen && <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />}
       {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canEdit && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
-      {sharing && <ShareDialog meta={base} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      {sharing && <ShareDialog meta={base} userId={userId} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
     </div>
   );
 }

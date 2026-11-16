@@ -560,6 +560,8 @@ export const en: Record<string, string> = {
   "没有通知": "No notifications",
   "链接分享范围": "Link access scope",
   "按协作者权限": "Collaborator access",
+  "链接设置已被其他人修改，请确认最新设置后重试。": "Link settings changed. Review the latest settings and try again.",
+  "当前服务暂不支持安全修改链接权限，请更新服务。": "The server does not support safe link changes. Update the server.",
   "无法加载通知": "Unable to load notifications",
   "注册并进入": "Register and continue",
   "流程名称": "Workflow name",

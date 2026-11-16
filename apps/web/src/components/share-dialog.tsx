@@ -13,10 +13,10 @@ import { ShareLinkAccessSelect, ShareLinkScopeSelect } from "@/components/share-
 
 export const ROLE_LABEL: Record<string, string> = { view: "可阅读", edit: "可编辑", manage: "可管理", anon: "任何人可读", none: "关闭" };
 
-export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClose: () => void; anchorRef?: RefObject<HTMLButtonElement | null> }) {
+export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMeta; userId: number; onClose: () => void; anchorRef?: RefObject<HTMLButtonElement | null> }) {
   const qc = useQueryClient();
-  const key = ["shares", meta.id];
-  const info = useQuery({ queryKey: key, queryFn: () => docsApi.shares(meta.id), refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000 });
+  const key = ["shares", meta.id, userId];
+  const info = useQuery({ queryKey: key, queryFn: () => docsApi.sharesForAccount(meta.id, userId), refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000 });
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("edit");
   const [err, setErr] = useState("");
@@ -75,7 +75,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const memberKey = ["share-member-suggestions", meta.id];
   const directory = useQuery({ queryKey: memberKey, queryFn: () => commentsApi.members(meta.id), enabled: manage && !info.isFetching && suggestOpen && !!email.trim(), refetchOnMount: "always", refetchOnWindowFocus: true, gcTime: 0 });
-  useEffect(() => () => { qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); qc.removeQueries({ queryKey: ["share-settings", meta.id], exact: true }); qc.removeQueries({ queryKey: ["shares", meta.id], exact: true }); }, [qc, meta.id]);
+  useEffect(() => () => { qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); qc.removeQueries({ queryKey: ["share-settings", meta.id], exact: true }); qc.removeQueries({ queryKey: ["shares", meta.id, userId], exact: true }); }, [qc, meta.id, userId]);
   useEffect(() => { if (!manage) qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); }, [manage, qc, meta.id]);
   const candidates = !directory.isFetching && !directory.isError && manage && !info.isFetching && suggestOpen && email.trim()
     ? inviteCandidates(email, directory.data ?? [], info.data!, meta.creatorId) : [];
@@ -95,7 +95,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
       await qc.cancelQueries({ queryKey: key });
       await task();
     } catch (e) {
-      if (kind === "link") setLinkError(e instanceof TypeError ? t("网络连接中断，更新结果可能尚未确认，请查看最新设置。") : t("更新链接权限失败，请重试。"));
+      if (kind === "link") setLinkError(e instanceof ApiError && e.status === 409 ? t("链接设置已被其他人修改，请确认最新设置后重试。") : e instanceof TypeError || e instanceof Error && e.name === "AbortError" ? t("网络连接中断，更新结果可能尚未确认，请查看最新设置。") : t("更新链接权限失败，请重试。"));
       else if (kind === "settings") setSettingsError(copyProtectionError(e));
       else setErr(e instanceof TypeError ? t("网络连接中断，更新结果可能尚未确认，请查看协作者列表。") : e instanceof Error ? e.message : t("更新协作者失败"));
     } finally {
@@ -112,7 +112,7 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
   const inviteNew = (address: string) => update(async () => {
     // Revalidate immediately before submitting; the server also needs an atomic
     // create-only operation to guard a competing administrator in another tab.
-    const [current, users] = await Promise.all([docsApi.shares(meta.id), commentsApi.members(meta.id)]);
+    const [current, users] = await Promise.all([docsApi.sharesForAccount(meta.id, userId), commentsApi.members(meta.id)]);
     if (current.role !== "manage") throw new Error(t("你已没有管理权限，请刷新后重试。"));
     const conflict = invitationConflict(address, current, users, meta.creatorId);
     if (conflict) throw new Error(conflict === "owner" ? t("该用户是文档所有者。") : t("该用户已是协作者，请在协作者列表中修改权限。"));
@@ -125,6 +125,12 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
     setSuggestOpen(false);
   }, "invite");
   const linkRole = info.data?.link.role ?? "none";
+  const linkRevision = info.data?.link.revision;
+  const linkEditable = !!manage && !busy && !info.isFetching && Number.isSafeInteger(linkRevision) && linkRevision! >= 0 && linkRevision! < Number.MAX_SAFE_INTEGER && Number.isSafeInteger(userId) && userId > 0;
+  const changeLink = (next: "none" | "anon" | "view" | "edit") => {
+    if (!linkEditable || next === linkRole || linkRevision === undefined) return;
+    void update(async () => { const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), 10_000); try { await docsApi.setLinkAtRevision(meta.id, next, linkRevision, userId, controller.signal); } finally { window.clearTimeout(timer); } }, "link");
+  };
   const verified = !info.isFetching && !info.isError && !busy;
   const url = verifiedShareUrl(info.data, location.origin, verified) || verifiedDirectShareUrl(info.data, meta, location.origin, location.pathname, verified);
   const linkDescription = linkRole === "none" ? t("已有文档访问权限的人可访问") : linkRole === "anon" ? t("获得链接的人可阅读") : t("获得链接的登录用户{role}", { role: t(ROLE_LABEL[linkRole] ?? "可访问") });
@@ -203,10 +209,11 @@ export function ShareDialog({ meta, onClose, anchorRef }: { meta: DocMeta; onClo
             <p className="mb-4 font-medium">{t("链接分享")}</p>
             <div className="flex items-center gap-3">
               <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#1456f0] text-white"><BuildingIcon className="size-[15px]" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!manage || busy || info.isFetching} onChange={(next) => { if (manage && next !== linkRole) void update(async () => { await docsApi.setLink(meta.id, next); }, "link"); }} /></span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
-              <ShareLinkAccessSelect role={linkRole} disabled={!manage || busy || info.isFetching} onChange={(next) => { if (manage && next !== linkRole) void update(async () => { await docsApi.setLink(meta.id, next); }, "link"); }} />
+              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!linkEditable} onChange={changeLink} /></span><span className="block truncate text-[12px] text-subtle">{linkDescription}</span></span>
+              <ShareLinkAccessSelect role={linkRole} disabled={!linkEditable} onChange={changeLink} />
             </div>
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
+            {manage && !info.isFetching && (!Number.isSafeInteger(linkRevision) || linkRevision! < 0 || linkRevision! >= Number.MAX_SAFE_INTEGER) && <p role="status" className="pt-2 text-[12px] text-subtle">{t("当前服务暂不支持安全修改链接权限，请更新服务。")}</p>}
           </div>
           <footer className="flex min-h-[66px] items-center gap-2 bg-sidebar px-4 py-3">
             <button type="button" disabled={!url} title={!url ? t("无法验证分享链接") : linkRole === "none" ? t("已有文档访问权限的人可访问") : t("复制链接")} className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={async () => { try { if (!navigator.clipboard) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(url); setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopyError(true); } }}>{copied ? <Check size={14}/> : <LinkIcon className="size-[14px]"/>}{copied ? t("已复制") : t("复制链接")}</button>

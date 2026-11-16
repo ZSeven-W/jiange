@@ -298,7 +298,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           </div>}
         </div>
       </div>
-      {sharingDoc && <ShareDialog key={`${me.user.id}:${sharingDoc.id}`} meta={sharingDoc} onClose={() => setSharingDoc(null)}/>}
+      {sharingDoc && <ShareDialog key={`${me.user.id}:${sharingDoc.id}`} meta={sharingDoc} userId={me.user.id} onClose={() => setSharingDoc(null)}/>}
       {libraryOpen && <TemplateLibrary disabled={createWithContent.isPending} onChoose={chooseTemplate} onClose={() => setLibraryOpen(false)} />}
     </main>
   );

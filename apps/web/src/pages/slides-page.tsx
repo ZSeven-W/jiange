@@ -802,7 +802,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           <button type="button" role="menuitem" onClick={() => { setPageMenu(null); setFormatOpen(true); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Palette size={14}/>幻灯片背景</button>
         </div>;
       })()}
-      {sharing && <ShareDialog meta={meta.data} onClose={() => setSharing(false)} anchorRef={shareRef}/>}
+      {sharing && <ShareDialog meta={meta.data} userId={userId} onClose={() => setSharing(false)} anchorRef={shareRef}/>}
     </main>
   );
 }

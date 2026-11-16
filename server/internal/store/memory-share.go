@@ -118,7 +118,19 @@ func (m *Memory) SetLink(_ context.Context, doc int64, l Link) error {
 	if m.sh.links == nil {
 		m.sh.links = map[int64]Link{}
 	}
-	if old := m.sh.links[doc]; l.Role == "none" || old.Token != "" && old.Token != l.Token {
+	old := m.sh.links[doc]
+	if old.Role == "" {
+		old.Role = "none"
+	}
+	if l.Role != old.Role || l.Token != old.Token {
+		if old.Revision >= 9007199254740991 {
+			return ErrConflict
+		}
+		l.Revision = old.Revision + 1
+	} else {
+		l.Revision = old.Revision
+	}
+	if l.Role == "none" || old.Token != "" && old.Token != l.Token {
 		delete(m.sh.joins, doc)
 	}
 	m.sh.links[doc] = l
@@ -135,11 +147,21 @@ func (m *Memory) ChangeLinkRole(_ context.Context, doc int64, role, candidate st
 		m.sh.links = map[int64]Link{}
 	}
 	old := m.sh.links[doc]
-	next := Link{Role: role, Token: old.Token}
+	next := Link{Role: role, Token: old.Token, Revision: old.Revision}
 	if role == "none" {
 		next.Token = ""
 	} else if old.Role == "" || old.Role == "none" || old.Token == "" {
 		next.Token = candidate
+	}
+	oldRole := old.Role
+	if oldRole == "" {
+		oldRole = "none"
+	}
+	if next.Role != oldRole || next.Token != old.Token {
+		if old.Revision >= 9007199254740991 {
+			return Link{}, ErrConflict
+		}
+		next.Revision++
 	}
 	if role == "none" || old.Token != "" && old.Token != next.Token {
 		delete(m.sh.joins, doc)

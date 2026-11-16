@@ -108,8 +108,8 @@ describe("share permission settings", () => {
     vi.stubGlobal("location", { origin: "https://example.test" });
     const render = (role: "manage" | "edit") => {
       const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      qc.setQueryData(["shares", doc.id], { role, members: [], link: { role: "none" } });
-      return renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={{ ...doc, role }} onClose={() => {}} /></QueryClientProvider>);
+      qc.setQueryData(["shares", doc.id, 1], { role, members: [], link: { role: "none" } });
+      return renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={{ ...doc, role }} userId={1} onClose={() => {}} /></QueryClientProvider>);
     };
     expect(render("manage")).toContain("权限设置");
     expect(render("edit")).not.toContain("权限设置");
@@ -118,21 +118,29 @@ describe("share permission settings", () => {
   it("allows a direct link without suggesting that only invitees have access", () => {
     vi.stubGlobal("location", { origin: "https://example.test", pathname: "/" });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    qc.setQueryData(["shares", doc.id], { role: "manage", members: [], link: { role: "none" } });
-    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} onClose={() => {}} /></QueryClientProvider>);
+    qc.setQueryData(["shares", doc.id, 1], { role: "manage", members: [], link: { role: "none" } });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} userId={1} onClose={() => {}} /></QueryClientProvider>);
     expect(html).toContain("仅限已有权限的人");
     expect(html).toContain("已有文档访问权限的人可访问");
     expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>.*?复制链接<\/button>/);
   });
 
+  it("does not enable link changes when the server omits a revision", () => {
+    vi.stubGlobal("location", { origin: "https://example.test", pathname: "/" });
+    const qc = new QueryClient();
+    qc.setQueryData(["shares", doc.id, 1], { role: "manage", members: [], link: { role: "none" } });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} userId={1} onClose={() => {}} /></QueryClientProvider>);
+    expect(html).toMatch(/<select aria-label="链接分享范围"[^>]*disabled/);
+  });
+
   it("hides cached share details after an access error", () => {
     vi.stubGlobal("location", { origin: "https://example.test" });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
-    const key = ["shares", doc.id];
+    const key = ["shares", doc.id, 1];
     qc.setQueryData(key, { role: "manage", members: [{ userId: 3, name: "私人协作者", email: "private@example.test", role: "edit" }], link: { role: "view", token: "private-token" } });
     const query = qc.getQueryCache().find({ queryKey: key })!;
     query.setState({ status: "error", error: new ApiError(403, "forbidden", "denied") });
-    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} onClose={() => {}} /></QueryClientProvider>);
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} userId={1} onClose={() => {}} /></QueryClientProvider>);
     expect(html).toContain("加载分享设置失败");
     expect(html).not.toContain("私人协作者");
     expect(html).not.toContain("private-token");

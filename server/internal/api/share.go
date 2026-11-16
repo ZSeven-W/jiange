@@ -38,7 +38,12 @@ func token() (string, error) {
 }
 
 func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	d, ok := s.need(w, r, store.RoleView)
+	if !ok {
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
 	if !ok {
 		return
 	}
@@ -48,6 +53,24 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link, err := s.Store.GetLink(r.Context(), d.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	user, err := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
+	if errors.Is(err, store.ErrNotFound) || err == nil && user.ID != guard.UserID {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	d, err = s.Store.GetDoc(r.Context(), guard.UserID, d.ID)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrForbidden) || err == nil && store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "文档不存在或无权访问")
+		return
+	}
 	if err != nil {
 		s.fail(w, r, err)
 		return

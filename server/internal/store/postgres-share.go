@@ -78,7 +78,7 @@ func (p *Postgres) AddShare(ctx context.Context, doc, uid int64, role string) er
 
 func (p *Postgres) GetLink(ctx context.Context, doc int64) (l Link, err error) {
 	var tok *string
-	err = p.Pool.QueryRow(ctx, `SELECT link_role, link_token FROM nodes WHERE id=$1`, doc).Scan(&l.Role, &tok)
+	err = p.Pool.QueryRow(ctx, `SELECT link_role, link_token, link_revision FROM nodes WHERE id=$1`, doc).Scan(&l.Role, &tok, &l.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -131,8 +131,7 @@ func (p *Postgres) ChangeLinkRole(ctx context.Context, doc int64, role, candidat
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `UPDATE nodes SET link_role=$2, link_token=NULLIF($3,'') WHERE id=$1`, doc, next.Role, next.Token)
-		return err
+		return tx.QueryRow(ctx, `UPDATE nodes SET link_role=$2, link_token=NULLIF($3,'') WHERE id=$1 RETURNING link_revision`, doc, next.Role, next.Token).Scan(&next.Revision)
 	})
 	return
 }

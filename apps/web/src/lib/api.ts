@@ -370,7 +370,7 @@ export interface Share {
 }
 export interface ShareInfo {
   members: Share[];
-  link: { role: "none" | "anon" | "view" | "edit"; token?: string };
+  link: { role: "none" | "anon" | "view" | "edit"; token?: string; revision?: number };
   role: Role;
 }
 export interface FileMeta {
@@ -513,8 +513,13 @@ export const docsApi = {
   setIcon: (id: number, icon: string, expectedRevision: number) => request<{ icon: string; revision: number } | undefined>("PUT", `/api/docs/${id}/icon`, { icon, expectedRevision }),
   create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
+  sharesForAccount: (id: number, userId: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares-account`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
+  setLinkAtRevision: (id: number, role: "none" | "anon" | "view" | "edit", expectedRevision: number, userId: number, signal?: AbortSignal) => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link-guarded`, { role, expectedRevision }, signal, { "X-Jiange-User-Id": String(userId) }).then((link) => {
+    if (link !== undefined && (link.role !== role || !Number.isSafeInteger(link.revision) || link.revision! < expectedRevision)) throw new TypeError("链接修改结果无法确认");
+    return link;
+  }),
   join: (token: string) => request<DocMeta>("POST", `/api/share/${token}`),
   shared: () => request<{ docs: DocMeta[] }>("GET", "/api/shared").then((r) => r.docs),
   upload: async (id: number, f: File, onProgress?: (percent: number) => void): Promise<FileMeta> => {

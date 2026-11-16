@@ -174,7 +174,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "drive" ? (
         <DrivePage key={`${route.folderId ?? 0}:${route.personal}`} folderId={route.folderId} personalRoot={route.personal} userId={me.user.id} uploads={uploads} />
       ) : route.page === "file" ? (
-        <DriveFilePage key={route.id} id={route.id} />
+        <DriveFilePage key={route.id} id={route.id} userId={me.user.id} />
       ) : route.page === "slides" ? (
         <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
       ) : route.page === "trash" ? (
