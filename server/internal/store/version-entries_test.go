@@ -19,6 +19,7 @@ type versionEntryTestStore interface {
 	Store
 	CreateVersionEntry(context.Context, RestoreGuard, int64, int64, int64, []byte, string, string) (VersionEntry, error)
 	ListVersionEntries(context.Context, RestoreGuard, int64) ([]VersionEntry, error)
+	ManageVersionEntry(context.Context, RestoreGuard, int64, string, int64, *string) error
 }
 
 func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
@@ -58,6 +59,7 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	if err != nil || len(entries) != 1 || entries[0].Label != "Legacy" {
 		t.Fatalf("legacy: %+v %v", entries, err)
 	}
+	legacyID := entries[0].ID
 	request1 := "11111111111111111111111111111111"
 	request2 := "22222222222222222222222222222222"
 	first, err := st.CreateVersionEntry(ctx, og, d.ID, epoch, head, state, "A", request1)
@@ -132,6 +134,104 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	if parallelErrs[0] != nil || parallelErrs[1] != nil || parallelIDs[0] == parallelIDs[1] {
 		t.Fatalf("parallel distinct requests: %v %v", parallelIDs, parallelErrs)
 	}
+	// A legacy s: link remains stable when promoted, renamed and deleted.
+	legacyName := "Legacy renamed"
+	if err = st.ManageVersionEntry(ctx, og, d.ID, legacyID, 1, &legacyName); err != nil {
+		t.Fatalf("rename legacy: %v", err)
+	}
+	entries, err = st.ListVersionEntries(ctx, og, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundLegacy := false
+	for _, entry := range entries {
+		if entry.ID == legacyID && entry.Label == legacyName && entry.Revision == 2 {
+			foundLegacy = true
+		}
+	}
+	if !foundLegacy {
+		t.Fatalf("legacy link changed: %+v", entries)
+	}
+	if err = st.ManageVersionEntry(ctx, og, d.ID, legacyID, 2, nil); err != nil {
+		t.Fatalf("delete legacy: %v", err)
+	}
+	entries, err = st.ListVersionEntries(ctx, og, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.ID == legacyID {
+			t.Fatalf("deleted legacy reappeared: %+v", entries)
+		}
+	}
+	// Concurrent edits from the same revision must not overwrite one another.
+	changes := []string{"First", "Second"}
+	changeErrs := make([]error, len(changes))
+	for i := range changes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			changeErrs[i] = st.ManageVersionEntry(ctx, og, d.ID, first.ID, 1, &changes[i])
+		}(i)
+	}
+	wg.Wait()
+	if !((changeErrs[0] == nil && errors.Is(changeErrs[1], ErrConflict)) || (changeErrs[1] == nil && errors.Is(changeErrs[0], ErrConflict))) {
+		t.Fatalf("concurrent rename: %v", changeErrs)
+	}
+	if err = st.ManageVersionEntry(ctx, og, d.ID, first.ID, 1, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale delete: %v", err)
+	}
+	if err = st.ManageVersionEntry(ctx, og, d.ID, first.ID, 2, nil); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err = st.CreateVersionEntry(ctx, og, d.ID, epoch, head, state, "A", request1); !errors.Is(err, ErrConflict) {
+		t.Fatalf("deleted request resurrected: %v", err)
+	}
+	entries, err = st.ListVersionEntries(ctx, og, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptSecond := false
+	for _, entry := range entries {
+		if entry.ID == first.ID {
+			t.Fatal("deleted entry reappeared")
+		}
+		if entry.ID == second.ID {
+			keptSecond = true
+		}
+	}
+	if !keptSecond {
+		t.Fatal("deleting one name deleted another at the same sequence")
+	}
+	legacyDoc, err := st.CreateDoc(ctx, ws.ID, owner.ID, nil, "Old", InitialDocOps("Old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyEpoch, legacyHead, err := st.HeadVersion(ctx, legacyDoc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.SaveSnapshot(ctx, legacyDoc.ID, legacyHead, state); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.SaveVersion(ctx, legacyDoc.ID, legacyHead, "Only legacy", owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	oldID := fmt.Sprintf("s:%d", legacyHead)
+	if err = st.ManageVersionEntry(ctx, og, legacyDoc.ID, oldID, 1, nil); err != nil {
+		t.Fatalf("delete only legacy: %v", err)
+	}
+	legacyEntries, err := st.ListVersionEntries(ctx, og, legacyDoc.ID)
+	if err != nil || len(legacyEntries) != 0 {
+		t.Fatalf("legacy fallback resurrected: %+v %v", legacyEntries, err)
+	}
+	if _, err = st.CreateVersionEntry(ctx, og, legacyDoc.ID, legacyEpoch, legacyHead, state, "New", "77777777777777777777777777777777"); err != nil {
+		t.Fatalf("create after legacy deletion: %v", err)
+	}
+	legacyEntries, err = st.ListVersionEntries(ctx, og, legacyDoc.ID)
+	if err != nil || len(legacyEntries) != 1 || legacyEntries[0].Label != "New" {
+		t.Fatalf("legacy resurrection after create: %+v %v", legacyEntries, err)
+	}
 	if err = st.SetShare(ctx, d.ID, guest.ID, RoleView); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +240,9 @@ func checkVersionEntries(t *testing.T, st versionEntryTestStore) {
 	}
 	if _, err = st.CreateVersionEntry(ctx, gg, d.ID, epoch, head, state, "No", request1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer create: %v", err)
+	}
+	if err = st.ManageVersionEntry(ctx, gg, d.ID, second.ID, 1, nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer delete: %v", err)
 	}
 	if err = st.SetShare(ctx, d.ID, guest.ID, ""); err != nil {
 		t.Fatal(err)

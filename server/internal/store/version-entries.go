@@ -20,11 +20,13 @@ type VersionEntry struct {
 	CreatedBy     int64     `json:"createdBy"`
 	CreatedByName string    `json:"createdByName"`
 	CreatedAt     time.Time `json:"createdAt"`
+	Revision      int64     `json:"revision"`
 }
 type memoryVersionEntry struct {
 	VersionEntry
 	request string
 	epoch   int64
+	deleted bool
 }
 
 var versionRequestPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -58,6 +60,9 @@ func (m *Memory) CreateVersionEntry(ctx context.Context, guard RestoreGuard, doc
 	}
 	for _, entry := range d.namedVersions {
 		if entry.CreatedBy == guard.UserID && entry.request == request {
+			if entry.deleted {
+				return VersionEntry{}, ErrConflict
+			}
 			if entry.Seq != head || entry.epoch != epoch || entry.Label != label {
 				return VersionEntry{}, ErrConflict
 			}
@@ -86,19 +91,18 @@ func (m *Memory) CreateVersionEntry(ctx context.Context, guard RestoreGuard, doc
 			}
 		}
 		if !hasEntry {
-			m.d.versionEntrySequence++
 			name := ""
 			if u := m.userByID(old.UserID); u != nil {
 				name = u.Name
 			}
-			d.namedVersions = append(d.namedVersions, memoryVersionEntry{VersionEntry: VersionEntry{ID: fmt.Sprintf("n:%d", m.d.versionEntrySequence), Seq: head, Label: old.Label, CreatedBy: old.UserID, CreatedByName: name, CreatedAt: old.At}})
+			d.namedVersions = append(d.namedVersions, memoryVersionEntry{VersionEntry: VersionEntry{ID: fmt.Sprintf("s:%d", head), Seq: head, Label: old.Label, CreatedBy: old.UserID, CreatedByName: name, CreatedAt: old.At, Revision: 1}})
 		}
 	} else {
 		d.snaps[head] = slices.Clone(state)
 		d.versions[head] = memVersion{Label: label, UserID: guard.UserID, At: time.Now()}
 	}
 	m.d.versionEntrySequence++
-	out := VersionEntry{ID: fmt.Sprintf("n:%d", m.d.versionEntrySequence), Seq: head, Label: label, CreatedBy: guard.UserID, CreatedByName: m.users[guard.UserID-1].Name, CreatedAt: time.Now()}
+	out := VersionEntry{ID: fmt.Sprintf("n:%d", m.d.versionEntrySequence), Seq: head, Label: label, CreatedBy: guard.UserID, CreatedByName: m.users[guard.UserID-1].Name, CreatedAt: time.Now(), Revision: 1}
 	d.namedVersions = append(d.namedVersions, memoryVersionEntry{VersionEntry: out, request: request, epoch: epoch})
 	return out, nil
 }
@@ -120,13 +124,19 @@ func (m *Memory) ListVersionEntries(ctx context.Context, guard RestoreGuard, doc
 	out := make([]VersionEntry, 0, len(d.namedVersions)+len(d.versions))
 	represented := map[int64]bool{}
 	for _, entry := range d.namedVersions {
+		represented[entry.Seq] = true
+		if entry.deleted {
+			continue
+		}
 		value := entry.VersionEntry
+		if value.Revision == 0 {
+			value.Revision = 1
+		}
 		value.CreatedByName = ""
 		if user := m.userByID(value.CreatedBy); user != nil {
 			value.CreatedByName = user.Name
 		}
 		out = append(out, value)
-		represented[entry.Seq] = true
 	}
 	for seq, v := range d.versions {
 		if represented[seq] {
@@ -136,7 +146,7 @@ func (m *Memory) ListVersionEntries(ctx context.Context, guard RestoreGuard, doc
 		if u := m.userByID(v.UserID); u != nil {
 			name = u.Name
 		}
-		out = append(out, VersionEntry{ID: fmt.Sprintf("s:%d", seq), Seq: seq, Label: v.Label, CreatedBy: v.UserID, CreatedByName: name, CreatedAt: v.At})
+		out = append(out, VersionEntry{ID: fmt.Sprintf("s:%d", seq), Seq: seq, Label: v.Label, CreatedBy: v.UserID, CreatedByName: name, CreatedAt: v.At, Revision: 1})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
@@ -205,7 +215,7 @@ func (p *Postgres) CreateVersionEntry(ctx context.Context, guard RestoreGuard, d
 		}
 		// Preserve old-client versions created after the migration as separate entries.
 		if versioned {
-			_, e = tx.Exec(ctx, `INSERT INTO doc_version_entries(doc_id,seq,label,created_by,created_at) SELECT $1,$2,$3,$4,$5 WHERE NOT EXISTS (SELECT 1 FROM doc_version_entries WHERE doc_id=$1 AND seq=$2)`, docID, head, legacyLabel, legacyCreator, legacyTime)
+			_, e = tx.Exec(ctx, `INSERT INTO doc_version_entries(doc_id,seq,label,created_by,created_at,legacy_seq) SELECT $1,$2,$3,$4,$5,true WHERE NOT EXISTS (SELECT 1 FROM doc_version_entries WHERE doc_id=$1 AND seq=$2)`, docID, head, legacyLabel, legacyCreator, legacyTime)
 			if e != nil {
 				return e
 			}
@@ -215,12 +225,15 @@ func (p *Postgres) CreateVersionEntry(ctx context.Context, guard RestoreGuard, d
 				return e
 			}
 		}
-		var id, seq, oldEpoch int64
+		var id, seq, oldEpoch, revision int64
 		var oldLabel, name string
 		var at time.Time
-		e = tx.QueryRow(ctx, `INSERT INTO doc_version_entries(doc_id,seq,history_epoch,label,created_by,request_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(doc_id,created_by,request_id) DO NOTHING RETURNING id,seq,history_epoch,label,created_at`, docID, head, epoch, label, guard.UserID, request).Scan(&id, &seq, &oldEpoch, &oldLabel, &at)
+		e = tx.QueryRow(ctx, `INSERT INTO doc_version_entries(doc_id,seq,history_epoch,label,created_by,request_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(doc_id,created_by,request_id) DO NOTHING RETURNING id,seq,history_epoch,label,created_at,revision`, docID, head, epoch, label, guard.UserID, request).Scan(&id, &seq, &oldEpoch, &oldLabel, &at, &revision)
 		if errors.Is(e, pgx.ErrNoRows) {
-			e = tx.QueryRow(ctx, `SELECT id,seq,history_epoch,label,created_at FROM doc_version_entries WHERE doc_id=$1 AND created_by=$2 AND request_id=$3 FOR SHARE`, docID, guard.UserID, request).Scan(&id, &seq, &oldEpoch, &oldLabel, &at)
+			e = tx.QueryRow(ctx, `SELECT id,seq,history_epoch,label,created_at,revision FROM doc_version_entries WHERE doc_id=$1 AND created_by=$2 AND request_id=$3 AND deleted_at IS NULL FOR SHARE`, docID, guard.UserID, request).Scan(&id, &seq, &oldEpoch, &oldLabel, &at, &revision)
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrConflict
+			}
 			if e != nil {
 				return e
 			}
@@ -236,7 +249,7 @@ func (p *Postgres) CreateVersionEntry(ctx context.Context, guard RestoreGuard, d
 		if e = tx.QueryRow(ctx, `SELECT name FROM users WHERE id=$1`, guard.UserID).Scan(&name); e != nil {
 			return e
 		}
-		out = VersionEntry{ID: fmt.Sprintf("n:%d", id), Seq: seq, Label: oldLabel, CreatedBy: guard.UserID, CreatedByName: name, CreatedAt: at}
+		out = VersionEntry{ID: fmt.Sprintf("n:%d", id), Seq: seq, Label: oldLabel, CreatedBy: guard.UserID, CreatedByName: name, CreatedAt: at, Revision: revision}
 		return nil
 	})
 	if retryableRestoreConflict(err) {
@@ -265,11 +278,11 @@ func (p *Postgres) ListVersionEntries(ctx context.Context, guard RestoreGuard, d
 		if e = drivePGValidChain(ctx, tx, docID, ws); e != nil {
 			return ErrForbidden
 		}
-		rows, e := tx.Query(ctx, `SELECT id,seq,label,created_by,name,created_at FROM (
-    SELECT 'n:'||v.id::text AS id,v.seq,v.label,COALESCE(v.created_by,0) AS created_by,COALESCE(u.name,'') AS name,v.created_at
-    FROM doc_version_entries v LEFT JOIN users u ON u.id=v.created_by WHERE v.doc_id=$1
+		rows, e := tx.Query(ctx, `SELECT id,seq,label,created_by,name,created_at,revision FROM (
+    SELECT CASE WHEN v.legacy_seq THEN 's:'||v.seq::text ELSE 'n:'||v.id::text END AS id,v.seq,v.label,COALESCE(v.created_by,0) AS created_by,COALESCE(u.name,'') AS name,v.created_at,v.revision
+    FROM doc_version_entries v LEFT JOIN users u ON u.id=v.created_by WHERE v.doc_id=$1 AND v.deleted_at IS NULL
     UNION ALL
-    SELECT 's:'||s.seq::text,s.seq,s.label,COALESCE(s.created_by,0),COALESCE(u.name,''),s.created_at
+    SELECT 's:'||s.seq::text,s.seq,s.label,COALESCE(s.created_by,0),COALESCE(u.name,''),s.created_at,1::bigint
     FROM doc_snapshots s LEFT JOIN users u ON u.id=s.created_by WHERE s.doc_id=$1 AND s.is_version AND NOT EXISTS(SELECT 1 FROM doc_version_entries v WHERE v.doc_id=s.doc_id AND v.seq=s.seq)
    ) entries ORDER BY created_at DESC,id DESC`, docID)
 		if e != nil {
@@ -279,7 +292,7 @@ func (p *Postgres) ListVersionEntries(ctx context.Context, guard RestoreGuard, d
 		out = []VersionEntry{}
 		for rows.Next() {
 			var v VersionEntry
-			if e = rows.Scan(&v.ID, &v.Seq, &v.Label, &v.CreatedBy, &v.CreatedByName, &v.CreatedAt); e != nil {
+			if e = rows.Scan(&v.ID, &v.Seq, &v.Label, &v.CreatedBy, &v.CreatedByName, &v.CreatedAt, &v.Revision); e != nil {
 				return e
 			}
 			out = append(out, v)

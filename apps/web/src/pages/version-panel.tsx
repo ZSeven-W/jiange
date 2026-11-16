@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, ChevronUp, HelpCircle, Link, Plus, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, HelpCircle, Link, MoreHorizontal, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, docsApi, type DocView } from "@/lib/api";
+import { ApiError, docsApi, type DocView, type VersionEntry } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
 import { canDiffViews, diffViews, type DiffRow } from "./version-diff";
 import { formatEditTime } from "./doc-header-meta";
@@ -46,6 +46,11 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   const [requested, setRequested] = useState<string | null | undefined>(initialVersionId);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
+  const [menuVersion, setMenuVersion] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<VersionEntry | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [manageError, setManageError] = useState("");
+  const [managing, setManaging] = useState(false);
   const [diffMode, setDiffMode] = useState(false);
   const [mobilePreview, setMobilePreview] = useState(initialVersionId !== undefined);
   const root = useRef<HTMLDivElement>(null);
@@ -71,11 +76,11 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
       if (match) { setPreviewing({ id: match.id, seq: match.seq }); setRequested(undefined); }
       return;
     }
-    if (!list.data.length) return;
     if (!previewing || !list.data.some((version) => version.id === previewing.id && version.seq === previewing.seq)) {
-      const first = list.data[0]; setPreviewing({ id: first.id, seq: first.seq });
+      if (previewing && initialVersionId === previewing.id) { setPreviewing(null); setRequested(initialVersionId); return; }
+      const first = list.data[0]; setPreviewing(first ? { id: first.id, seq: first.seq } : null);
     }
-  }, [listVisible, list.data, previewing, requested]);
+  }, [listVisible, list.data, previewing, requested, initialVersionId]);
   const selectedIndex = listVisible && previewing ? list.data.findIndex((v) => v.id === previewing.id && v.seq === previewing.seq) : -1;
   const preview = useQuery({
     queryKey: ["versions", userId, id, "preview", mode, previewing?.id, previewing?.seq, canViewHistory],
@@ -95,6 +100,31 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["versions", userId, id] }); },
   });
+  const latestManage = useRef({ canEdit, listVerified, versions: list.data });
+  latestManage.current = { canEdit, listVerified, versions: list.data };
+  const canManage = (v: VersionEntry) => {
+    const current = latestManage.current;
+    return current.canEdit && current.listVerified && !!current.versions?.some((item) => item.id === v.id && item.revision === v.revision);
+  };
+  const manage = async (v: VersionEntry, action: "rename" | "delete", label?: string) => {
+    if (managing || !canManage(v)) return;
+    setManaging(true); setManageError("");
+    try {
+      await docsApi.manageVersionEntry(id, v.id, v.revision, action, userId, label);
+      if (mounted.current) { setRenameTarget(null); setMenuVersion(null); }
+    } catch (error) {
+      if (mounted.current) setManageError(error instanceof ApiError && error.status === 409 ? "版本已变化，请关闭并重新操作。" : "无法确认操作结果，请刷新版本列表后检查。 ");
+    } finally {
+      await qc.invalidateQueries({ queryKey: ["versions", userId, id] });
+      if (mounted.current) setManaging(false);
+    }
+  };
+  const deleteVersion = async (v: VersionEntry) => {
+    if (!canManage(v) || confirming.current || managing) return;
+    confirming.current = true; setMenuVersion(null);
+    try { if (await ask("删除该版本？", "删除后，该版本的分享链接将失效，文档当前内容不会改变。")) { if (mounted.current && canManage(v)) await manage(v, "delete"); } }
+    finally { confirming.current = false; if (mounted.current) back.current?.focus(); }
+  };
   const selectVersion = (v: { id: string; seq: number }) => {
     if (restore.isPending) return;
     restore.reset(); setRequested(undefined); setPreviewing({ id: v.id, seq: v.seq }); setMobilePreview(true); setShareLink(null);
@@ -113,6 +143,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   };
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (confirming.current) return;
+    if (event.key === "Escape" && menuVersion) { event.preventDefault(); setMenuVersion(null); root.current?.querySelector<HTMLButtonElement>(`[data-version-menu="${menuVersion}"]`)?.focus(); return; }
     if (event.key === "Escape" && !confirming.current && !restore.isPending) { event.preventDefault(); onClose(); return; }
     if (event.key !== "Tab" || !root.current) return;
     const items = [...root.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled])")].filter((item) => item.getClientRects().length > 0);
@@ -128,7 +159,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
   const title = mode === "saved" ? "已存版本" : "历史记录";
-  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} data-version-panel data-version-mode={mode} data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
+  return <div ref={root} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} onMouseDown={(event) => { if (menuVersion && !(event.target as HTMLElement).closest("[data-version-menu], [data-version-management-menu]")) setMenuVersion(null); }} data-version-panel data-version-mode={mode} data-document-print-restricted={disableFileDownloads ? "true" : undefined} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
     <header className="flex h-14 shrink-0 items-center border-b sm:h-16">
       <button ref={back} type="button" onClick={onClose} disabled={restore.isPending} className="ml-3 flex h-9 items-center gap-1.5 rounded px-2 text-[14px] hover:bg-hover disabled:opacity-40 sm:ml-4"><ArrowLeft size={16}/><span>返回文档</span></button>
       <span className="mx-2 h-5 w-px bg-border sm:mx-3" />
@@ -143,6 +174,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
       <button ref={mobileToggle} type="button" onClick={() => setMobilePreview((v) => !v)} className="mr-2 rounded px-2 py-2 text-[13px] text-[#1456F0] hover:bg-hover md:hidden">{mobilePreview ? "版本列表" : "预览"}</button>
       <div className="hidden h-full w-[294px] shrink-0 items-center gap-2 border-l px-4 text-[16px] font-medium md:flex"><span>{title}</span><HelpCircle size={14} className="text-subtle" aria-label="命名版本与历史快照"/>{canEdit && <button type="button" onClick={onCreateVersion} aria-label="创建当前版本" title="创建当前版本" className="ml-auto grid size-8 place-items-center rounded text-muted-foreground hover:bg-hover" data-create-version><Plus size={17}/></button>}</div>
     </header>
+    {manageError && !renameTarget && <p role="alert" className="mx-4 mt-3 rounded border border-red-200 bg-red-50 p-3 text-[13px] text-destructive">{manageError}</p>}
     <div className="flex min-h-0 flex-1">
       <main className={`${mobilePreview ? "flex" : "hidden"} min-w-0 flex-1 flex-col overflow-y-auto md:flex`} data-version-preview data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
         {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canRestore} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
@@ -162,16 +194,32 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
           {listVisible && list.data.length === 0 && <p className="px-4 py-8 text-center text-[13px] text-subtle">还没有版本</p>}
           {(listVisible ? list.data : []).map((v, i, all) => <Fragment key={v.id}>
             {(i === 0 || group(v.createdAt) !== group(all[i-1].createdAt)) && <div className="border-b px-4 py-2 text-[12px] text-subtle">{group(v.createdAt)}</div>}
-            <button type="button" aria-pressed={previewing?.id === v.id} onClick={() => selectVersion(v)} data-version-item={v.id} className={`block w-full border-l-[3px] py-3 pl-7 pr-4 text-left text-[13px] ${previewing?.id === v.id ? "border-[#3370FF] bg-[#E1EAFF] hover:bg-[#E1EAFF] dark:bg-primary/20 dark:hover:bg-primary/20" : "border-transparent hover:bg-hover"}`}>
+            <div className={`group relative border-l-[3px] ${previewing?.id === v.id ? "border-[#3370FF] bg-[#E1EAFF] dark:bg-primary/20" : "border-transparent hover:bg-hover"}`}>
+            <button type="button" aria-pressed={previewing?.id === v.id} onClick={() => { setMenuVersion(null); selectVersion(v); }} data-version-item={v.id} className="block w-full py-3 pl-7 pr-12 text-left text-[13px]">
               <span className="block text-[#1456F0]">{formatEditTime(v.createdAt) || "时间未知"}</span>
               <span className="mt-1 block truncate text-foreground">{v.label || "历史版本"}</span>
               <span className="mt-1 flex items-center gap-2 text-[12px] text-muted-foreground"><span className="size-1.5 shrink-0 rounded-full bg-[#8D52E9]"/>{v.createdByName || "系统"}</span>
             </button>
+            {mode === "saved" && canEdit && <><button type="button" aria-label={`版本操作：${v.label}`} aria-expanded={menuVersion === v.id} disabled={!listVerified || managing} onClick={() => setMenuVersion((open) => open === v.id ? null : v.id)} className="absolute right-3 top-3 grid size-8 place-items-center rounded text-muted-foreground hover:bg-white/70 disabled:opacity-40" data-version-menu={v.id}><MoreHorizontal size={17}/></button>
+              {menuVersion === v.id && <div role="menu" data-version-management-menu className="absolute right-3 top-11 z-20 w-32 rounded-md border bg-surface py-1 text-[13px] shadow-lg">
+                <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left hover:bg-hover" onClick={() => { setManageError(""); setRenameTarget(v); setRenameValue(v.label); setMenuVersion(null); }} data-rename-version>重命名</button>
+                <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-destructive hover:bg-hover" onClick={() => void deleteVersion(v)} data-delete-version>删除版本</button>
+              </div>}
+            </>}
+            </div>
           </Fragment>)}
         </div>
         {mode === "history" && <div className="flex h-12 shrink-0 items-center justify-between border-t px-4 text-[13px]"><span>对比当前</span><button type="button" role="switch" aria-label="对比当前" aria-checked={diffMode} disabled={!currentView || selectedIndex < 0} onClick={() => setDiffMode((v) => !v)} className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${diffMode ? "bg-[#1456F0]" : "bg-[#BBBFC4]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform ${diffMode ? "left-[18px]" : "left-0.5"}`}/></button></div>}
       </aside>
     </div>
+    {renameTarget && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4" onKeyDown={(event) => { if (event.key === "Escape" && !managing) { event.preventDefault(); event.stopPropagation(); setRenameTarget(null); } else if (event.key === "Tab") { event.stopPropagation(); const items = [...event.currentTarget.querySelectorAll<HTMLElement>("input:not([disabled]),button:not([disabled])")]; const i = items.indexOf(document.activeElement as HTMLElement); if (items.length && (i < 0 || event.shiftKey && i === 0 || !event.shiftKey && i === items.length - 1)) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); } } }}>
+      <form role="dialog" aria-modal="true" aria-label="重命名版本" className="w-full max-w-[420px] rounded-lg bg-surface p-5 shadow-xl" onSubmit={(event) => { event.preventDefault(); const name = renameValue.trim(); if (name && name !== renameTarget.label) void manage(renameTarget, "rename", name); }}>
+        <h2 className="text-[16px] font-medium">重命名版本</h2><label htmlFor="version-rename" className="mt-5 block text-[13px]">版本名称</label>
+        <input autoFocus id="version-rename" maxLength={1000} value={renameValue} disabled={managing} onChange={(event) => setRenameValue(event.target.value)} className="mt-2 h-9 w-full rounded border px-3 text-[14px] outline-none focus:border-[#3370FF]" />
+        {manageError && <p role="alert" className="mt-3 text-[13px] text-destructive">{manageError}</p>}
+        <div className="mt-8 flex justify-end gap-3"><button type="button" disabled={managing} onClick={() => setRenameTarget(null)} className="h-8 rounded border px-4 text-[13px] hover:bg-hover">取消</button><button type="submit" disabled={managing || !renameValue.trim() || renameValue.trim() === renameTarget.label || !canManage(renameTarget)} className="h-8 rounded bg-[#3370FF] px-4 text-[13px] text-white disabled:opacity-40">{managing ? "保存中…" : "保存"}</button></div>
+      </form>
+    </div>}
     {shareLink && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShareLink(null); shareButton.current?.focus(); } }} onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setShareLink(null); shareButton.current?.focus(); }
       if (event.key === "Tab" && shareDialog.current) { event.stopPropagation(); const items = [...shareDialog.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])")]; const index = items.indexOf(document.activeElement as HTMLElement); if (items.length && (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === items.length - 1)) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); } }

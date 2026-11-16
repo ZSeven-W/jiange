@@ -353,7 +353,7 @@ export interface Version {
   createdByName: string;
   createdAt: string;
 }
-export interface VersionEntry extends Version { id: string }
+export interface VersionEntry extends Version { id: string; revision: number }
 export interface DocView {
   blocks: { id: string; parent: string; type: string; props: Record<string, string>; spans: { text: string; marks: Record<string, string> }[] }[];
 }
@@ -539,6 +539,7 @@ export const docsApi = {
   versions: (id: number) => request<{ versions: Version[] }>("GET", `/api/docs/${id}/versions`).then((r) => r.versions),
   versionEntries: (id: number, userId: number, scope?: "saved" | "history") => request<{ versions: VersionEntry[] }>("GET", `/api/docs/${id}/version-entries${scope ? `?scope=${scope}` : ""}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.versions),
   createVersionEntry: (id: number, label: string, expectedSeq: number, historyEpoch: number, requestId: string, userId: number, signal: AbortSignal) => request<VersionEntry>("POST", `/api/docs/${id}/version-entries`, { label, expectedSeq, historyEpoch, requestId }, signal, { "X-Jiange-User-Id": String(userId) }),
+  manageVersionEntry: (id: number, entryId: string, expectedRevision: number, action: "rename" | "delete", userId: number, label?: string) => request<void>("PATCH", `/api/docs/${id}/version-entries/${encodeURIComponent(entryId)}`, { action, expectedRevision, ...(label === undefined ? {} : { label }) }, undefined, { "X-Jiange-User-Id": String(userId) }),
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
   createNamedVersion: (id: number, label: string, expectedSeq: number, historyEpoch: number, userId: number, signal: AbortSignal) => request<Version>("POST", `/api/docs/${id}/named-version`, { label, expectedSeq, historyEpoch }, signal, { "X-Jiange-User-Id": String(userId) }),
   versionPreview: (id: number, seq: number, userId?: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`, undefined, undefined, userId === undefined ? undefined : { "X-Jiange-User-Id": String(userId) }),

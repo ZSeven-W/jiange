@@ -94,12 +94,30 @@ func TestSavedVersionEntryPreview(t *testing.T) {
 	}
 	traced := &versionReadRaceStore{Memory: e.store}
 	traced.afterVersionRead = func() {
-		if err := e.store.SetShare(ctx, e.source.ID, e.guestUser.ID, ""); err != nil {
+		data := bytes.NewBufferString(`{"action":"delete","expectedRevision":1}`)
+		req, _ := http.NewRequest("PATCH", e.url()+"/version-entries/"+url.PathEscape(second.ID), data)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Jiange-User-Id", strconv.FormatInt(e.ownerUser.ID, 10))
+		response, err := e.owner.Do(req)
+		if err != nil {
 			t.Error(err)
+			return
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Errorf("delete during read: %d", response.StatusCode)
 		}
 	}
 	tracedServer := httptest.NewServer((&Server{Store: traced, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 100}).Handler())
 	defer tracedServer.Close()
+	if status, body := get(tracedServer.URL, e.guest, second.ID, e.guestUser.ID); status != 404 || bytes.Contains(body, []byte("可分享的版本")) {
+		t.Fatalf("deleted during read: %d %s", status, body)
+	}
+	traced.afterVersionRead = func() {
+		if err := e.store.SetShare(ctx, e.source.ID, e.guestUser.ID, ""); err != nil {
+			t.Error(err)
+		}
+	}
 	if status, body := get(tracedServer.URL, e.guest, first.ID, e.guestUser.ID); status != 404 || bytes.Contains(body, []byte("可分享的版本")) {
 		t.Fatalf("revoked during read: %d %s", status, body)
 	}

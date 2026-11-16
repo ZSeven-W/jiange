@@ -3,6 +3,16 @@ import { docsApi } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("account-bound version entries", () => {
+  it("binds management to the selected entry, account and revision", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+    await docsApi.manageVersionEntry(8, "s:3", 2, "rename", 4, "交付版");
+    await docsApi.manageVersionEntry(8, "s:3", 3, "delete", 4);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/docs/8/version-entries/s%3A3");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "PATCH", headers: { "X-Jiange-User-Id": "4" } });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ action: "rename", expectedRevision: 2, label: "交付版" });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ action: "delete", expectedRevision: 3 });
+  });
   it("addresses and verifies the specific saved entry", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:2", seq: 3, view: { blocks: [] } }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:1", seq: 3, view: { blocks: [] } }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
