@@ -41,6 +41,7 @@ import type { SearchGuardCapture } from "@/components/search-focus";
 import { publishDocumentIcon } from "@/components/document-icon-cache";
 import { ask, askText } from "@/components/ui/ask";
 import { VersionPanel, type VersionMode } from "./version-panel";
+import { withoutVersionHash } from "@/lib/version-link";
 import { DocumentPresentation } from "./document-presentation";
 import { NamedVersionDialog } from "./named-version-dialog";
 import { namedVersionPoint } from "./named-version-safety";
@@ -77,7 +78,7 @@ import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, F
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
 
-export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearchGuardRegistrar }: { id: number; me: Me; sidebarDocked?: boolean; onGlobalSearch?: () => void; onSearchGuardRegistrar?: (capture: SearchGuardCapture | null) => void }) {
+export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobalSearch, onSearchGuardRegistrar }: { id: number; linkedVersion?: string | null; me: Me; sidebarDocked?: boolean; onGlobalSearch?: () => void; onSearchGuardRegistrar?: (capture: SearchGuardCapture | null) => void }) {
   const qc = useQueryClient();
   const meta = useQuery({
     queryKey: docMetaKey(id, me.user.id),
@@ -224,6 +225,12 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   useEffect(() => { if (!metadataVerified) setSharing(false); }, [metadataVerified]);
   const [history, setHistory] = useState<VersionMode | null>(null);
   const [presenting, setPresenting] = useState(false);
+  const hadLinkedVersion = useRef(false);
+  useEffect(() => {
+    if (linkedVersion !== undefined) { setPresenting(false); setHistory("saved"); }
+    else if (hadLinkedVersion.current) setHistory(null);
+    hadLinkedVersion.current = linkedVersion !== undefined;
+  }, [linkedVersion]);
   const [mentionsTarget, setMentionsTarget] = useState<{ doc: number; user: number } | null>(null);
   useEffect(() => { setMentionsTarget(null); }, [id, me.user.id, metadataVerified]);
   useEffect(() => { setPresenting(false); }, [id, me.user.id, metadataVerified]);
@@ -1284,18 +1291,19 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
       {metadataVerified && history && (history !== "history" || canEditRole) && (
         <VersionPanel
-          key={`version-history:${me.user.id}:${id}`}
+          key={`version-history:${me.user.id}:${id}:${history}:${linkedVersion === null ? "invalid" : linkedVersion ?? "none"}`}
           id={id}
           userId={me.user.id}
           onCreateVersion={() => setVersionTarget({ doc: id, user: me.user.id })}
           canEdit={canEditContent}
           canViewHistory={canEditRole}
           mode={history}
+          initialVersionId={history === "saved" ? linkedVersion : undefined}
           canRestore={!!namedVersionPoint(sync.client, canEditContent, permissionsVerified)}
           allowCopy={contentCopyAllowed}
           disableFileDownloads={!downloadAllowed}
           currentView={sync.client.doc?.view()}
-          onClose={() => setHistory(null)}
+          onClose={() => { setHistory(null); if (linkedVersion !== undefined) location.hash = withoutVersionHash(location.hash); }}
         />
       )}
       {meta.data?.copyProtected && (

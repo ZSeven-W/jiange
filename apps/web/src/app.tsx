@@ -164,7 +164,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
-        <DocPage key={route.id} id={route.id} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
+        <DocPage key={route.id} id={route.id} linkedVersion={route.versionId} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
       ) : route.page === "unsupported" ? (
         <ResourceTypeNotice id={route.id} />
       ) : route.page === "base" ? (

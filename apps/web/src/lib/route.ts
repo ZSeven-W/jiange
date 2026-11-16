@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
+import { versionFromHash } from "./version-link";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number } | { page: "unsupported"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number; versionId?: string | null } | { page: "unsupported"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
 
 export function parseHash(h: string): Route {
   const unsupported = /^#\/unsupported\/(\d+)\/?$/.exec(h);
   if (unsupported) { const id = Number(unsupported[1]); return Number.isSafeInteger(id) && id > 0 ? { page: "unsupported", id } : { page: "home" }; }
   const m = /^#\/doc\/(\d+)/.exec(h);
-  if (m) return { page: "doc", id: Number(m[1]) };
+  if (m) { const versionId = versionFromHash(h); return versionId === undefined ? { page: "doc", id: Number(m[1]) } : { page: "doc", id: Number(m[1]), versionId }; }
   const bm = /^#\/base\/(\d+)/.exec(h);
   if (bm) return { page: "base", id: Number(bm[1]) };
   const file = /^#\/file\/(\d+)\/?$/.exec(h);

@@ -542,6 +542,10 @@ export const docsApi = {
   createVersion: (id: number, label: string) => request<Version>("POST", `/api/docs/${id}/versions`, { label }),
   createNamedVersion: (id: number, label: string, expectedSeq: number, historyEpoch: number, userId: number, signal: AbortSignal) => request<Version>("POST", `/api/docs/${id}/named-version`, { label, expectedSeq, historyEpoch }, signal, { "X-Jiange-User-Id": String(userId) }),
   versionPreview: (id: number, seq: number, userId?: number) => request<{ seq: number; view: DocView }>("GET", `/api/docs/${id}/versions/${seq}`, undefined, undefined, userId === undefined ? undefined : { "X-Jiange-User-Id": String(userId) }),
+  savedVersionPreview: (id: number, entryId: string, seq: number, userId: number) => request<{ id: string; seq: number; view: DocView }>("GET", `/api/docs/${id}/version-entries/${encodeURIComponent(entryId)}/preview`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((result) => {
+    if (result.id !== entryId || result.seq !== seq || !Array.isArray(result.view?.blocks)) throw new Error("版本数据不匹配");
+    return result;
+  }),
   restoreVersion: (id: number, seq: number, userId: number, signal?: AbortSignal) => request<{ restored: number }>("POST", `/api/docs/${id}/versions/${seq}/restore-guarded`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   trash: (id: number) => request<void>("DELETE", `/api/docs/${id}`),
   listTrash: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),

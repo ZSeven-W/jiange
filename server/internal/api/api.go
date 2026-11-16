@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/named-version":                   s.createNamedVersion,
 		"GET /api/docs/{id}/version-entries":                  s.listVersionEntries,
 		"POST /api/docs/{id}/version-entries":                 s.createVersionEntry,
+		"GET /api/docs/{id}/version-entries/{entry}/preview": s.getSavedVersionEntry,
 		"POST /api/docs/{id}/conditional-ops":                 s.commitConditionalOps,
 		"GET /api/docs/{id}/conditional-ops/{requestId}":      s.getConditionalOpsStatus,
 		"GET /api/docs/{id}/versions/{seq}":                   s.getVersion,

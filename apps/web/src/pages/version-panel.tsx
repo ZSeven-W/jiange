@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, ChevronUp, HelpCircle, Plus } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, HelpCircle, Link, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocView } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
 import { canDiffViews, diffViews, type DiffRow } from "./version-diff";
 import { formatEditTime } from "./doc-header-meta";
 import { ReadOnlyDoc } from "./read-only-doc";
+import { savedVersionLink } from "@/lib/version-link";
 
 export function restoreErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status !== 408 && error.status !== 429 && error.status < 500) {
@@ -29,7 +30,7 @@ export function RestoreErrorNotice({ error, canEdit, onRetry, onDismiss }: { err
 export type VersionMode = "history" | "saved";
 
 /** History and explicitly saved versions have different visibility rules. */
-export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory = true, mode = "history", allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; canRestore: boolean; canViewHistory?: boolean; mode?: VersionMode; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
+export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory = true, mode = "history", initialVersionId, allowCopy = true, disableFileDownloads, currentView, onClose, onCreateVersion }: { id: number; userId: number; canEdit: boolean; canRestore: boolean; canViewHistory?: boolean; mode?: VersionMode; initialVersionId?: string | null; allowCopy?: boolean; disableFileDownloads: boolean; currentView?: DocView; onClose: () => void; onCreateVersion: () => void }) {
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["versions", userId, id, "list", mode, canViewHistory],
@@ -42,11 +43,16 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   const listVisible = list.isSuccess;
   const listVerified = listVisible && !list.isFetching;
   const [previewing, setPreviewing] = useState<{ id: string; seq: number } | null>(null);
+  const [requested, setRequested] = useState<string | null | undefined>(initialVersionId);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
   const [diffMode, setDiffMode] = useState(false);
-  const [mobilePreview, setMobilePreview] = useState(false);
+  const [mobilePreview, setMobilePreview] = useState(initialVersionId !== undefined);
   const root = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
   const mobileToggle = useRef<HTMLButtonElement>(null);
+  const shareButton = useRef<HTMLButtonElement>(null);
+  const shareDialog = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
   const confirming = useRef(false);
   useEffect(() => {
@@ -59,16 +65,23 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
     if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches) mobileToggle.current?.focus();
   }, [mobilePreview]);
   useEffect(() => {
-    if (!listVisible || !list.data.length) return;
+    if (!listVisible) return;
+    if (requested !== undefined) {
+      const match = list.data.find((version) => version.id === requested);
+      if (match) { setPreviewing({ id: match.id, seq: match.seq }); setRequested(undefined); }
+      return;
+    }
+    if (!list.data.length) return;
     if (!previewing || !list.data.some((version) => version.id === previewing.id && version.seq === previewing.seq)) {
       const first = list.data[0]; setPreviewing({ id: first.id, seq: first.seq });
     }
-  }, [listVisible, list.data, previewing]);
+  }, [listVisible, list.data, previewing, requested]);
   const selectedIndex = listVisible && previewing ? list.data.findIndex((v) => v.id === previewing.id && v.seq === previewing.seq) : -1;
   const preview = useQuery({
-    queryKey: ["versions", userId, id, "preview", previewing?.seq, canViewHistory],
-    queryFn: () => docsApi.versionPreview(id, previewing!.seq, userId),
+    queryKey: ["versions", userId, id, "preview", mode, previewing?.id, previewing?.seq, canViewHistory],
+    queryFn: () => mode === "saved" ? docsApi.savedVersionPreview(id, previewing!.id, previewing!.seq, userId) : docsApi.versionPreview(id, previewing!.seq, userId),
     enabled: previewing !== null && selectedIndex >= 0,
+    refetchOnMount: "always",
   });
   const previewReady = mode === "history" && canRestore && listVerified && selectedIndex >= 0 && preview.isSuccess && !preview.isFetching;
   const latest = useRef({ id, userId, canRestore, previewing, previewReady });
@@ -84,7 +97,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
   });
   const selectVersion = (v: { id: string; seq: number }) => {
     if (restore.isPending) return;
-    restore.reset(); setPreviewing({ id: v.id, seq: v.seq }); setMobilePreview(true);
+    restore.reset(); setRequested(undefined); setPreviewing({ id: v.id, seq: v.seq }); setMobilePreview(true); setShareLink(null);
   };
   const startRestore = async () => {
     const target = latest.current;
@@ -120,6 +133,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
       <button ref={back} type="button" onClick={onClose} disabled={restore.isPending} className="ml-3 flex h-9 items-center gap-1.5 rounded px-2 text-[14px] hover:bg-hover disabled:opacity-40 sm:ml-4"><ArrowLeft size={16}/><span>返回文档</span></button>
       <span className="mx-2 h-5 w-px bg-border sm:mx-3" />
       <span className="flex-1" />
+      {mode === "saved" && <button ref={shareButton} type="button" disabled={!listVerified || selectedIndex < 0 || !preview.isSuccess || preview.isFetching} onClick={() => { if (!previewing) return; setCopyStatus(""); setShareLink(savedVersionLink(location.href, id, previewing.id)); }} className="flex h-9 items-center gap-1.5 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:opacity-40" data-share-version><Link size={15}/>分享版本</button>}
       {canEdit && mode === "history" && <button type="button" disabled={restore.isPending || !previewReady} onClick={() => void startRestore()} className="h-9 rounded px-2 text-[13px] text-[#1456F0] hover:bg-hover disabled:text-[#BBBFC4]" data-restore-version>{restore.isPending ? "还原中…" : "还原此历史记录"}</button>}
       <div className="hidden items-center gap-1 px-2 text-[13px] sm:flex">
         <button type="button" aria-label="上一个版本" disabled={!listVisible || selectedIndex <= 0 || restore.isPending} onClick={() => { if (listVisible && selectedIndex > 0) selectVersion(list.data[selectedIndex - 1]); }} className="rounded p-1 text-subtle hover:bg-hover disabled:opacity-30"><ChevronUp size={16}/></button>
@@ -133,7 +147,7 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
       <main className={`${mobilePreview ? "flex" : "hidden"} min-w-0 flex-1 flex-col overflow-y-auto md:flex`} data-version-preview data-document-print-restricted={disableFileDownloads ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
         {restore.isError && <RestoreErrorNotice error={restore.error} canEdit={canRestore} onRetry={() => void startRestore()} onDismiss={() => restore.reset()} />}
         <div className="mx-auto w-full max-w-[960px] px-7 pb-24 pt-12 sm:px-16 sm:pt-14">
-          {!listVisible || selectedIndex < 0 ? <p className="text-[14px] text-subtle">{list.isError ? "版本列表不可用。" : list.isFetching ? "正在加载版本…" : "创建版本后可在这里查看。"}</p> : preview.isError ? <p role="alert" className="text-[14px] text-destructive">版本预览加载失败，请检查文档权限。</p> : !preview.data || preview.isFetching ? <p className="text-[14px] text-subtle">正在加载版本…</p> : <>
+          {!listVisible || selectedIndex < 0 ? <p className="text-[14px] text-subtle">{list.isError ? "版本列表不可用。" : list.isFetching ? "正在加载版本…" : requested !== undefined ? "版本不存在或你没有权限查看。" : "创建版本后可在这里查看。"}</p> : preview.isError ? <p role="alert" className="text-[14px] text-destructive">版本预览加载失败，请检查文档权限。</p> : !preview.data || preview.isFetching ? <p className="text-[14px] text-subtle">正在加载版本…</p> : <>
             <h1 className="mb-8 break-words text-[32px] font-medium leading-[1.3]" data-version-title>{savedTitle}</h1>
             {mode === "history" && diffMode && currentView && <section className="mb-6 rounded-md border p-4" aria-label="与当前内容对比"><div className="mb-2 text-[13px] text-muted-foreground">按块比较文本，不包含格式、图片与附件的变化。</div>{canDiffViews(preview.data.view, currentView) ? <VersionDiffView oldView={preview.data.view} newView={currentView} /> : <p className="text-[13px] text-subtle">文档过长，暂无法在浏览器中比较；下方仍可查看完整版本。</p>}</section>}
             <VersionView view={preview.data.view} disableFileDownloads={disableFileDownloads} versionSeq={previewing!.seq} />
@@ -158,6 +172,17 @@ export function VersionPanel({ id, userId, canEdit, canRestore, canViewHistory =
         {mode === "history" && <div className="flex h-12 shrink-0 items-center justify-between border-t px-4 text-[13px]"><span>对比当前</span><button type="button" role="switch" aria-label="对比当前" aria-checked={diffMode} disabled={!currentView || selectedIndex < 0} onClick={() => setDiffMode((v) => !v)} className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${diffMode ? "bg-[#1456F0]" : "bg-[#BBBFC4]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform ${diffMode ? "left-[18px]" : "left-0.5"}`}/></button></div>}
       </aside>
     </div>
+    {shareLink && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShareLink(null); shareButton.current?.focus(); } }} onKeyDown={(event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setShareLink(null); shareButton.current?.focus(); }
+      if (event.key === "Tab" && shareDialog.current) { event.stopPropagation(); const items = [...shareDialog.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])")]; const index = items.indexOf(document.activeElement as HTMLElement); if (items.length && (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === items.length - 1)) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); } }
+    }}>
+      <div ref={shareDialog} role="dialog" aria-modal="true" aria-label="分享版本" className="w-full max-w-[440px] rounded-lg bg-white p-5 shadow-xl dark:bg-surface">
+        <div className="flex items-center justify-between"><h2 className="text-[16px] font-medium">分享版本</h2><button type="button" aria-label="关闭" className="rounded p-1 hover:bg-hover" onClick={() => { setShareLink(null); shareButton.current?.focus(); }}><X size={18}/></button></div>
+        <p className="mt-4 text-[13px] text-muted-foreground">链接不会授予文档访问权限，接收者需要有文档访问权限。</p>
+        <input autoFocus aria-label="版本链接" readOnly value={shareLink} onFocus={(event) => event.currentTarget.select()} className="mt-4 h-9 w-full rounded border px-3 text-[13px] outline-none focus:border-[#3370FF]" />
+        <div className="mt-4 flex items-center justify-end gap-3"><span role="status" className="text-[13px] text-muted-foreground">{copyStatus}</span><button type="button" onClick={() => { if (!navigator.clipboard) { setCopyStatus("请手动复制链接"); return; } void navigator.clipboard.writeText(shareLink).then(() => setCopyStatus("已复制"), () => setCopyStatus("请手动复制链接")); }} className="h-9 rounded bg-[#3370FF] px-4 text-[13px] text-white hover:bg-[#245bdb]">复制链接</button></div>
+      </div>
+    </div>}
   </div>;
 }
 

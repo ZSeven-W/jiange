@@ -3,6 +3,14 @@ import { docsApi } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("account-bound version entries", () => {
+  it("addresses and verifies the specific saved entry", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:2", seq: 3, view: { blocks: [] } }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ id: "n:1", seq: 3, view: { blocks: [] } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await docsApi.savedVersionPreview(8, "n:2", 3, 4);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/docs/8/version-entries/n%3A2/preview");
+    expect(fetcher.mock.calls[0][1].headers).toMatchObject({ "X-Jiange-User-Id": "4" });
+    await expect(docsApi.savedVersionPreview(8, "n:2", 3, 4)).rejects.toThrow("版本数据不匹配");
+  });
   it("requests the selected version scope and binds previews to the account", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ versions: [] }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ seq: 3, view: { blocks: [] } }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
