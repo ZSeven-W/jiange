@@ -25,7 +25,7 @@
 | 同步块、子页面列表 | **已缺/待核验**。当前命令和文档模型中未找到完整的跨文档同步块或权限过滤的子页面列表；应分别建立引用关系和权限边界。 | [飞书同步块](https://www.feishu.cn/hc/zh-CN/articles/446198306304-v7.8-%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3%E5%90%8C%E6%AD%A5%E5%9D%97-%E4%B8%80%E5%A4%84%E6%9B%B4%E6%96%B0-%E5%A4%9A%E5%A4%84%E5%AE%9E%E6%97%B6%E5%90%8C%E6%AD%A5)、[飞书子页面列表](https://www.feishu.cn/hc/zh-CN/articles/780474929438-%E4%BD%BF%E7%94%A8%E5%AD%90%E9%A1%B5%E9%9D%A2%E5%88%97%E8%A1%A8) |
 | 基础编辑细节 | **部分**。已有标题、正文、代码、链接、查找替换及撤销等；跨块选区、输入法组合输入、所有命令的段中插入、粘贴和快捷键尚未逐项对照。当前有些附件等命令在段落中间会拒绝安全拆分。 | [编辑器](apps/web/src/editor/editor.tsx)、[链接报告](document-rich-link-report-20261116.md) |
 | 评论与通知 | **部分**。已有划词/块评论、回复、解决、提及和恢复机制；跨段锚点、权限变化、匿名评论和正文提及通知等仍需完整闭环和并发验证。 | [评论面板](apps/web/src/pages/comments-panel.tsx)、[路线图](roadmap.md) |
-| 历史、导入导出 | **部分**。已有历史、命名版本、Word 和 Markdown 路径；还需验证历史还原与并发、附件和权限，以及真实 Word/WPS、复杂分栏、单元格样式/图片、合并表格及其他格式保真。 | [文档页](apps/web/src/pages/doc-page.tsx)、[Word 验证报告](docx-import-validation-report-20261116.md)；[飞书历史记录](https://www.feishu.cn/hc/zh-CN/articles/753686977351-%E6%9F%A5%E7%9C%8B%E5%92%8C%E8%BF%98%E5%8E%9F%E6%96%87%E6%A1%A3%E5%8E%86%E5%8F%B2%E8%AE%B0%E5%BD%95) |
+| 历史、导入导出 | **部分**。已有历史、命名版本、Word 和 Markdown 路径；已补 Word 常见横纵合并及标题行、标题列的导入导出；仍需验证历史还原与并发、附件和权限，以及真实 Word/WPS、复杂分栏、单元格样式/图片、列宽和其他格式保真。 | [文档页](apps/web/src/pages/doc-page.tsx)、[Word 验证报告](docx-import-validation-report-20261116.md)；[飞书历史记录](https://www.feishu.cn/hc/zh-CN/articles/753686977351-%E6%9F%A5%E7%9C%8B%E5%92%8C%E8%BF%98%E5%8E%9F%E6%96%87%E6%A1%A3%E5%8E%86%E5%8F%B2%E8%AE%B0%E5%BD%95) |
 
 ## 优先级 P1：界面与移动端
 

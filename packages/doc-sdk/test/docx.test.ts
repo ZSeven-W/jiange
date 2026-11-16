@@ -220,7 +220,84 @@ describe("Word export → import round trip", () => {
   it("does not report losses for fully supported content", () => {
     expect(docxExportLosses(view)).toEqual(["公式和图表以源码文本导出，Word 中不会渲染"]);
     expect(docxExportLosses({ blocks: [b("paragraph", [{ text: "x", marks: { link: "javascript:alert(1)" } }])] })).toEqual(["部分链接协议不受支持，已导出为普通文字"]);
-    expect(docxExportLosses({ blocks: [b("table", "", { tableData: '[["a"]]', tableHeaderColumn: "column" })] })).toContain("表格的额外内容或设置无法完整保留");
+    expect(docxExportLosses({ blocks: [b("table", "", { tableData: '[["a"]]', tableHeaderColumn: "column" })] })).toEqual([]);
+  });
+});
+
+describe("Word table structure and headers", () => {
+  it("keeps an ordinary first row ordinary and round-trips combined horizontal and vertical merges", async () => {
+    const rows = [["项目", "", "负责人"], ["", "", "小简"], ["状态", "完成", "备注"]];
+    const props = { tableData: JSON.stringify(rows), tableMerges: JSON.stringify([[0, 0, 2, 2]]), tableHeader: "none", tableHeaderColumn: "column" };
+    const blocks = [b("table", "", props)];
+    const bytes = buildDocx({ blocks });
+    const entry = listZip(bytes).find((e) => e.name === "word/document.xml")!;
+    const xml = dec.decode(await readZipEntry(bytes, entry, 1 << 24));
+    expect(xml).toContain('<w:gridSpan w:val="2"/>');
+    expect(xml).toContain('<w:vMerge w:val="restart"/>');
+    expect(xml).toContain('<w:vMerge/>');
+    expect(xml).not.toContain('<w:tblHeader/>');
+    expect(xml).toContain('w:firstRow="0"');
+    expect(xml).toContain('w:firstColumn="1"');
+    expect(docxExportLosses({ blocks })).toEqual([]);
+    const imported = (await parseDocx(bytes)).blocks.find((block) => block.type === "table")!;
+    expect(imported.props).toMatchObject(props);
+  });
+
+  it("repeats an explicitly enabled title row and preserves a title column independently", async () => {
+    for (const [header, column] of [["row", "none"], ["none", "column"], ["row", "column"], ["none", "none"]]) {
+      const props = { tableData: '[["标题","状态"],["任务","完成"]]', tableHeader: header, tableHeaderColumn: column };
+      const bytes = buildDocx({ blocks: [b("table", "", props)] });
+      const xml = dec.decode(await readZipEntry(bytes, listZip(bytes).find((e) => e.name === "word/document.xml")!, 1 << 24));
+      expect(xml.includes("<w:tblHeader/>" )).toBe(header === "row");
+      const expectedMask = (0x400 | (header === "row" ? 0x20 : 0) | (column === "column" ? 0x80 : 0)).toString(16).padStart(4, "0").toUpperCase();
+      expect(xml).toContain(`<w:tblLook w:val="${expectedMask}"`);
+      const imported = (await parseDocx(bytes)).blocks[0];
+      expect(imported.props.tableHeader !== "none").toBe(header === "row");
+      expect(imported.props.tableHeaderColumn === "column").toBe(column === "column");
+    }
+  });
+
+  it("does not hide populated covered cells when exporting a malformed or concurrent merge", async () => {
+    const props = { tableData: '[["可见","隐藏但有值"],["下方","内容"]]', tableHeader: "none", tableMerges: '[[0,0,2,2]]' };
+    const blocks = [b("table", "", props)];
+    expect(docxExportLosses({ blocks })).toContain("部分合并区域无法无损导出，将拆分并保留单元格内容");
+    const imported = (await parseDocx(buildDocx({ blocks }))).blocks[0];
+    expect(imported.props.tableMerges).toBeUndefined();
+    expect(JSON.parse(imported.props.tableData)).toEqual([["可见", "隐藏但有值"], ["下方", "内容"]]);
+  });
+
+  it("warns on out-of-bounds and overlapping merge metadata without losing table data", async () => {
+    for (const tableMerges of ['[[0,0,3,2]]', '[[0,0,1,2],[0,1,2,1]]', '{bad']) {
+      const props = { tableData: '[["A",""],["B","C"]]', tableHeader: "none", tableMerges };
+      const blocks = [b("table", "", props)];
+      expect(docxExportLosses({ blocks })).toContain("部分合并区域无法无损导出，将拆分并保留单元格内容");
+      const imported = (await parseDocx(buildDocx({ blocks }))).blocks[0];
+      expect(JSON.parse(imported.props.tableData)).toEqual([["A", ""], ["B", "C"]]);
+    }
+  });
+
+  it("keeps text in nonempty Word vertical continuation cells and warns about the split", async () => {
+    const body = '<w:tbl><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>首格</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>不可丢失</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const result = await parseDocx(rawDocx(body));
+    expect(JSON.parse(result.blocks[0].props.tableData)).toEqual([["首格"], ["不可丢失"]]);
+    expect(result.blocks[0].props.tableMerges).toBeUndefined();
+    expect(result.warnings).toContain("部分合并单元格无法无损导入，已拆分并保留内容");
+  });
+
+  it("does not reinterpret third-party first-column styling or silently ignore unsupported merges", async () => {
+    const body = '<w:tbl><w:tblPr><w:tblStyle w:val="ThirdParty"/><w:tblLook w:firstColumn="1"/></w:tblPr><w:tr><w:tc><w:tcPr><w:hMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const result = await parseDocx(rawDocx(body));
+    expect(result.blocks[0].props.tableHeader).toBe("none");
+    expect(result.blocks[0].props.tableHeaderColumn).toBeUndefined();
+    expect(JSON.parse(result.blocks[0].props.tableData)).toEqual([["A", "B"]]);
+    expect(result.warnings).toContain("部分合并单元格无法无损导入，已拆分并保留内容");
+  });
+
+  it("does not treat an unknown vertical merge value as a continuation", async () => {
+    const body = '<w:tbl><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>首格</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge w:val="invalid"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>';
+    const result = await parseDocx(rawDocx(body));
+    expect(result.blocks[0].props.tableMerges).toBeUndefined();
+    expect(result.warnings).toContain("部分合并单元格无法无损导入，已拆分并保留内容");
   });
 });
 
@@ -299,7 +376,8 @@ describe("Word import of third-party documents", () => {
     expect(result.blocks[5].spans[0].marks.link).toBe("https://field.example");
     expect(result.blocks[6].spans[0].marks.link).toBeUndefined();
     expect(JSON.parse(result.blocks[7].props.tableData)).toEqual([["合并", ""], ["a", "b\nc"]]);
-    expect(result.warnings).toContain("合并单元格已拆分为普通单元格");
+    expect(JSON.parse(result.blocks[7].props.tableMerges)).toEqual([[0, 0, 1, 2]]);
+    expect(result.warnings).not.toContain("合并单元格已拆分为普通单元格");
   });
 
   it("reads deflate-compressed parts like real Word files", async () => {

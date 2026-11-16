@@ -1,4 +1,5 @@
 import { tableDataOf } from "./table-cells.js";
+import { exportableTableMerges, type TableMerge } from "./docx-tables.js";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
  *
@@ -119,7 +120,9 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
     if (block.type === "columns") losses.add("分栏布局会被展开为普通段落");
     else if (block.type === "table") {
       if (!rows) losses.add("表格数据格式异常，原始数据会作为文本导出");
-      if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && !key.startsWith("tbl.") && value)) losses.add("表格的额外内容或设置无法完整保留");
+      if (rows && exportableTableMerges(block.props.tableMerges, rows).loss) losses.add("部分合并区域无法无损导出，将拆分并保留单元格内容");
+      if (text || Object.entries(block.props).some(([key, value]) => !["tableData", "tableMerges", "tableHeader", "tableHeaderColumn"].includes(key) && !key.startsWith("tbl.") && value)
+        || ![undefined, "", "row", "none"].includes(block.props.tableHeader) || ![undefined, "", "column", "none"].includes(block.props.tableHeaderColumn)) losses.add("表格的额外内容或设置无法完整保留");
     } else if (block.type === "image") {
       if (!block.props.fileId || !options.images?.has(block.props.fileId)) losses.add("部分图片无法读取或格式不受支持（仅支持 PNG/JPEG/GIF），只导出图片名称");
       const width = block.props.imageWidth;
@@ -236,15 +239,26 @@ function indentLevel(props: Record<string, string>): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(8, Math.floor(n))) : 0;
 }
 
-function tableXml(rows: string[][]): string {
+function tableXml(rows: string[][], props: Record<string, string>): string {
   const cols = rows[0].length;
   const width = Math.max(600, Math.floor(9026 / cols));
   const grid = Array.from({ length: cols }, () => `<w:gridCol w:w="${width}"/>`).join("");
-  const body = rows.map((row, r) => `<w:tr>${r === 0 ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}${row.map((cell) => {
-    const paras = cell.split("\n").map((line) => paragraph("", line ? `<w:r>${r === 0 ? "<w:rPr><w:b/><w:bCs/></w:rPr>" : ""}${textContentXml(line)}</w:r>` : "")).join("");
-    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${r === 0 ? `<w:shd w:val="clear" w:color="auto" w:fill="F5F6F7"/>` : ""}</w:tcPr>${paras}</w:tc>`;
+  const header = props.tableHeader !== "none", headerColumn = props.tableHeaderColumn === "column";
+  const look = (0x400 | (header ? 0x20 : 0) | (headerColumn ? 0x80 : 0)).toString(16).padStart(4, "0").toUpperCase();
+  const covers = new Map<string, TableMerge>();
+  for (const merge of exportableTableMerges(props.tableMerges, rows).merges) {
+    const [r, c, rs, cs] = merge;
+    for (let y = r; y < r + rs; y++) for (let x = c; x < c + cs; x++) covers.set(`${y}:${x}`, merge);
+  }
+  const body = rows.map((row, r) => `<w:tr>${r === 0 && header ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}${row.map((cell, c) => {
+    const merge = covers.get(`${r}:${c}`);
+    if (merge && c !== merge[1]) return "";
+    const span = merge?.[3] ?? 1, vertical = merge && merge[2] > 1 ? (r === merge[0] ? '<w:vMerge w:val="restart"/>' : '<w:vMerge/>') : "";
+    const heading = (header && r === 0) || (headerColumn && c === 0);
+    const paras = cell.split("\n").map((line) => paragraph("", line ? `<w:r>${heading ? "<w:rPr><w:b/><w:bCs/></w:rPr>" : ""}${textContentXml(line)}</w:r>` : "")).join("");
+    return `<w:tc><w:tcPr><w:tcW w:w="${width * span}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ""}${vertical}${heading ? `<w:shd w:val="clear" w:color="auto" w:fill="F5F6F7"/>` : ""}</w:tcPr>${paras}</w:tc>`;
   }).join("")}</w:tr>`).join("");
-  return `<w:tbl><w:tblPr><w:tblStyle w:val="JiangeTable"/><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
+  return `<w:tbl><w:tblPr><w:tblStyle w:val="JiangeTable"/><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="${look}" w:firstRow="${header ? 1 : 0}" w:lastRow="0" w:firstColumn="${headerColumn ? 1 : 0}" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
 }
 
 function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
@@ -298,7 +312,7 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         break;
       case "table": {
         const rows = markdownTableRows(tableDataOf(block.props));
-        if (rows) { out.push(tableXml(rows)); out.push(paragraph("", "")); }
+        if (rows) { out.push(tableXml(rows, block.props)); out.push(paragraph("", "")); }
         else out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, w.run(tableDataOf(block.props), { code: "true" })));
         break;
       }
@@ -824,7 +838,15 @@ class DocxReader {
 
   table(tbl: XmlElement, blocks: MdBlock[]): void {
     const rows: string[][] = [];
-    let styled = false, merged = false;
+    let styled = false, unsupportedMerge = false;
+    const merges: TableMerge[] = [];
+    let active = new Map<number, TableMerge>();
+    const finish = (merge: TableMerge) => { if (merge[2] > 1 || merge[3] > 1) merges.push(merge); };
+    const tablePr = child(tbl, "w:tblPr"), look = child(tablePr, "w:tblLook");
+    // Only infer first-column semantics from our own style. In third-party Word
+    // documents tblLook is conditional styling, not an unambiguous title column.
+    const ownTable = child(tablePr, "w:tblStyle")?.attrs["w:val"] === "JiangeTable";
+    const headerColumn = ownTable && look?.attrs["w:firstColumn"] === "1";
     const rowEls: XmlElement[] = [];
     const collect = (node: XmlElement) => {
       for (const c of children(node)) {
@@ -833,8 +855,12 @@ class DocxReader {
       }
     };
     collect(tbl);
+    const headerNode = child(child(rowEls[0], "w:trPr"), "w:tblHeader");
+    const header = !!headerNode && !["0", "false", "off"].includes(headerNode.attrs["w:val"] ?? "1");
+    if (rowEls.slice(1).some((tr) => { const node = child(child(tr, "w:trPr"), "w:tblHeader"); return node && !["0", "false", "off"].includes(node.attrs["w:val"] ?? "1"); })) this.warnings.add("多行表头仅保留首行");
     for (const [rowIndex, tr] of rowEls.entries()) {
       const row: string[] = [];
+      const nextActive = new Map<number, TableMerge>();
       const cells: XmlElement[] = [];
       const gather = (node: XmlElement) => {
         for (const c of children(node)) {
@@ -847,23 +873,42 @@ class DocxReader {
       for (let k = 0; k < Math.min(before, 64); k++) row.push("");
       for (const tc of cells) {
         const tcPr = child(tc, "w:tcPr");
-        const span = Math.max(1, Math.min(64, Number(child(tcPr, "w:gridSpan")?.attrs["w:val"] ?? 1) || 1));
+        const rawSpan = Number(child(tcPr, "w:gridSpan")?.attrs["w:val"] ?? 1);
+        const span = Number.isSafeInteger(rawSpan) && rawSpan >= 1 && rawSpan <= 64 ? rawSpan : 1;
+        if (span !== rawSpan) unsupportedMerge = true;
         const vMerge = child(tcPr, "w:vMerge");
-        const continued = vMerge && vMerge.attrs["w:val"] !== "restart";
-        if (span > 1 || vMerge) merged = true;
-        const cell = continued ? { text: "", styled: false } : this.cellText(tc, rowIndex === 0);
+        const vValue = vMerge?.attrs["w:val"];
+        const validVertical = !!vMerge && (vValue === undefined || vValue === "restart" || vValue === "continue");
+        if (vMerge && !validVertical) unsupportedMerge = true;
+        const continued = validVertical && vValue !== "restart";
+        const column = row.length;
+        const cell = this.cellText(tc, (header && rowIndex === 0) || (headerColumn && column === 0));
         styled ||= cell.styled;
+        if (child(tcPr, "w:hMerge")) unsupportedMerge = true;
+        if (continued) {
+          const prior = active.get(column);
+          if (prior && prior[3] === span && !cell.text) { prior[2]++; nextActive.set(column, prior); }
+          else { unsupportedMerge = true; if (span > 1) finish([rowIndex, column, 1, span]); }
+        } else if (validVertical) nextActive.set(column, [rowIndex, column, 1, span]);
+        else if (span > 1) finish([rowIndex, column, 1, span]);
         row.push(cell.text);
         for (let k = 1; k < span; k++) row.push("");
       }
+      for (const [column, merge] of active) if (nextActive.get(column) !== merge) finish(merge);
+      active = nextActive;
       rows.push(row);
     }
+    for (const merge of active.values()) finish(merge);
     const width = Math.max(0, ...rows.map((r) => r.length));
     if (!rows.length || !width) return;
     for (const row of rows) while (row.length < width) row.push("");
     if (styled) this.warnings.add("表格单元格中的文字样式不会导入");
-    if (merged) this.warnings.add("合并单元格已拆分为普通单元格");
-    blocks.push({ type: "table", text: "", props: { tableData: JSON.stringify(rows) }, spans: [] });
+    if (unsupportedMerge) this.warnings.add("部分合并单元格无法无损导入，已拆分并保留内容");
+    const props: Record<string, string> = { tableData: JSON.stringify(rows) };
+    if (!header) props.tableHeader = "none";
+    if (headerColumn) props.tableHeaderColumn = "column";
+    if (merges.length) props.tableMerges = JSON.stringify(merges);
+    blocks.push({ type: "table", text: "", props, spans: [] });
   }
 
   body(node: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }): void {
