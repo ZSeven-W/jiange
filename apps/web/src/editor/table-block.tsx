@@ -5,6 +5,7 @@ import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { formatTableTSV } from "./table-clipboard";
 import { tableTabIntent } from "./table-keyboard";
+import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
@@ -80,7 +81,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
   const [moreOpen, setMoreOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
-  const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean } | null>(null);
+  const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean } | null>(null);
   const lastFindNavigation = useRef<number | null>(null);
   useLayoutEffect(() => {
     const pending = pendingTab.current;
@@ -91,34 +92,69 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
     if (next) { next.focus(); next.setSelectionRange(0, 0); }
   }, [data, readOnly]);
   useEffect(() => {
-    const move = (event: PointerEvent) => {
-      const drag = dragSelection.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-table-position]");
+    let frame = 0;
+    const updateSelection = (drag: NonNullable<typeof dragSelection.current>, x: number, y: number) => {
+      const cell = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-table-position]");
       if (!cell || !root.current?.contains(cell)) return;
       const [r, c] = (cell.dataset.tablePosition ?? "").split(":").map(Number);
       if (!Number.isInteger(r) || !Number.isInteger(c)) return;
       if (!drag.active && r === drag.r && c === drag.c) return;
+      if (!drag.active && document.activeElement === drag.source) { drag.restoreFocus = true; drag.source.blur(); }
       drag.active = true;
-      setRange(normRange({ r0: drag.r, c0: drag.c, r1: r, c1: c }));
+      const next = normRange({ r0: drag.r, c0: drag.c, r1: r, c1: c });
+      setRange((current) => current && current.r0 === next.r0 && current.c0 === next.c0 && current.r1 === next.r1 && current.c1 === next.c1 ? current : next);
       window.getSelection()?.removeAllRanges();
+    };
+    const tick = () => {
+      frame = 0;
+      const drag = dragSelection.current, container = root.current;
+      if (!drag?.active || !container) return;
+      const horizontal = container.querySelector<HTMLElement>("[data-table-scroll]"), table = horizontal?.querySelector("table");
+      const vertical = tableVerticalScrollParent(container);
+      if (!horizontal || !table || !vertical) return;
+      const h = horizontal.getBoundingClientRect(), v = vertical === document.scrollingElement ? { top: 0, bottom: window.innerHeight } : vertical.getBoundingClientRect();
+      const left = Math.max(0, h.left), right = Math.min(window.innerWidth, h.right);
+      const top = Math.max(0, v.top), bottom = Math.min(window.innerHeight, v.bottom);
+      const dx = horizontal.scrollWidth > horizontal.clientWidth ? tableSelectionScrollSpeed(drag.x, left, right) : 0;
+      const dy = vertical.scrollHeight > vertical.clientHeight ? tableSelectionScrollSpeed(drag.y, top, bottom) : 0;
+      const beforeX = horizontal.scrollLeft, beforeY = vertical.scrollTop;
+      if (dx) horizontal.scrollLeft += dx;
+      if (dy) vertical.scrollTop += dy;
+      if (beforeX === horizontal.scrollLeft && beforeY === vertical.scrollTop) return;
+      const bounds = table.getBoundingClientRect();
+      const x0 = Math.max(left, bounds.left), x1 = Math.min(right, bounds.right);
+      const y0 = Math.max(top, bounds.top), y1 = Math.min(bottom, bounds.bottom);
+      if (x1 > x0 + 2 && y1 > y0 + 2) updateSelection(drag, Math.max(x0 + 1, Math.min(x1 - 1, drag.x)), Math.max(y0 + 1, Math.min(y1 - 1, drag.y)));
+      frame = requestAnimationFrame(tick);
+    };
+    const move = (event: PointerEvent) => {
+      const drag = dragSelection.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      drag.x = event.clientX; drag.y = event.clientY;
+      updateSelection(drag, drag.x, drag.y);
+      if (drag.active && !frame) frame = requestAnimationFrame(tick);
     };
     const stop = (event: PointerEvent) => {
       const drag = dragSelection.current;
       if (drag?.pointerId !== event.pointerId) return;
-      if (drag.active && document.activeElement instanceof HTMLTextAreaElement && root.current?.contains(document.activeElement)) {
-        const input = document.activeElement;
-        input.setSelectionRange(input.selectionEnd, input.selectionEnd);
-      }
       dragSelection.current = null;
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (drag.active && drag.restoreFocus) requestAnimationFrame(() => {
+        if (!dragSelection.current && drag.source.isConnected && document.activeElement === document.body) drag.source.focus({ preventScroll: true });
+      });
     };
+    const blur = () => { dragSelection.current = null; if (frame) cancelAnimationFrame(frame); frame = 0; };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", blur);
     return () => {
+      blur();
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", blur);
     };
   }, []);
   useLayoutEffect(() => {
@@ -204,7 +240,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
         {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-7 place-items-center rounded hover:bg-hover hover:text-destructive" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
-      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")}>
+      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")} data-table-scroll>
       <table className="border-collapse text-[14px] leading-[22px]">
         <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
         <tbody>
@@ -238,7 +274,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, onH
                         onScroll={(event) => syncFindOverlay(event.currentTarget)}
                         onPointerDown={(event) => {
                           if (event.pointerType === "mouse" && event.button === 0 && !event.shiftKey) {
-                            dragSelection.current = { pointerId: event.pointerId, r: ri, c: ci, active: false };
+                            dragSelection.current = { pointerId: event.pointerId, r: ri, c: ci, active: false, x: event.clientX, y: event.clientY, source: event.currentTarget, restoreFocus: false };
                           }
                         }}
                         onKeyDown={(e) => {
