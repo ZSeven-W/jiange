@@ -115,3 +115,29 @@ func TestTitleConsistencyShowsBothSourcesWithoutChangingThem(t *testing.T) {
 		t.Fatalf("check changed title: %+v %v", doc, err)
 	}
 }
+
+func TestTitleConsistencyRejectsSwitchedAccountHeader(t *testing.T) {
+	st := store.NewMemory()
+	ts, owner := newTestServer(t, st, nil)
+	resp := post(t, owner, ts.URL+"/api/auth/register", map[string]string{"email": "title-header@test.dev", "name": "Owner", "password": "password123"})
+	resp.Body.Close()
+	resp = post(t, owner, ts.URL+"/api/docs", map[string]string{"title": "私有标题"})
+	var doc store.DocMeta
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/docs/"+strconv.FormatInt(doc.ID, 10)+"/title-consistency", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Jiange-User-Id", "999999")
+	res, err := owner.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}

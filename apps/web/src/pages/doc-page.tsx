@@ -18,7 +18,8 @@ import { FindReplacePanel, type FindReplaceMode } from "@/editor/find-replace-pa
 import { Avatar } from "@/components/brand";
 import { AddIcon, BuildingIcon, DownBoldIcon, EditIcon, MoreIcon, SearchIcon } from "@/components/feishu-icons";
 import { StarterTemplates, type StarterTemplate } from "./starter-templates";
-import { TitleConsistency } from "./title-consistency";
+import { parseTitleConsistency, TitleConsistency } from "./title-consistency";
+import { TitleAutoSync, TitleSyncReadError, type TitleSyncOutcome } from "./title-auto-sync";
 import { DocumentReferencesPanel } from "./document-references";
 import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starter-template-ops";
 import { peekStarter, takeStarter } from "./pending-starter";
@@ -814,27 +815,43 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     sync.client.setAwareness({ ...presence, cursor: null });
   }, [sync.client, presence]);
 
-  // mirror the collaborative title into directory metadata (debounced)
-  const renameTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(renameTimer.current), [id, me.user.id]);
-  const onTitle = (t: string) => {
-    clearTimeout(renameTimer.current);
-    renameTimer.current = setTimeout(async () => {
-      if (!canEditRef.current) return;
-      try {
-        const d = await docsApi.rename(id, t);
-        if (!d) {
-          void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) });
-          void qc.invalidateQueries({ queryKey: ["docs"] });
-          return;
-        }
-        qc.setQueryData(docMetaKey(id, me.user.id), d);
-        qc.setQueryData<DocMeta[]>(["docs"], (old) => old?.map((x) => (x.id === id ? d : x)));
-      } catch { void qc.invalidateQueries({ queryKey: docMetaKey(id, me.user.id) }); }
-    }, 400);
-  };
   const live = sync.client.doc?.hasBlock(TITLE) ? sync.client.doc : null;
   const title = live ? live.text(TITLE) : (meta.data?.title ?? "");
+  const [titleSyncRevision, setTitleSyncRevision] = useState(0);
+  const [titleSyncNotice, setTitleSyncNotice] = useState<TitleSyncOutcome | null>(null);
+  const titleSync = useMemo(() => {
+    const client = sync.client, account = me.user.id;
+    const current = () => { const c = exportContext.current; return c.mounted && c.id === id && c.user === account && c.client === client && c.verified; };
+    const headers = { "Content-Type": "application/json", "X-Jiange-User-Id": String(account) };
+    return new TitleAutoSync(() => {
+      const d = client.doc;
+      if (!current() || !canEditRef.current || !d?.hasBlock(TITLE) || client.epoch === null || client.status !== "synced" || !client.caughtUp || client.blocked || client.unacked !== 0) return null;
+      return { epoch: client.epoch, head: client.lastSeq, historyRevision: client.droppedOnResync, title: d.text(TITLE) };
+    }, {
+      commit: async (snapshot, signal) => (await fetch(`/api/docs/${id}/title-consistency`, { method: "POST", credentials: "same-origin", cache: "no-store", headers, body: JSON.stringify(snapshot), signal })).status,
+      read: async (signal) => { const res = await fetch(`/api/docs/${id}/title-consistency`, { credentials: "same-origin", cache: "no-store", headers, signal }); if (!res.ok) throw new TitleSyncReadError(res.status); return parseTitleConsistency(await res.json()); },
+    }, () => { if (current()) { void qc.invalidateQueries({ queryKey: docMetaKey(id, account) }); void qc.invalidateQueries({ queryKey: ["docs"] }); } });
+  }, [id, me.user.id, qc, sync.client]);
+  useEffect(() => { titleSync.activate(); setTitleSyncNotice(null); return () => titleSync.dispose(); }, [titleSync]);
+  useEffect(() => {
+    if (!titleSync.hasPending) return;
+    let cancelled = false;
+    let timer = window.setTimeout(async () => {
+      const result = await titleSync.step();
+      const current = exportContext.current;
+      if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client) return;
+      if (result !== "busy" && result !== "waiting") setTitleSyncNotice(result === "done" ? null : result);
+      if (result === "done") setTitleSyncRevision((n) => n + 1);
+      if (result === "denied") void meta.refetch();
+      if (!cancelled && titleSync.hasPending && (result === "waiting" || result === "busy" || result === "retry")) timer = window.setTimeout(() => setTitleSyncRevision((n) => n + 1), 1500);
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [titleSync, titleSyncRevision, id, me.user.id, sync.client, sync.version, sync.status, sync.caughtUp, sync.blocked, sync.client.unacked, meta.refetch]);
+  const onTitle = () => {
+    if (!meta.data) { setTitleSyncNotice("conflict"); return; }
+    titleSync.edit(meta.data.title, sync.client.epoch, sync.client.droppedOnResync);
+    setTitleSyncRevision((n) => n + 1);
+  };
   useEffect(() => {
     document.title = `${title.trim() || "未命名文档"} - Jiange`;
   }, [title]);
@@ -1125,6 +1142,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           title={title}
           workspace={meta.data?.workspaceName || me.workspaces[0]?.name || "我的空间"}
           status={metadataVerified ? sync.status : "offline"}
+          directorySync={titleSync.hasPending ? titleSyncNotice && !["retry", "waiting", "busy"].includes(titleSyncNotice) ? "blocked" : "pending" : undefined}
           draftConflict={sync.blocked === "history_changed"}
           peers={sync.peers}
           me={presence}
@@ -1132,6 +1150,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {metadataVerified && referenceVisibility.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">无法读取文档引用显示设置。<button type="button" className="ml-2 underline" onClick={() => void referenceVisibility.refetch()}>重试</button></p>}
         {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
+        {titleSyncNotice && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive" data-title-sync-notice>{titleSyncNotice === "conflict" ? "目录名称已变化，标题暂未同步。" : titleSyncNotice === "history_changed" ? "文档历史已变化，目录名称未自动同步。" : titleSyncNotice === "invalid" ? "目录名称暂未同步：标题不能有首尾空白、换行或超过 200 字。" : titleSyncNotice === "denied" ? "权限已变化，目录名称尚未同步。" : "目录名称同步结果尚未确认，正在重新核对。"} {(titleSyncNotice === "conflict" || titleSyncNotice === "history_changed") && <button type="button" className="text-primary underline" onClick={() => setTitleCheckTarget({ doc: id, user: me.user.id })}>检查文档名称</button>}</p>}
         {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
         {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
         {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
@@ -1323,7 +1342,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         window.setTimeout(() => { if (target.getAttribute("data-mention-located") === marker) target.removeAttribute("data-mention-located"); }, 2500);
         return true;
       }} />}
-      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} userId={me.user.id} canEdit={canEditContent} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} onUpdated={() => { void meta.refetch(); void qc.invalidateQueries({ queryKey: ["docs"] }); }} />}
+      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} userId={me.user.id} canEdit={canEditContent} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} onUpdated={(updatedTitle) => { titleSync.clearIfCurrent(updatedTitle); if (!titleSync.hasPending) setTitleSyncNotice(null); setTitleSyncRevision((n) => n + 1); void meta.refetch(); void qc.invalidateQueries({ queryKey: ["docs"] }); }} />}
       {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
       {metadataVerified && history && (history !== "history" || canEditRole) && (
         <VersionPanel
@@ -1380,6 +1399,7 @@ function TopBar({
   title,
   workspace,
   status,
+  directorySync,
   draftConflict = false,
   peers,
   me,
@@ -1450,6 +1470,7 @@ function TopBar({
   title: string;
   workspace: string;
   status: SyncStatus;
+  directorySync?: "pending" | "blocked";
   draftConflict?: boolean;
   peers: RemotePeer[];
   me: Presence;
@@ -1464,7 +1485,7 @@ function TopBar({
       return next === prev ? prev : { ...next, doc: meta?.id };
     });
   }, [status, meta?.id]);
-  const metaText = draftConflict ? "本地草稿待处理" : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
+  const metaText = draftConflict ? "本地草稿待处理" : status === "synced" && directorySync ? directorySync === "blocked" ? "目录名称未同步" : "正在同步目录名称…" : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
   const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
     <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:h-16 md:pr-5", sidebarDocked && "md:pl-5")}>
@@ -1488,7 +1509,7 @@ function TopBar({
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
-      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict ? "#D83931" : s.color }} />{metaText}</span>
+      <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict || directorySync === "blocked" ? "#D83931" : directorySync === "pending" ? "#FF8800" : s.color }} />{metaText}</span>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
         {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">只读</span>}

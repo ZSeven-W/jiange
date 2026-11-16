@@ -8,6 +8,13 @@ export interface TitleConsistencySnapshot {
   differs: boolean;
 }
 
+export function parseTitleConsistency(value: unknown): TitleConsistencySnapshot {
+  if (!value || typeof value !== "object") throw new Error("invalid title snapshot");
+  const snapshot = value as Partial<TitleConsistencySnapshot>;
+  if (typeof snapshot.directoryTitle !== "string" || typeof snapshot.documentTitle !== "string" || typeof snapshot.differs !== "boolean" || !Number.isSafeInteger(snapshot.head) || (snapshot.head as number) < 0 || (snapshot.historyEpoch !== undefined && (!Number.isSafeInteger(snapshot.historyEpoch) || snapshot.historyEpoch < 1)) || snapshot.differs !== (snapshot.directoryTitle !== snapshot.documentTitle)) throw new Error("invalid title snapshot");
+  return snapshot as TitleConsistencySnapshot;
+}
+
 type CheckState =
   | { status: "loading" }
   | { status: "ready"; snapshot: TitleConsistencySnapshot }
@@ -50,10 +57,7 @@ export function createTitleConsistencyCheck(
       if (!response.ok) throw new Error("title consistency unavailable");
       const value: unknown = await response.json();
       if (!isCurrent()) return;
-      if (!value || typeof value !== "object") throw new Error("invalid title snapshot");
-      const snapshot = value as Partial<TitleConsistencySnapshot>;
-      if (typeof snapshot.directoryTitle !== "string" || typeof snapshot.documentTitle !== "string" || typeof snapshot.differs !== "boolean" || !Number.isSafeInteger(snapshot.head) || (snapshot.head as number) < 0 || (snapshot.historyEpoch !== undefined && (!Number.isSafeInteger(snapshot.historyEpoch) || snapshot.historyEpoch < 1)) || snapshot.differs !== (snapshot.directoryTitle !== snapshot.documentTitle)) throw new Error("invalid title snapshot");
-      update({ status: "ready", snapshot: snapshot as TitleConsistencySnapshot });
+      update({ status: "ready", snapshot: parseTitleConsistency(value) });
     } catch {
       if (isCurrent()) update({ status: "error" });
     }
@@ -66,7 +70,7 @@ export function createTitleConsistencyCheck(
 }
 
 /** The directory name changes only on an explicit, guarded user action. */
-export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allowPrint = true, onClose, onAccessDenied, onUpdated }: { id: number; userId?: number; canEdit?: boolean; allowCopy: boolean; allowPrint?: boolean; onClose: () => void; onAccessDenied: () => void; onUpdated?: () => void }) {
+export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allowPrint = true, onClose, onAccessDenied, onUpdated }: { id: number; userId?: number; canEdit?: boolean; allowCopy: boolean; allowPrint?: boolean; onClose: () => void; onAccessDenied: () => void; onUpdated?: (title: string) => void }) {
   const [state, setState] = useState<CheckState>({ status: "loading" });
   const [copyNotice, setCopyNotice] = useState("");
   const [repairing, setRepairing] = useState(false);
@@ -103,7 +107,7 @@ export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allow
       if (response.status === 401 || response.status === 403 || response.status === 404) { denied.current(); setCopyNotice("权限已变化，请重新检查。"); }
       else if (response.status === 409) setCopyNotice("文档或目录名称已变化，请重新检查。");
       else if (!response.ok) setCopyNotice("未能同步名称，请重新检查后重试。");
-      else { setCopyNotice("已使用文档标题更新目录名称。"); onUpdated?.(); }
+      else { setCopyNotice("已使用文档标题更新目录名称。"); onUpdated?.(snapshot.documentTitle); }
     } catch { if (active.current && !controller.signal.aborted) setCopyNotice("同步结果未确认，请重新检查后再操作。"); }
     finally { if (repair.current === controller) repair.current = null; if (active.current) { setRepairing(false); if (document.visibilityState !== "hidden") void check.current?.run(); } }
   };

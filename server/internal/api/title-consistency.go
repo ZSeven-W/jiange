@@ -60,6 +60,10 @@ func (s *Server) getTitleConsistency(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	u, _ := UserFrom(r.Context())
+	if !driveExpectedUser(w, r, u.ID) {
+		return
+	}
 	if meta.Kind != "doc" {
 		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "仅文档支持标题一致性检查")
 		return
@@ -101,7 +105,6 @@ func (s *Server) getTitleConsistency(w http.ResponseWriter, r *http.Request) {
 	}
 	// Revalidate the original session as well as the document grant. A user
 	// may have logged out while reconstruction was in progress.
-	u, _ := UserFrom(r.Context())
 	cookie, err := r.Cookie(CookieName)
 	if err != nil || cookie.Value == "" {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "session expired")
