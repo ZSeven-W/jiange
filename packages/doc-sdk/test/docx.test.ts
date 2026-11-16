@@ -225,6 +225,52 @@ describe("Word export → import round trip", () => {
 });
 
 describe("Word table structure and headers", () => {
+  it("round-trips explicit column widths, including the total width of a merged cell", async () => {
+    const props = { tableData: '[["计划","","团队"],["开发","完成","小简"]]', tableMerges: '[[0,0,1,2]]', tableHeader: "row", tableWidths: '[180,120,240]' };
+    const blocks = [b("table", "", props)];
+    expect(docxExportLosses({ blocks })).toEqual([]);
+    const bytes = buildDocx({ blocks });
+    const xml = dec.decode(await readZipEntry(bytes, listZip(bytes).find((e) => e.name === "word/document.xml")!, 1 << 24));
+    expect(xml).toContain('<w:tblW w:w="8100" w:type="dxa"/><w:tblLayout w:type="fixed"/>');
+    expect(xml).toContain('<w:tblGrid><w:gridCol w:w="2700"/><w:gridCol w:w="1800"/><w:gridCol w:w="3600"/></w:tblGrid>');
+    expect(xml).toContain('<w:tcW w:w="4500" w:type="dxa"/><w:gridSpan w:val="2"/>');
+    const result = await parseDocx(bytes);
+    expect(result.warnings).toEqual([]);
+    expect(result.blocks[0].props).toMatchObject({ tableData: props.tableData, tableMerges: props.tableMerges, tableWidths: props.tableWidths });
+    expect(result.blocks[0].props.tableHeader).not.toBe("none");
+  });
+
+  it("warns when widths are automatic, invalid, too narrow, or exceed the Word page", () => {
+    const data = '[["A","B"]]';
+    const losses = (tableWidths: string) => docxExportLosses({ blocks: [b("table", "", { tableData: data, tableWidths })] });
+    for (const value of ['[120,null]', '[80,120]', '[120]', 'invalid', '[0,120]']) expect(losses(value)).toContain("部分表格列宽为自动或无效值，Word 中可能不同");
+    expect(losses('[400,400]')).toContain("表格宽于 Word 正文，列宽可能缩放");
+    expect(losses('[120,180]')).toEqual([]);
+  });
+
+  it("imports fixed Word grid widths and warns about conflicting or automatic layout", async () => {
+    const cells = '<w:tr><w:tc><w:tcPr><w:tcW w:w="2700" w:type="dxa"/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr><w:p/></w:tc></w:tr>';
+    const grid = '<w:tblGrid><w:gridCol w:w="2700"/><w:gridCol w:w="1800"/></w:tblGrid>';
+    const fixed = await parseDocx(rawDocx(`<w:tbl><w:tblPr><w:tblW w:w="4500" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>${grid}${cells}</w:tbl>`));
+    expect(fixed.blocks[0].props.tableWidths).toBe('[180,120]');
+    expect(fixed.warnings).toEqual([]);
+    const conflict = await parseDocx(rawDocx(`<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>${grid}${cells}</w:tbl>`));
+    expect(conflict.warnings).toContain("表格列宽与网格不一致或小于最小宽度，显示可能不同");
+    const auto = await parseDocx(rawDocx(`<w:tbl>${grid}${cells}</w:tbl>`));
+    expect(auto.blocks[0].props.tableWidths).toBeUndefined();
+    expect(auto.warnings).toContain("Word 表格使用自动布局，列宽可能不同");
+    const missing = await parseDocx(rawDocx(`<w:tbl><w:tblPr><w:tblLayout w:type="fixed"/></w:tblPr>${cells}</w:tbl>`));
+    expect(missing.warnings).toContain("表格固定列宽无法识别，已使用默认列宽");
+  });
+
+  it("retains trailing blank grid columns omitted by Word rows", async () => {
+    const body = '<w:tbl><w:tblPr><w:tblW w:w="5700" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="2700"/><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/></w:tblGrid><w:tr><w:trPr><w:gridAfter w:val="2"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2700" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>保留</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const result = await parseDocx(rawDocx(body));
+    expect(JSON.parse(result.blocks[0].props.tableData)).toEqual([["保留", "", ""]]);
+    expect(result.blocks[0].props.tableWidths).toBe('[180,100,100]');
+    expect(result.warnings).toEqual([]);
+  });
+
   it("keeps an ordinary first row ordinary and round-trips combined horizontal and vertical merges", async () => {
     const rows = [["项目", "", "负责人"], ["", "", "小简"], ["状态", "完成", "备注"]];
     const props = { tableData: JSON.stringify(rows), tableMerges: JSON.stringify([[0, 0, 2, 2]]), tableHeader: "none", tableHeaderColumn: "column" };

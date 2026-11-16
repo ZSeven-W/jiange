@@ -24,4 +24,4 @@
 - SDK 单元测试检查首行/首列的四种组合、二维合并、越界或含隐藏文字的合并、第三方续接格含文字及不支持的旧式合并。
 - `scripts/verify-document-docx-table.ts` 使用 python-docx 读取 Jiange 文件并生成第三方 Word 文件；还使用 LibreOffice 另存 DOCX，再验证单元格文字、合并及标题设置。
 - `scripts/verify-document-docx-table-ui.mjs` 在隔离账号和数据库中通过界面导入 DOCX、检查结构及刷新持久化，再从界面导出；手机截图为 390 × 844 模拟视口。
-- 表格的自定义列宽、单元格富文本、图片与复杂样式仍未完整转换，已有损失提示；不保证复杂第三方 Word 文件中的全部格式。未对 Microsoft Word、WPS 或真实手机做本轮验收。
+- 固定列宽已补充，详见 `document-docx-table-width-report-20261116.md`；自动布局、单元格富文本、图片与复杂样式仍未完整转换，已有损失提示；不保证复杂第三方 Word 文件中的全部格式。未对 Microsoft Word、WPS 或真实手机做本轮验收。

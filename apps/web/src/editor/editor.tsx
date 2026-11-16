@@ -55,6 +55,7 @@ import { FileCard, fmtSize } from "./file-card";
 import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./image-block";
 import { TableBlock } from "./table-block";
+import { parseTableWidths } from "./table-widths";
 import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./table-ops";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
@@ -3026,7 +3027,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           data={tableDataOf(props)}
           findCells={tableFindCells}
           findNavigation={findNavigation}
-          widths={props.tableWidths ? JSON.parse(props.tableWidths) : undefined}
+          widths={parseTableWidths(props.tableWidths)}
           header={props.tableHeader !== "none"}
           headerColumn={props.tableHeaderColumn === "column"}
           onHeader={onTableHeader ? (on) => onTableHeader("row", on) : undefined}

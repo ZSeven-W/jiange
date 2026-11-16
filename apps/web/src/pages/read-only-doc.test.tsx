@@ -14,6 +14,14 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  it("preserves table column widths in normal, shared and presentation snapshots", () => {
+    const view: DocView = { blocks: [b("1:1", "table", "", { tableData: '[["A","B"],["C","D"]]', tableWidths: '[180,120]' })] };
+    for (const publicToken of [undefined, "example-token"]) {
+      const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken={publicToken} />);
+      expect(html).toContain('<col style="width:180px"/><col style="width:120px"/>');
+      expect(html).toContain('style="width:300px"');
+    }
+  });
   it("shows an independently enabled title column in public and ordinary views", () => {
     const view: DocView = { blocks: [b("1:1", "table", "", { tableData: JSON.stringify([["A", "B"], ["C", "D"]]), tableHeader: "none", tableHeaderColumn: "column" })] };
     for (const publicToken of [undefined, "example-token"]) {

@@ -7,6 +7,7 @@ import { formatTableTSV } from "./table-clipboard";
 import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
+import { visibleTableWidths } from "./table-widths";
 
 type GripSel = { kind: "row" | "col"; index: number };
 
@@ -188,8 +189,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [grip, range, moreOpen]);
-  const size = (r: string[]) => Math.max(...r.map((c) => [...c].length));
-  const colW = (ci: number) => widths?.[ci] ?? Math.max(100, Math.min(260, 18 + size(rows[0]) * 9));
+  const columnWidths = visibleTableWidths(rows, widths);
+  const colW = (ci: number) => columnWidths[ci] ?? 100;
   const startResize = (e: React.MouseEvent, ci: number) => {
     e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, base = colW(ci);
@@ -244,8 +245,8 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
         <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
       <div className={cn("max-w-full overflow-x-auto", editable && "sm:-ml-4 sm:-mt-4 sm:pl-4 sm:pt-4")} data-table-scroll>
-      <table className="border-collapse text-[14px] leading-[22px]">
-        <colgroup>{rows[0].map((_, ci) => <col key={ci} style={{ width: colW(ci) }} />)}</colgroup>
+      <table className="table-fixed border-collapse text-[14px] leading-[22px]" style={{ width: columnWidths.reduce((total, width) => total + width, readOnly ? 0 : 24) }}>
+        <colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} />)}{!readOnly && <col style={{ width: 24 }} />}</colgroup>
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri} className="group/row" data-table-title-row={ri === 0 ? "true" : undefined}>
