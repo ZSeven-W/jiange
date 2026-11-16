@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
 import { bodyBlocks } from "@/editor/model";
@@ -27,7 +28,7 @@ function rawDocx(body: string, extra: { name: string; data: string }[] = [], rel
   const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   return createZip([
     { name: "[Content_Types].xml", data: enc.encode(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`) },
-    { name: "word/document.xml", data: enc.encode(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="${W}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}</w:body></w:document>`) },
+    { name: "word/document.xml", data: enc.encode(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="${W}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>${body}</w:body></w:document>`) },
     { name: "word/_rels/document.xml.rels", data: enc.encode(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`) },
     ...extra.map((e) => ({ name: e.name, data: enc.encode(e.data) })),
   ]);
@@ -180,10 +181,10 @@ describe("Word export → import round trip", () => {
 
   it("imports embedded images and preserves text and image order", async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20]);
-    const xml = `<w:document xmlns:w="w" xmlns:r="r"><w:body><w:p><w:r><w:t>前文</w:t><w:drawing><wp:inline><wp:docPr descr="示意图"/><a:blip r:embed="pic"/></wp:inline></w:drawing><w:t>后文</w:t></w:r></w:p></w:body></w:document>`;
+    const xml = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:r><w:t>前文</w:t><w:drawing><wp:inline><wp:docPr descr="示意图"/><a:blip r:embed="pic"/></wp:inline></w:drawing><w:t>后文</w:t></w:r></w:p></w:body></w:document>`;
     const zip = createZip([
       { name: "word/document.xml", data: enc.encode(xml) },
-      { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) },
+      { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) },
       { name: "word/media/p.png", data: png },
     ]);
     const result = await parseDocx(zip, { images: true });
@@ -224,8 +225,8 @@ describe("Word export → import round trip", () => {
 
   it("reports cropping and complex section widths instead of claiming fidelity", async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20]);
-    const xml = `<w:document><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1500000" cy="750000"/><a:srcRect l="10000"/><a:blip r:embed="pic"/></wp:inline></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w="10000"/><w:pgMar w:left="1000" w:right="1000"/><w:cols w:num="2"/></w:sectPr></w:body></w:document>`;
-    const zip = createZip([{ name: "word/document.xml", data: enc.encode(xml) }, { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) }, { name: "word/media/p.png", data: png }]);
+    const xml = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1500000" cy="750000"/><a:srcRect l="10000"/><a:blip r:embed="pic"/></wp:inline></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w="10000"/><w:pgMar w:left="1000" w:right="1000"/><w:cols w:num="2"/></w:sectPr></w:body></w:document>`;
+    const zip = createZip([{ name: "word/document.xml", data: enc.encode(xml) }, { name: "word/_rels/document.xml.rels", data: enc.encode(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="pic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/></Relationships>`) }, { name: "word/media/p.png", data: png }]);
     const result = await parseDocx(zip, { images: true });
     expect(result.blocks[0].props.imageWidth).toBe("30");
     expect(result.warnings.join("；")).toMatch(/分节较复杂/);
@@ -239,6 +240,48 @@ describe("Word export → import round trip", () => {
 });
 
 describe("Word import of third-party documents", () => {
+  it("imports a compressed python-docx document with renamed Word XML prefixes", async () => {
+    const bytes = await readFile(new URL("./fixtures/python-docx-alternate-prefix.docx", import.meta.url));
+    const result = await parseDocx(bytes, { images: true });
+    expect(result.blocks.find((block) => block.type === "h1")?.text).toBe("项目协作方案");
+    expect(result.blocks.find((block) => block.text.includes("完成设计评审"))?.spans.some((span) => span.text.includes("完成设计评审") && span.marks.bold)).toBeTruthy();
+    expect(result.blocks.find((block) => block.type === "bullet")?.text).toBe("需求梳理与原型设计");
+    expect(JSON.parse(result.blocks.find((block) => block.type === "table")!.props.tableData)).toEqual([["任务", "状态"], ["界面设计", "进行中"]]);
+    expect(result.blocks.some((block) => block.type === "image")).toBe(true);
+    expect(result.images?.size).toBe(1);
+  });
+
+  it("imports equivalent default and alternate namespace prefixes in text, styles, links and images", async () => {
+    const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const pkg = "http://schemas.openxmlformats.org/package/2006/relationships";
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20]);
+    const xml = `<document xmlns="${w}" xmlns:q="${w}" xmlns:link="${rel}" xmlns:draw="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pos="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><body><p><pPr><pStyle q:val="MyHeading"/></pPr><r><t>兼容标题</t></r></p><p><hyperlink link:id="url"><r><t>官网</t></r></hyperlink></p><p><r><drawing><pos:inline><pos:docPr descr="示意图"/><draw:blip link:embed="pic"/></pos:inline></drawing></r></p></body></document>`;
+    const styles = `<s:styles xmlns:s="${w}"><s:style s:styleId="MyHeading"><s:name s:val="heading 1"/></s:style></s:styles>`;
+    const rels = `<p:Relationships xmlns:p="${pkg}"><p:Relationship Id="url" Type="${rel}/hyperlink" Target="https://example.test/" TargetMode="External"/><p:Relationship Id="pic" Type="${rel}/image" Target="media/p.png"/></p:Relationships>`;
+    const zip = createZip([{name:"word/document.xml",data:enc.encode(xml)}, {name:"word/styles.xml",data:enc.encode(styles)}, {name:"word/_rels/document.xml.rels",data:enc.encode(rels)}, {name:"word/media/p.png",data:png}]);
+    const result = await parseDocx(zip, { images: true });
+    expect(result.blocks.map((block) => [block.type, block.text])).toEqual([["h1", "兼容标题"], ["paragraph", "官网"], ["image", ""]]);
+    expect(result.blocks[1].spans[0].marks.link).toBe("https://example.test/");
+    expect(result.blocks[2].props.importImageId).toBe("pic");
+    expect(result.images?.get("pic")?.data).toEqual(png);
+  });
+
+  it("rejects undeclared prefixes and duplicate expanded attributes", async () => {
+    const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const broken = (xml: string) => createZip([{name:"word/document.xml", data:enc.encode(xml)}]);
+    await expect(parseDocx(broken(`<w:document><w:body/></w:document>`))).rejects.toThrow(/损坏/);
+    await expect(parseDocx(broken(`<w:document xmlns:w="${w}" xmlns:x="${w}"><w:body><w:p><w:pPr><w:pStyle w:val="x" x:val="y"/></w:pPr></w:p></w:body></w:document>`))).rejects.toThrow(/损坏/);
+    await expect(parseDocx(broken(`<w:document xmlns:w="https://example.test/foreign"><w:body><w:p><w:r><w:t>不是正文</w:t></w:r></w:p></w:body></w:document>`))).rejects.toThrow(/不是有效/);
+  });
+
+  it("uses the namespace in each element's scope when prefixes are rebound", async () => {
+    const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const xml = `<q:document xmlns:q="${w}"><q:body><w:p xmlns:w="${w}"><w:r><w:t>有效正文</w:t></w:r></w:p><w:p xmlns:w="https://example.test/foreign"><w:r><w:t>其他命名空间</w:t></w:r></w:p></q:body></q:document>`;
+    const result = await parseDocx(createZip([{name:"word/document.xml",data:enc.encode(xml)}]));
+    expect(result.blocks.map((block) => block.text)).toEqual(["有效正文"]);
+  });
+
   it("recognizes localized heading styles, numbering, hyperlinks and fields", async () => {
     const styles = `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
       <w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/></w:style>

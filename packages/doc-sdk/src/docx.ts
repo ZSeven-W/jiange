@@ -10,7 +10,8 @@ import { tableDataOf } from "./tableCells.js";
 import { CALLOUT_COLORS } from "./blockStyles.js";
 import { markdownTableRows, type MdBlock, type MdSpan } from "./markdown.js";
 import { createZip, listZip, readZipEntry, ZipError, type ZipEntry } from "./zip.js";
-import { child, children, escapeXml, parseXml, XmlError, type XmlElement } from "./xml.js";
+import { child, children, escapeXml, XmlError, type XmlElement } from "./xml.js";
+import { parseDocxXml } from "./docxXml.js";
 
 export const DOCX_MAX_BYTES = 10 * 1024 * 1024;
 /** Upper bound for any single inflated part we read from the archive. */
@@ -931,7 +932,7 @@ export async function parseDocx(bytes: Uint8Array, options: { images?: boolean }
     if (!entry) return undefined;
     try {
       const data = await readZipEntry(bytes, entry, PART_LIMIT);
-      return parseXml(new TextDecoder("utf-8", { fatal: true }).decode(data));
+      return parseDocxXml(new TextDecoder("utf-8", { fatal: true }).decode(data));
     } catch (error) {
       if (error instanceof ZipError && /encrypted/.test(error.message)) throw new DocxImportError("Word 文件已加密，无法导入。");
       if (error instanceof ZipError || error instanceof XmlError || error instanceof TypeError) throw new DocxImportError("Word 文档已损坏，无法解析。");
