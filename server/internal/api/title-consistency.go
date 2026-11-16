@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +15,42 @@ import (
 // Bound concurrent materializations: the synchronous CRDT decoder cannot be
 // forcibly interrupted by a context deadline.
 var titleCheckSlots = make(chan struct{}, 1)
+
+func materializeTitle(ctx context.Context, snapshot store.TitleSnapshot) (string, error) {
+	doc := collab.NewDoc()
+	if len(snapshot.Snapshot) != 0 {
+		var err error
+		doc, err = collab.DecodeState(snapshot.Snapshot)
+		if err != nil {
+			return "", fmt.Errorf("invalid document snapshot: %w", err)
+		}
+	}
+	seq := snapshot.SnapshotSeq
+	for _, row := range snapshot.Ops {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if row.Seq != seq+1 || row.Seq > snapshot.Head {
+			return "", fmt.Errorf("incomplete document log")
+		}
+		ops, err := collab.DecodeOps(row.Bytes)
+		if err != nil || len(ops) != 1 || row.ClientID < 0 || (len(ops) == 1 && uint64(row.ClientID) != ops[0].ID.Client) {
+			return "", fmt.Errorf("invalid document operation at sequence %d", row.Seq)
+		}
+		if !doc.Apply(ops[0]) {
+			return "", fmt.Errorf("duplicate document operation at sequence %d", row.Seq)
+		}
+		seq = row.Seq
+	}
+	if seq != snapshot.Head || doc.Pending() != 0 || snapshot.Head > 9007199254740991 {
+		return "", fmt.Errorf("incomplete or incompatible document state")
+	}
+	title, kind, visible := doc.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
+	if !visible || kind != "title" {
+		return "", fmt.Errorf("document title block missing or hidden")
+	}
+	return title, nil
+}
 
 // getTitleConsistency compares the two existing title sources at one storage
 // snapshot. It never attempts to pick a winner or modify either source.
@@ -34,6 +71,11 @@ func (s *Server) getTitleConsistency(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusServiceUnavailable, "title_check_busy", "标题检查繁忙，请稍后重试")
 		return
 	}
+	epoch, head, err := s.Store.HeadVersion(r.Context(), meta.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	snapshot, err := s.Store.ReadTitleSnapshot(r.Context(), meta.ID)
 	if errors.Is(err, store.ErrTitleSnapshotTooLarge) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "title_check_too_large", "文档内容过大，暂无法检查标题")
@@ -43,42 +85,18 @@ func (s *Server) getTitleConsistency(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	doc := collab.NewDoc()
-	if len(snapshot.Snapshot) != 0 {
-		doc, err = collab.DecodeState(snapshot.Snapshot)
-		if err != nil {
-			s.fail(w, r, fmt.Errorf("invalid document snapshot: %w", err))
-			return
-		}
-	}
-	seq := snapshot.SnapshotSeq
-	for _, row := range snapshot.Ops {
-		if err := r.Context().Err(); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		if row.Seq != seq+1 || row.Seq > snapshot.Head {
-			s.fail(w, r, fmt.Errorf("incomplete document log"))
-			return
-		}
-		ops, err := collab.DecodeOps(row.Bytes)
-		if err != nil || len(ops) != 1 || row.ClientID < 0 || (len(ops) == 1 && uint64(row.ClientID) != ops[0].ID.Client) {
-			s.fail(w, r, fmt.Errorf("invalid document operation at sequence %d", row.Seq))
-			return
-		}
-		if !doc.Apply(ops[0]) {
-			s.fail(w, r, fmt.Errorf("duplicate document operation at sequence %d", row.Seq))
-			return
-		}
-		seq = row.Seq
-	}
-	if seq != snapshot.Head || doc.Pending() != 0 || snapshot.Head > 9007199254740991 {
-		s.fail(w, r, fmt.Errorf("incomplete or incompatible document state"))
+	title, err := materializeTitle(r.Context(), snapshot)
+	if err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	title, kind, visible := doc.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
-	if !visible || kind != "title" {
-		s.fail(w, r, fmt.Errorf("document title block missing or hidden"))
+	endEpoch, endHead, err := s.Store.HeadVersion(r.Context(), meta.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if epoch < 1 || epoch > conditionalSafeInteger || head != snapshot.Head || endEpoch != epoch || endHead != head {
+		httpx.Error(w, http.StatusConflict, "title_changed", "文档已变化，请重新检查")
 		return
 	}
 	// Revalidate the original session as well as the document grant. A user
@@ -100,6 +118,6 @@ func (s *Server) getTitleConsistency(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"directoryTitle": snapshot.DirectoryTitle, "documentTitle": title,
-		"head": snapshot.Head, "differs": snapshot.DirectoryTitle != title,
+		"head": snapshot.Head, "historyEpoch": epoch, "differs": snapshot.DirectoryTitle != title,
 	})
 }

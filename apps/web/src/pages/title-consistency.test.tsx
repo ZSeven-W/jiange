@@ -22,6 +22,14 @@ describe("title consistency inspection", () => {
     expect(update).toHaveBeenLastCalledWith({ status: "ready", snapshot: good });
   });
 
+  it("retries a temporarily busy title materializer without showing an error", async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ error: "title_check_busy" }, 503)).mockResolvedValueOnce(response({ ...good, historyEpoch: 2 }));
+    const update = vi.fn();
+    await createTitleConsistencyCheck(17, update, vi.fn(), send).run();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith({ status: "ready", snapshot: { ...good, historyEpoch: 2 } });
+  });
+
   it("does not display obsolete results after a second check or disposal", async () => {
     let resolveFirst!: (response: Response) => void;
     const send = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; })).mockResolvedValueOnce(response({ ...good, directoryTitle: "新名称" }));
@@ -70,7 +78,7 @@ describe("title consistency inspection", () => {
   });
 
   it("does not expose malformed, contradictory or failed results", async () => {
-    for (const res of [response({}, 503), response({ ...good, differs: false }), response({ ...good, head: Number.MAX_SAFE_INTEGER + 1 })]) {
+    for (const res of [response({}, 503), response({ ...good, differs: false }), response({ ...good, head: Number.MAX_SAFE_INTEGER + 1 }), response({ ...good, historyEpoch: 0 }), response({ ...good, historyEpoch: Number.MAX_SAFE_INTEGER + 1 })]) {
       const update = vi.fn();
       const check = createTitleConsistencyCheck(17, update, vi.fn(), vi.fn<typeof fetch>().mockResolvedValue(res));
       await check.run();

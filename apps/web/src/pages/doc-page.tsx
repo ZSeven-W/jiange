@@ -1323,7 +1323,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         window.setTimeout(() => { if (target.getAttribute("data-mention-located") === marker) target.removeAttribute("data-mention-located"); }, 2500);
         return true;
       }} />}
-      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} />}
+      {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} userId={me.user.id} canEdit={canEditContent} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} onUpdated={() => { void meta.refetch(); void qc.invalidateQueries({ queryKey: ["docs"] }); }} />}
       {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
       {metadataVerified && history && (history !== "history" || canEditRole) && (
         <VersionPanel
