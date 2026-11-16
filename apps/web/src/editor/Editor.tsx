@@ -38,7 +38,7 @@ import { SlashLinkPopover } from "./SlashLinkPopover";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slashLink";
 import { captureLinkRange, resolveLinkRange, sameLinkRange, type LinkRange } from "./linkRange";
 import { applyTableEdit, CLIPPABLE_BLOCKS, NEW_TABLE, parseTableData, type ClipBlock } from "./model";
-import { FormatToolbar } from "./FormatToolbar";
+import { blockAlign, FormatToolbar, type Align } from "./FormatToolbar";
 import { CalloutColorBar, CalloutEmoji } from "./CalloutControls";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { CodeLineNumbers } from "./CodeLineNumbers";
@@ -641,9 +641,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
           return;
         }
         case "align":
-          return editing((tx, s) => {
-            for (const x of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(x).type) && !isColumnText(tx.doc, x)) tx.setProp(x, "align", action.value);
-          });
+          return editing((tx, s) => setSelectionAlignment(tx, s, action.value));
         case "color":
           return editing((tx, s) => {
             for (const x of normalize(tx.doc, s).blocks) {
@@ -2258,9 +2256,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             setToolbar(null);
             setAiPanel({ key: idKey(cur.a.b), x: r ? Math.max(0, Math.round(r.left - base.left)) : 0, y: r ? Math.round(r.bottom - base.top + 6) : toolbar.y + 24, range: { start, end } });
           } : undefined}
-          onAlign={(a) => run((tx, s) => {
-            for (const b of normalize(tx.doc, s).blocks) if (ALIGNABLE.has(tx.doc.blockInfo(b).type) && !isColumnText(tx.doc, b)) tx.setProp(b, "align", a);
-          })}
+          onAlign={(a) => run((tx, s) => setSelectionAlignment(tx, s, a))}
           onClearFormat={() => run((tx, s) => {
             const { start, end, blocks } = normalize(tx.doc, s);
             for (const b of blocks) {
@@ -2344,6 +2340,15 @@ function wordLen(text: string, o: number, back: boolean): number {
 /** 块菜单在某类块上可用的动作；跨块选区（multi）时按“作用于其中适用的块”放开。 */
 /** 可设置段落对齐的块（与飞书一致：文本类块，不含代码块）。 */
 export const ALIGNABLE = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout"]);
+/** Align visible text while rejecting stale or cross-column selections. */
+export function setSelectionAlignment(tx: Tx, selection: Sel, align: Align): void {
+  const doc = tx.doc;
+  if (!validEditorSelection(doc, selection) || !eqId(selection.a.b, selection.f.b) && (isColumnText(doc, selection.a.b) || isColumnText(doc, selection.f.b))) return;
+  for (const block of normalize(doc, selection).blocks) {
+    const info = doc.blockInfo(block);
+    if (ALIGNABLE.has(info.type) && blockAlign(info.props.align) !== align) tx.setProp(block, "align", align);
+  }
+}
 /** “清除格式”移除的行内样式。 */
 export const CLEARABLE_MARKS = ["bold", "italic", "underline", "strike", "code", "color", "bg", "link"] as const;
 
@@ -2620,7 +2625,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             {(childBlocks ?? []).map((ch) => {
               const threads = ch.commentThreads ?? [];
               return <div key={`${ch.id}:${columnRemount?.[ch.id] ?? 0}`} className="group/col relative min-w-0 flex-1 rounded-md bg-sidebar/40 p-2" data-column={ch.id} data-block={ch.id}>
-                <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none">
+                <div data-text contentEditable={!!onSetProp} suppressContentEditableWarning className="min-h-7 whitespace-pre-wrap break-words text-[15px] leading-7 outline-none" style={{ textAlign: blockAlign(ch.props.align) }}>
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
                 </div>

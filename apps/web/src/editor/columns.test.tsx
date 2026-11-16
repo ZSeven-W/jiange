@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import type { SyncDoc } from "@/lib/useSyncDoc";
-import { Editor } from "./Editor";
+import { Editor, setSelectionAlignment } from "./Editor";
 import { deleteRange, joinBackward, joinForward, normalize, splitBlock, toggleMark } from "./model";
 import { selectionContainsColumns } from "./model";
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
@@ -24,6 +24,43 @@ function setup() {
 }
 
 describe("column text scope", () => {
+  it("aligns only the selected column, supports undo and renders the saved value", () => {
+    const { doc, left, right } = setup();
+    const peer = Doc.fromState(2, doc.encodeState());
+    const otherText = peer.insertText(right, 0, "协作")!;
+    const selection = { a: { b: left, o: 0 }, f: { b: left, o: 2 } };
+    const tx = new Tx(doc);
+    setSelectionAlignment(tx, selection, "center");
+    expect(doc.blockInfo(left).props.align).toBe("center");
+    expect(doc.blockInfo(right).props.align).toBeUndefined();
+    doc.apply(otherText);
+    const sync = { client: { doc }, peers: [], version: 0 } as unknown as SyncDoc;
+    const html = renderToStaticMarkup(<Editor sync={sync} me={{ name: "测试", color: "#3370ff" }} />);
+    expect(html).toMatch(/data-text[^>]*style="text-align:center"/);
+    const undo = new UndoManager();
+    undo.record(tx, null, null);
+    undo.undo(doc);
+    expect(doc.blockInfo(left).props.align || "left").toBe("left");
+    expect(doc.text(right)).toBe("协作右栏");
+    undo.redo(doc);
+    expect(doc.blockInfo(left).props.align).toBe("center");
+    expect(doc.text(right)).toBe("协作右栏");
+  });
+
+  it("does not align across columns or rewrite an unchanged alignment", () => {
+    const { doc, left, right } = setup();
+    const same = new Tx(doc);
+    setSelectionAlignment(same, { a: { b: left, o: 0 }, f: { b: left, o: 1 } }, "left");
+    expect(same.ops).toHaveLength(0);
+    const cross = new Tx(doc);
+    setSelectionAlignment(cross, { a: { b: left, o: 0 }, f: { b: right, o: 1 } }, "right");
+    expect(cross.ops).toHaveLength(0);
+    doc.deleteBlock(left);
+    const stale = new Tx(doc);
+    setSelectionAlignment(stale, { a: { b: left, o: 0 }, f: { b: left, o: 0 } }, "right");
+    expect(stale.ops).toHaveLength(0);
+  });
+
   it("formats, inserts line breaks, and undoes one column without affecting its neighbor", () => {
     const { doc, columns, left, right } = setup();
     const tx = new Tx(doc);

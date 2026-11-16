@@ -68,6 +68,14 @@ describe("read-only document snapshots", () => {
     expect(html).toContain('href="/api/files/12"');
   });
 
+  it("shows each column's alignment in read-only and public views", () => {
+    const view: DocView = { blocks: [b("1:1", "columns"), b("1:2", "paragraph", "居中", { align: "center" }, "1:1"), b("1:3", "paragraph", "靠右", { align: "right" }, "1:1"), b("1:4", "paragraph", "默认", { align: "unknown" }, "1:1")] };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);
+    expect(html).toMatch(/style="text-align:center"[^>]*>.*居中/);
+    expect(html).toMatch(/style="text-align:right"[^>]*>.*靠右/);
+    expect(html).toMatch(/style="text-align:left"[^>]*>.*默认/);
+  });
+
   it("uses the current public link for shared media and hides protected downloads", () => {
     const view: DocView = { blocks: [b("1:1", "image", "", { fileId: "12", name: "预览图" }), b("1:2", "file", "", { fileId: "34", name: "方案.pdf" })] };
     const html = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="example-token" />);

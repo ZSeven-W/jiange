@@ -6,6 +6,10 @@ const block = (type: string, text = "", props: Record<string, string> = {}, mark
 });
 
 describe("Markdown export loss preflight", () => {
+  it("warns when non-default paragraph alignment would be lost", () => {
+    expect(markdownExportLosses({ blocks: [block("paragraph", "文字", { align: "center" }), block("h1", "标题", { align: "right" })] })).toEqual(["文字对齐方式不会保留"]);
+    expect(markdownExportLosses({ blocks: [block("paragraph", "文字", { align: "left" })] })).toEqual([]);
+  });
   it("allows supported text and common marks without a loss warning", () => {
     expect(markdownExportLosses({ blocks: [
       block("paragraph", "正文", {}, { bold: "true", link: "https://example.com" }),

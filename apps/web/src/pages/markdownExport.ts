@@ -43,6 +43,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
       losses.add("公式包含独立的 $$ 分隔符，重新导入时公式可能被截断");
     }
     if (TEXT_BLOCKS.has(block.type)) {
+      if (block.props.align === "center" || block.props.align === "right") losses.add("文字对齐方式不会保留");
       if (!text) losses.add("空段落和空文本块可能无法还原");
       if (text.includes("\n")) losses.add("文本块内换行可能无法还原");
       if (block.spans.some((span) => Object.entries(span.marks).some(([key, value]) => value && !MARKS.has(key)))) {
