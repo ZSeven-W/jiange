@@ -1072,6 +1072,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
             <div ref={body} className="mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
+                userId={me.user.id}
                 onUndoRegistrar={onUndoRegistrar}
                 onTableFindRegistrar={onTableFindRegistrar}
                 onFindBatchRegistrar={onFindBatchRegistrar}

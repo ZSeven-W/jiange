@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
+import { encodeOps, eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/useSyncDoc";
 import type { Presence } from "@/lib/presence";
@@ -50,7 +50,7 @@ import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./LinkCard";
 import { FileCard, fmtSize } from "./FileCard";
-import { ApiError, linkApi } from "@/lib/api";
+import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./ImageBlock";
 import { TableBlock } from "./TableBlock";
 import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./tableOps";
@@ -69,7 +69,10 @@ import { AddIcon } from "@/components/FeishuIcons";
 import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
-import { ColumnAlignmentHistory } from "./columnAlignmentHistory";
+import { ColumnAlignmentHistory, type ConditionalAlignmentPlan } from "./columnAlignmentHistory";
+import { ColumnAlignmentCommit } from "./columnAlignmentCommit";
+import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./columnAlignmentOwner";
+import { browserConditionalJournalEnvironment, ConditionalJournal, conditionalJournalStorageKey } from "@/lib/conditionalJournal";
 import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboardPayload";
@@ -111,6 +114,8 @@ export type FindBatchReplacer = (matches: readonly FindMatch[], replacement: str
 
 interface Props {
   sync: SyncDoc;
+  /** Account identity binds durable conditional operations to this session. */
+  userId?: number;
   readOnly?: boolean;
   /** Register a transaction from another document control with this editor's undo stack. */
   onUndoRegistrar?: (record: ExternalUndoRecorder | null) => void;
@@ -160,7 +165,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -206,11 +211,32 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   currentClient.current = sync.client;
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const currentUserId = useRef(userId); currentUserId.current = userId;
+  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean } | null>(null);
+  const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
+  const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
+  const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
+  const alignmentBusy = useRef(false);
+  const alignmentPendingRef = useRef(false);
+  const [alignmentPending, setAlignmentPending] = useState(false);
+  const [alignmentMessage, setAlignmentMessage] = useState("");
+  const setPendingAlignment = useCallback((pending: boolean) => { alignmentPendingRef.current = pending; setAlignmentPending(pending); }, []);
+  const conditionalAlignment = useMemo(() => {
+    if (typeof window === "undefined" || !Number.isSafeInteger(userId) || !userId || userId < 1) return null;
+    try {
+      const client = sync.client, account = userId;
+      const journal = new ConditionalJournal(browserConditionalJournalEnvironment(), client.docId, account);
+      return new ColumnAlignmentCommit(journal, {
+        active: () => mounted.current && currentClient.current === client && currentUserId.current === account && !readOnlyRef.current,
+        observe: () => ({ docId: client.docId, userId: account, epoch: client.epoch, lastSeq: client.lastSeq, caughtUp: client.caughtUp, blocked: client.blocked, unacked: client.unacked }),
+      });
+    } catch { return null; }
+  }, [sync.client, userId]);
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number; initialText?: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
   const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
-  const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" } | null>(null);
+  const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" | "unsupported" } | null>(null);
   useEffect(() => {
     if (batchSyncNotice && canStepFindBatch(sync.client)) setBatchSyncNotice(null);
   }, [batchSyncNotice, sync.client, sync.status, sync.caughtUp, sync.blocked, sync.client.unacked]);
@@ -245,6 +271,138 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     return () => onFindBatchRegistrar?.(null);
   }, [onFindBatchRegistrar, replaceFindBatch]);
   const [, force] = useState(0);
+  const releaseAlignmentOwner = useCallback(() => { const owner = alignmentOwner.current; alignmentOwner.current = null; if (owner) alignmentOwnerRelease.current = owner.lease.release(); }, []);
+  const ensureAlignmentOwner = useCallback(async () => {
+    if (!conditionalAlignment || !userId) return false;
+    const client = sync.client;
+    if (alignmentOwner.current?.client === client && alignmentOwner.current.userId === userId) return true;
+    if (alignmentOwner.current) releaseAlignmentOwner();
+    await alignmentOwnerRelease.current;
+    if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return false;
+    const lease = await acquireAlignmentOwner(typeof navigator === "undefined" ? undefined : navigator.locks, client.docId, userId);
+    if (!lease) return false;
+    if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) { await lease.release(); return false; }
+    alignmentOwner.current = { lease, client, userId };
+    return true;
+  }, [conditionalAlignment, sync.client, userId, releaseAlignmentOwner]);
+  useEffect(() => {
+    let alive = true;
+    pendingAlignmentPlan.current = null; setPendingAlignment(false); setAlignmentMessage("");
+    const check = () => {
+      if (conditionalAlignment) void conditionalAlignment.hasPending().then((pending) => {
+        if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+        if (!pending && pendingAlignmentPlan.current) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
+        setPendingAlignment(pending);
+        setAlignmentMessage(pending ? "有一项分栏对齐操作尚待核对。" : "");
+      }).catch(() => { if (alive && currentClient.current === sync.client && currentUserId.current === userId) { setPendingAlignment(true); setAlignmentMessage("无法读取本地操作记录，请检查浏览器存储后重试。"); } });
+    };
+    const changed = (event: StorageEvent) => { if (userId && (event.key === null || event.key === conditionalJournalStorageKey(userId, sync.client.docId))) check(); };
+    check(); window.addEventListener("storage", changed);
+    return () => {
+      alive = false; window.removeEventListener("storage", changed);
+      if (alignmentRequest.current?.owner === conditionalAlignment) { alignmentRequest.current.controller.abort(); alignmentRequest.current = null; alignmentBusy.current = false; }
+      if (alignmentOwner.current?.client === sync.client && alignmentOwner.current.userId === userId) releaseAlignmentOwner();
+    };
+  }, [conditionalAlignment, setPendingAlignment, releaseAlignmentOwner, sync.client, userId]);
+
+  const reconcileAlignment = useCallback(async () => {
+    if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
+    if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能核对该操作。"); return; }
+    alignmentBusy.current = true;
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    let discarded = false;
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在核对该操作，或浏览器不支持跨页面锁。"); return; }
+      const result = await conditionalAlignment.finish(controller.signal, (attempt) => {
+        const pending = pendingAlignmentPlan.current;
+        if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
+        if (attempt.batch !== conditionalBatchBase64(encodeOps([pending.plan.op]))) return false;
+        const d = sync.client.doc;
+        if (d === pending.doc && columnAlignmentHistory.finishConditional(d, um, pending.plan) === "ready") { pendingAlignmentPlan.current = null; return true; }
+        if (um.peekMarker(pending.redo) === pending.key && um.discardMarker(pending.redo, pending.key, um.revision)) {
+          columnAlignmentHistory.discard(pending.doc, pending.key, pending.redo); pendingAlignmentPlan.current = null; discarded = true; return true;
+        }
+        return false;
+      });
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+      if (result === "committed" || result === "not_committed") {
+        setPendingAlignment(false); pendingAlignmentPlan.current = null; releaseAlignmentOwner(); force((x) => x + 1);
+        setAlignmentMessage("");
+        setColumnNotice(result === "not_committed" ? "文档已变化，分栏对齐操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "分栏对齐操作已保存。");
+      } else if (result === "empty" && !pendingAlignmentPlan.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); }
+      else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
+      else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认操作结果，请保留当前记录并检查文档历史。");
+      else if (result === "blocked") setAlignmentMessage("暂时无法核对操作，请检查账号权限和浏览器存储。");
+      else setAlignmentMessage("操作结果尚未确认，可核对状态或重试相同操作。");
+    } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("暂时无法核对操作，原请求仍保存在本地。"); }
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, releaseAlignmentOwner, setPendingAlignment]);
+
+  const retryAlignment = useCallback(async () => {
+    if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
+    if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能重试该操作。"); return; }
+    alignmentBusy.current = true;
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
+      const result = await conditionalAlignment.retry(controller.signal, () => {
+        const pending = pendingAlignmentPlan.current;
+        return !pending || sync.client.doc === pending.doc && columnAlignmentHistory.canSubmitConditional(pending.doc, um, pending.plan);
+      });
+      if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
+    } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("重试失败，原请求仍保存在本地。"); }
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
+    void reconcileAlignment();
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, reconcileAlignment]);
+
+  const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
+    if (alignmentBusy.current || !mounted.current) return;
+    setColumnNotice(""); setTableHistoryConflict(null);
+    if (alignmentPendingRef.current) { setAlignmentMessage("请先核对尚未完成的分栏对齐操作。"); void reconcileAlignment(); return; }
+    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交分栏对齐撤销。"); return; }
+    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏对齐。`); return; }
+    if (sync.client.epoch === null) { setColumnNotice("当前服务端不支持安全撤销，请升级服务端后重试。"); return; }
+    alignmentBusy.current = true;
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setColumnNotice("另一页面正在处理该文档，或浏览器不支持跨页面锁。"); return; }
+      const d = sync.client.doc, epoch = sync.client.epoch, head = sync.client.lastSeq;
+      if (!d || !canStepFindBatch(sync.client) || epoch === null || readOnlyRef.current || controller.signal.aborted) { releaseAlignmentOwner(); return; }
+      const prepared = columnAlignmentHistory.prepareConditional(d, um, key, redo);
+      if (prepared.status !== "ready") {
+        releaseAlignmentOwner();
+        if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, ...(prepared.status === "unsupported" ? { reason: "unsupported" } : {}) });
+        return;
+      }
+      const { plan } = prepared;
+      pendingAlignmentPlan.current = { plan, doc: d, key, redo };
+      setPendingAlignment(true); setAlignmentMessage("正在安全提交分栏对齐操作…");
+      const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === d && columnAlignmentHistory.canSubmitConditional(d, um, plan));
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未执行分栏对齐操作。"); }
+      else if (result === "occupied") { pendingAlignmentPlan.current = null; setAlignmentMessage("已有操作待核对，请先处理该记录。"); }
+      else setAlignmentMessage(result === "sent" ? "操作已提交，正在核对同步结果。" : "操作结果尚未确认，可核对状态或重试相同操作。");
+    } catch {
+      let pending = true;
+      try { pending = await conditionalAlignment.hasPending(); } catch { /* A damaged record must remain protected. */ }
+      if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) {
+        setPendingAlignment(pending);
+        if (pending) setAlignmentMessage("操作结果尚未确认，原请求仍保存在本地。");
+        else { pendingAlignmentPlan.current = null; releaseAlignmentOwner(); setColumnNotice("无法安全提交分栏对齐操作，请检查浏览器存储。"); }
+      }
+    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
+    void reconcileAlignment();
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+
+  useEffect(() => {
+    if (!alignmentPending) return;
+    void reconcileAlignment();
+    const timer = window.setInterval(() => void reconcileAlignment(), 2500);
+    return () => window.clearInterval(timer);
+  }, [alignmentPending, reconcileAlignment]);
   const [remount, setRemount] = useState<Record<string, number>>({});
   const [slash, setSlash] = useState<{
     at: Pos;
@@ -1787,16 +1945,8 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     publish();
   };
   columnAlignmentHistoryActionRef.current = (key, redo) => {
-    const d = sync.client.doc;
-    if (!d || readOnlyRef.current) return;
-    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏对齐。`); return; }
-    const result = columnAlignmentHistory.step(d, um, key, redo);
-    if (result.status !== "ready") {
-      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
-      return;
-    }
-    setColumnNotice(""); setTableHistoryConflict(null);
-    sync.client.push(result.tx.ops); force((x) => x + 1); publish();
+    if (!sync.client.doc || readOnlyRef.current) return;
+    void startAlignmentUndo(key, redo);
   };
   tableStructureHistoryActionRef.current = (key, redo) => {
     const d = sync.client.doc;
@@ -1954,9 +2104,10 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对分栏对齐操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "unsupported" ? "当前分栏对齐无法安全处理" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
@@ -1983,7 +2134,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         role="textbox"
         aria-multiline
         data-editor
-        className={cn("outline-none", (columnNotice || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
+        className={cn("outline-none", (columnNotice || alignmentPending || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
         onKeyDown={onKeyDown}
         onCopy={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e); }}
         onCut={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e, true); }}
@@ -2276,7 +2427,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             setToolbar(null);
             setAiPanel({ key: idKey(cur.a.b), x: r ? Math.max(0, Math.round(r.left - base.left)) : 0, y: r ? Math.round(r.bottom - base.top + 6) : toolbar.y + 24, range: { start, end } });
           } : undefined}
-          onAlign={(a) => run((tx, s) => setSelectionAlignment(tx, s, a), undefined, false, true)}
+          onAlign={(a) => {
+            const d = sync.client.doc, s = sel.current;
+            if (alignmentPendingRef.current && pendingAlignmentPlan.current && d && s && isColumnText(d, s.f.b)) { setColumnNotice("请先核对尚未完成的分栏对齐操作。"); return; }
+            run((tx, selection) => setSelectionAlignment(tx, selection, a), undefined, false, true);
+          }}
           onClearFormat={() => run((tx, s) => {
             const { start, end, blocks } = normalize(tx.doc, s);
             for (const b of blocks) {

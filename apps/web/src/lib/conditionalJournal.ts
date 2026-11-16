@@ -11,7 +11,7 @@ export type ConditionalObservation = { docId: number; userId: number; epoch: num
 const safe = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 const requestPattern = /^[0-9a-f]{32}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
-const keyFor = (user: number, doc: number) => `jiange:conditional-ops:v1:${user}:${doc}`;
+export const conditionalJournalStorageKey = (user: number, doc: number) => `jiange:conditional-ops:v1:${user}:${doc}`;
 
 function decodeBatch(value: string): Uint8Array {
   if (value.length > Math.ceil((8 << 20) / 3) * 4) throw new Error("invalid conditional batch");
@@ -82,7 +82,7 @@ export class ConditionalJournal {
   private readonly key: string;
   constructor(private readonly env: ConditionalJournalEnvironment, readonly docId: number, readonly userId: number) {
     if (!safe(docId) || docId <= 0 || !safe(userId) || userId <= 0) throw new Error("invalid conditional scope");
-    this.key = keyFor(userId, docId);
+    this.key = conditionalJournalStorageKey(userId, docId);
   }
 
   async read(): Promise<ConditionalAttempt | null> {
@@ -104,6 +104,7 @@ export class ConditionalJournal {
 
 export class ConditionalJournalLease {
   private active = true;
+  private preparedHere: ConditionalAttempt | null = null;
   constructor(private readonly env: ConditionalJournalEnvironment, private readonly key: string, private readonly docId: number, private readonly userId: number) {}
   close() { this.active = false; }
   private ensure() { if (!this.active) throw new Error("conditional lease expired"); }
@@ -125,7 +126,25 @@ export class ConditionalJournalLease {
     if (this.env.storage.getItem(this.key) !== raw) throw new Error("conditional attempt could not be persisted");
     const saved = await this.row();
     if (!saved || saved.raw !== raw) throw new Error("conditional attempt changed");
+    this.preparedHere = saved.attempt;
     return saved.attempt;
+  }
+  /** Only the lease that just created an attempt may discard it before any send begins. */
+  async discardUnsubmitted(attempt: ConditionalAttempt): Promise<void> {
+    this.ensure();
+    if (this.preparedHere !== attempt) throw new Error("attempt is not an unsubmitted preparation");
+    const row = await this.row();
+    if (!row || this.preparedHere !== attempt || JSON.stringify(row.attempt) !== JSON.stringify(attempt)) throw new Error("conditional attempt changed");
+    this.ensure(); if (this.env.storage.getItem(this.key) !== row.raw) throw new Error("conditional attempt changed");
+    this.env.storage.removeItem(this.key);
+    if (this.env.storage.getItem(this.key) !== null) throw new Error("conditional attempt could not be cleared");
+    this.preparedHere = null;
+  }
+  /** Seal the preparation before initiating transport; afterward its result is always treated as uncertain. */
+  markSubmitting(attempt: ConditionalAttempt): void {
+    this.ensure();
+    if (this.preparedHere !== attempt) throw new Error("attempt is not an unsubmitted preparation");
+    this.preparedHere = null;
   }
   async redact(): Promise<ConditionalAttempt | null> {
     const row = await this.row(); if (!row || row.attempt.redacted) return row?.attempt ?? null;

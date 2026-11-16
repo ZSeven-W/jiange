@@ -38,6 +38,32 @@ const committed = (attempt: ConditionalAttempt, epoch = 2) => ({ docId: 7, userI
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional operation journal", () => {
+  it("only discards the creating lease's attempt before transport starts", async () => {
+    const journal = new ConditionalJournal(environment(), 7, 2);
+    await journal.run(async (lease) => {
+      const unsent = await lease.prepare({historyEpoch:2,expectedSeq:3,batch:bytes,allowPersist:true});
+      await lease.discardUnsubmitted(unsent);
+      expect(await lease.read()).toBeNull();
+      const sending = await lease.prepare({historyEpoch:2,expectedSeq:3,batch:bytes,allowPersist:true});
+      lease.markSubmitting(sending);
+      await expect(lease.discardUnsubmitted(sending)).rejects.toThrow(/unsubmitted/);
+      expect(await lease.read()).not.toBeNull();
+    });
+    await journal.run(async (lease) => {
+      const existing = await lease.read();
+      await expect(lease.discardUnsubmitted(existing!)).rejects.toThrow(/unsubmitted/);
+    });
+  });
+  it("does not remove a journal changed while an unsent discard is being checked", async () => {
+    const storage = new StorageMock(), env = environment(storage), journal = new ConditionalJournal(env, 7, 2);
+    await journal.run(async (lease) => {
+      const attempt = await lease.prepare({historyEpoch:2,expectedSeq:3,batch:bytes,allowPersist:true});
+      const key = storage.key(0)!;
+      env.digest = async (value) => { storage.setItem(key, "changed-by-another-page"); return hash(value); };
+      await expect(lease.discardUnsubmitted(attempt)).rejects.toThrow(/changed/);
+      expect(storage.getItem(key)).toBe("changed-by-another-page");
+    });
+  });
   it("matches the server digest vector and copies the original batch", async () => {
     const proof = await conditionalOpsDigest(2, 3, bytes, hash);
     expect(proof).toEqual({ clientId: 9, opCount: 1, digest: "cfc24dd38d45569dee454d431f0f256f33aa38ce0fdb5cdd75deb2b84da779fc" });
