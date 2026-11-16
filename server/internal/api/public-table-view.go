@@ -20,17 +20,20 @@ var publicTableFill = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 func publicTableView(view collab.DocView) (collab.DocView, error) {
 	out := collab.DocView{Blocks: make([]collab.BlockView, len(view.Blocks))}
 	copy(out.Blocks, view.Blocks)
+	children := make(map[string]map[string]bool)
+	types := make(map[string]string, len(view.Blocks))
+	for _, block := range view.Blocks {
+		types[block.ID] = block.Type
+		if children[block.Parent] == nil {
+			children[block.Parent] = make(map[string]bool)
+		}
+		children[block.Parent][block.ID] = true
+	}
 	for i := range out.Blocks {
 		block := &out.Blocks[i]
-		if block.Type != "table" {
-			// A deleted/converted table can leave its old props on a paragraph.
-			clean := make(map[string]string, len(block.Props))
-			for key, value := range block.Props {
-				if !strings.HasPrefix(key, "tbl.") && key != "tableData" && key != "tableMerges" && key != "tableWidths" && key != "tableHeader" && key != "tableHeaderColumn" {
-					clean[key] = value
-				}
-			}
-			block.Props = clean
+		columnChild := types[block.Parent] == "columns"
+		if block.Type != "table" || columnChild {
+			*block = publicCommonBlock(*block, children[block.ID], columnChild)
 			continue
 		}
 		projected, err := publicTableProps(block.Props)
