@@ -60,7 +60,7 @@ import { MemberCard, type MemberInfo } from "./MemberCard";
 import { ask, askText } from "@/components/ui/ask";
 import { MessageCircle, Play } from "lucide-react";
 import { TodoCheck } from "./menuIcons";
-import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
+import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, navigateDocumentHash, REVISIT_DOCUMENT_LINK, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./BlockHandle";
 import { CALLOUT_COLORS, calloutStyle } from "./blockStyles";
 import { MathView } from "./MathView";
 import { DiagramView } from "./DiagramView";
@@ -733,15 +733,25 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
 
   // 打开带 ?block= 的块链接时滚动到该块并短暂高亮。
   const linkedDone = useRef<string | null>(null);
+  const linkedHighlight = useRef<{ element: HTMLElement; timer: number } | null>(null);
   useEffect(() => {
-    const key = linkedBlock(window.location.hash);
+    const clear = () => { const current = linkedHighlight.current; if (current) { window.clearTimeout(current.timer); current.element.removeAttribute("data-block-linked"); linkedHighlight.current = null; } };
+    const revisit = () => { linkedDone.current = null; clear(); force((value) => value + 1); };
+    window.addEventListener("hashchange", revisit);
+    window.addEventListener(REVISIT_DOCUMENT_LINK, revisit);
+    return () => { window.removeEventListener("hashchange", revisit); window.removeEventListener(REVISIT_DOCUMENT_LINK, revisit); clear(); };
+  }, []);
+  useEffect(() => {
+    const hash = window.location.hash, route = /^#\/doc\/(\d+)(?:\?|$)/.exec(hash);
+    const key = route && Number(route[1]) === sync.client.docId ? linkedBlock(hash) : null;
     if (!key || linkedDone.current === key) return;
     const el = root.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(key)}"]`);
     if (!el) return;
     linkedDone.current = key;
     el.scrollIntoView({ block: "center" });
     el.setAttribute("data-block-linked", "true");
-    window.setTimeout(() => el.removeAttribute("data-block-linked"), 2000);
+    const timer = window.setTimeout(() => { el.removeAttribute("data-block-linked"); if (linkedHighlight.current?.timer === timer) linkedHighlight.current = null; }, 2000);
+    linkedHighlight.current = { element: el, timer };
   });
 
   /** 流程图块：双击弹多行编辑框改写 Mermaid 源码。 */
@@ -1891,7 +1901,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
         onEnter={keepLinkCard}
         onLeave={hideLinkCard}
         onEditingChange={(editing) => { editingLinkCard.current = editing; if (editing) keepLinkCard(); }}
-        onOpen={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } if (linkCard.docTitle !== undefined) { setLinkCard(null); location.hash = linkCard.href; } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
+        onOpen={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } if (linkCard.docTitle !== undefined) { setLinkCard(null); navigateDocumentHash(linkCard.href); } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
         onCopy={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } const url = linkCard.docTitle !== undefined ? new URL(linkCard.href, location.href).href : linkCard.href; void navigator.clipboard?.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
         onEdit={readOnly ? undefined : (url) => {
           const range = linkCard.range, current = sync.client.doc, resolved = current && resolveLinkRange(current, range);
@@ -2755,7 +2765,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         className={cn(cls, "rounded px-1 py-px font-medium no-underline hover:underline", "bg-[#E1EAFF]")}
         onClick={(e) => {
           e.preventDefault();
-          location.hash = href;
+          navigateDocumentHash(href);
         }}
       >
         {text}

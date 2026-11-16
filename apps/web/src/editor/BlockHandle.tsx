@@ -200,3 +200,10 @@ export function linkedBlock(hash: string): string | null {
   if (!m) return null;
   try { return decodeURIComponent(m[1]); } catch { return null; }
 }
+
+/** A repeated visit to the same hash does not emit the browser's hashchange event. */
+export const REVISIT_DOCUMENT_LINK = "jiange:revisit-document-link";
+export function navigateDocumentHash(href: string) {
+  if (window.location.hash === href) window.dispatchEvent(new Event(REVISIT_DOCUMENT_LINK));
+  else window.location.hash = href;
+}

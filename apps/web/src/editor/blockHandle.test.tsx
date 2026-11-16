@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BlockHandle, blockLink, CONVERT_TARGETS, linkedBlock } from "./BlockHandle";
+import { BlockHandle, blockLink, CONVERT_TARGETS, linkedBlock, navigateDocumentHash, REVISIT_DOCUMENT_LINK } from "./BlockHandle";
 import { blockAbilities, dropPlan, readOnlyBlockAbilities, withPageAbilities } from "./Editor";
 
 const noop = () => {};
@@ -66,6 +66,18 @@ describe("block links", () => {
     expect(url).toBe("http://h/app#/doc/7?block=3%3A9");
     expect(linkedBlock(url.slice(url.indexOf("#")))).toBe("3:9");
     expect(linkedBlock("#/doc/7")).toBeNull();
+  });
+  it("signals repeated navigation when the browser hash is already the target", () => {
+    const fake = { location: { hash: "#/doc/7?block=3%3A9" }, dispatchEvent: vi.fn() };
+    vi.stubGlobal("window", fake);
+    try {
+      navigateDocumentHash("#/doc/7?block=3%3A9");
+      expect(fake.dispatchEvent).toHaveBeenCalledOnce();
+      expect(fake.dispatchEvent.mock.calls[0][0].type).toBe(REVISIT_DOCUMENT_LINK);
+      navigateDocumentHash("#/doc/7?block=1%3A2");
+      expect(fake.location.hash).toBe("#/doc/7?block=1%3A2");
+      expect(fake.dispatchEvent).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 
