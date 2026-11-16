@@ -69,6 +69,7 @@ import { AddIcon } from "@/components/FeishuIcons";
 import { shouldRetryImage, type ImageFailure } from "./imageRetry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./compositionAnchor";
 import { createColumn, requestColumnDeletion, safeColumnUndo } from "./columnSafety";
+import { ColumnAlignmentHistory } from "./columnAlignmentHistory";
 import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slashInsert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./uploadInsert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboardPayload";
@@ -168,10 +169,12 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
   const stored = useRef<Record<string, string | null> | null>(null);
   const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
+  const columnAlignmentHistory = useMemo(() => new ColumnAlignmentHistory(), [sync.client]);
   const tableStructureHistory = useMemo(() => new TableStructureHistory(), [sync.client]);
   const findBatchHistory = useMemo(() => new FindBatchHistory(), [sync.client]);
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
+  const columnAlignmentHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableStructureHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
   const findBatchActionRef = useRef<FindBatchReplacer>(() => ({ status: "unavailable", count: 0 }));
@@ -414,7 +417,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
 
   /** Runs an edit as one undoable transaction. */
   const run = useCallback(
-    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false) => {
+    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false, guardColumnAlignment = false) => {
       const d = sync.client.doc,
         original = sel.current;
       if (!d || !original || readOnlyRef.current) return;
@@ -424,18 +427,22 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       // Cross-column selections cannot be represented as a root block range.
       // Never let a structural operation delete unrelated document blocks.
       if (!eqId(s.a.b, s.f.b) && (isColumnText(d, s.a.b) || isColumnText(d, s.f.b))) { setColumnNotice("暂不支持跨栏编辑，请在同一栏内选择内容。"); return; }
+      const column = guardColumnAlignment && eqId(s.a.b, s.f.b) && isColumnText(d, s.f.b) ? s.f.b : null;
+      const alignmentBefore = column ? columnAlignmentHistory.capture(d, column) : null;
+      if (column && !alignmentBefore) { setColumnNotice("分栏已变化，请重新选择。"); return; }
       const tx = new Tx(d);
       const r = fn(tx, s);
       const next: Sel | null = r ? ("a" in r ? r : { a: r, f: r }) : s;
       if (tx.ops.length) {
-        um.record(preserveCreatedBlocks ? safeSlashUndo(tx) : tx, s, next, tag);
+        if (column && alignmentBefore) columnAlignmentHistory.record(d, um, column, alignmentBefore);
+        else um.record(preserveCreatedBlocks ? safeSlashUndo(tx) : tx, s, next, tag);
         sync.client.push(tx.ops);
       }
       sel.current = next;
       force((x) => x + 1);
       publish();
     },
-    [sync.client, um, publish],
+    [sync.client, um, publish, columnAlignmentHistory],
   );
 
   const focusEditorPosition = (doc: Doc, position: Pos, afterLink = false) => {
@@ -824,7 +831,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -1779,6 +1786,18 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
     force((x) => x + 1);
     publish();
   };
+  columnAlignmentHistoryActionRef.current = (key, redo) => {
+    const d = sync.client.doc;
+    if (!d || readOnlyRef.current) return;
+    if (!canStepFindBatch(sync.client)) { setColumnNotice(`请等待文档同步完成后再${redo ? "重做" : "撤销"}分栏对齐。`); return; }
+    const result = columnAlignmentHistory.step(d, um, key, redo);
+    if (result.status !== "ready") {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
+      return;
+    }
+    setColumnNotice(""); setTableHistoryConflict(null);
+    sync.client.push(result.tx.ops); force((x) => x + 1); publish();
+  };
   tableStructureHistoryActionRef.current = (key, redo) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current) return;
@@ -1937,10 +1956,11 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
-            if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
+            if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("find-batch:")) findBatchHistory.discard(tableHistoryConflict.key);
             else if (tableHistoryConflict.key.startsWith("table-structure:")) tableStructureHistory.discard(tableHistoryConflict.key);
             else { tableHistory.discard(sync.client, tableHistoryConflict.key, tableHistoryConflict.redo); findBatchHistory.discardTableChange(tableHistoryConflict.key, tableHistoryConflict.redo); }
           }
@@ -2256,7 +2276,7 @@ export function Editor({ sync, me, readOnly, onUndoRegistrar, onTableFindRegistr
             setToolbar(null);
             setAiPanel({ key: idKey(cur.a.b), x: r ? Math.max(0, Math.round(r.left - base.left)) : 0, y: r ? Math.round(r.bottom - base.top + 6) : toolbar.y + 24, range: { start, end } });
           } : undefined}
-          onAlign={(a) => run((tx, s) => setSelectionAlignment(tx, s, a))}
+          onAlign={(a) => run((tx, s) => setSelectionAlignment(tx, s, a), undefined, false, true)}
           onClearFormat={() => run((tx, s) => {
             const { start, end, blocks } = normalize(tx.doc, s);
             for (const b of blocks) {

@@ -80,7 +80,23 @@ func conditionalTextBlock(kind string) bool {
 	}
 }
 
-// commitConditionalOps accepts only text changes and table-cell properties.
+func conditionalAlignment(op collab.Op) bool {
+	if op.Key != "align" || op.Value == nil {
+		return false
+	}
+	switch *op.Value {
+	case "", "left", "center", "right":
+		return true
+	default:
+		return false
+	}
+}
+
+func conditionalAlignableBlock(kind string) bool {
+	return kind != "code" && conditionalTextBlock(kind)
+}
+
+// commitConditionalOps accepts text changes, table-cell properties, and text alignment.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
 func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +176,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 		case collab.TMark:
 		case collab.TBlockSet:
-			if !conditionalTableKey(op.Key) {
+			if !conditionalTableKey(op.Key) && !conditionalAlignment(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
 				return
 			}
@@ -225,7 +241,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 			blockKinds[op.Block] = kind
 		}
-		if op.T == collab.TBlockSet && kind != "table" || op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
+		if op.T == collab.TBlockSet && !(kind == "table" && conditionalTableKey(op.Key) || conditionalAlignableBlock(kind) && conditionalAlignment(op)) || op.T != collab.TBlockSet && !conditionalTextBlock(kind) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
 			return
 		}
