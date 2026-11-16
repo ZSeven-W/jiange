@@ -317,6 +317,12 @@ export class Doc {
     return !!b && !b.deleted;
   }
 
+  /** Type retained by a deleted block, or null for missing/live blocks. */
+  deletedBlockType(id: OpId): string | null {
+    const b = this.blocks.get(idKey(id));
+    return b?.deleted ? b.props.get("type")?.value ?? "" : null;
+  }
+
   text(block: OpId): string {
     return this.visible(this.block(block)).map((c) => c.ch).join("");
   }
