@@ -83,6 +83,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
 }) {
   const rows = parseTableData(data);
   const nCols = rows[0]?.length ?? 0;
+  const editable = !readOnly && !!onChange;
   const merges = useMemo(() => parseMerges(rawMerges, rows.length, nCols), [rawMerges, rows.length, nCols]);
   const cover = useMemo(() => coverMap(merges), [merges]);
   const findByCell = useMemo(() => new Map(findCells.map((item) => [`${item.row}:${item.col}`, item])), [findCells]);
@@ -99,7 +100,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [fillOpen, setFillOpen] = useState(false);
   const [alignOpen, setAlignOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
-  const [rowHeights, setRowHeights] = useState<number[]>([]);
+  const [rowBounds, setRowBounds] = useState<{ top: number; height: number }[]>([]);
   const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
   const reorderDrag = useRef<{ pointer: number; kind: "row" | "col"; indices: number[]; startX: number; startY: number; x: number; y: number; active: boolean; before: number | null; valid: boolean; session: TableReorderSession | null; target: HTMLElement; frame: number } | null>(null);
   const suppressGripClick = useRef(false);
@@ -122,23 +123,31 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     return () => { window.removeEventListener("keydown", escape); widthDrag.current?.session.cancel(); widthDrag.current = null; };
   }, []);
   useTableStickyHeader(root, header);
-  // A rowspan can cover rows of different heights. Track each actual row so
-  // the grip for a covered row stays aligned when its content or width changes.
+  // The row grips sit outside the horizontal scrollport. Measure actual rows,
+  // including rows covered by a rowspan and a translated sticky title row.
   useLayoutEffect(() => {
-    if (readOnly || !merges.some(([, c, height]) => c === 0 && height > 1)) return;
-    const table = root.current?.querySelector("table");
-    if (!table) return;
+    const container = root.current, table = container?.querySelector("table");
+    if (!editable || !container || !table) return;
     const elements = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody > tr"));
+    let frame = 0;
     const measure = () => {
-      const heights = elements.map(row => row.getBoundingClientRect().height);
-      setRowHeights(previous => previous.length === heights.length && previous.every((height, index) => Math.abs(height - heights[index]) < 0.1) ? previous : heights);
+      frame = 0;
+      const top = container.getBoundingClientRect().top;
+      const stickyBottom = elements[0]?.dataset.tableHeaderStuck === "true" ? elements[0].getBoundingClientRect().bottom : -Infinity;
+      const bounds = elements.map((row, index) => {
+        const rect = row.getBoundingClientRect(), visibleTop = index ? Math.min(rect.bottom, Math.max(rect.top, stickyBottom)) : rect.top;
+        return { top: visibleTop - top, height: Math.max(0, rect.bottom - visibleTop) };
+      });
+      setRowBounds(previous => previous.length === bounds.length && previous.every((value, index) => Math.abs(value.top - bounds[index].top) < 0.1 && Math.abs(value.height - bounds[index].height) < 0.1) ? previous : bounds);
     };
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(container); observer?.observe(table);
     elements.forEach(row => observer?.observe(row));
-    window.addEventListener("resize", measure);
+    window.addEventListener("resize", schedule); window.addEventListener("scroll", schedule, true);
     measure();
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [readOnly, rawMerges, rows.length]);
+    return () => { if (frame) cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener("resize", schedule); window.removeEventListener("scroll", schedule, true); };
+  }, [editable, header, rawMerges, rows.length]);
   const pendingTab = useRef<{ source: HTMLTextAreaElement; row: number; cols: number } | null>(null);
   const dragSelection = useRef<{ pointerId: number; r: number; c: number; active: boolean; x: number; y: number; source: HTMLTextAreaElement; restoreFocus: boolean; kind: "mouse" | "touch"; previousRange?: CellRange | null; previousTouch?: boolean } | null>(null);
   const selectionSignature = JSON.stringify([data, rawMerges ?? "", fillProps["tbl.rows"] ?? "", fillProps["tbl.cols"] ?? "", readOnly]);
@@ -474,14 +483,13 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols), op); setGrip(null); setRange(null); setTouchSelecting(false); };
   const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); setTouchSelecting(false); };
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
-  const editable = !readOnly && !!onChange;
   const renderGrip = (kind: "row" | "col", index: number, weight: number) => {
     const active = grip?.kind === kind && grip.index === index || axisSelection?.kind === kind && axisSelection.indices.includes(index);
     const label = kind === "row" ? `选择第 ${index + 1} 行` : `选择第 ${index + 1} 列`;
     return <button key={index} type="button" aria-label={label} aria-keyshortcuts={kind === "row" ? "Alt+ArrowUp Alt+ArrowDown" : "Alt+ArrowLeft Alt+ArrowRight"} aria-pressed={active} title={`选择或拖动${kind === "row" ? "行" : "列"}，按住 Ctrl 或 Command 多选`} style={{ flex: `${weight} 1 0%` }} onMouseDown={e => e.preventDefault()} onClick={e => openGrip(e, { kind, index })} onKeyDown={e => keyReorder(e, { kind, index })} onPointerDown={e => beginReorder(e, { kind, index })} onPointerMove={moveReorder} onPointerUp={e => endReorder(e)} onPointerCancel={e => endReorder(e, true)} onLostPointerCapture={e => endReorder(e, true)} className={cn("pointer-events-auto min-h-0 min-w-0 touch-none rounded-[3px] bg-[#EFF0F1] opacity-0 hover:bg-primary/30 group-hover/t:opacity-100 dark:bg-hover [@media(pointer:coarse)]:opacity-100", active && "bg-primary opacity-100")} data-table-row-grip={kind === "row" ? index : undefined} data-table-col-grip={kind === "col" ? index : undefined} />;
   };
   return (
-    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined} data-table-axis-selection={axisSelection ? `${axisSelection.kind}:${axisSelection.indices.join(',')}` : undefined}
+    <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", editable && "-ml-4 pl-4", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined} data-table-axis-selection={axisSelection ? `${axisSelection.kind}:${axisSelection.indices.join(',')}` : undefined}
       onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
@@ -556,7 +564,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         {multi && selected && deletion && <><span className="mx-0.5 h-4 w-px bg-border" />
         <button type="button" title={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} aria-label={deletion.kind === "rows" ? "删除选中行" : deletion.kind === "cols" ? "删除选中列" : "删除表格"} className="grid size-9 place-items-center rounded hover:bg-hover hover:text-destructive sm:size-7" onMouseDown={(e) => e.preventDefault()} onClick={() => { const error = onDeleteSelection?.(selected); setClipboardNotice(error ?? ""); if (!error) { setMoreOpen(false); setGrip(null); setRange(null); setTouchSelecting(false); } }} data-table-delete-selection={deletion.kind}><Trash2 size={14} strokeWidth={1.7} /></button></>}
       </span></div>}
-      <div className={cn("max-w-full overflow-x-auto", editable && "-ml-4 -mt-4 pl-4 pt-4")} data-table-scroll>
+      <div className={cn("max-w-full overflow-x-auto", editable && "-mt-4 pt-4")} data-table-scroll>
       <table className="table-fixed border-collapse text-[14px] leading-[22px]" style={{ width: columnWidths.reduce((total, width) => total + width, readOnly ? 0 : 24) }}>
         <colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} />)}{!readOnly && <col style={{ width: 24 }} />}</colgroup>
         <tbody>
@@ -659,11 +667,10 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                     {editable && touchRange && (touchSelecting || editing) && (() => {
                       const first = ri === touchRange.r0 && ci === touchRange.c0;
                       const last = ri + (span?.[0] ?? 1) - 1 === touchRange.r1 && ci + (span?.[1] ?? 1) - 1 === touchRange.c1;
-                      const handle = (corner: "start" | "end") => <button key={corner} type="button" aria-label={corner === "start" ? "调整选区起点" : "调整选区终点"} title="拖动或使用方向键调整选区" className={cn("absolute z-20 hidden size-8 touch-none items-center justify-center [@media(pointer:coarse)]:flex", corner === "start" ? "-left-4 -top-4" : "bottom-0 right-0")} onPointerDown={e => beginTouchSelection(e, corner)} onKeyDown={e => moveTouchSelectionWithKey(e, corner)} data-table-touch-handle={corner}><span className={cn("size-3 rounded-full border-2 border-white bg-primary shadow", corner === "end" && "absolute bottom-0 right-0")} /></button>;
+                      const handle = (corner: "start" | "end") => <button key={corner} type="button" aria-label={corner === "start" ? "调整选区起点" : "调整选区终点"} title="拖动或使用方向键调整选区" className={cn("absolute z-20 hidden size-8 touch-none items-center justify-center [@media(pointer:coarse)]:flex", corner === "start" ? "left-0 -top-4" : "bottom-0 right-0")} onPointerDown={e => beginTouchSelection(e, corner)} onKeyDown={e => moveTouchSelectionWithKey(e, corner)} data-table-touch-handle={corner}><span className={cn("size-3 rounded-full border-2 border-white bg-primary shadow", corner === "end" && "absolute bottom-0 right-0")} /></button>;
                       return <>{touchSelecting && first && handle("start")}{last && handle("end")}</>;
                     })()}
                     {editable && ri === 0 && <span className="pointer-events-none absolute -top-[14px] left-0 right-0 flex h-[10px] [@media(pointer:coarse)]:-top-4 [@media(pointer:coarse)]:h-4">{Array.from({ length: span?.[1] ?? 1 }, (_, offset) => renderGrip("col", ci + offset, colW(ci + offset)))}</span>}
-                    {editable && ci === 0 && <span className="pointer-events-none absolute -left-[14px] bottom-0 top-0 flex w-[10px] flex-col [@media(pointer:coarse)]:-left-4 [@media(pointer:coarse)]:w-4">{Array.from({ length: span?.[0] ?? 1 }, (_, offset) => renderGrip("row", ri + offset, rowHeights[ri + offset] || 1))}</span>}
                     {!readOnly && onBeginResize && ri === 0 && Array.from({ length: span?.[1] ?? 1 }, (_, offset) => {
                       const index = ci + offset, trailing = columnWidths.slice(index + 1, ci + (span?.[1] ?? 1)).reduce((sum, width) => sum + width, 0);
                       return <div key={index} role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`调整第 ${index + 1} 列宽`} aria-valuemin={100} aria-valuemax={100000} aria-valuenow={Math.round(colW(index))} style={{ right: trailing, transform: "translateX(50%)" }} className={cn("absolute top-0 z-10 h-full w-[6px] touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-primary/60 focus-visible:after:bg-primary/60 [@media(pointer:coarse)]:w-4", span && offset < span[1] - 1 && "[@media(pointer:coarse)]:h-4", widthDrag.current?.index === index && "after:bg-primary")} onPointerDown={(e) => startResize(e, index)} onPointerMove={moveResize} onPointerUp={(e) => endResize(e)} onPointerCancel={(e) => endResize(e, true)} onLostPointerCapture={(e) => endResize(e, true)} onKeyDown={(e) => {
@@ -686,6 +693,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         </tbody>
       </table>
       </div>
+      {editable && rows.map((_, index) => <span key={index} className="pointer-events-none absolute left-0 z-20 flex w-[10px] [@media(pointer:coarse)]:w-4" style={{ top: rowBounds[index]?.top ?? 0, height: rowBounds[index]?.height ?? 0 }}>{renderGrip("row", index, 1)}</span>)}
       {reorderGuide && <div aria-hidden="true" className={cn("pointer-events-none absolute z-40 rounded-full",reorderGuide.valid?"bg-primary":"bg-destructive")} style={{left:reorderGuide.left,top:reorderGuide.top,width:reorderGuide.width,height:reorderGuide.height}} data-table-reorder-guide data-valid={reorderGuide.valid ? "true" : "false"} />}
       {editable && grip && !gripMenuHidden && (
         <div role="menu" style={{ left: menuAt?.x ?? 16, top: menuAt?.y ?? 16 }} className="absolute z-40 w-36 rounded-lg border bg-surface p-1 text-[13px] font-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-table-grip-menu={grip.kind}>
