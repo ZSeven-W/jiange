@@ -99,6 +99,16 @@ func checkTitleReplayPages(t *testing.T, st titleReplayStore) {
 	if err != nil || target != 3 {
 		t.Fatalf("head: %d %d %v", epoch, target, err)
 	}
+	materialized := collab.NewDoc()
+	for _, initial := range store.InitialDocOps("标题😀") {
+		ops, e := collab.DecodeOps(initial.Bytes)
+		if e != nil || len(ops) != 1 || !materialized.Apply(ops[0]) {
+			t.Fatalf("initial snapshot operation: %v", e)
+		}
+	}
+	if err = st.SaveSnapshot(ctx, doc.ID, target, materialized.EncodeState()); err != nil {
+		t.Fatal(err)
+	}
 	if page, err := st.ReadTitleReplayPage(ctx, guard, doc.ID, epoch, target, 0, 1, 1); !errors.Is(err, store.ErrTitleReplayPageLimit) || len(page) != 0 {
 		t.Fatalf("small budget: %d %v", len(page), err)
 	}
@@ -135,6 +145,20 @@ func checkTitleReplayPages(t *testing.T, st titleReplayStore) {
 	}
 	if _, err = st.AppendOps(ctx, doc.ID, []store.RawOp{{ClientID: 91, Clock: 1, Bytes: raw}}); err != nil {
 		t.Fatal(err)
+	}
+	snapshot, err := st.ReadTitleSnapshot(ctx, doc.ID)
+	if err != nil || snapshot.Head != target+1 || snapshot.SnapshotSeq != target {
+		t.Fatalf("snapshot with tail: %+v %v", snapshot, err)
+	}
+	verified, err := store.VerifyTitleSnapshotReplay(ctx, st, guard, doc.ID, epoch, snapshot, 1, 1024)
+	if err != nil || verified.Head != uint64(target+1) || verified.Text != "标题😀" || !verified.Visible {
+		t.Fatalf("verified snapshot: %+v %v", verified, err)
+	}
+	badSnapshot := snapshot
+	badSnapshot.Snapshot = append([]byte(nil), snapshot.Snapshot...)
+	badSnapshot.Snapshot[len(badSnapshot.Snapshot)-1] ^= 1
+	if _, err = store.VerifyTitleSnapshotReplay(ctx, st, guard, doc.ID, epoch, badSnapshot, 1, 1024); !errors.Is(err, store.ErrTitleSnapshotUnverified) {
+		t.Fatalf("tampered snapshot: %v", err)
 	}
 	replay, err := collab.NewTitleIdentityReplay(uint64(doc.ID), uint64(epoch))
 	if err != nil {

@@ -31,7 +31,7 @@ type TitleReplayPageReader interface {
 // read rechecks the account and epoch. A concurrent append can make the
 // candidate stale; full causality and publication still need separate checks.
 func BuildTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (collab.TitleProjectionCandidate, error) {
-	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes)
+	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes, nil)
 	if err != nil {
 		return collab.TitleProjectionCandidate{}, err
 	}
@@ -42,7 +42,7 @@ func BuildTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader
 // the uncut full log. It is still a read-only historical candidate, not proof
 // of immutable pages, live snapshot compatibility, or permission to publish.
 func BuildCausallyCheckedTitleReplayCandidate(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (collab.TitleProjectionCandidate, error) {
-	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes)
+	replay, err := replayTitlePrefix(ctx, reader, guard, doc, epoch, head, maxRows, maxBytes, nil)
 	if err != nil {
 		return collab.TitleProjectionCandidate{}, err
 	}
@@ -60,7 +60,7 @@ func BuildCausallyCheckedTitleReplayCandidate(ctx context.Context, reader TitleR
 	return candidate, nil
 }
 
-func replayTitlePrefix(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int) (*collab.TitleIdentityReplay, error) {
+func replayTitlePrefix(ctx context.Context, reader TitleReplayPageReader, guard RestoreGuard, doc, epoch, head int64, maxRows, maxBytes int, visit func(collab.TitleProjectionRecord) error) (*collab.TitleIdentityReplay, error) {
 	if reader == nil || !validTitleReplayPage(doc, epoch, head, 0, maxRows, maxBytes) {
 		return nil, ErrConflict
 	}
@@ -87,6 +87,11 @@ func replayTitlePrefix(ctx context.Context, reader TitleReplayPageReader, guard 
 			}
 			if record.Seq != uint64(cursor+1) || record.Seq > uint64(head) || len(record.Bytes) > maxBytes-used {
 				return nil, ErrConflict
+			}
+			if visit != nil {
+				if err := visit(record); err != nil {
+					return nil, err
+				}
 			}
 			if err := replay.ApplyRecord(record); err != nil {
 				return nil, err
