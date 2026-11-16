@@ -134,14 +134,47 @@ export function tableDataOf(props: Record<string, string>): string {
  * Reorder stable axes without rewriting cell registers. Reject a stale legacy
  * mirror or malformed identities rather than guessing which content moves.
  */
-export function stableTableReorderWrites(props: Record<string, string>, axis: "row" | "column", order: readonly number[]): Record<string, string> | null {
+function stableTableSnapshot(props: Record<string, string>): { rows: string[]; cols: string[]; grid: string[][] } | null {
   const rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
   if (props[TBL_VERSION] !== "2" || !rows || !cols || !mirrorTrusted(props) || new Set(rows).size !== rows.length || new Set(cols).size !== cols.length || rows.length > 200 || cols.length > 50 || rows.length * cols.length > 5000) return null;
-  const grid = cellGrid(props), count = axis === "row" ? rows.length : axis === "column" ? cols.length : 0;
-  if (!grid || !count || order.length !== count || new Set(order).size !== count || order.some(index => !Number.isSafeInteger(index) || index < 0 || index >= count)) return null;
+  const grid = cellGrid(props);
+  return grid ? { rows, cols, grid } : null;
+}
+
+export function stableTableReorderWrites(props: Record<string, string>, axis: "row" | "column", order: readonly number[]): Record<string, string> | null {
+  const snapshot = stableTableSnapshot(props);
+  if (!snapshot) return null;
+  const { rows, cols, grid } = snapshot, count = axis === "row" ? rows.length : axis === "column" ? cols.length : 0;
+  if (!count || order.length !== count || new Set(order).size !== count || order.some(index => !Number.isSafeInteger(index) || index < 0 || index >= count)) return null;
   const next = axis === "row" ? order.map(index => [...grid[index]]) : grid.map(row => order.map(index => row[index]));
   const mirror = JSON.stringify(next);
   return { [axis === "row" ? TBL_ROWS : TBL_COLS]: JSON.stringify(order.map(index => (axis === "row" ? rows : cols)[index])), tableData: mirror, [TBL_MIRROR]: tableHash(mirror) };
+}
+
+/** Insert a fresh axis without changing any existing cell register. */
+export function stableTableInsertWrites(props: Record<string, string>, axis: "row" | "column", at: number, id: string): Record<string, string> | null {
+  const snapshot = stableTableSnapshot(props);
+  if (!snapshot || (axis !== "row" && axis !== "column") || typeof id !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) return null;
+  const { rows, cols, grid } = snapshot, source = axis === "row" ? rows : cols;
+  if (!Number.isSafeInteger(at) || at < 0 || at > source.length || rows.includes(id) || cols.includes(id) || Object.keys(props).some(key => key.startsWith("tbl.") && key.split(".")[axis === "row" ? 2 : 3] === id)) return null;
+  const nextRows = rows.length + (axis === "row" ? 1 : 0), nextCols = cols.length + (axis === "column" ? 1 : 0);
+  if (nextRows > 200 || nextCols > 50 || nextRows * nextCols > 5000) return null;
+  const axes = [...source.slice(0, at), id, ...source.slice(at)];
+  const next = axis === "row" ? [...grid.slice(0, at), Array(cols.length).fill(""), ...grid.slice(at)] : grid.map(row => [...row.slice(0, at), "", ...row.slice(at)]);
+  const mirror = JSON.stringify(next);
+  return { [axis === "row" ? TBL_ROWS : TBL_COLS]: JSON.stringify(axes), tableData: mirror, [TBL_MIRROR]: tableHash(mirror) };
+}
+
+/** Remove axes but retain their registers for delayed writes and guarded undo. */
+export function stableTableDeleteWrites(props: Record<string, string>, axis: "row" | "column", indices: readonly number[]): Record<string, string> | null {
+  const snapshot = stableTableSnapshot(props);
+  if (!snapshot || (axis !== "row" && axis !== "column")) return null;
+  const { rows, cols, grid } = snapshot, source = axis === "row" ? rows : cols, removed = new Set(indices);
+  if (!indices.length || removed.size !== indices.length || indices.length >= source.length || indices.some(index => !Number.isSafeInteger(index) || index < 0 || index >= source.length)) return null;
+  const axes = source.filter((_, index) => !removed.has(index));
+  const next = axis === "row" ? grid.filter((_, index) => !removed.has(index)) : grid.map(row => row.filter((_, index) => !removed.has(index)));
+  const mirror = JSON.stringify(next);
+  return { [axis === "row" ? TBL_ROWS : TBL_COLS]: JSON.stringify(axes), tableData: mirror, [TBL_MIRROR]: tableHash(mirror) };
 }
 
 let seq = 0;

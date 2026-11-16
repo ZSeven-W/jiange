@@ -44,3 +44,17 @@ func TestTableRowsFollowsReorderedStableAxes(t *testing.T) {
 		t.Fatalf("reordered axes must follow cell identities: %v", rows)
 	}
 }
+
+func TestTableRowsFollowsInsertedAndRemovedStableAxes(t *testing.T) {
+	mirror := `[["B"],["新增"],["D edited"]]`
+	props := map[string]string{
+		"tbl.v": "2", "tbl.rows": `["r0","a1_100","r1"]`, "tbl.cols": `["c1"]`,
+		"tbl.base": `[["A","B"],["C","D"]]`, "tbl.c.a1_100.c1": "新增",
+		"tbl.c.r1.c1": "D edited", "tbl.c.r2.c1": "deleted row edit",
+		"tableData": mirror, "tbl.m": tableHash(mirror),
+	}
+	rows := tableRows(props)
+	if len(rows) != 3 || len(rows[0]) != 1 || rows[0][0] != "B" || rows[1][0] != "新增" || rows[2][0] != "D edited" {
+		t.Fatalf("inserted and removed axes must follow visible identities: %v", rows)
+	}
+}

@@ -4,7 +4,7 @@ import { buildDocx, docxExportLosses, DOCX_MAX_BYTES, DocxImportError, imageInfo
 import { createZip, crc32, listZip, readZipEntry } from "../src/zip.js";
 import { parseXml, XmlError } from "../src/xml.js";
 import type { MdBlock } from "../src/markdown.js";
-import { cellAlignKey, cellFillKey, cellTableWrites, stableTableReorderWrites, tableCellAlign, tableCellFill, tableRowsOf } from "../src/table-cells.js";
+import { cellAlignKey, cellFillKey, cellTableWrites, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableCellAlign, tableCellFill, tableRowsOf } from "../src/table-cells.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -226,6 +226,18 @@ describe("Word export → import round trip", () => {
 });
 
 describe("Word table structure and headers", () => {
+  it("exports inserted and deleted stable axes with surviving cell styles", async () => {
+    const grid = [["标题", "状态"], ["任务", "完成"]], props: Record<string, string> = { tableData: JSON.stringify(grid), tableHeader: "none" };
+    Object.assign(props, cellTableWrites(props, grid, 1));
+    props[cellFillKey("r1", "c1")] = "#E3ECFF";
+    props[cellAlignKey("r1", "c1", "horizontal")] = "right";
+    Object.assign(props, stableTableInsertWrites(props, "row", 1, "a1_100"));
+    Object.assign(props, stableTableDeleteWrites(props, "column", [0]));
+    const imported = (await parseDocx(buildDocx({ blocks: [b("table", "", props)] }))).blocks[0];
+    expect(tableRowsOf(imported.props)).toEqual([["状态"], [""], ["完成"]]);
+    expect(tableCellFill(imported.props, 2, 0)).toBe("#E3ECFF");
+    expect(tableCellAlign(imported.props, 2, 0, "horizontal")).toBe("right");
+  });
   it("exports reordered stable axes with their cell styles", async () => {
     const grid = [["标题", "状态"], ["任务", "完成"]], props: Record<string, string> = { tableData: JSON.stringify(grid), tableHeader: "none" };
     Object.assign(props, cellTableWrites(props, grid, 1));

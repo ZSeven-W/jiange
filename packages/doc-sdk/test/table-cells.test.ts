@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
-import { applyTableWrites, cellGrid, cellTableWrites, stableTableReorderWrites, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "../src/table-cells.js";
+import { applyTableWrites, cellGrid, cellTableWrites, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "../src/table-cells.js";
 import { applyTableEdit } from "../src/model.js";
 
 function replicas() {
@@ -110,6 +110,91 @@ describe("cell-level table storage", () => {
     const { a, table } = replicas();
     expect(tableRepairWrites(a.blockInfo(table).props, 1)).toBeNull();
     expect(tableDataOf(a.blockInfo(table).props)).toBe(JSON.stringify([["", ""], ["", ""]]));
+  });
+});
+
+describe("stable table axis insertion and deletion", () => {
+  it("inserts a blank axis and keeps delayed edits and formatting on their original cells", async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    sync(init.ops, b); sync(edit(a, table, 0, 0, "甲"), b);
+    const color = new Tx(a); setTableCellFills(color, table, [{ row: 1, col: 1, fill: "#E3ECFF" }]); sync(color.ops, b);
+    const before = a.blockInfo(table).props, insert = new Tx(a);
+    applyTableWrites(insert, table, before, stableTableInsertWrites(before, "row", 1, "a1_100")!);
+    expect(insert.ops.every(op => op.t === "bset" && !op.key.startsWith("tbl.c.") && !op.key.startsWith("tbl.fill."))).toBe(true);
+    const delayed = edit(b, table, 1, 1, "远程编辑");
+    sync(insert.ops, b); sync(delayed, a);
+    for (const doc of [a, b]) {
+      expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["甲", "B"], ["", ""], ["C", "远程编辑"]]);
+      expect(tableCellFill(doc.blockInfo(table).props, 2, 1)).toBe("#E3ECFF");
+      expect(tableCellFill(doc.blockInfo(table).props, 1, 1)).toBe("");
+    }
+  });
+  it("retains delayed edits to a removed axis as hidden registers", () => {
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    sync(init.ops, b); sync(edit(a, table, 0, 0, "甲"), b);
+    const before = a.blockInfo(table).props, deletion = new Tx(a);
+    applyTableWrites(deletion, table, before, stableTableDeleteWrites(before, "row", [0])!);
+    const delayed = edit(b, table, 0, 1, "迟到的修改");
+    sync(deletion.ops, b); sync(delayed, a);
+    for (const doc of [a, b]) {
+      const props = doc.blockInfo(table).props;
+      expect(tableRowsOf(props)).toEqual([["C", "D"]]);
+      expect(props['tbl.c.r0.c1']).toBe("迟到的修改");
+    }
+  });
+  it("keeps a delayed edit on its original column after inserting a new one", () => {
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    sync(init.ops, b); sync(edit(a, table, 0, 0, "甲"), b);
+    const before = a.blockInfo(table).props, insert = new Tx(a);
+    applyTableWrites(insert, table, before, stableTableInsertWrites(before, "column", 0, "a1_101")!);
+    const delayed = edit(b, table, 1, 1, "远程");
+    sync(delayed, a); sync(insert.ops, b);
+    for (const doc of [a, b]) expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "甲", "B"], ["", "C", "远程"]]);
+  });
+  it("does not transfer delayed formatting from a deleted row to its successor", async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const { a, b, table } = replicas(); sync(edit(a, table, 0, 0, "甲"), b);
+    const props = a.blockInfo(table).props, deletion = new Tx(a), color = new Tx(b);
+    applyTableWrites(deletion, table, props, stableTableDeleteWrites(props, "row", [0])!);
+    setTableCellFills(color, table, [{ row: 0, col: 1, fill: "#E5F5E8" }]);
+    sync(color.ops, a); sync(deletion.ops, b);
+    for (const doc of [a, b]) {
+      expect(doc.blockInfo(table).props['tbl.fill.r0.c1']).toBe('#E5F5E8');
+      expect(tableCellFill(doc.blockInfo(table).props, 0, 1)).toBe('');
+    }
+  });
+  it("preserves surviving identities when deleting multiple columns", async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const doc = new Doc(1), tx = new Tx(doc), table = tx.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B", "C", "D"]]) });
+    edit(doc, table, 0, 0, "甲");
+    const color = new Tx(doc); setTableCellFills(color, table, [{ row: 0, col: 3, fill: "#E5F5E8" }]);
+    const props = doc.blockInfo(table).props, deletion = new Tx(doc);
+    applyTableWrites(deletion, table, props, stableTableDeleteWrites(props, "column", [0, 2])!);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["B", "D"]]);
+    expect(tableCellFill(doc.blockInfo(table).props, 0, 1)).toBe("#E5F5E8");
+    expect(deletion.ops.every(op => op.t === "bset" && !op.key.startsWith("tbl.c.") && !op.key.startsWith("tbl.fill."))).toBe(true);
+  });
+  it("rejects invalid, stale and reused identities before writing", () => {
+    const { a, table } = replicas(); edit(a, table, 0, 0, "甲");
+    const props = a.blockInfo(table).props;
+    expect(stableTableInsertWrites(props, "row", -1, "a1_1")).toBeNull();
+    expect(stableTableInsertWrites(props, "column", 1, "c0")).toBeNull();
+    expect(stableTableInsertWrites({ ...props, 'tbl.c.a1_1.c0': 'orphan' }, "row", 1, "a1_1")).toBeNull();
+    expect(stableTableInsertWrites({ ...props, tableData: '[["legacy"]]' }, "row", 1, "a1_1")).toBeNull();
+    expect(stableTableDeleteWrites(props, "row", [0, 0])).toBeNull();
+    expect(stableTableDeleteWrites(props, "row", [0, 1])).toBeNull();
+    expect(stableTableDeleteWrites(props, "column", [2])).toBeNull();
+  });
+  it("refuses insertions beyond the table resource limits", () => {
+    const grid = Array.from({ length: 200 }, () => Array(25).fill(""));
+    const props: Record<string, string> = { tableData: JSON.stringify(grid) };
+    Object.assign(props, cellTableWrites(props, grid, 1));
+    expect(stableTableInsertWrites(props, "row", 0, "a1_100")).toBeNull();
+    expect(stableTableInsertWrites(props, "column", 0, "a1_101")).toBeNull();
   });
 });
 
