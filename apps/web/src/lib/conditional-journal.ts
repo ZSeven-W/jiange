@@ -4,7 +4,7 @@ import { conditionalBatchBase64, isVerifiedConditionalStatus, type ConditionalOp
 type LockProvider = Pick<LockManager, "request">;
 export type ConditionalJournalEnvironment = { storage: Storage; locks?: LockProvider; random: () => string; digest: (bytes: Uint8Array) => Promise<Uint8Array> };
 type AttemptBase = { version: 1; docId: number; userId: number; requestId: string; historyEpoch: number; expectedSeq: number; opCount: number; clientId: number; digest: string };
-export type ConditionalAttempt = AttemptBase & ({ batch: string; redacted?: never; purpose?: never } | { redacted: true; batch?: never; purpose?: "atomic-find" });
+export type ConditionalAttempt = AttemptBase & ({ batch: string; redacted?: never; purpose?: "column-archive" } | { redacted: true; batch?: never; purpose?: "atomic-find" });
 export type ConditionalResolution = "committed" | "cancelled" | "not_committed" | "pending" | "history_changed" | "mismatch";
 export type ConditionalObservation = { docId: number; userId: number; epoch: number | null; lastSeq: number; caughtUp: boolean; blocked: string | null; unacked: number };
 
@@ -58,7 +58,7 @@ async function parseAttempt(raw: string, docId: number, userId: number, digest: 
   const allowed = new Set(["version", "docId", "userId", "requestId", "historyEpoch", "expectedSeq", "opCount", "clientId", "digest", "batch", "redacted", "purpose"]);
   if (Object.keys(value).some((key) => !allowed.has(key)) || a.version !== 1 || a.docId !== docId || a.userId !== userId || typeof a.requestId !== "string" || !requestPattern.test(a.requestId) || !safe(a.historyEpoch) || a.historyEpoch <= 0 || !safe(a.expectedSeq) || a.expectedSeq < 0 || !safe(a.opCount) || a.opCount <= 0 || a.opCount > 100000 || a.expectedSeq + a.opCount > Number.MAX_SAFE_INTEGER || !safe(a.clientId) || a.clientId <= 0 || typeof a.digest !== "string" || !digestPattern.test(a.digest)) throw new Error("damaged conditional attempt");
   if (a.redacted === true) { if (a.batch !== undefined || a.purpose !== undefined && a.purpose !== "atomic-find") throw new Error("damaged conditional attempt"); return Object.freeze({ ...a }); }
-  if (a.redacted !== undefined || a.purpose !== undefined || typeof a.batch !== "string") throw new Error("damaged conditional attempt");
+  if (a.redacted !== undefined || a.purpose !== undefined && a.purpose !== "column-archive" || typeof a.batch !== "string") throw new Error("damaged conditional attempt");
   const proof = await conditionalOpsDigest(a.historyEpoch, a.expectedSeq, decodeBatch(a.batch), digest);
   if (proof.digest !== a.digest || proof.opCount !== a.opCount || proof.clientId !== a.clientId) throw new Error("damaged conditional attempt");
   return Object.freeze({ ...a });
@@ -119,13 +119,14 @@ export class ConditionalJournalLease {
     return { raw, attempt };
   }
   async read(): Promise<ConditionalAttempt | null> { return (await this.row())?.attempt ?? null; }
-  async prepare(input: { historyEpoch: number; expectedSeq: number; batch: Uint8Array; allowPersist: boolean; redactInstead?: boolean; redactedPurpose?: "atomic-find" }): Promise<ConditionalAttempt> {
+  async prepare(input: { historyEpoch: number; expectedSeq: number; batch: Uint8Array; allowPersist: boolean; purpose?: "column-archive"; redactInstead?: boolean; redactedPurpose?: "atomic-find" }): Promise<ConditionalAttempt> {
     this.ensure(); if (!input.allowPersist && !input.redactInstead) throw new Error("conditional persistence forbidden");
+    if (input.purpose && (!input.allowPersist || input.redactInstead || input.redactedPurpose)) throw new Error("invalid conditional purpose");
     if (this.env.storage.getItem(this.key) !== null) throw new Error("conditional attempt already exists");
     const requestId = this.env.random(); if (!requestPattern.test(requestId)) throw new Error("secure random unavailable");
     const batch = Uint8Array.from(input.batch), proof = await conditionalOpsDigest(input.historyEpoch, input.expectedSeq, batch, this.env.digest);
     this.ensure(); if (this.env.storage.getItem(this.key) !== null) throw new Error("conditional attempt already exists");
-    const raw = JSON.stringify({ version: 1, docId: this.docId, userId: this.userId, requestId, historyEpoch: input.historyEpoch, expectedSeq: input.expectedSeq, ...proof, ...(input.allowPersist ? { batch: conditionalBatchBase64(batch) } : { redacted: true, ...(input.redactedPurpose ? { purpose: input.redactedPurpose } : {}) }) });
+    const raw = JSON.stringify({ version: 1, docId: this.docId, userId: this.userId, requestId, historyEpoch: input.historyEpoch, expectedSeq: input.expectedSeq, ...proof, ...(input.allowPersist ? { batch: conditionalBatchBase64(batch), ...(input.purpose ? { purpose: input.purpose } : {}) } : { redacted: true, ...(input.redactedPurpose ? { purpose: input.redactedPurpose } : {}) }) });
     this.env.storage.setItem(this.key, raw);
     if (this.env.storage.getItem(this.key) !== raw) throw new Error("conditional attempt could not be persisted");
     const saved = await this.row();
@@ -152,6 +153,7 @@ export class ConditionalJournalLease {
   }
   async redact(purpose?: "atomic-find"): Promise<ConditionalAttempt | null> {
     const row = await this.row(); if (!row || row.attempt.redacted) return row?.attempt ?? null;
+    if (row.attempt.purpose) throw new Error("cannot redact this conditional attempt");
     const { raw, attempt } = row, { batch: _batch, ...rest } = attempt;
     this.ensure(); if (this.env.storage.getItem(this.key) !== raw) throw new Error("conditional attempt changed");
     const redacted = JSON.stringify({ ...rest, redacted: true, ...(purpose ? { purpose } : {}) });

@@ -41,13 +41,14 @@ export class AtomicFindCommit {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
       if (attempt.redacted) return attempt.purpose === "atomic-find" ? "redacted" : "other";
+      if (attempt.purpose) return "other";
       return atomicFindBatchOps(await lease.batch(attempt)) ? "find" : "other";
     });
   }
   async redactPending(): Promise<void> {
     await this.journal.run(async (lease) => {
       const attempt = await lease.read();
-      if (attempt && !attempt.redacted && atomicFindBatchOps(await lease.batch(attempt))) await lease.redact("atomic-find");
+      if (attempt && !attempt.redacted && !attempt.purpose && atomicFindBatchOps(await lease.batch(attempt))) await lease.redact("atomic-find");
     });
   }
   private matches(attempt: ConditionalAttempt, observation: ConditionalObservation | null): boolean {
@@ -73,6 +74,7 @@ export class AtomicFindCommit {
   async retry(signal: AbortSignal, stillValid: () => boolean = () => true, inMemoryOps?: readonly Op[]): Promise<AtomicFindSendResult> {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt || !this.context.active() || signal.aborted) return "blocked";
+      if (!attempt.redacted && attempt.purpose) return "occupied";
       if (attempt.redacted && (attempt.purpose !== "atomic-find" || !inMemoryOps)) return "blocked";
       const bytes = attempt.redacted ? encodeOps([...inMemoryOps!]) : await lease.batch(attempt);
       if (!atomicFindBatchOps(bytes) || attempt.redacted && !await lease.matchesBatch(attempt, bytes)) return "occupied";
@@ -86,7 +88,7 @@ export class AtomicFindCommit {
   async finish(signal: AbortSignal, finalize: (attempt: ConditionalAttempt, status: ConditionalOpsStatus, observe: () => ConditionalObservation | null) => Promise<boolean>): Promise<AtomicFindFinishResult> {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
-      if (!this.context.active() || signal.aborted || attempt.redacted && attempt.purpose !== "atomic-find") return "blocked";
+      if (!this.context.active() || signal.aborted || attempt.redacted && attempt.purpose !== "atomic-find" || !attempt.redacted && !!attempt.purpose) return "blocked";
       if (!attempt.redacted && !atomicFindBatchOps(await lease.batch(attempt))) return "blocked";
       let status: ConditionalOpsStatus; try { status = await this.network.status(attempt, signal); } catch { return "pending"; }
       const observed = this.context.observe();
@@ -103,7 +105,7 @@ export class AtomicFindCommit {
   async cancel(signal: AbortSignal): Promise<AtomicFindFinishResult | "needs_resolution" | "unavailable"> {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
-      if (!this.context.active() || signal.aborted || !this.network.cancel || attempt.redacted && attempt.purpose !== "atomic-find") return "blocked";
+      if (!this.context.active() || signal.aborted || !this.network.cancel || attempt.redacted && attempt.purpose !== "atomic-find" || !attempt.redacted && !!attempt.purpose) return "blocked";
       if (!attempt.redacted && !atomicFindBatchOps(await lease.batch(attempt))) return "blocked";
       let status: ConditionalOpsStatus; try { status = await this.network.cancel(attempt, signal); } catch (error) { return error instanceof ApiError && error.status === 503 && error.code === "conditional_cancel_disabled" ? "unavailable" : "pending"; }
       const observed = this.context.observe();

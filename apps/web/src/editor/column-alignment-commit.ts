@@ -66,7 +66,7 @@ export class ColumnAlignmentCommit {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read();
       if (!attempt) return "blocked";
-      if (attempt.redacted || !this.context.active() || signal.aborted) return "pending";
+      if (attempt.redacted || attempt.purpose || !this.context.active() || signal.aborted) return "pending";
       const bytes = await lease.batch(attempt);
       if (!columnLayoutOp(bytes)) return "occupied";
       let status: ConditionalOpsStatus;
@@ -83,7 +83,7 @@ export class ColumnAlignmentCommit {
   async finish(signal: AbortSignal, finalizeCommitted: (attempt: ConditionalAttempt) => boolean): Promise<FinishResult> {
     return this.journal.run(async (lease) => {
       const attempt = await lease.read(); if (!attempt) return "empty";
-      if (attempt.redacted || !this.context.active() || signal.aborted) return "blocked";
+      if (attempt.redacted || attempt.purpose || !this.context.active() || signal.aborted) return "blocked";
       if (!columnLayoutOp(await lease.batch(attempt))) return "blocked";
       let status: ConditionalOpsStatus;
       try { status = await this.transport.status(attempt, signal); } catch { return "pending"; }

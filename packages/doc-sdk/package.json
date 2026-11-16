@@ -19,7 +19,8 @@
     "./table-cells": "./src/table-cells.ts",
     "./block-styles": "./src/block-styles.ts",
     "./column-widths": "./src/column-widths.ts",
-    "./column-move": "./src/column-move.ts"
+    "./column-move": "./src/column-move.ts",
+    "./column-archive-experimental": "./src/column-archive-experimental.ts"
   },
   "files": [
     "dist",
@@ -84,6 +85,10 @@
       "./column-move": {
         "types": "./dist/column-move.d.ts",
         "import": "./dist/column-move.js"
+      },
+      "./column-archive-experimental": {
+        "types": "./dist/column-archive-experimental.d.ts",
+        "import": "./dist/column-archive-experimental.js"
       }
     }
   },

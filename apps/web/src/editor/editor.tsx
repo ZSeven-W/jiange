@@ -77,11 +77,14 @@ import { askArea } from "@/components/ui/ask";
 import { AddIcon } from "@/components/feishu-icons";
 import { shouldRetryImage, type ImageFailure } from "./image-retry";
 import { captureCompositionSelection, resolveCompositionSelection, type CompositionAnchor } from "./composition-anchor";
-import { createColumn, insertColumnAfter, MAX_COLUMNS, requestColumnDeletion, safeColumnUndo } from "./column-safety";
+import { createColumn, insertColumnAfter, MAX_COLUMNS, safeColumnUndo } from "./column-safety";
 import { applyColumnWidths, captureColumnWidths, columnWeights, COLUMN_WIDTHS } from "./column-widths";
 import { ColumnAlignmentHistory, type ConditionalAlignmentPlan } from "./column-alignment-history";
 import { ColumnWidthHistory } from "./column-width-history";
 import { ColumnMoveHistory } from "./column-move-history";
+import { ColumnArchiveHistory } from "./column-archive-history";
+import { ColumnArchiveCommit } from "./column-archive-commit";
+import { prepareColumnArchive, preparedColumnArchiveIsCurrent, type PreparedColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
 import { applyColumnMove, captureColumnMove } from "./column-move";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./column-alignment-owner";
@@ -202,6 +205,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const um = useMemo(() => new UndoManager<Sel>(), [sync.client]);
   const tableHistory = useMemo(() => new TableCellHistory(), [sync.client]);
   const columnAlignmentHistory = useMemo(() => new ColumnAlignmentHistory(), [sync.client]);
+  const columnArchiveHistory = useMemo(() => new ColumnArchiveHistory(), [sync.client]);
   const columnWidthHistory = useMemo(() => new ColumnWidthHistory(), [sync.client]);
   const columnMoveHistory = useMemo(() => new ColumnMoveHistory(), [sync.client]);
   const tableWidthHistory = useMemo(() => new TableWidthHistory(), [sync.client]);
@@ -213,6 +217,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const tableCellUndoRef = useRef<(target: EventTarget | null, redo: boolean) => boolean>(() => false);
   const tableHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const columnAlignmentHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
+  const columnArchiveHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableStructureHistoryActionRef = useRef<(key: string, redo: boolean) => void>(() => {});
   const tableFindActionRef = useRef<TableFindReplacer>(() => "unavailable");
   const findBatchActionRef = useRef<FindBatchReplacer>(() => ({ status: "unavailable", count: 0 }));
@@ -259,10 +264,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     | null
   >(null);
   const pendingAtomicFind = useRef<{ kind: "initial"; plan: AtomicFindPlan; doc: Doc; anchor: object; atomicAliases: AtomicFindAlias[]; batchAliases: FindBatchAlias[] } | { kind: "step"; plan: AtomicFindStep; doc: Doc; key: string; redo: boolean; batchAliases: FindBatchAlias[] } | null>(null);
+  const pendingColumnArchive = useRef<{ kind: "initial"; plan: PreparedColumnArchive; doc: Doc; anchor: object } | { kind: "step"; plan: PreparedColumnArchive; doc: Doc; key: string; redo: boolean; historyLost?: boolean } | null>(null);
   const atomicTableBusy = (block: OpId) => { const pending = pendingAtomicFind.current; return !!pending && (pending.kind === "initial" ? pending.plan.tables.map((table) => table.block) : atomicFindHistory.tableBlocks(pending.key)).some((item) => eqId(item, block)); };
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
-  const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit | AtomicFindCommit } | null>(null);
+  const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit | AtomicFindCommit | ColumnArchiveCommit } | null>(null);
   const alignmentBusy = useRef(false);
   const [alignmentWorking, setAlignmentWorking] = useState(false);
   const setAlignmentBusy = useCallback((value: boolean) => { alignmentBusy.current = value; if (mounted.current) setAlignmentWorking(value); }, []);
@@ -270,6 +276,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const alignmentPendingRef = useRef(false);
   const [alignmentPending, setAlignmentPending] = useState(false);
   const [canCancelFind, setCanCancelFind] = useState(false);
+  const [canCancelArchive, setCanCancelArchive] = useState(false);
   const [cancelUnavailable, setCancelUnavailable] = useState(false);
   const [alignmentMessage, setAlignmentMessage] = useState("");
   const [waitingResizeSync, setWaitingResizeSync] = useState(false);
@@ -291,6 +298,16 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     try {
       const client = sync.client, account = userId;
       return new AtomicFindCommit(new ConditionalJournal(browserConditionalJournalEnvironment(), client.docId, account), {
+        active: () => mounted.current && currentClient.current === client && currentUserId.current === account && !readOnlyRef.current,
+        observe: () => ({ docId: client.docId, userId: account, epoch: client.epoch, lastSeq: client.lastSeq, caughtUp: client.caughtUp, blocked: client.blocked, unacked: client.unacked }),
+      });
+    } catch { return null; }
+  }, [sync.client, userId]);
+  const conditionalArchive = useMemo(() => {
+    if (typeof window === "undefined" || !Number.isSafeInteger(userId) || !userId || userId < 1) return null;
+    try {
+      const client = sync.client, account = userId;
+      return new ColumnArchiveCommit(new ConditionalJournal(browserConditionalJournalEnvironment(), client.docId, account), {
         active: () => mounted.current && currentClient.current === client && currentUserId.current === account && !readOnlyRef.current,
         observe: () => ({ docId: client.docId, userId: account, epoch: client.epoch, lastSeq: client.lastSeq, caughtUp: client.caughtUp, blocked: client.blocked, unacked: client.unacked }),
       });
@@ -361,12 +378,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalAlignment, sync.client, userId, releaseAlignmentOwner]);
   useEffect(() => {
     let alive = true;
-    pendingAlignmentPlan.current = null; pendingAtomicFind.current = null; setPendingAlignment(false); setCanCancelFind(false); setAlignmentMessage(""); setWaitingResizeSync(false);
+    pendingAlignmentPlan.current = null; pendingAtomicFind.current = null; pendingColumnArchive.current = null; setPendingAlignment(false); setCanCancelFind(false); setCanCancelArchive(false); setAlignmentMessage(""); setWaitingResizeSync(false);
     const check = () => {
       if (conditionalAlignment) void conditionalAlignment.hasPending().then((pending) => {
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
-        if (alignmentBusy.current && !pendingAlignmentPlan.current && !pendingAtomicFind.current && !pending) return;
-        if (!pending && (pendingAlignmentPlan.current || pendingAtomicFind.current)) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
+        if (alignmentBusy.current && !pendingAlignmentPlan.current && !pendingAtomicFind.current && !pendingColumnArchive.current && !pending) return;
+        if (!pending && (pendingAlignmentPlan.current || pendingAtomicFind.current || pendingColumnArchive.current)) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
         setPendingAlignment(pending);
         setAlignmentMessage(pending ? "有一项文档操作尚待核对。" : "");
       }).catch(() => { if (alive && currentClient.current === sync.client && currentUserId.current === userId) { setPendingAlignment(true); setAlignmentMessage("无法读取本地操作记录，请检查浏览器存储后重试。"); } });
@@ -375,10 +392,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     check(); window.addEventListener("storage", changed);
     return () => {
       alive = false; window.removeEventListener("storage", changed);
-      if (alignmentRequest.current?.owner === conditionalAlignment || alignmentRequest.current?.owner === conditionalFind) { alignmentRequest.current.controller.abort(); alignmentRequest.current = null; setAlignmentBusy(false); sensitiveFindTransport.current = false; }
+      if (alignmentRequest.current?.owner === conditionalAlignment || alignmentRequest.current?.owner === conditionalFind || alignmentRequest.current?.owner === conditionalArchive) { alignmentRequest.current.controller.abort(); alignmentRequest.current = null; setAlignmentBusy(false); sensitiveFindTransport.current = false; }
       if (alignmentOwner.current?.client === sync.client && alignmentOwner.current.userId === userId) releaseAlignmentOwner();
     };
-  }, [conditionalAlignment, conditionalFind, setPendingAlignment, setAlignmentBusy, releaseAlignmentOwner, sync.client, userId]);
+  }, [conditionalAlignment, conditionalFind, conditionalArchive, setPendingAlignment, setAlignmentBusy, releaseAlignmentOwner, sync.client, userId]);
   useEffect(() => {
     if (!conditionalFind || !alignmentPending || !onCopyBlock && !readOnly) return;
     let stopped = false, running = false, timer: number | undefined;
@@ -409,6 +426,42 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     let discarded = false, superseded = false, historyConflict = false, initialResize = false;
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在核对该操作，或浏览器不支持跨页面锁。"); return; }
+      const archiveKind = conditionalArchive ? await conditionalArchive.pendingKind() : "other";
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
+      if (archiveKind === "empty" && pendingColumnArchive.current) { setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
+      if (conditionalArchive && archiveKind === "archive") {
+        if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalArchive;
+        setCanCancelFind(false); setCanCancelArchive(true);
+        const original = pendingColumnArchive.current;
+        let lostHistory = false;
+        const result = await conditionalArchive.finish(controller.signal, async (attempt) => {
+          const pending = pendingColumnArchive.current, d = sync.client.doc;
+          if (!pending) return true;
+          if (!d || d !== pending.doc || attempt.redacted || attempt.batch !== conditionalBatchBase64(encodeOps([...pending.plan.ops]))) return false;
+          if (pending.kind === "initial") {
+            const installed = columnArchiveHistory.install(d, um, pending.plan, pending.anchor);
+            if (installed === "unobserved") return false;
+            lostHistory = installed === "no-history"; return true;
+          }
+          if (pending.historyLost) { lostHistory = true; return true; }
+          if (columnArchiveHistory.finish(d, um, pending.plan) === "ready") return true;
+          if (um.peekMarker(pending.redo) === pending.key && um.discardMarker(pending.redo, pending.key, um.revision)) { columnArchiveHistory.discard(pending.key); pending.historyLost = true; lostHistory = true; return true; }
+          return false;
+        });
+        if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+        if (result === "committed" || result === "cancelled" || result === "not_committed") {
+          pendingColumnArchive.current = null; setPendingAlignment(false); setCanCancelArchive(false); setAlignmentMessage(""); releaseAlignmentOwner(); force((x) => x + 1);
+          if (result === "cancelled") setColumnNotice("未提交的分栏操作已停止。");
+          else if (result === "not_committed") setColumnNotice("文档已变化，分栏操作未执行，请重新操作。");
+          else if (lostHistory || !original) setColumnNotice("分栏操作已保存，但本次撤销记录不可用。");
+          else setToast(original.kind === "initial" ? "已删除分栏" : original.redo ? "已重做" : "已撤销");
+        } else if (result === "needs_finalize") setAlignmentMessage("分栏操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
+        else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认分栏操作，请保留当前记录并检查文档历史。");
+        else if (result === "blocked") setAlignmentMessage("暂时无法核对分栏操作，请检查账号权限和浏览器存储。");
+        else setAlignmentMessage("分栏操作结果尚未确认，可核对状态或重试相同操作。");
+        return;
+      }
+      setCanCancelArchive(false);
       const pendingKind = conditionalFind ? await conditionalFind.pendingKind() : "other";
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
       if (pendingKind === "empty" && pendingAtomicFind.current) { setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
@@ -494,7 +547,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       else setAlignmentMessage("操作结果尚未确认，可核对状态或重试相同操作。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("暂时无法核对操作，原请求仍保存在本地。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); } }
-  }, [conditionalAlignment, conditionalFind, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, tableStructureHistory, tableHistory, findBatchHistory, atomicFindHistory, atomicFindBatchAliases, um, releaseAlignmentOwner, setPendingAlignment, setAlignmentBusy]);
+  }, [conditionalAlignment, conditionalFind, conditionalArchive, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnArchiveHistory, tableWidthHistory, tableStructureHistory, tableHistory, findBatchHistory, atomicFindHistory, atomicFindBatchAliases, um, releaseAlignmentOwner, setPendingAlignment, setAlignmentBusy]);
 
   const retryAlignment = useCallback(async () => {
     if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
@@ -504,6 +557,17 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const timer = window.setTimeout(() => controller.abort(), 10_000);
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
+      const archiveKind = conditionalArchive ? await conditionalArchive.pendingKind() : "other";
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
+      if (conditionalArchive && archiveKind === "archive") {
+        if (alignmentRequest.current?.controller === controller) alignmentRequest.current.owner = conditionalArchive;
+        const result = await conditionalArchive.retry(controller.signal, () => {
+          const pending = pendingColumnArchive.current;
+          return !pending || sync.client.doc === pending.doc && (pending.kind === "initial" ? preparedColumnArchiveIsCurrent(pending.plan, pending.doc) : columnArchiveHistory.canSubmit(pending.doc, um, pending.plan));
+        });
+        if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
+        window.setTimeout(() => void reconcileAlignment(), 0); return;
+      }
       let kind = conditionalFind ? await conditionalFind.pendingKind() : "other";
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId || controller.signal.aborted) return;
       if (conditionalFind && (kind === "find" || kind === "redacted")) {
@@ -528,7 +592,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("重试失败，原请求仍保存在本地。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { sensitiveFindTransport.current = false; alignmentRequest.current = null; setAlignmentBusy(false); } }
     void reconcileAlignment();
-  }, [conditionalAlignment, conditionalFind, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, atomicFindHistory, um, setAlignmentBusy, reconcileAlignment]);
+  }, [conditionalAlignment, conditionalFind, conditionalArchive, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnArchiveHistory, tableWidthHistory, atomicFindHistory, um, setAlignmentBusy, reconcileAlignment]);
 
   const cancelAtomicFind = useCallback(async () => {
     if (!conditionalFind || alignmentBusy.current || !mounted.current) return;
@@ -559,6 +623,30 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     } catch { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); } }
   }, [conditionalFind, ensureAlignmentOwner, sync.client, userId, setAlignmentBusy, setPendingAlignment, releaseAlignmentOwner, reconcileAlignment]);
+
+  const cancelColumnArchive = useCallback(async () => {
+    if (!conditionalArchive || alignmentBusy.current || !mounted.current) return;
+    if (readOnlyRef.current) { setAlignmentMessage("当前不可编辑，恢复权限后才能停止该操作。"); return; }
+    setAlignmentBusy(true);
+    const client = sync.client, controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalArchive };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
+      const kind = await conditionalArchive.pendingKind();
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || controller.signal.aborted) return;
+      if (kind !== "archive") { setAlignmentMessage("待处理记录已变化，请重新核对。"); return; }
+      setCancelUnavailable(false);
+      const result = await conditionalArchive.cancel(controller.signal);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
+      if (result === "cancelled") { pendingColumnArchive.current = null; setPendingAlignment(false); setCanCancelArchive(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("未提交的分栏操作已停止。"); }
+      else if (result === "needs_resolution" || result === "committed") { setAlignmentMessage("操作已提交，正在核对保存结果。"); window.setTimeout(() => void reconcileAlignment(), 0); }
+      else if (result === "unavailable") setCancelUnavailable(true);
+      else if (result === "history_changed" || result === "mismatch") setAlignmentMessage("文档历史已变化，无法安全停止，请检查文档历史。");
+      else if (result === "blocked") setAlignmentMessage("暂时无法停止，请检查账号权限和同步状态。");
+      else setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。");
+    } catch { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setAlignmentMessage("停止结果尚未确认，请再次核对或重试停止。"); }
+    finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); } }
+  }, [conditionalArchive, ensureAlignmentOwner, sync.client, userId, setAlignmentBusy, setPendingAlignment, releaseAlignmentOwner, reconcileAlignment]);
 
   const startAtomicFind = useCallback<AtomicFindReplacer>(async (matches, replacement, directoryTitle) => {
     const client = sync.client, d = client.doc;
@@ -640,6 +728,50 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalFind, conditionalAlignment, ensureAlignmentOwner, releaseAlignmentOwner, sync.client, userId, atomicFindHistory, findBatchHistory, um, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
   atomicFindActionRef.current = startAtomicFind;
   atomicFindHistoryActionRef.current = (key, redo) => { void startAtomicFindStep(key, redo); };
+
+  const startColumnArchive = useCallback(async (request: { kind: "initial"; parent: OpId; block: OpId } | { kind: "step"; key: string; redo: boolean }) => {
+    const client = sync.client, d = client.doc;
+    if (!conditionalArchive || !conditionalAlignment || !d || !userId || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) { setColumnNotice("请等待文档同步完成后再操作分栏。"); return; }
+    if (alignmentBusy.current || alignmentPendingRef.current) { setColumnNotice("请先核对尚未完成的文档操作。"); return; }
+    setColumnNotice(""); setTableHistoryConflict(null);
+    setAlignmentBusy(true);
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalArchive };
+    const timer = window.setTimeout(() => controller.abort(), 25_000);
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === client && currentUserId.current === userId) setColumnNotice("另一页面正在处理文档操作，或浏览器不支持跨页面锁。"); return; }
+      const replica = await allocateAtomicFindReplica(client.docId, controller.signal);
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || readOnlyRef.current || client.doc !== d || !canStepFindBatch(client) || client.epoch !== replica.epoch || controller.signal.aborted) { releaseAlignmentOwner(); return; }
+      let plan: PreparedColumnArchive | null = null;
+      if (request.kind === "initial") {
+        plan = prepareColumnArchive(d, replica.author, request.parent, request.block);
+        if (!plan) { releaseAlignmentOwner(); setColumnNotice("分栏已变化，无法删除，请重新操作。"); return; }
+        pendingColumnArchive.current = { kind: "initial", plan, doc: d, anchor: um.markInsertionPoint() };
+      } else {
+        const prepared = columnArchiveHistory.prepare(d, um, request.key, request.redo, replica.author);
+        if (prepared.status !== "ready") { releaseAlignmentOwner(); if (um.peekMarker(request.redo) === request.key) setTableHistoryConflict({ client, key: request.key, redo: request.redo, revision: um.revision }); return; }
+        plan = prepared.plan;
+        pendingColumnArchive.current = { kind: "step", plan, doc: d, key: request.key, redo: request.redo };
+      }
+      setPendingAlignment(true); setCanCancelArchive(true); setAlignmentMessage("正在安全提交分栏操作…");
+      const result = await conditionalArchive.start(plan, client.epoch, client.lastSeq, controller.signal, () => client.doc === d && !readOnlyRef.current && (request.kind === "initial" ? preparedColumnArchiveIsCurrent(plan!, d) : columnArchiveHistory.canSubmit(d, um, plan!)));
+      if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId) return;
+      if (result === "blocked") { pendingColumnArchive.current = null; setPendingAlignment(false); setCanCancelArchive(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，分栏操作未执行。"); }
+      else if (result === "occupied") { pendingColumnArchive.current = null; setCanCancelArchive(false); setAlignmentMessage("已有操作待核对，请先处理该记录。"); }
+      else setAlignmentMessage(result === "sent" ? "分栏操作已提交，正在核对同步结果。" : "分栏操作结果尚未确认，可核对状态或重试相同操作。");
+    } catch {
+      let pending = true; try { pending = await conditionalAlignment.hasPending(); } catch { /* Preserve damaged journal data. */ }
+      if (mounted.current && currentClient.current === client && currentUserId.current === userId) {
+        setPendingAlignment(pending);
+        if (pending) setAlignmentMessage("分栏操作结果尚未确认，原请求仍待核对。");
+        else { pendingColumnArchive.current = null; setCanCancelArchive(false); releaseAlignmentOwner(); setColumnNotice("无法安全提交分栏操作，请检查同步和浏览器存储。"); }
+      }
+    } finally {
+      window.clearTimeout(timer);
+      if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; setAlignmentBusy(false); }
+      if (alignmentPendingRef.current) window.setTimeout(() => void reconcileAlignment(), 0);
+    }
+  }, [conditionalArchive, conditionalAlignment, ensureAlignmentOwner, releaseAlignmentOwner, sync.client, userId, columnArchiveHistory, um, setPendingAlignment, setAlignmentBusy, reconcileAlignment]);
+  columnArchiveHistoryActionRef.current = (key, redo) => { void startColumnArchive({ kind: "step", key, redo }); };
 
   const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
     if (!mounted.current) return;
@@ -1360,7 +1492,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const d = sync.client.doc;
       if (!d || readOnlyRef.current) return;
       const marker = um.peekMarker(redo);
-      if (marker) { if (marker.startsWith("atomic-find:")) atomicFindHistoryActionRef.current(marker, redo); else if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:") || marker.startsWith("table-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
+      if (marker) { if (marker.startsWith("atomic-find:")) atomicFindHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-archive:")) columnArchiveHistoryActionRef.current(marker, redo); else if (marker.startsWith("find-batch:")) findBatchHistoryActionRef.current(marker, redo); else if (marker.startsWith("table-structure:")) tableStructureHistoryActionRef.current(marker, redo); else if (marker.startsWith("column-align:") || marker.startsWith("column-width:") || marker.startsWith("column-move:") || marker.startsWith("table-width:")) columnAlignmentHistoryActionRef.current(marker, redo); else tableHistoryActionRef.current(marker, redo); return; }
       const r = redo ? um.redo(d) : um.undo(d);
       if (!r) return;
       sync.client.push(r.ops);
@@ -2593,13 +2725,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
       {mentionNavigationNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{mentionNavigationNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setMentionNavigationNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button>{canCancelFind && <><button type="button" disabled={alignmentWorking || !!readOnly} className="text-primary disabled:opacity-50" onClick={() => void cancelAtomicFind()}>停止未确认操作</button><span className="basis-full text-xs text-subtle">{cancelUnavailable ? "当前服务尚未开启安全停止功能，请联系管理员；待确认记录会保留。" : "停止只阻止尚未提交的请求；已提交的内容会保留。"}</span></>}</>}</div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对文档操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" disabled={alignmentWorking} className="text-primary disabled:opacity-50" onClick={() => void retryAlignment()}>重试相同操作</button>{(canCancelFind || canCancelArchive) && <><button type="button" disabled={alignmentWorking || !!readOnly} className="text-primary disabled:opacity-50" onClick={() => void (canCancelArchive ? cancelColumnArchive() : cancelAtomicFind())}>停止未确认操作</button><span className="basis-full text-xs text-subtle">{cancelUnavailable ? "当前服务尚未开启安全停止功能，请联系管理员；待确认记录会保留。" : "停止只阻止尚未提交的请求；已提交的内容会保留。"}</span></>}</>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
-        <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
+        <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-archive:") ? "分栏位置已变化" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
         <button type="button" className="text-primary" onClick={() => {
           if (tableHistoryConflict.client === sync.client && um.discardMarker(tableHistoryConflict.redo, tableHistoryConflict.key, tableHistoryConflict.revision)) {
             if (tableHistoryConflict.key.startsWith("column-align:")) { if (sync.client.doc) columnAlignmentHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
+            else if (tableHistoryConflict.key.startsWith("column-archive:")) columnArchiveHistory.discard(tableHistoryConflict.key);
             else if (tableHistoryConflict.key.startsWith("column-width:")) { if (sync.client.doc) columnWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("table-width:")) { if (sync.client.doc) tableWidthHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
             else if (tableHistoryConflict.key.startsWith("column-move:")) { if (sync.client.doc) columnMoveHistory.discard(sync.client.doc, tableHistoryConflict.key, tableHistoryConflict.redo); }
@@ -2904,10 +3037,9 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onDeleteColumn={readOnly ? undefined : (col) => {
                   if (readOnlyRef.current) return;
+                  if (doc.children(b).length <= 1) { setColumnNotice("分栏中至少保留一栏。"); return; }
                   const cid = { client: Number(col.split(":")[0]), clock: Number(col.split(":")[1]) };
-                  // Block tombstones cannot be undone with the same ID. A
-                  // collaborator may still send edits to it after undo.
-                  if (requestColumnDeletion(doc, cid) === "unsupported") setColumnNotice("暂不支持安全删除分栏：协作者可能仍在编辑，栏内容已保留。");
+                  void startColumnArchive({ kind: "initial", parent: b, block: cid });
                 }}
                 onBeginTableResize={readOnly ? undefined : (index, selectedIndices) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return null;
@@ -3664,7 +3796,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             return <div ref={columnMenuRef} role="menu" aria-label="分栏操作" data-column-move-menu style={{ position: "fixed", left: columnMenu.left, top: columnMenu.top }} className="z-[70] w-40 rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]">
               <button type="button" role="menuitem" disabled={index <= 0} onClick={() => action(-1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowLeft size={15} />向左移动</button>
               <button type="button" role="menuitem" disabled={index < 0 || index >= count - 1} onClick={() => action(1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowRight size={15} />向右移动</button>
-              {onDeleteColumn && <button type="button" role="menuitem" title="安全删除尚未完成" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />删除分栏</button>}
+              {onDeleteColumn && <button type="button" role="menuitem" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />删除分栏</button>}
             </div>;
           })(), document.body)}
         </div>

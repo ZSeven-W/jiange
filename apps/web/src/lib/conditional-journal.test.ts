@@ -38,6 +38,17 @@ const committed = (attempt: ConditionalAttempt, epoch = 2) => ({ docId: 7, userI
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conditional operation journal", () => {
+  it("keeps archive records scoped and rejects redaction that would erase their type", async () => {
+    const env = environment(), journal = new ConditionalJournal(env, 7, 2);
+    await journal.run(async (lease) => {
+      const attempt = await lease.prepare({ historyEpoch: 2, expectedSeq: 3, batch: bytes, allowPersist: true, purpose: "column-archive" });
+      expect(attempt.purpose).toBe("column-archive");
+      await expect(lease.redact()).rejects.toThrow("cannot redact");
+      expect((await lease.read())?.purpose).toBe("column-archive");
+    });
+    expect(await new ConditionalJournal(env, 7, 3).read()).toBeNull();
+    expect(await new ConditionalJournal(env, 8, 2).read()).toBeNull();
+  });
   it("clears a redacted attempt only after a matching cancellation fence is verified", async () => {
     const journal = new ConditionalJournal(environment(), 7, 2);
     await journal.run(async (lease) => {
