@@ -5,6 +5,7 @@ import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { formatTableTSV } from "./table-clipboard";
 import { parseTableRichHTML, tableRichHTML, type RichTableClipboard } from "./table-rich-clipboard";
+import { parseExternalTableHTML } from "./table-external-clipboard";
 import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
@@ -463,15 +464,18 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                         }}
                         onPaste={(e) => {
                           const text = e.clipboardData.getData("text/plain");
-                          const rich = parseTableRichHTML(e.clipboardData.getData("text/html"), text);
                           const structured = /[\t\r\n]/.test(text);
+                          const html = e.clipboardData.getData("text/html");
+                          const own = parseTableRichHTML(html, text);
+                          const external = !own && (structured || multi) ? parseExternalTableHTML(html, text) : null;
+                          const rich = own ?? external?.clipboard ?? null;
                           if (!multi && (!onPasteCells || !structured && !rich)) return;
                           e.preventDefault(); e.stopPropagation();
                           if (!e.clipboardData.types.includes("text/plain") || (!text && !rich)) return;
                           if (!onPasteCells) { setClipboardNotice("当前无法粘贴到选区，表格未修改。"); return; }
                           const start = multi && selected ? { r: selected.r0, c: selected.c0 } : { r: ri, c: ci };
                           const error = onPasteCells(start.r, start.c, text, !structured, rich ?? undefined);
-                          setClipboardNotice(error ?? "");
+                          setClipboardNotice(error ?? (external?.lostFormatting ? "已粘贴表格，部分格式可能未保留。" : !rich && /<table\b/i.test(html) ? "表格格式未能识别，已按纯文本粘贴。" : ""));
                           if (!error) {
                             setRange(null); setGrip(null); setTouchSelecting(false); setMoreOpen(false);
                             if (multi) {
