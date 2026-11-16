@@ -22,4 +22,10 @@ describe("document reference list", () => {
     expect(html).toContain("文档尚未同步");
     expect(html).not.toContain("暂无被引用文档");
   });
+  it("shows the hide control only to an eligible editor", () => {
+    const client = new QueryClient();
+    const render = (onHide?: () => Promise<boolean>) => renderToStaticMarkup(<QueryClientProvider client={client}><DocumentReferencesPanel id={1} userId={2} enabled synced allowCopy onHide={onHide}/></QueryClientProvider>);
+    expect(render()).not.toContain('aria-label="隐藏文档引用"');
+    expect(render(async () => true)).toContain('aria-label="隐藏文档引用"');
+  });
 });

@@ -180,6 +180,11 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		if err != nil {
 			return err
 		}
+		// The source node is locked by lockCopySource; copy its display
+		// preference in the same transaction as the new document.
+		if _, err = tx.Exec(ctx, `INSERT INTO document_reference_visibility(doc_id,visible,revision) SELECT $1,false,1 FROM document_reference_visibility WHERE doc_id=$2 AND visible=false`, result.ID, c.SourceID); err != nil {
+			return err
+		}
 		// Copies share immutable object keys. Lock all source attachment rows
 		// before publishing any references, in a stable order. Deletion must
 		// wait for this transaction before it counts references and removes a

@@ -118,6 +118,13 @@ export interface DocMeta {
   /** Groups the subtree of one guarded trash operation; 0 for legacy deletions. */
   trashBatchId?: number;
 }
+export interface ReferenceVisibility { visible: boolean; revision: number }
+function checkedReferenceVisibility(value: unknown): ReferenceVisibility {
+  if (!value || typeof value !== "object") throw new TypeError("无法确认显示设置");
+  const setting = value as Partial<ReferenceVisibility>;
+  if (typeof setting.visible !== "boolean" || !Number.isSafeInteger(setting.revision) || setting.revision! < 0) throw new TypeError("无法确认显示设置");
+  return setting as ReferenceVisibility;
+}
 /** A document returned by the per-user recent-visit history. */
 export interface RecentDoc extends DocMeta {
   viewedAt: string;
@@ -506,6 +513,12 @@ export const extrasApi = {
 };
 export const docsApi = {
   list: () => request<{ docs: DocMeta[] }>("GET", "/api/docs").then((r) => r.docs),
+  referenceVisibility: (id: number, userId: number, signal?: AbortSignal) => request<unknown>("GET", `/api/docs/${id}/reference-visibility`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then(checkedReferenceVisibility),
+  setReferenceVisibility: (id: number, userId: number, visible: boolean, expectedRevision: number) => request<unknown>("PUT", `/api/docs/${id}/reference-visibility`, { visible, expectedRevision }, undefined, { "X-Jiange-User-Id": String(userId) }).then((value) => {
+    const result = checkedReferenceVisibility(value);
+    if (result.visible !== visible || (result.revision !== expectedRevision && result.revision !== expectedRevision + 1)) throw new TypeError("无法确认显示设置");
+    return result;
+  }),
   pasteTarget: (id: number, userId: number, signal: AbortSignal) => request<{ id?: unknown; title?: unknown }>("GET", `/api/docs/${id}/paste-target`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then((result) => {
     if (!result || result.id !== id || typeof result.title !== "string") throw new TypeError("无法确认文档名称");
     return result.title;

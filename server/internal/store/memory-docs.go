@@ -13,27 +13,29 @@ type memClient struct {
 }
 
 type memDoc struct {
-	meta            DocMeta
-	lastModifierID  int64
-	lastModifier    string
-	driveFileID     int64
-	driveRevision   int64
-	driveTrashBatch int64
-	purged          bool  // 永久删除：不可恢复，目录/回收站均不可见
-	historyEpoch    int64 // 1 起；回滚/恢复后代际 +1
-	iconRevision    int64
-	cover           DocCover
-	deleted         bool
-	personal        bool // 我的空间：仅创建者与显式分享可见
-	ops             []SeqOp
-	ids             map[[2]int64]bool
-	ranges          map[int64][]memoryOpRange
-	opaqueIDs       map[int64]bool
-	snaps           map[int64][]byte
-	versions        map[int64]memVersion
-	namedVersions   []memoryVersionEntry
-	conditionalOps  map[conditionalOpsKey]conditionalOpsReceipt
-	opAt            []time.Time // arrival time per op (auto-version sweep)
+	meta               DocMeta
+	lastModifierID     int64
+	lastModifier       string
+	driveFileID        int64
+	driveRevision      int64
+	driveTrashBatch    int64
+	purged             bool  // 永久删除：不可恢复，目录/回收站均不可见
+	historyEpoch       int64 // 1 起；回滚/恢复后代际 +1
+	iconRevision       int64
+	cover              DocCover
+	referencesHidden   bool
+	referencesRevision int64
+	deleted            bool
+	personal           bool // 我的空间：仅创建者与显式分享可见
+	ops                []SeqOp
+	ids                map[[2]int64]bool
+	ranges             map[int64][]memoryOpRange
+	opaqueIDs          map[int64]bool
+	snaps              map[int64][]byte
+	versions           map[int64]memVersion
+	namedVersions      []memoryVersionEntry
+	conditionalOps     map[conditionalOpsKey]conditionalOpsReceipt
+	opAt               []time.Time // arrival time per op (auto-version sweep)
 }
 
 type memVersion struct {

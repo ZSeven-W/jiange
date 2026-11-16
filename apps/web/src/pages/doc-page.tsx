@@ -76,7 +76,7 @@ import { DocumentMentionsDialog } from "./document-mentions-dialog";
 import { PendingDraftPreview } from "./pending-draft-preview";
 import { collectDocumentMentions } from "./document-mentions";
 import { useI18n } from "@/lib/i18n";
-import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -628,6 +628,46 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
   const canEditContent = canEditRole && !readingMode && !sync.blocked && !sync.client.projectionOnly;
   canEditRef.current = canEditContent;
+  const [referenceVisibilityBusy, setReferenceVisibilityBusy] = useState(false);
+  const [referenceVisibilityUncertain, setReferenceVisibilityUncertain] = useState(false);
+  const referenceVisibilityLock = useRef(false);
+  const referenceVisibilityBeforeFailure = useRef(0);
+  const referenceVisibilityKey = ["reference-visibility", me.user.id, id] as const;
+  const referenceVisibility = useQuery({ queryKey: referenceVisibilityKey, queryFn: ({ signal }) => docsApi.referenceVisibility(id, me.user.id, signal), enabled: metadataVerified && permissionsVerified, retry: false, refetchInterval: referenceVisibilityBusy ? false : 5000, refetchIntervalInBackground: false, refetchOnWindowFocus: true });
+  useEffect(() => {
+    if (referenceVisibilityUncertain && referenceVisibility.isSuccess && !referenceVisibility.isFetching && referenceVisibility.dataUpdatedAt > referenceVisibilityBeforeFailure.current) setReferenceVisibilityUncertain(false);
+  }, [referenceVisibilityUncertain, referenceVisibility.isSuccess, referenceVisibility.isFetching, referenceVisibility.dataUpdatedAt]);
+  const referenceSetting = metadataVerified && !referenceVisibilityUncertain && referenceVisibility.isSuccess ? referenceVisibility.data : undefined;
+  const changeReferenceVisibility = async (visible: boolean): Promise<boolean> => {
+    const setting = referenceSetting, identity = exportContext.current;
+    if (!setting || setting.visible === visible || referenceVisibilityLock.current || !canEditRef.current || !identity.verified) return false;
+    referenceVisibilityLock.current = true;
+    setReferenceVisibilityBusy(true);
+    try {
+      await qc.cancelQueries({ queryKey: referenceVisibilityKey, exact: true });
+      const now = exportContext.current;
+      if (!now.mounted || now.id !== id || now.user !== me.user.id || !now.verified || !canEditRef.current) return false;
+      const result = await docsApi.setReferenceVisibility(id, me.user.id, visible, setting.revision);
+      const current = exportContext.current;
+      if (!current.mounted || current.id !== id || current.user !== me.user.id || !current.verified) return false;
+      qc.setQueryData(referenceVisibilityKey, result);
+      setReferenceVisibilityUncertain(false);
+      setPageNotice({ ok: true, text: visible ? "已显示文档引用。" : "已隐藏文档引用。" });
+      return true;
+    } catch {
+      const current = exportContext.current;
+      if (current.mounted && current.id === id && current.user === me.user.id) {
+        referenceVisibilityBeforeFailure.current = referenceVisibility.dataUpdatedAt;
+        setReferenceVisibilityUncertain(true);
+        setPageNotice({ ok: false, text: "显示设置未能确认，正在重新检查。" });
+        void referenceVisibility.refetch();
+      }
+      return false;
+    } finally {
+      referenceVisibilityLock.current = false;
+      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setReferenceVisibilityBusy(false);
+    }
+  };
   const saveNamedVersion = async (label: string, requestId: string) => {
     const client = sync.client;
     const notReady = (text: string) => Object.assign(new Error(text), { name: "VersionNotReady" });
@@ -1074,6 +1114,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
           onImport={canEditContent ? importFile : undefined}
           onOutline={() => setOutlineOpen((v) => !v)}
+          onShowReferences={canEditContent && permissionsVerified && referenceSetting?.visible === false && !referenceVisibilityBusy ? () => { void changeReferenceVisibility(true); } : undefined}
           width={width}
           onWidthChange={(value) => { writeDocWidth(me.user.id, id, value); setWidth(value); }}
           readOnly={!canEditRole || sync.blocked === "history_changed"}
@@ -1089,6 +1130,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           me={presence}
         />
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
+        {metadataVerified && referenceVisibility.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">无法读取文档引用显示设置。<button type="button" className="ml-2 underline" onClick={() => void referenceVisibility.refetch()}>重试</button></p>}
         {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
         {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
         {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
@@ -1226,7 +1268,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
-            {metadataVerified && !history && !presenting && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} />}
+            {metadataVerified && !history && !presenting && referenceSetting?.visible && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />}
           </article>}</DocumentCover>
           </div>
           </div>
@@ -1363,6 +1405,7 @@ function TopBar({
   onExport,
   onImport,
   onOutline,
+  onShowReferences,
   width,
   onWidthChange,
   readOnly,
@@ -1386,6 +1429,7 @@ function TopBar({
   onCreate: () => void;
   creating: boolean;
   onOutline: () => void;
+  onShowReferences?: () => void;
   width: DocWidth;
   onWidthChange: (value: DocWidth) => void;
   onHistory?: () => void;
@@ -1453,7 +1497,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1562,6 +1606,7 @@ function DocMenu({
   onExport,
   onImport,
   onOutline,
+  onShowReferences,
   width,
   onWidthChange,
   onComments,
@@ -1583,6 +1628,7 @@ function DocMenu({
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
   onOutline: () => void;
+  onShowReferences?: () => void;
   width?: DocWidth;
   onWidthChange?: (value: DocWidth) => void;
   onPrint: () => void;
@@ -1676,6 +1722,7 @@ function DocMenu({
           <div className={group}>
             <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />查找和替换</button>
             <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>
+            {onShowReferences && <button className={row} onClick={() => { close(); onShowReferences(); }} data-show-references><Link2 size={15} className={icon} />显示双向链接</button>}
             {onAI && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onAI(); }}><Sparkles size={15} className={icon} />AI 助手</button>}
             <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />评论</button>
           </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Link2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Link2, RefreshCw, X } from "lucide-react";
 import { navigateDocumentHash } from "@/editor/block-handle";
 
 export interface DocumentReferenceContext { block: string; text?: string }
@@ -23,11 +23,30 @@ export async function fetchDocumentReferences(id: number, userId: number, signal
 }
 
 /** Loading is deferred until the reader approaches the end of the document. */
-export function DocumentReferencesPanel({ id, userId, enabled, synced, allowCopy }: { id: number; userId: number; enabled: boolean; synced: boolean; allowCopy: boolean }) {
+export function DocumentReferencesPanel({ id, userId, enabled, synced, allowCopy, onHide, hiding = false }: { id: number; userId: number; enabled: boolean; synced: boolean; allowCopy: boolean; onHide?: () => Promise<boolean>; hiding?: boolean }) {
   const marker = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
   const [inView, setInView] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const [confirmHide, setConfirmHide] = useState(false);
+  const [hideError, setHideError] = useState(false);
+  const confirmRef = useRef<HTMLElement>(null);
+  useEffect(() => { if (!onHide) setConfirmHide(false); }, [onHide]);
+  useEffect(() => {
+    if (!confirmHide) return;
+    const previous = document.activeElement as HTMLElement | null;
+    confirmRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !hiding) { event.preventDefault(); setConfirmHide(false); return; }
+      if (event.key !== "Tab" || !confirmRef.current) return;
+      const buttons = [...confirmRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      if (!buttons.length) return;
+      const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0 || event.shiftKey && i === 0 || !event.shiftKey && i === buttons.length - 1) { event.preventDefault(); buttons[event.shiftKey ? buttons.length - 1 : 0].focus(); }
+    };
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("keydown", key); if (previous?.isConnected) previous.focus(); };
+  }, [confirmHide, hiding]);
   useEffect(() => {
     if (!enabled || !marker.current) return;
     if (typeof IntersectionObserver === "undefined") { setVisible(true); setInView(true); return; }
@@ -43,7 +62,7 @@ export function DocumentReferencesPanel({ id, userId, enabled, synced, allowCopy
   const toggle = (key: number) => setExpanded((old) => { const next = new Set(old); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const open = (event: React.MouseEvent<HTMLAnchorElement>, hash: string) => { event.preventDefault(); navigateDocumentHash(hash); };
   return <section ref={marker} data-document-references className="mt-16 border-t border-[#E5E6EB] pt-5 text-[14px] text-[#1F2329] dark:border-border dark:text-foreground print:hidden" onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
-    <div className="mb-4 flex items-center gap-2"><Link2 size={16} className="text-[#646A73]" /><h2 className="font-medium">文档引用</h2><button type="button" aria-label="刷新文档引用" title="刷新" disabled={!enabled || !visible || query.isFetching} onClick={() => void query.refetch()} className="ml-auto grid size-7 place-items-center rounded text-[#8F959E] hover:bg-hover disabled:opacity-40"><RefreshCw size={14}/></button></div>
+    <div className="mb-4 flex items-center gap-2"><Link2 size={16} className="text-[#646A73]" /><h2 className="font-medium">文档引用</h2><button type="button" aria-label="刷新文档引用" title="刷新" disabled={!enabled || !visible || query.isFetching} onClick={() => void query.refetch()} className="ml-auto grid size-7 place-items-center rounded text-[#8F959E] hover:bg-hover disabled:opacity-40"><RefreshCw size={14}/></button>{onHide && <button type="button" aria-label="隐藏文档引用" title="隐藏" disabled={hiding} onClick={() => { setHideError(false); setConfirmHide(true); }} className="grid size-7 place-items-center rounded text-[#8F959E] hover:bg-hover disabled:opacity-40"><X size={15}/></button>}</div>
     {!synced && <p className="mb-3 text-[12px] text-[#8F959E]">文档尚未同步，引用结果以已保存内容为准。</p>}
     {visible && (query.isFetching || query.isPending) && <p role="status" className="py-3 text-[13px] text-[#8F959E]">正在加载文档引用…</p>}
     {visible && query.isError && !query.isFetching && <p role="alert" className="py-3 text-[13px] text-[#8F959E]">引用查询未完成，文档过多、内容过大或服务暂不可用，可点击刷新重试。</p>}
@@ -58,5 +77,6 @@ export function DocumentReferencesPanel({ id, userId, enabled, synced, allowCopy
         {data.outgoing.length === 0 ? <p className="py-2 text-[13px] text-[#8F959E]">暂无引用文档</p> : data.outgoing.map((item) => { const href = item.href ?? `#/doc/${item.id}`; return <a key={item.id} href={href} onClick={(event) => open(event, href)} className="block truncate rounded-md px-2 py-2 hover:bg-[#F5F6F7] hover:text-[#1456F0] dark:hover:bg-hover">{item.title.trim() || "未命名文档"}</a>; })}
       </div>
     </div>}
+    {confirmHide && onHide && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !hiding) setConfirmHide(false); }}><section ref={confirmRef} role="dialog" aria-modal="true" aria-labelledby="reference-hide-title" className="w-full max-w-[420px] rounded-lg bg-surface p-6 text-foreground shadow-xl"><h2 id="reference-hide-title" className="text-[16px] font-medium">隐藏文档引用</h2><p className="mt-3 text-[14px] leading-6 text-muted-foreground">隐藏后，所有协作者都将看不到文档底部的引用列表。可在文档菜单中重新显示。</p>{hideError && <p role="alert" className="mt-3 text-[13px] text-destructive">设置未能确认，请检查后重试。</p>}<div className="mt-6 flex justify-end gap-2"><button type="button" disabled={hiding} onClick={() => setConfirmHide(false)} className="h-8 rounded-md border px-4 text-[13px] hover:bg-hover disabled:opacity-50">取消</button><button type="button" disabled={hiding} onClick={() => { void onHide().then((ok) => { if (ok) setConfirmHide(false); else setHideError(true); }).catch(() => setHideError(true)); }} className="h-8 rounded-md bg-[#1456F0] px-4 text-[13px] text-white hover:bg-[#0F4DD6] disabled:opacity-50">{hiding ? "正在隐藏…" : "隐藏"}</button></div></section></div>}
   </section>;
 }
