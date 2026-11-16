@@ -3,6 +3,17 @@ import type { DocumentReferenceItem, DocumentReferences } from "./document-refer
 export interface ReferenceGraphNode extends DocumentReferenceItem { incoming: boolean; outgoing: boolean; x: number; y: number }
 export interface ReferenceGraphLayout { width: number; height: number; centerX: number; centerY: number; nodes: ReferenceGraphNode[] }
 
+/** Conservative bounds include labels rather than the canvas's empty margin. */
+export function referenceGraphBounds(layout: ReferenceGraphLayout): { left: number; top: number; width: number; height: number } {
+  let left = layout.centerX - 100, right = layout.centerX + 100;
+  let top = layout.centerY - 55, bottom = layout.centerY + 85;
+  for (const node of layout.nodes) {
+    left = Math.min(left, node.x - 100); right = Math.max(right, node.x + 100);
+    top = Math.min(top, node.y - 30); bottom = Math.max(bottom, node.y + 55);
+  }
+  return { left, top, width: right - left, height: bottom - top };
+}
+
 /** Stable concentric rings keep every permitted relation reachable by scrolling. */
 export function layoutDocumentReferenceGraph(data: DocumentReferences): ReferenceGraphLayout {
   const nodes = new Map<number, ReferenceGraphNode>();

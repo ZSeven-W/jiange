@@ -19,6 +19,9 @@ describe("document reference graph", () => {
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><DocumentReferenceGraph rootId={1} rootTitle="需求" userId={7} enabled={false} loadReferences={async () => ({ incoming: [], outgoing: [] })} onClose={() => {}}/></QueryClientProvider>);
     expect(html).toContain('aria-label="文档关系图"');
     expect(html).toContain('aria-label="搜索文档关系图"');
+    expect(html).toContain('aria-label="缩小关系图"');
+    expect(html).toContain('aria-label="放大关系图"');
+    expect(html).toContain('aria-label="适应关系图画布"');
     expect(html).toContain("正在确认文档权限");
     expect(html).not.toContain("data-reference-graph-node");
   });

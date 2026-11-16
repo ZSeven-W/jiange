@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layoutDocumentReferenceGraph, referenceGraphPath } from "./document-reference-graph-layout";
+import { layoutDocumentReferenceGraph, referenceGraphBounds, referenceGraphPath } from "./document-reference-graph-layout";
 
 describe("document reference graph layout", () => {
   it("merges reciprocal relations and keeps both directions", () => {
@@ -23,5 +23,13 @@ describe("document reference graph layout", () => {
   });
   it("has a centered empty state", () => {
     expect(layoutDocumentReferenceGraph({ incoming: [], outgoing: [] })).toEqual({ width: 816, height: 456, centerX: 408, centerY: 228, nodes: [] });
+  });
+  it("fits node labels rather than the empty canvas margin", () => {
+    const graph = layoutDocumentReferenceGraph({ incoming: [{ id: 1, title: "文档" }], outgoing: [] });
+    const bounds = referenceGraphBounds(graph);
+    expect(bounds.width).toBe(200);
+    expect(bounds.height).toBe(265);
+    expect(bounds.width).toBeLessThan(graph.width);
+    expect(bounds.top).toBeLessThan(graph.centerY);
   });
 });
