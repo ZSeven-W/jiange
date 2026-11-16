@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
 import { captureColumnMove } from "../src/column-move.js";
-import { archiveColumn, toggleArchivedColumn } from "../src/column-archive-experimental.js";
+import { archiveColumn, recoverColumnArchive, serializeColumnArchive, toggleArchivedColumn } from "../src/column-archive-experimental.js";
 
 function setup() {
   const doc = new Doc(1), tx = new Tx(doc), parent = tx.create("columns", null, ROOT);
@@ -41,7 +41,25 @@ describe("experimental reversible column archive", () => {
     expect(cold.deletedBlockType(archived.archive)).toBe("jiange-column-archive-v1");
     expect(cold.hasBlock(x.middle)).toBe(true); expect(cold.text(x.middle)).toBe("原文");
     expect(cold.view().blocks.some((b) => b.id === idKey(x.middle))).toBe(false);
-    expect(toggleArchivedColumn(new Tx(cold), archived)).toBeNull(); // Recovery needs a durable, validated handle.
+    expect(toggleArchivedColumn(new Tx(cold), archived)).toBeNull();
+    const saved = serializeColumnArchive(archived);
+    expect(saved).not.toContain("原文");
+    const recovered = recoverColumnArchive(cold, saved)!;
+    expect(recovered).not.toBeNull();
+    const restored = toggleArchivedColumn(new Tx(cold), recovered)!;
+    expect(cold.text(x.middle)).toBe("原文");
+    expect(children(cold, x.parent)).toEqual([x.left, x.middle, x.right].map(idKey));
+    const coldAgain = Doc.fromState(4, cold.encodeState());
+    expect(toggleArchivedColumn(new Tx(coldAgain), recoverColumnArchive(coldAgain, serializeColumnArchive(restored))!)?.archived).toBe(true);
+  });
+
+  it("rejects corrupt or stale persisted handles without changing the replica", () => {
+    const x = setup(), archived = archiveColumn(new Tx(x.doc), captureColumnMove(x.doc, x.parent, x.middle)!)!;
+    const saved = serializeColumnArchive(archived), data = JSON.parse(saved);
+    for (const invalid of ["{", JSON.stringify({ ...data, unknown: 1 }), JSON.stringify({ ...data, archive: "1:0" }), JSON.stringify({ ...data, originalPos: "A0" }), JSON.stringify({ ...data, version: "99:99" }), JSON.stringify({ ...data, archived: false })]) expect(recoverColumnArchive(x.doc, invalid)).toBeNull();
+    const peer = Doc.fromState(2, x.doc.encodeState()); x.doc.apply(peer.moveBlock(x.right, x.parent, 0));
+    expect(recoverColumnArchive(x.doc, saved)).toBeNull();
+    expect(x.doc.text(x.middle)).toBe("原文");
   });
 
   it("rejects stale sibling positions and replaying a prior transition", () => {

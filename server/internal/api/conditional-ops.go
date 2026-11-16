@@ -231,6 +231,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_ops", "提交操作无效")
 		return
 	}
+	archiveBatch := conditionalColumnArchiveBatch(ops)
 	client := ops[0].ID.Client
 	if client == 0 || client > conditionalSafeInteger {
 		httpx.Error(w, http.StatusBadRequest, "invalid_ops", "提交操作无效")
@@ -252,6 +253,11 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch op.T {
+		case collab.TBlockCreate, collab.TBlockDelete:
+			if !archiveBatch {
+				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此操作类型")
+				return
+			}
 		case collab.TTextInsert:
 			if op.Text == "" {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "提交操作无效")
@@ -264,7 +270,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 		case collab.TMark:
 		case collab.TBlockMove:
-			if len(ops) != 1 || !conditionalColumnPosition.MatchString(op.Pos) || strings.HasSuffix(op.Pos, "0") {
+			if !archiveBatch && (len(ops) != 1 || !conditionalColumnPosition.MatchString(op.Pos) || strings.HasSuffix(op.Pos, "0")) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏位置无效")
 				return
 			}
@@ -328,31 +334,47 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 	originalTitle, originalKind, originalVisible := state.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
 	blockKinds := make(map[collab.OpID]string)
 	titleChanged := false
-	for _, op := range ops {
-		kind, found := blockKinds[op.Block]
-		if !found {
-			var visible bool
-			_, kind, visible = state.VisibleBlockText(op.Block)
-			if !visible {
-				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标不可用")
-				return
-			}
-			blockKinds[op.Block] = kind
-		}
-		isTitleText := op.Block == (collab.OpID{Client: 0, Clock: 1}) && kind == "title" && (op.T == collab.TTextInsert || op.T == collab.TTextDelete)
-		if isTitleText {
-			titleChanged = true
-		}
-		if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && (conditionalTableKey(op.Key) || conditionalTableWidths(op)) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) && !isTitleText {
-			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
+	if archiveBatch {
+		if !state.CanArchiveColumn(ops[2].Block) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏状态不支持删除")
 			return
 		}
-		if err = state.TryApply(op); err != nil {
-			if lookup() {
+		for _, op := range ops {
+			if err = state.TryApply(op); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
 				return
 			}
-			httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
-			return
+		}
+	} else {
+		for _, op := range ops {
+			kind, found := blockKinds[op.Block]
+			if !found {
+				var visible bool
+				_, kind, visible = state.VisibleBlockText(op.Block)
+				if !visible {
+					httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标不可用")
+					return
+				}
+				blockKinds[op.Block] = kind
+			}
+			isTitleText := op.Block == (collab.OpID{Client: 0, Clock: 1}) && kind == "title" && (op.T == collab.TTextInsert || op.T == collab.TTextDelete)
+			if isTitleText {
+				titleChanged = true
+			}
+			if op.T == collab.TBlockMove && !state.CanReorderColumn(op.Block, op.Parent, op.Pos) || op.T == collab.TBlockSet && !(kind == "table" && (conditionalTableKey(op.Key) || conditionalTableWidths(op)) || conditionalAlignableBlock(kind) && conditionalAlignment(op) || kind == "columns" && conditionalColumnWidths(op)) || op.T != collab.TBlockMove && op.T != collab.TBlockSet && !conditionalTextBlock(kind) && !isTitleText {
+				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "操作目标类型不支持")
+				return
+			}
+			if err = state.TryApply(op); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+				return
+			}
 		}
 	}
 	var seqs []int64

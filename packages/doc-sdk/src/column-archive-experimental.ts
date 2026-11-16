@@ -1,11 +1,11 @@
 import { eqId, idKey, ROOT, type Doc, type Op, type OpId, type Tx } from "@jiange/collab";
-import { captureColumnMove, type ColumnMoveSnapshot } from "./column-move.js";
+import { captureColumnMove, validColumnPosition, type ColumnMoveSnapshot } from "./column-move.js";
 
 /**
  * Experimental only: not exported from the SDK entry point or connected to UI.
  * A deleted parent hides its live child in both TS and Go projections. Keeping
  * the child alive allows late character edits to follow the original identity.
- * Transport atomicity, conditional server admission, recovery after reload,
+ * Transport atomicity, conditional server admission, durable handle storage,
  * and the editor undo stack must be integrated before exposing this to users.
  */
 const ARCHIVE_TYPE = "jiange-column-archive-v1";
@@ -21,6 +21,15 @@ export interface ColumnArchive {
   readonly version: string;
   readonly archived: boolean;
 }
+
+const validId = (value: unknown): value is string => {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*):[1-9]\d*$/.test(value)) return false;
+  return value.split(":").every((part) => Number.isSafeInteger(Number(part)));
+};
+const parseId = (value: string): OpId => {
+  const [client, clock] = value.split(":").map(Number);
+  return { client, clock };
+};
 
 /** Verify the same group and sibling positions without comparing column text. */
 function siblingGuard(doc: Doc, parent: OpId, block: OpId): string | null {
@@ -53,13 +62,37 @@ export function archiveColumn(tx: Tx, captured: ColumnMoveSnapshot): ColumnArchi
   return Object.freeze({ doc, parent: Object.freeze({ ...captured.parent }), block: Object.freeze({ ...captured.block }), archive: Object.freeze({ ...archive }), originalPos: captured.pos, guard: captured.guard, version: idKey(move), archived: true });
 }
 
+/** Persist only layout identities and positions, never column content.
+ * The host must scope storage to its authenticated account and document;
+ * matching structure alone does not authenticate a document identity. */
+export function serializeColumnArchive(entry: ColumnArchive): string {
+  return JSON.stringify({ v: 1, parent: idKey(entry.parent), block: idKey(entry.block), archive: idKey(entry.archive), originalPos: entry.originalPos, guard: entry.guard, version: entry.version, archived: entry.archived });
+}
+
+/** Rebind a persisted handle to a fully synchronized replica, without changing it. */
+export function recoverColumnArchive(doc: Doc, raw: string): ColumnArchive | null {
+  if (typeof raw !== "string" || raw.length > 1_000_000 || doc.pendingCount !== 0) return null;
+  let data: unknown;
+  try { data = JSON.parse(raw); } catch { return null; }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data as Record<string, unknown>;
+  const keys = Object.keys(value).sort().join(",");
+  if (keys !== "archive,archived,block,guard,originalPos,parent,v,version" || value.v !== 1 || !validId(value.parent) || !validId(value.block) || !validId(value.archive) || !validId(value.version) || typeof value.originalPos !== "string" || !validColumnPosition(value.originalPos) || typeof value.guard !== "string" || typeof value.archived !== "boolean") return null;
+  const entry: ColumnArchive = Object.freeze({ doc, parent: Object.freeze(parseId(value.parent)), block: Object.freeze(parseId(value.block)), archive: Object.freeze(parseId(value.archive)), originalPos: value.originalPos, guard: value.guard, version: value.version, archived: value.archived });
+  return validArchiveState(doc, entry) ? entry : null;
+}
+
+function validArchiveState(doc: Doc, entry: ColumnArchive): boolean {
+  if (entry.doc !== doc || doc.pendingCount !== 0 || !doc.hasBlock(entry.block) || doc.deletedBlockType(entry.archive) !== ARCHIVE_TYPE || siblingGuard(doc, entry.parent, entry.block) !== entry.guard) return false;
+  const loc = doc.blockLocation(entry.block);
+  if (idKey(loc.version) !== entry.version || !eqId(loc.parent, entry.archived ? entry.archive : entry.parent) || loc.pos !== (entry.archived ? ARCHIVE_POS : entry.originalPos)) return false;
+  return !entry.archived || !doc.children(entry.parent).some((item) => doc.blockLocation(item).pos === entry.originalPos);
+}
+
 /** Restore or re-hide the same block if no sibling or location changed. */
 export function toggleArchivedColumn(tx: Tx, entry: ColumnArchive): ColumnArchive | null {
   const doc = tx.doc;
-  if (entry.doc !== doc || doc.pendingCount !== 0 || !doc.hasBlock(entry.block) || doc.deletedBlockType(entry.archive) !== ARCHIVE_TYPE || siblingGuard(doc, entry.parent, entry.block) !== entry.guard) return null;
-  const loc = doc.blockLocation(entry.block);
-  if (idKey(loc.version) !== entry.version || !eqId(loc.parent, entry.archived ? entry.archive : entry.parent) || loc.pos !== (entry.archived ? ARCHIVE_POS : entry.originalPos)) return null;
-  if (entry.archived && doc.children(entry.parent).some((item) => doc.blockLocation(item).pos === entry.originalPos)) return null;
+  if (!validArchiveState(doc, entry)) return null;
   let id: OpId;
   try { [id] = doc.allocateOpIds(1); } catch { return null; }
   const op: Op = { t: "bmove", id, block: entry.block, parent: entry.archived ? entry.parent : entry.archive, pos: entry.archived ? entry.originalPos : ARCHIVE_POS };

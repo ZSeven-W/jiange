@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+func TestCanArchiveColumnValidatesLayout(t *testing.T) {
+	d := NewDoc()
+	group := d.CreateBlock(1, Root, "A", "columns")
+	left := d.CreateBlock(1, group.ID, "A", "paragraph")
+	if d.CanArchiveColumn(left.ID) {
+		t.Fatal("single column accepted")
+	}
+	right := d.CreateBlock(1, group.ID, "B", "paragraph")
+	if !d.CanArchiveColumn(left.ID) {
+		t.Fatal("valid group rejected")
+	}
+	duplicate := Op{T: TBlockMove, ID: d.next(1, 1), Block: right.ID, Parent: group.ID, Pos: "A"}
+	d.Apply(duplicate)
+	if d.CanArchiveColumn(left.ID) {
+		t.Fatal("duplicate positions accepted")
+	}
+	bad := Op{T: TBlockMove, ID: d.next(1, 1), Block: right.ID, Parent: group.ID, Pos: "A0"}
+	d.Apply(bad)
+	if d.CanArchiveColumn(left.ID) {
+		t.Fatal("invalid position accepted")
+	}
+	outside := d.CreateBlock(1, Root, "C", "paragraph")
+	if d.CanArchiveColumn(outside.ID) {
+		t.Fatal("root paragraph accepted")
+	}
+}
+
 // A prototype protocol proof only: this is not a server endpoint or UI feature.
 func TestExperimentalColumnArchiveProjectionAndSnapshot(t *testing.T) {
 	d := NewDoc()
