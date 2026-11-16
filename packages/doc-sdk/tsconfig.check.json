@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "paths": {
+      "@jiange/collab": [
+        "../collab/src/index.ts"
+      ],
+      "@jiange/whiteboard-sdk/model": [
+        "../whiteboard-sdk/src/model.ts"
+      ]
+    }
+  }
+}

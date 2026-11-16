@@ -1,0 +1,73 @@
+{
+  "name": "@jiange/doc-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./model": "./src/model.ts",
+    "./tableCells": "./src/tableCells.ts",
+    "./blockStyles": "./src/blockStyles.ts",
+    "./docx": "./src/docx.ts",
+    "./markdown": "./src/markdown.ts",
+    "./zip": "./src/zip.ts",
+    "./xml": "./src/xml.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./model": {
+        "types": "./dist/model.d.ts",
+        "import": "./dist/model.js"
+      },
+      "./tableCells": {
+        "types": "./dist/tableCells.d.ts",
+        "import": "./dist/tableCells.js"
+      },
+      "./blockStyles": {
+        "types": "./dist/blockStyles.d.ts",
+        "import": "./dist/blockStyles.js"
+      },
+      "./docx": {
+        "types": "./dist/docx.d.ts",
+        "import": "./dist/docx.js"
+      },
+      "./markdown": {
+        "types": "./dist/markdown.d.ts",
+        "import": "./dist/markdown.js"
+      },
+      "./zip": {
+        "types": "./dist/zip.d.ts",
+        "import": "./dist/zip.js"
+      },
+      "./xml": {
+        "types": "./dist/xml.d.ts",
+        "import": "./dist/xml.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@jiange/collab": "workspace:*",
+    "@jiange/whiteboard-sdk": "workspace:*"
+  }
+}

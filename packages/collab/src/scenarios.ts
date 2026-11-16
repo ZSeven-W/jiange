@@ -1,7 +1,7 @@
-import { Doc, type DocView } from "./doc";
-import { ROOT } from "./id";
-import type { Op } from "./ops";
-import { randomSession } from "./random";
+import { Doc, type DocView } from "./doc.js";
+import { ROOT } from "./id.js";
+import type { Op } from "./ops.js";
+import { randomSession } from "./random.js";
 
 export interface Scenario {
   name: string;

@@ -1,8 +1,8 @@
-import { Doc } from "./doc";
-import { decodeOps, encodeOps } from "./encoding";
-import { idKey } from "./id";
-import type { Op } from "./ops";
-import { decodeServerMsg, encodeClientMsg, type ClientMsg } from "./protocol";
+import { Doc } from "./doc.js";
+import { decodeOps, encodeOps } from "./encoding.js";
+import { idKey } from "./id.js";
+import type { Op } from "./ops.js";
+import { decodeServerMsg, encodeClientMsg, type ClientMsg } from "./protocol.js";
 
 export type SyncStatus = "connecting" | "synced" | "syncing" | "offline";
 

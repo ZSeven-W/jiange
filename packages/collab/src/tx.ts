@@ -1,6 +1,6 @@
-import { eqId, idKey, ROOT, type OpId } from "./id";
-import type { Op } from "./ops";
-import type { Doc } from "./doc";
+import { eqId, idKey, ROOT, type OpId } from "./id.js";
+import type { Op } from "./ops.js";
+import type { Doc } from "./doc.js";
 
 /** Everything needed to recreate a deleted block. */
 export interface BlockSnap {

@@ -1,0 +1,59 @@
+{
+  "name": "@jiange/whiteboard-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./model": "./src/model.ts",
+    "./mindmap": "./src/mindmap.ts",
+    "./history": "./src/history.ts",
+    "./viewport": "./src/viewport.ts",
+    "./inkGeometry": "./src/inkGeometry.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./model": {
+        "types": "./dist/model.d.ts",
+        "import": "./dist/model.js"
+      },
+      "./mindmap": {
+        "types": "./dist/mindmap.d.ts",
+        "import": "./dist/mindmap.js"
+      },
+      "./history": {
+        "types": "./dist/history.d.ts",
+        "import": "./dist/history.js"
+      },
+      "./viewport": {
+        "types": "./dist/viewport.d.ts",
+        "import": "./dist/viewport.js"
+      },
+      "./inkGeometry": {
+        "types": "./dist/inkGeometry.d.ts",
+        "import": "./dist/inkGeometry.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,4 +1,4 @@
-import { Reader, Writer } from "./encoding";
+import { Reader, Writer } from "./encoding.js";
 
 /** Sync protocol message types (spec/PROTOCOL.md §Sync). One message per WebSocket binary frame. */
 export const MSG = {

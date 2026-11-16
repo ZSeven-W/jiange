@@ -1,7 +1,7 @@
-import { idKey, ROOT, type OpId } from "./id";
-import type { Op } from "./ops";
-import type { Doc } from "./doc";
-import { applyMarks, indexAfter, reconcileMarks, snapshotBlock, Tx, type UndoItem } from "./tx";
+import { idKey, ROOT, type OpId } from "./id.js";
+import type { Op } from "./ops.js";
+import type { Doc } from "./doc.js";
+import { applyMarks, indexAfter, reconcileMarks, snapshotBlock, Tx, type UndoItem } from "./tx.js";
 
 interface Entry<S> {
   items: UndoItem[];

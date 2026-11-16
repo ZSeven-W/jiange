@@ -1,6 +1,6 @@
-import { Doc } from "./doc";
-import type { OpId } from "./id";
-import type { Op } from "./ops";
+import { Doc } from "./doc.js";
+import type { OpId } from "./id.js";
+import type { Op } from "./ops.js";
 
 /** Small deterministic PRNG (mulberry32) for reproducible property tests. */
 export function rng(seed: number): () => number {

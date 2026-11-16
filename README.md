@@ -5,18 +5,21 @@
 开源的飞书文档 + 多维表格替代品，AI 原生、可自部署。除基础库外全部自研：自研协同模型（CRDT）、自研 Go 同步与 API 服务。
 An open-source, self-hostable, AI-native alternative to Feishu/Lark Docs and Base. Apart from a few foundational libraries, everything is written from scratch, including the collaborative data model (CRDT) and the Go backend.
 
-> 状态 / Status: **P0 + P1 done**（脚手架、账号会话、协同内核）。编辑器、同步服务、文档树等在后续阶段实现。
+> 状态 / Status: 开发中。文档、幻灯片、多维表格及画板已有不同程度实现；普通表格仍为开发预览。实际进度和未完成项以 [ROADMAP.md](ROADMAP.md) 为准。
 
 ## 目录 / Layout
 
 ```
 apps/web          React + Vite + TS + TanStack Query + Tailwind + shadcn/ui
 packages/collab   协同内核 (TS): OpId/Lamport, Fugue 文本序列, 块树 LWW+move, Peritext 标记, 二进制编码
+packages/{doc,slides,sheet,whiteboard}-sdk  编辑器的无 UI 模型与操作（见 HEADLESS_SDK.md）
 server/           Go 模块: cmd/jiange, internal/{api,auth,httpx,migrate,store,config}, collab (Go 版内核)
 spec/             PROTOCOL.md 协议规范 + vectors/ 跨语言一致性向量
 docker-compose.yml  Postgres + MinIO
 ci/               GitHub Actions workflow (see ci/README.md to enable)
 ```
+
+各编辑器和协同内核的无 UI SDK、构建方式及当前能力边界见 [HEADLESS_SDK.md](HEADLESS_SDK.md)。
 
 ## 允许的基础库 / Allowed foundational libraries
 
@@ -46,7 +49,8 @@ pnpm --filter @jiange/web dev            # http://localhost:5173 (proxies /api -
 ## 测试 / Tests
 
 ```bash
-pnpm test                                # collab 内核 + web 单测 (vitest)
+pnpm test                                # SDK、协同内核与 web 单测 (vitest)
+pnpm test:sdk:pack                       # 隔离 Node ESM 与类型声明验证
 pnpm --filter @jiange/web build
 cd server && go test ./...               # Go 单测 + 跨语言向量
 JIANGE_TEST_DATABASE_URL=postgres://jiange:jiange@localhost:5432/jiange_test?sslmode=disable go test ./internal/store

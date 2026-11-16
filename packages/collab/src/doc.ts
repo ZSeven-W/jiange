@@ -1,7 +1,7 @@
-import { cmpId, eqId, idKey, ROOT, type OpId } from "./id";
-import { keyBetween } from "./fracindex";
-import { opSpan, type Anchor, type Op, type Side } from "./ops";
-import { MAGIC, Reader, VERSION, Writer } from "./encoding";
+import { cmpId, eqId, idKey, ROOT, type OpId } from "./id.js";
+import { keyBetween } from "./fracindex.js";
+import { opSpan, type Anchor, type Op, type Side } from "./ops.js";
+import { MAGIC, Reader, VERSION, Writer } from "./encoding.js";
 
 export const STATE_TAG = 0x53;
 

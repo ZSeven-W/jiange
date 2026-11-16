@@ -1,5 +1,5 @@
-import { cmpId, idKey, type OpId } from "./id";
-import { parseTableSnapshotJson } from "./tableStrictJson";
+import { cmpId, idKey, type OpId } from "./id.js";
+import { parseTableSnapshotJson } from "./tableStrictJson.js";
 
 /**
  * Experimental, transport-independent table CRDT. This is deliberately not

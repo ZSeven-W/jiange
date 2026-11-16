@@ -1,0 +1,54 @@
+{
+  "name": "@jiange/sheet-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./grid": "./src/grid.ts",
+    "./formula": "./src/formula.ts",
+    "./clipboard": "./src/clipboard.ts",
+    "./tsv": "./src/tsv.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./grid": {
+        "types": "./dist/grid.d.ts",
+        "import": "./dist/grid.js"
+      },
+      "./formula": {
+        "types": "./dist/formula.d.ts",
+        "import": "./dist/formula.js"
+      },
+      "./clipboard": {
+        "types": "./dist/clipboard.d.ts",
+        "import": "./dist/clipboard.js"
+      },
+      "./tsv": {
+        "types": "./dist/tsv.d.ts",
+        "import": "./dist/tsv.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,4 +1,4 @@
-import type { OpId } from "./id";
+import type { OpId } from "./id.js";
 
 /** 0 = before the character, 1 = after the character. */
 export type Side = 0 | 1;

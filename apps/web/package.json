@@ -12,6 +12,10 @@
   },
   "dependencies": {
     "@jiange/collab": "workspace:*",
+    "@jiange/doc-sdk": "workspace:*",
+    "@jiange/sheet-sdk": "workspace:*",
+    "@jiange/slides-sdk": "workspace:*",
+    "@jiange/whiteboard-sdk": "workspace:*",
     "@radix-ui/react-label": "^2.1.1",
     "@radix-ui/react-slot": "^1.1.1",
     "@tanstack/react-query": "^5.62.0",

@@ -1,3 +1,6 @@
+import type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage } from "@jiange/slides-sdk";
+export type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage } from "@jiange/slides-sdk";
+
 export interface User {
   id: number;
   email: string;
@@ -452,23 +455,6 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-export type SlideShape = { id: string; kind: "rectangle" | "ellipse" | "triangle" | "rounded-rectangle" | "right-triangle" | "diamond" | "pentagon" | "hexagon" | "star" | "parallelogram" | "trapezoid" | "arrow-right" | "line" | "line-arrow" | "line-arrow-filled" | "line-dot" | "line-double-arrow" | "text" | "image"; x: number; y: number; color: string; width?: number; height?: number; rotation?: number; text?: string; fontSize?: number; bold?: boolean; align?: "left" | "center" | "right"; fileId?: number };
-export type SlideLayout = "" | "title" | "blank" | "blank-title";
-export type SlideCreationLayout = SlideLayout | "two-column";
-export interface SlidesPage {
-  id: number;
-  slidesId: number;
-  pos: number;
-  title: string;
-  body: string;
-  background: string;
-  layout?: SlideLayout;
-  notes: string;
-  shapes: SlideShape[];
-  hidden: boolean;
-  revision: number;
-  updatedAt: string;
-}
 const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image"]);
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
