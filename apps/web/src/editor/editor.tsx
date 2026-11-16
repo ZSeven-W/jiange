@@ -5,7 +5,7 @@ import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
-import { isDocumentReferenceMarks, isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
+import { copyableURL, isDocumentReferenceMarks, isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
 import { parseMentionNotificationHash } from "@/lib/mention-notification-link";
 import {
   activeMarks,
@@ -1854,7 +1854,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       e.preventDefault();
       if (!eqId(s.a.b, s.f.b) || isSourceBlock(d, s.a.b)) { setColumnNotice("请选择同一段中的文字后插入链接。"); return; }
       const captured = captureInlineLinkSelection(d, s);
-      if (!captured) { setColumnNotice("无法在当前位置插入链接，请重新选择文字。"); return; }
+      if (!captured) { setColumnNotice("无法在当前位置插入链接，请避开成员提及、文档引用、公式或换行。"); return; }
       const at = { b: s.a.b, o: Math.min(s.a.o, s.f.o) }, rect = root.current ? caretRect(root.current, at) : null;
       changeSlash(null); setToolbar(null); um.seal();
       setSlashLink({ captured, client: sync.client, initialText: captured.text, x: rect?.left ?? window.innerWidth / 2, y: rect?.bottom ?? 80 });
@@ -2307,7 +2307,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         onLeave={hideLinkCard}
         onEditingChange={(editing) => { editingLinkCard.current = editing; if (editing) keepLinkCard(); }}
         onOpen={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } if (linkCard.docTitle !== undefined) { setLinkCard(null); navigateDocumentHash(linkCard.href); } else window.open(linkCard.href, "_blank", "noopener,noreferrer"); }}
-        onCopy={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } const url = linkCard.docTitle !== undefined ? new URL(linkCard.href, location.href).href : linkCard.href; void navigator.clipboard?.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${linkCard.href}`)); }}
+        onCopy={() => { if (!resolveLinkRange(sync.client.doc!, linkCard.range)) { setLinkCard(null); setToast("链接已变化，请重新选择。"); return; } const url = copyableURL(linkCard.href, location.href); if (!url) { setToast("链接无效，无法复制。"); return; } if (!navigator.clipboard?.writeText) { setToast(`请手动复制：${url}`); return; } void navigator.clipboard.writeText(url).then(() => setToast("已复制链接"), () => setToast(`请手动复制：${url}`)); }}
         onEdit={readOnly ? undefined : (url) => {
           const range = linkCard.range, current = sync.client.doc, resolved = current && resolveLinkRange(current, range);
           editingLinkCard.current = false; setLinkCard(null);
@@ -2926,7 +2926,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               } else toggleMark(tx, s, key, value);
             })
           }
-          onLink={(url) => { run((tx, s) => { const result = toggleTextLink(tx, s, url); if (result !== "applied") setColumnNotice(result === "invalid" ? "请输入有效的链接地址。" : "文档引用或公式不能直接设置文字链接。"); }); um.seal(); }}
+          onLink={(url) => { run((tx, s) => { const result = toggleTextLink(tx, s, url); if (result !== "applied") setColumnNotice(result === "invalid" ? "请输入有效的链接地址。" : "成员提及、文档引用或公式不能直接设置文字链接。"); }); um.seal(); }}
           onType={(t) => run((tx, s) => { if (!isColumnText(tx.doc, s.f.b)) return setBlockType(tx, s, t); setColumnNotice("暂不支持更改栏内块类型。"); })}
           onComment={onComment ? () => {
             const s = sel.current;

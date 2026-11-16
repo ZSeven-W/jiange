@@ -17,3 +17,11 @@ export function safeURL(url?: string): string | undefined {
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : undefined;
   } catch { return undefined; }
 }
+
+/** Copy internal fragment links as usable absolute addresses outside this page. */
+export function copyableURL(url: string, base: string): string | undefined {
+  const safe = safeURL(url);
+  if (!safe) return undefined;
+  try { return isDocumentReferenceURL(safe) ? new URL(safe, base).href : safe; }
+  catch { return undefined; }
+}

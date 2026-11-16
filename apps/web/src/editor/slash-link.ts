@@ -6,7 +6,7 @@ import type { Pos, Sel } from "./model";
 export type InlineLinkAnchor = CompositionAnchor & { parent: OpId; type: string; text: string; marks: Record<string, string>[] };
 function insideReference(doc: Doc, pos: Pos): boolean {
   const chars = doc.richChars(pos.b), before = chars[pos.o - 1], after = chars[pos.o];
-  return !!(before && after && isDocumentReferenceMarks(before.marks) && isDocumentReferenceMarks(after.marks) && before.marks.link === after.marks.link);
+  return !!(before && after && ((isDocumentReferenceMarks(before.marks) && isDocumentReferenceMarks(after.marks) && before.marks.link === after.marks.link) || (before.marks.mention && before.marks.mention === after.marks.mention)));
 }
 export function captureInlineLink(doc: Doc, pos: Pos): InlineLinkAnchor | null {
   if (!doc.hasBlock(pos.b) || pos.o < 0 || pos.o > doc.visibleIds(pos.b).length) return null;
@@ -18,7 +18,8 @@ export function captureInlineLinkSelection(doc: Doc, selection: Sel): InlineLink
   const captured = captureCompositionSelection(doc, selection);
   if (!captured) return null;
   const start = Math.min(selection.a.o, selection.f.o), end = Math.max(selection.a.o, selection.f.o), chars = doc.richChars(captured.block).slice(start, end);
-  if (chars.some((char) => !!char.marks.math || isDocumentReferenceMarks(char.marks) || char.ch === "\n" || char.ch === "\r")) return null;
+  if (start === end && insideReference(doc, { b: captured.block, o: start })) return null;
+  if (chars.some((char) => !!char.marks.math || !!char.marks.mention || isDocumentReferenceMarks(char.marks) || char.ch === "\n" || char.ch === "\r")) return null;
   const info = doc.blockInfo(captured.block);
   return { ...captured, parent: info.parent, type: info.type, text: chars.map((char) => char.ch).join(""), marks: chars.map((char) => ({ ...char.marks })) };
 }
@@ -42,7 +43,7 @@ export function insertInlineLink(tx: Tx, captured: InlineLinkAnchor, text: strin
     const selection = resolveCompositionSelection(tx.doc, captured);
     if (!selection) return null;
     const chars = tx.doc.richChars(pos.b).slice(selection.a.o, selection.f.o);
-    if (chars.some((char, i) => char.marks.link !== captured.marks[i]?.link || char.marks.linkKind !== captured.marks[i]?.linkKind || !!char.marks.math || isDocumentReferenceMarks(char.marks))) return null;
+    if (chars.some((char, i) => char.marks.link !== captured.marks[i]?.link || char.marks.linkKind !== captured.marks[i]?.linkKind || !!char.marks.math || !!char.marks.mention || isDocumentReferenceMarks(char.marks))) return null;
     if (label === captured.text) {
       tx.format(pos.b, selection.a.o, selection.f.o, "link", href);
       tx.format(pos.b, selection.a.o, selection.f.o, "linkKind", isDocumentReferenceURL(href) ? "text" : null);

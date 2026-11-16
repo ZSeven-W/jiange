@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Doc, ROOT, Tx } from "@jiange/collab";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import { Editor } from "./editor";
+import { copyableURL } from "@/lib/safe-url";
 
 function renderDocument(url: string, kind?: string) {
   const doc = new Doc(1);
@@ -22,6 +23,13 @@ function renderDocument(url: string, kind?: string) {
 }
 
 describe("untrusted document links in the editor", () => {
+  it("copies internal links as absolute addresses while rejecting unsafe links", () => {
+    expect(copyableURL("#/doc/42", "https://jiange.test/app/#/doc/1")).toBe("https://jiange.test/app/#/doc/42");
+    expect(copyableURL("#/s/token", "https://jiange.test/#/doc/1")).toBe("https://jiange.test/#/s/token");
+    expect(copyableURL("https://example.test/path", "https://jiange.test/")).toBe("https://example.test/path");
+    expect(copyableURL("javascript:alert(1)", "https://jiange.test/")).toBeUndefined();
+    expect(copyableURL("#/doc/42", "invalid base")).toBeUndefined();
+  });
   it.each(["javascript:alert(1)", "data:text/html,bad", " JAVASCRIPT:alert(1)", "java\nscript:alert(1)", "//example.com/path"]) ("retains content without linking %s", (url) => {
     const html = renderDocument(url);
     expect(html).toContain("文字链接");

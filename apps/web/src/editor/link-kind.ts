@@ -10,7 +10,7 @@ export function toggleTextLink(tx: Tx, selection: Sel, value: string): "applied"
   const segments = blocks.filter((block) => !isSourceBlock(tx.doc, block)).map((block) => ({ block, from: eqId(block, start.b) ? start.o : 0, to: eqId(block, end.b) ? end.o : len(tx.doc, block) })).filter((part) => part.to > part.from);
   if (!segments.length) return "blocked";
   const chars = segments.flatMap((part) => tx.doc.richChars(part.block).slice(part.from, part.to));
-  if (chars.some((char) => !!char.marks.math || isDocumentReferenceMarks(char.marks))) return "blocked";
+  if (chars.some((char) => !!char.marks.math || !!char.marks.mention || isDocumentReferenceMarks(char.marks))) return "blocked";
   const remove = chars.every((char) => char.marks.link === href);
   for (const part of segments) {
     tx.format(part.block, part.from, part.to, "link", remove ? null : href);

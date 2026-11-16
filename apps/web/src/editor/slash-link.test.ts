@@ -72,6 +72,19 @@ describe("slash link insertion", () => {
     tx.format(block, 0, 2, "link", "#/doc/12"); tx.format(block, 0, 2, "linkKind", "reference");
     expect(captureInlineLinkSelection(doc, { a: { b: block, o: 0 }, f: { b: block, o: 1 } })).toBeNull();
     expect(captureInlineLink(doc, { b: block, o: 1 })).toBeNull();
+    expect(captureInlineLinkSelection(doc, { a: { b: block, o: 1 }, f: { b: block, o: 1 } })).toBeNull();
+  });
+  it("protects member mentions at capture and if added while the dialog is open", () => {
+    const { doc, block } = fixture("@小简"), selection = { a: { b: block, o: 0 }, f: { b: block, o: 3 } };
+    const before = captureInlineLinkSelection(doc, selection)!;
+    new Tx(doc).format(block, 0, 3, "mention", "7");
+    expect(captureInlineLinkSelection(doc, selection)).toBeNull();
+    expect(captureInlineLink(doc, { b: block, o: 1 })).toBeNull();
+    expect(captureInlineLinkSelection(doc, { a: { b: block, o: 1 }, f: { b: block, o: 1 } })).toBeNull();
+    const tx = new Tx(doc);
+    expect(insertInlineLink(tx, before, "更改名字", "https://example.test/")).toBeNull();
+    expect(tx.ops).toHaveLength(0);
+    expect(doc.text(block)).toBe("@小简");
   });
   it("rejects a changed link classification while the form is open", () => {
     const { doc, block } = fixture("链接"), anchor = captureInlineLinkSelection(doc, { a: { b: block, o: 0 }, f: { b: block, o: 2 } })!;
