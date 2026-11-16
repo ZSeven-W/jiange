@@ -8,8 +8,8 @@ import { publicBlockKey, publicBlockLink } from "./public-block-links";
 /** Explain a failed public link without discarding its token on sign-in. */
 export function PublicDocMessage({ issue, token, onRetry }: { issue: PublicIssue; token: string; onRetry: () => void }) {
   return <div className="py-24 text-center">
-    <p className="text-[15px] text-muted-foreground">{issue === "login" ? "此链接需要登录后访问" : issue === "expired" ? "链接已失效或已关闭分享" : issue === "unsupported_table" ? "当前版本无法安全显示此文档中的表格内容，请联系文档所有者。" : "暂时无法连接服务器"}</p>
-    {issue === "login" ? <a href={`#/s/${encodeURIComponent(token)}`} className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-[13px] text-white">登录后访问</a> : issue === "temporary" ? <button type="button" onClick={onRetry} className="mt-4 rounded-md bg-primary px-4 py-2 text-[13px] text-white">重试</button> : <a href="#/" className="mt-4 inline-block text-[13px] text-primary">返回主页</a>}
+    <p className="text-[15px] text-muted-foreground">{issue === "login" ? "此链接需要登录后访问" : issue === "expired" ? "链接已失效或已关闭分享" : issue === "unsupported_table" ? "当前版本无法安全显示此文档中的表格内容，请联系文档所有者。" : issue === "table_unavailable" ? "表格数据暂时无法安全显示，请稍后重试或联系文档所有者。" : "暂时无法连接服务器"}</p>
+    {issue === "login" ? <a href={`#/s/${encodeURIComponent(token)}`} className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-[13px] text-white">登录后访问</a> : issue === "temporary" || issue === "table_unavailable" ? <button type="button" onClick={onRetry} className="mt-4 rounded-md bg-primary px-4 py-2 text-[13px] text-white">重试</button> : <a href="#/" className="mt-4 inline-block text-[13px] text-primary">返回主页</a>}
   </div>;
 }
 

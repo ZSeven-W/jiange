@@ -300,7 +300,32 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 	if rejectUnsupportedTableView(w, doc) {
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "cover": cover, "view": doc.View()})
+	view, projectionErr := publicTableView(doc.View())
+	// Projection can be expensive for large tables. Refresh policy and token
+	// after it completes so a concurrent revocation is not bypassed.
+	d, err = s.Store.GetDocSystem(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	currentID, currentRole, err = s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, store.ErrNotFound) || err == nil && (currentID != id || currentRole != "anon") {
+		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if projectionErr != nil {
+		httpx.Error(w, http.StatusConflict, "table_unavailable", "表格数据暂无法安全显示，请联系文档所有者")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "cover": cover, "view": view})
 }
 
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {

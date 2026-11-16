@@ -13,7 +13,7 @@ export interface PublicSnapshot {
   view: DocView;
 }
 
-export type PublicIssue = "login" | "expired" | "temporary" | "unsupported_table";
+export type PublicIssue = "login" | "expired" | "temporary" | "unsupported_table" | "table_unavailable";
 export type PublicOutcome = { snapshot: PublicSnapshot } | { issue: PublicIssue };
 export interface PublicDocState {
   token: string;
@@ -54,6 +54,7 @@ export async function fetchPublicDoc(token: string, signal: AbortSignal): Promis
     if (response.status === 409) {
       const error: unknown = await response.json().catch(() => null);
       if (error && typeof error === "object" && "error" in error && error.error === "table_unsupported") return { issue: "unsupported_table" };
+      if (error && typeof error === "object" && "error" in error && error.error === "table_unavailable") return { issue: "table_unavailable" };
     }
     if (!response.ok) return { issue: "temporary" };
     const value: unknown = await response.json();

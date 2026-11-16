@@ -21,5 +21,8 @@ describe("public document error actions", () => {
     const unsupported = renderToStaticMarkup(<PublicDocMessage issue="unsupported_table" token="abc" onRetry={() => {}} />);
     expect(unsupported).toContain("无法安全显示此文档中的表格内容");
     expect(unsupported).not.toContain("暂时无法连接服务器");
+    const tableUnavailable = renderToStaticMarkup(<PublicDocMessage issue="table_unavailable" token="abc" onRetry={() => {}} />);
+    expect(tableUnavailable).toContain("表格数据暂时无法安全显示");
+    expect(tableUnavailable).toContain("重试");
   });
 });
