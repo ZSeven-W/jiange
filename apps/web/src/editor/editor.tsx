@@ -57,7 +57,8 @@ import { ImageBlock } from "./image-block";
 import { TableBlock, type TableReorderSession, type TableResizeSession } from "./table-block";
 import { equalizedTableWidths, parseTableWidths, updatedSelectedTableWidths, validTableWidths, visibleTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
-import { applyTableOp, coverMap, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { applyTableOp, coverMap, parseMerges, parseMergesStrict, planSelectionDelete, planTableAxisDelete, planTableReorder, remapWidths, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { planAnchorFormats } from "./table-anchor-transfer";
 import { alignmentCells, fillCells, readTableAlignments, readTableFills, remapTableFills, tableFormatCells, type TableFormatTarget } from "./table-fill";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipboard";
@@ -2424,6 +2425,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               const migrationWrites = isCellTable(current) ? null : cellTableWrites(current, previous, doc.client);
               const virtualProps = migrationWrites ? { ...current, ...migrationWrites } : current;
               let structuralWrites: Record<string, string> | null = null;
+              let anchorFormats: Extract<ReturnType<typeof planAnchorFormats>, { ok: true }> | null = null;
               if (stableStructure && (!tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("tableWidths") !== tableSnapshot.widths || version("tbl.rows") !== tableSnapshot.rows || version("tbl.cols") !== tableSnapshot.cols || tableDataOf(current) !== tableDataOf(info.props))) { setColumnNotice("表格结构已变化，请重新操作。"); return "表格结构已变化，请重新操作。"; }
               if (stableMove) {
                 const sourceMerges = parseMergesStrict(current.tableMerges, previous.length, previous[0]?.length ?? 0);
@@ -2434,8 +2436,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               } else if (axisEdit) {
                 const sourceMerges = parseMergesStrict(current.tableMerges, previous.length, previous[0]?.length ?? 0);
                 if (!sourceMerges || !validTableWidths(current.tableWidths ?? "")) { setColumnNotice("表格结构或列宽无效，未修改表格。"); return "表格结构或列宽无效，未修改表格。"; }
-                const plan = applyTableOp(previous, sourceMerges, axisEdit);
+                const deletion = axisEdit.kind === "deleteRow" || axisEdit.kind === "deleteCol" ? planTableAxisDelete(previous, sourceMerges, axisEdit) : null;
+                if (deletion && !deletion.ok) return deletion.message;
+                const plan = deletion?.ok ? deletion : applyTableOp(previous, sourceMerges, axisEdit);
                 if (JSON.stringify(plan.rows) !== JSON.stringify(rows) || JSON.stringify(plan.merges) !== JSON.stringify(merges)) { setColumnNotice("表格结构已变化，请重新操作。"); return "表格结构已变化，请重新操作。"; }
+                if (deletion?.ok && deletion.transfers.length) {
+                  const formats = planAnchorFormats(virtualProps, deletion.transfers);
+                  if (!formats.ok) return formats.message;
+                  anchorFormats = formats;
+                }
                 const axis = axisEdit.kind === "insertRow" || axisEdit.kind === "deleteRow" ? "row" : "column";
                 if (axisEdit.kind === "insertRow" || axisEdit.kind === "insertCol") {
                   const count = axis === "row" ? previous.length : previous[0].length;
@@ -2454,7 +2463,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               const migration = new Tx(doc);
               if (migrationWrites) applyTableWrites(migration, b, current, migrationWrites);
               const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
-              if (structuralWrites) applyTableWrites(tx, b, doc.blockInfo(b).props, structuralWrites);
+              if (structuralWrites) {
+                applyTableWrites(tx, b, doc.blockInfo(b).props, structuralWrites);
+                if (anchorFormats) {
+                  writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
+                  setTableCellFills(tx, b, anchorFormats.fills);
+                  setTableCellAlignments(tx, b, anchorFormats.alignments);
+                }
+              }
               else writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
               if (fills) setTableCellFills(tx, b, fillCells(fills));
               if (horizontal && vertical) setTableCellAlignments(tx, b, [...alignmentCells(horizontal, "horizontal"), ...alignmentCells(vertical, "vertical")]);
@@ -3060,7 +3076,7 @@ interface BlockProps {
   canCopy?: boolean;
   canDownload?: boolean;
   onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
-  onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => void;
+  onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => string | null | void;
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 

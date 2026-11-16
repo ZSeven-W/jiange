@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, reorderIndices, splitCell, type Merge } from "./table-ops";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, parseMerges, parseMergesStrict, planSelectionDelete, planTableAxisDelete, planTableReorder, remapWidths, reorderIndices, splitCell, type Merge } from "./table-ops";
 
 const grid = () => [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]];
 
 describe("table structure ops", () => {
+  it("moves a surviving merged anchor when its first row or column is deleted", () => {
+    const rows = [["标题", "X", "状态"], ["", "Y", "完成"], ["后续", "Z", "待办"]];
+    const original = JSON.stringify(rows);
+    expect(planTableAxisDelete(rows, [[0,0,2,1]], { kind: "deleteRow", index: 0 })).toEqual({ ok: true, rows: [["标题", "Y", "完成"], ["后续", "Z", "待办"]], merges: [], transfers: [{ fromRow: 0, fromCol: 0, toRow: 1, toCol: 0, newRow: 0, newCol: 0 }] });
+    expect(JSON.stringify(rows)).toBe(original);
+    expect(planTableAxisDelete([["A", "", "C"], ["D", "E", "F"]], [[0,0,1,2]], { kind: "deleteCol", index: 0 })).toMatchObject({ ok: true, rows: [["A", "C"], ["E", "F"]], merges: [] });
+    expect(planTableAxisDelete([["A", "", "C"], ["", "", "F"], ["G", "H", "I"]], [[0,0,2,2]], { kind: "deleteRow", index: 0 })).toMatchObject({ ok: true, rows: [["A", "", "F"], ["G", "H", "I"]], merges: [[0,0,1,2]] });
+  });
+  it("keeps unrelated anchors and refuses hidden text or invalid geometry", () => {
+    const rows = [["A", "X"], ["hidden", "Y"], ["C", "Z"]];
+    expect(planTableAxisDelete(rows, [[0,0,2,1]], { kind: "deleteRow", index: 0 })).toMatchObject({ ok: false, message: expect.stringContaining("隐藏内容") });
+    expect(rows[1][0]).toBe("hidden");
+    expect(planTableAxisDelete(rows, [[0,0,2,1]], { kind: "deleteRow", index: 2 })).toMatchObject({ ok: true, rows: [["A", "X"], ["hidden", "Y"]], merges: [[0,0,2,1]], transfers: [] });
+    expect(planTableAxisDelete(rows, [[0,0,4,1]], { kind: "deleteRow", index: 0 })).toMatchObject({ ok: false });
+    expect(planTableAxisDelete([["A"]], [], { kind: "deleteRow", index: 0 })).toMatchObject({ ok: false });
+    const two = [["one", "two"], ["", "hidden"], ["last", "last"]];
+    expect(planTableAxisDelete(two, [[0,0,2,1],[0,1,2,1]], { kind: "deleteRow", index: 0 })).toMatchObject({ ok: false });
+    expect(two[1]).toEqual(["", "hidden"]);
+  });
   it("reorders contiguous and nonadjacent axes without changing their relative order", () => {
     expect(reorderIndices(5,[1,3],0)).toEqual([1,3,0,2,4]);
     expect(reorderIndices(5,[1,2],5)).toEqual([0,3,4,1,2]);

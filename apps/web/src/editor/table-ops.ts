@@ -17,6 +17,7 @@ export type TableOp =
 /** 列宽：null 表示按内容自动。 */
 export type Widths = (number | null)[];
 export interface CellRange { r0: number; c0: number; r1: number; c1: number }
+export interface TableAnchorTransfer { fromRow: number; fromCol: number; toRow: number; toCol: number; newRow: number; newCol: number }
 
 export const normRange = (a: CellRange): CellRange => ({ r0: Math.min(a.r0, a.r1), c0: Math.min(a.c0, a.c1), r1: Math.max(a.r0, a.r1), c1: Math.max(a.c0, a.c1) });
 
@@ -179,6 +180,26 @@ export function applyTableOp(rows: string[][], merges: Merge[], op: TableOp): { 
     case "clearCol":
       return { rows: rows.map((row) => row.map((cell, j) => (j === op.index ? "" : cell))), merges };
   }
+}
+
+/** Keep a merged cell's visible anchor when only its first row or column is removed. */
+export function planTableAxisDelete(rows: string[][], merges: Merge[], op: Extract<TableOp, { kind: "deleteRow" | "deleteCol" }>):
+  | { ok: true; rows: string[][]; merges: Merge[]; transfers: TableAnchorTransfer[] }
+  | { ok: false; message: string } {
+  const cols = rows[0]?.length ?? 0, count = op.kind === "deleteRow" ? rows.length : cols;
+  if (!count || rows.some(row => row.length !== cols || row.some(cell => typeof cell !== "string")) || !Number.isSafeInteger(op.index) || op.index < 0 || op.index >= count || count <= 1) return { ok: false, message: "无法删除最后一行或最后一列。" };
+  if (!parseMergesStrict(JSON.stringify(merges), rows.length, cols)) return { ok: false, message: "表格合并数据无效，未删除行列。" };
+  const next = applyTableOp(rows, merges, op), result = next.rows.map(row => [...row]), transfers: TableAnchorTransfer[] = [];
+  for (const [r, c, rs, cs] of merges) {
+    const row = op.kind === "deleteRow" && op.index === r && rs > 1;
+    const col = op.kind === "deleteCol" && op.index === c && cs > 1;
+    if (!row && !col) continue;
+    const toRow = r + (row ? 1 : 0), toCol = c + (col ? 1 : 0), newRow = r, newCol = c;
+    if (rows[toRow]?.[toCol]) return { ok: false, message: "合并区域中有隐藏内容，请先拆分单元格再删除。" };
+    result[newRow][newCol] = rows[r][c];
+    transfers.push({ fromRow: r, fromCol: c, toRow, toCol, newRow, newCol });
+  }
+  return { ok: true, rows: result, merges: next.merges, transfers };
 }
 
 /** 相邻行/列交换；任一侧被跨行（跨列）合并块覆盖时不可移动。 */

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, Copy, Eraser, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
-import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, planTableReorder, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, planTableAxisDelete, planTableReorder, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { formatTableTSV } from "./table-clipboard";
 import { parseTableRichHTML, tableRichHTML, type RichTableClipboard } from "./table-rich-clipboard";
 import { parseExternalTableHTML } from "./table-external-clipboard";
@@ -71,7 +71,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   onBeginReorder?: () => TableReorderSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
-  onChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => void;
+  onChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => string | null | void;
   onPasteCells?: (r: number, c: number, text: string, literal?: boolean, rich?: RichTableClipboard) => string | null;
   onCutCells?: (range: CellRange) => string | null;
   onClearCells?: (range: CellRange) => string | null;
@@ -535,7 +535,14 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
-  const apply = (op: TableOp) => { const res = applyTableOp(rows, merges, op); onChange?.(res.rows, res.merges, remapWidths(widths, op, nCols), op); setGrip(null); setRange(null); setTouchSelecting(false); };
+  const apply = (op: TableOp) => {
+    const deletion = op.kind === "deleteRow" || op.kind === "deleteCol" ? planTableAxisDelete(rows, merges, op) : null;
+    if (deletion && !deletion.ok) { setClipboardNotice(deletion.message); setGrip(null); return; }
+    const result = deletion?.ok ? deletion : applyTableOp(rows, merges, op);
+    const error = onChange?.(result.rows, result.merges, remapWidths(widths, op, nCols), op);
+    if (error) { setClipboardNotice(error); setGrip(null); return; }
+    setGrip(null); setRange(null); setTouchSelecting(false);
+  };
   const merge = () => { if (!selected) return; const res = mergeCells(rows, merges, selected); if (res) onChange?.(res.rows, res.merges); setGrip(null); setRange(null); setTouchSelecting(false); };
   const split = () => { if (!focus) return; const m = splitCell(merges, focus.r, focus.c); if (m) onChange?.(rows, m); };
   const renderGrip = (kind: "row" | "col", index: number, weight: number) => {
