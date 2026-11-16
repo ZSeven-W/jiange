@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/server/collab"
@@ -29,6 +30,9 @@ func checkDocumentMentions(t *testing.T, st store.Store) {
 	notes, err := st.Notifications(ctx, e.users[1].ID, 20)
 	if err != nil || len(notes) != 1 || notes[0].CommentID != nil || notes[0].Kind != "mention" {
 		t.Fatalf("notice: %+v %v", notes, err)
+	}
+	if notes[0].AnchorBlock != paragraph.Key() || notes[0].AnchorChar == "" || notes[0].AnchorEpoch < 1 {
+		t.Fatalf("missing mention anchor: %+v", notes[0])
 	}
 	comments, err := st.Comments(ctx, doc)
 	if err != nil || len(comments) != 0 {
@@ -100,6 +104,56 @@ func checkDocumentMentions(t *testing.T, st store.Store) {
 	if err != nil || len(notes) != 0 {
 		t.Fatalf("revoked user still sees notice: %+v %v", notes, err)
 	}
+}
+
+func checkLargeMentionBatch(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	e := newEnv(t, st, 1000)
+	doc := e.newDoc()
+	c := e.client(0, doc)
+	c.edit(func(d *collab.Doc, id uint64) []collab.Op {
+		insert := d.InsertText(id, paragraph, 0, strings.Repeat("@人 ", 150))
+		ops := []collab.Op{insert}
+		value := fmt.Sprint(e.users[1].ID)
+		for i := 0; i < 150; i++ {
+			start := collab.OpID{Client: id, Clock: insert.ID.Clock + uint64(i*3)}
+			end := collab.OpID{Client: id, Clock: start.Clock + 1}
+			mark := collab.Op{T: collab.TMark, ID: collab.OpID{Client: id, Clock: d.Clock() + 1}, Block: paragraph, Key: "mention", Value: &value, Start: collab.Anchor{Char: start}, End: collab.Anchor{Char: end, Side: 1}}
+			d.Apply(mark)
+			ops = append(ops, mark)
+		}
+		return ops
+	})
+	waitFor(t, "large mention batch", c.idle)
+	notes, err := st.Notifications(ctx, e.users[1].ID, 200)
+	if err != nil || len(notes) != 150 {
+		t.Fatalf("lost batch notifications: %d %v", len(notes), err)
+	}
+	seen := map[string]bool{}
+	for _, n := range notes {
+		if n.AnchorBlock != paragraph.Key() || n.AnchorEpoch < 1 || n.AnchorChar == "" || seen[n.AnchorChar] {
+			t.Fatalf("bad anchor: %+v", n)
+		}
+		seen[n.AnchorChar] = true
+	}
+}
+
+func TestMemoryLargeDocumentMentionBatch(t *testing.T) { checkLargeMentionBatch(t, store.NewMemory()) }
+func TestPostgresLargeDocumentMentionBatch(t *testing.T) {
+	url := os.Getenv("JIANGE_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("JIANGE_TEST_DATABASE_URL not set")
+	}
+	pg, err := store.NewPostgres(context.Background(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	if _, err = migrate.Up(context.Background(), pg.Pool); err != nil {
+		t.Fatal(err)
+	}
+	checkLargeMentionBatch(t, pg)
 }
 
 func TestMemoryDocumentMentions(t *testing.T) { checkDocumentMentions(t, store.NewMemory()) }

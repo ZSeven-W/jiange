@@ -1,6 +1,9 @@
 package collab
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMentionTargetUsesVisibleEffectiveMark(t *testing.T) {
 	d := NewDoc()
@@ -22,6 +25,31 @@ func TestMentionTargetUsesVisibleEffectiveMark(t *testing.T) {
 	d.DeleteText(4, block.ID, 0, 1)
 	if d.MentionTarget(block.ID, overlay.ID) != 0 {
 		t.Fatal("deleted @ still produced a mention")
+	}
+}
+
+func TestMentionTargetsHandlesLargeBatchWithoutLosingEntries(t *testing.T) {
+	d := NewDoc()
+	block := d.CreateBlock(4, Root, "V", "paragraph")
+	insert := d.InsertText(4, block.ID, 0, strings.Repeat("@人 ", 150))
+	value := "12"
+	refs := make([]MentionRef, 0, 150)
+	for i := 0; i < 150; i++ {
+		start := OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + uint64(3*i)}
+		end := OpID{Client: start.Client, Clock: start.Clock + 1}
+		mark := Op{T: TMark, ID: d.next(4, 1), Block: block.ID, Key: "mention", Value: &value, Start: Anchor{Char: start}, End: Anchor{Char: end, Side: 1}}
+		d.Apply(mark)
+		refs = append(refs, MentionRef{Block: block.ID, Mark: mark.ID})
+	}
+	matches := d.MentionTargets(refs)
+	if len(matches) != len(refs) {
+		t.Fatalf("only %d of %d mentions found", len(matches), len(refs))
+	}
+	for i, ref := range refs {
+		want := OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + uint64(3*i)}
+		if got := matches[ref]; got.RecipientID != 12 || got.FirstChar != want {
+			t.Fatalf("mention %d: %+v", i, got)
+		}
 	}
 }
 
@@ -49,5 +77,37 @@ func TestMentionTargetRejectsHiddenAndInvalidMarks(t *testing.T) {
 	d.Apply(Op{T: TBlockDelete, ID: d.next(4, 1), Block: parent.ID})
 	if d.MentionTarget(block.ID, mark.ID) != 0 {
 		t.Fatal("hidden mention used")
+	}
+}
+
+func TestMentionTargetRejectsHiddenFormulaAndDocumentLink(t *testing.T) {
+	for _, key := range []string{"math", "link"} {
+		t.Run(key, func(t *testing.T) {
+			d := NewDoc()
+			block := d.CreateBlock(4, Root, "V", "paragraph")
+			insert := d.InsertText(4, block.ID, 0, "@人")
+			value := "2"
+			mark := Op{T: TMark, ID: d.next(4, 1), Block: block.ID, Key: "mention", Value: &value, Start: Anchor{Char: insert.ID}, End: Anchor{Char: OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + 1}, Side: 1}}
+			d.Apply(mark)
+			hidden := "x^2"
+			if key == "link" {
+				hidden = "#/doc/42"
+			}
+			over := mark
+			over.ID = d.next(4, 1)
+			over.Key = key
+			over.Value = &hidden
+			d.Apply(over)
+			if d.MentionTarget(block.ID, mark.ID) != 0 {
+				t.Fatal("invisible mention notified")
+			}
+			clear := over
+			clear.ID = d.next(4, 1)
+			clear.Value = nil
+			d.Apply(clear)
+			if d.MentionTarget(block.ID, mark.ID) != 2 {
+				t.Fatal("visible mention not restored")
+			}
+		})
 	}
 }

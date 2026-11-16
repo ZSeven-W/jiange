@@ -317,6 +317,9 @@ export interface AppNotification {
   read: boolean;
   createdAt: string;
   preview?: string;
+  anchorBlock?: string;
+  anchorChar?: string;
+  anchorEpoch?: number;
 }
 export type LinkPreview = { url: string; title: string; description?: string; icon?: string; siteName?: string };
 export const linkApi = {

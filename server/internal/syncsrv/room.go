@@ -569,17 +569,16 @@ func (r *room) handleOps(ctx context.Context, c *conn, ops []collab.Op) error {
 		// Derive notices from the candidate state; the store inserts them in the
 		// same transaction as the accepted mark, never from a client message.
 		mentions := make([]store.DocumentMention, 0)
-		checkedMentions := 0
+		refs := make([]collab.MentionRef, 0)
 		for _, op := range accepted {
 			if op.T != collab.TMark || op.Key != "mention" {
 				continue
 			}
-			checkedMentions++
-			if checkedMentions > 64 {
-				break
-			}
-			if recipient := r.doc.MentionTarget(op.Block, op.ID); recipient > 0 {
-				mentions = append(mentions, store.DocumentMention{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), RecipientID: recipient})
+			refs = append(refs, collab.MentionRef{Block: op.Block, Mark: op.ID})
+		}
+		for ref, target := range r.doc.MentionTargets(refs) {
+			if target.RecipientID > 0 {
+				mentions = append(mentions, store.DocumentMention{ClientID: int64(ref.Mark.Client), Clock: int64(ref.Mark.Clock), RecipientID: target.RecipientID, Block: ref.Block.Key(), Character: target.FirstChar.Key(), Epoch: r.epoch})
 			}
 		}
 		writeCtx = store.WithDocumentMentions(writeCtx, mentions)

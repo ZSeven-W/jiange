@@ -32,6 +32,8 @@ import { DocumentInfoDialog } from "./document-info-dialog";
 import { documentTextStats } from "./doc-info-stats";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./notification-bell";
+import { mentionNotificationHash } from "@/lib/mention-notification-link";
+import { navigateDocumentHash } from "@/editor/block-handle";
 import { Button } from "@/components/ui/button";
 import { ShareDialog } from "@/components/share-dialog";
 import { DocumentIconEditor } from "@/components/document-icon-editor";
@@ -1449,7 +1451,7 @@ function TopBar({
           <BuildingIcon className="size-4" />分享
         </Button>
         {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
-        <NotificationBell onOpenDoc={(id) => (location.hash = `#/doc/${id}`)} />
+        <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
         <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>

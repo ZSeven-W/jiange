@@ -6,6 +6,7 @@ import type { SyncDoc } from "@/lib/use-sync-doc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { safeURL } from "@/lib/safe-url";
+import { parseMentionNotificationHash } from "@/lib/mention-notification-link";
 import {
   activeMarks,
   bodyBlocks,
@@ -254,6 +255,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const [conflictDraft, setConflictDraft] = useState<{ text: string; message: string } | null>(null);
   const [slashLink, setSlashLink] = useState<{ captured: InlineLinkAnchor; client: SyncDoc["client"]; x: number; y: number; initialText?: string } | null>(null);
   const [columnNotice, setColumnNotice] = useState("");
+  const [mentionNavigationNotice, setMentionNavigationNotice] = useState("");
   const [batchSyncNotice, setBatchSyncNotice] = useState<"undo" | "redo" | null>(null);
   const [tableHistoryConflict, setTableHistoryConflict] = useState<{ client: SyncDoc["client"]; key: string; redo: boolean; revision: number; reason?: "size" | "unsupported" } | null>(null);
   useEffect(() => {
@@ -1001,10 +1003,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
 
   // 打开带 ?block= 的块链接时滚动到该块并短暂高亮。
   const linkedDone = useRef<string | null>(null);
-  const linkedHighlight = useRef<{ element: HTMLElement; timer: number } | null>(null);
+  const linkedHighlight = useRef<{ element: HTMLElement; timer: number; attribute: string } | null>(null);
   useEffect(() => {
-    const clear = () => { const current = linkedHighlight.current; if (current) { window.clearTimeout(current.timer); current.element.removeAttribute("data-block-linked"); linkedHighlight.current = null; } };
-    const revisit = () => { linkedDone.current = null; clear(); force((value) => value + 1); };
+    const clear = () => { const current = linkedHighlight.current; if (current) { window.clearTimeout(current.timer); current.element.removeAttribute(current.attribute); linkedHighlight.current = null; } };
+    const revisit = () => { linkedDone.current = null; clear(); setMentionNavigationNotice(""); force((value) => value + 1); };
     window.addEventListener("hashchange", revisit);
     window.addEventListener(REVISIT_DOCUMENT_LINK, revisit);
     return () => { window.removeEventListener("hashchange", revisit); window.removeEventListener(REVISIT_DOCUMENT_LINK, revisit); clear(); };
@@ -1012,14 +1014,32 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   useEffect(() => {
     const hash = window.location.hash, route = /^#\/doc\/(\d+)(?:\?|$)/.exec(hash);
     const key = route && Number(route[1]) === sync.client.docId ? linkedBlock(hash) : null;
-    if (!key || linkedDone.current === key) return;
+    if (!key || linkedDone.current === hash) return;
+    const params = new URLSearchParams(hash.split("?")[1] ?? "");
+    if (params.has("mention")) {
+      const anchor = parseMentionNotificationHash(hash, sync.client.docId), doc = sync.client.doc;
+      if (!anchor || !doc || !sync.client.caughtUp || sync.client.blocked || sync.client.epoch === null || !userId) return;
+      if (anchor.epoch !== sync.client.epoch) { linkedDone.current = hash; setMentionNavigationNotice("该提及来自旧的文档历史，无法定位。"); return; }
+      const [bc, bt] = anchor.block.split(":").map(Number), block = { client: bc, clock: bt };
+      if (!doc.hasBlock(block) || !doc.view().blocks.some((item) => item.id === anchor.block)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被删除。"); return; }
+      const ids = doc.visibleIds(block), index = ids.findIndex((id) => idKey(id) === anchor.char);
+      const marks = index < 0 ? undefined : doc.richChars(block)[index]?.marks;
+      if (!marks || marks.mention !== String(userId) || marks.math || marks.link?.startsWith("#/doc/")) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被修改或删除。"); return; }
+      const point = root.current && posToDom(root.current, { b: block, o: index + 1 });
+      const node = point && (point.node.nodeType === Node.ELEMENT_NODE ? point.node as Element : point.node.parentElement);
+      const el = node?.closest<HTMLElement>(`[data-member="${userId}"]`);
+      if (!el || !root.current?.contains(el)) return;
+      linkedDone.current = hash; setMentionNavigationNotice(""); el.scrollIntoView({ block: "center", inline: "nearest" }); el.setAttribute("data-mention-located", "true");
+      const timer = window.setTimeout(() => { el.removeAttribute("data-mention-located"); if (linkedHighlight.current?.timer === timer) linkedHighlight.current = null; }, 2500);
+      linkedHighlight.current = { element: el, timer, attribute: "data-mention-located" }; return;
+    }
     const el = root.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(key)}"]`);
     if (!el) return;
-    linkedDone.current = key;
+    linkedDone.current = hash;
     el.scrollIntoView({ block: "center" });
     el.setAttribute("data-block-linked", "true");
     const timer = window.setTimeout(() => { el.removeAttribute("data-block-linked"); if (linkedHighlight.current?.timer === timer) linkedHighlight.current = null; }, 2000);
-    linkedHighlight.current = { element: el, timer };
+    linkedHighlight.current = { element: el, timer, attribute: "data-block-linked" };
   });
 
   /** 流程图块：双击弹多行编辑框改写 Mermaid 源码。 */
@@ -2273,6 +2293,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
+      {mentionNavigationNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{mentionNavigationNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setMentionNavigationNotice("")}>关闭</button></div>}
       {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对布局操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
@@ -2306,7 +2327,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         role="textbox"
         aria-multiline
         data-editor
-        className={cn("outline-none", (columnNotice || alignmentPending || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
+        className={cn("outline-none", (columnNotice || mentionNavigationNotice || alignmentPending || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
         onKeyDown={onKeyDown}
         onCopy={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e); }}
         onCut={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e, true); }}

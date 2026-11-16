@@ -12,7 +12,11 @@ import (
 
 // DocumentMention is derived by the sync server from an effective, visible
 // mention mark, never from caller-supplied notification content.
-type DocumentMention struct{ ClientID, Clock, RecipientID int64 }
+type DocumentMention struct {
+	ClientID, Clock, RecipientID int64
+	Block, Character             string
+	Epoch                        int64
+}
 type documentMentionsKey struct{}
 
 func WithDocumentMentions(ctx context.Context, values []DocumentMention) context.Context {
@@ -38,7 +42,7 @@ func committedDocumentMentions(ctx context.Context, ops []RawOp, seqs []int64, a
 			continue
 		}
 		decoded, err := collab.DecodeOps(raw.Bytes)
-		if err != nil || len(decoded) != 1 || decoded[0].T != collab.TMark || decoded[0].Key != "mention" || decoded[0].Value == nil || *decoded[0].Value != strconv.FormatInt(v.RecipientID, 10) || decoded[0].ID.Client != uint64(v.ClientID) || decoded[0].ID.Clock != uint64(v.Clock) {
+		if err != nil || len(decoded) != 1 || decoded[0].T != collab.TMark || decoded[0].Key != "mention" || decoded[0].Value == nil || *decoded[0].Value != strconv.FormatInt(v.RecipientID, 10) || decoded[0].ID.Client != uint64(v.ClientID) || decoded[0].ID.Clock != uint64(v.Clock) || v.Block != "" && v.Block != decoded[0].Block.Key() {
 			continue
 		}
 		seen[key] = true
@@ -68,11 +72,17 @@ func (m *Memory) addDocumentMentionsLocked(ctx context.Context, doc *memDoc, ops
 		name = u.Name
 	}
 	var notes []Notification
+	authorized := map[int64]bool{}
+	checked := map[int64]bool{}
 	for _, mention := range committedDocumentMentions(ctx, ops, seqs, actor) {
-		if m.userByID(mention.RecipientID) == nil || doc.deleted || !m.driveValidChainLocked(doc, doc.meta.WorkspaceID, false) || RoleRank(m.roleLocked(mention.RecipientID, doc)) < RoleRank(RoleView) {
+		if !checked[mention.RecipientID] {
+			checked[mention.RecipientID] = true
+			authorized[mention.RecipientID] = m.userByID(mention.RecipientID) != nil && !doc.deleted && m.driveValidChainLocked(doc, doc.meta.WorkspaceID, false) && RoleRank(m.roleLocked(mention.RecipientID, doc)) >= RoleRank(RoleView)
+		}
+		if !authorized[mention.RecipientID] {
 			continue
 		}
-		notes = append(notes, Notification{UserID: mention.RecipientID, DocID: doc.meta.ID, ActorID: actor, ActorName: name, Kind: "mention", Preview: "在文档正文中提及了你"})
+		notes = append(notes, Notification{UserID: mention.RecipientID, DocID: doc.meta.ID, ActorID: actor, ActorName: name, Kind: "mention", Preview: "在文档正文中提及了你", AnchorBlock: mention.Block, AnchorChar: mention.Character, AnchorEpoch: mention.Epoch})
 	}
 	m.publishCommentNotificationsLocked(notes, doc.meta.UpdatedAt)
 }
@@ -80,28 +90,44 @@ func (m *Memory) addDocumentMentionsLocked(ctx context.Context, doc *memDoc, ops
 // PostgreSQL caller holds the head and actor's authorization locks, and inserts
 // notices in the same transaction as the newly accepted mark operation.
 func insertDocumentMentionsTx(ctx context.Context, tx pgx.Tx, doc int64, ops []RawOp, seqs []int64, actor int64) error {
+	var recipients []int64
+	var blocks, chars []string
+	var epochs []int64
+	authorized := map[int64]bool{}
+	checked := map[int64]bool{}
 	for _, mention := range committedDocumentMentions(ctx, ops, seqs, actor) {
-		var exists int64
-		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR KEY SHARE`, mention.RecipientID).Scan(&exists)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if !checked[mention.RecipientID] {
+			checked[mention.RecipientID] = true
+			var exists int64
+			err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR KEY SHARE`, mention.RecipientID).Scan(&exists)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			role, _, kind, err := lockCopySource(ctx, tx, doc, mention.RecipientID)
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrForbidden) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			authorized[mention.RecipientID] = kind == "doc" && RoleRank(role) >= RoleRank(RoleView)
+		}
+		if !authorized[mention.RecipientID] {
 			continue
 		}
-		if err != nil {
-			return err
-		}
-		role, _, kind, err := lockCopySource(ctx, tx, doc, mention.RecipientID)
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrForbidden) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if kind != "doc" || RoleRank(role) < RoleRank(RoleView) {
-			continue
-		}
-		if _, err = tx.Exec(ctx, `INSERT INTO notifications(user_id,doc_id,actor_id,kind,preview) VALUES($1,$2,$3,'mention','在文档正文中提及了你')`, mention.RecipientID, doc, actor); err != nil {
-			return err
-		}
+		recipients = append(recipients, mention.RecipientID)
+		blocks = append(blocks, mention.Block)
+		chars = append(chars, mention.Character)
+		epochs = append(epochs, mention.Epoch)
 	}
-	return nil
+	if len(recipients) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO notifications(user_id,doc_id,actor_id,kind,preview,anchor_block,anchor_char,anchor_epoch)
+	 SELECT v.uid,$1,$2,'mention','在文档正文中提及了你',v.block,v.char,v.epoch
+	 FROM unnest($3::bigint[],$4::text[],$5::text[],$6::bigint[]) AS v(uid,block,char,epoch)`, doc, actor, recipients, blocks, chars, epochs)
+	return err
 }

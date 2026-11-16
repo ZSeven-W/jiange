@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { t, useI18n } from "@/lib/i18n";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { notificationsApi } from "@/lib/api";
+import { notificationsApi, type AppNotification } from "@/lib/api";
 import { BellIcon } from "@/components/feishu-icons";
 
 const KIND_LABEL: Record<string, string> = { mention: "提到了你", reply: "回复了你", resolve: "解决了你的评论" };
 // 渲染时经 t() 翻译。
 
 /** Top bell with unread badge; clicking opens the notification center. */
-export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => void }) {
+export function NotificationBell({ onOpenDoc }: { onOpenDoc: (notification: AppNotification) => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -52,7 +52,7 @@ export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => voi
                 onClick={() => {
                   if (!n.read) notificationsApi.markRead([n.id]).then(() => qc.invalidateQueries({ queryKey: ["notifications"] }));
                   setOpen(false);
-                  onOpenDoc(n.docId);
+                  onOpenDoc(n);
                 }}
                 data-notification={n.id}
               >

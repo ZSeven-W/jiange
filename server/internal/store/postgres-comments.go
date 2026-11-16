@@ -78,14 +78,14 @@ func (p *Postgres) Notifications(ctx context.Context, userID int64, limit int) (
 		CASE WHEN n.kind='doc' AND notice.comment_id IS NOT NULL THEN
 			COALESCE((SELECT CASE WHEN length(c.body)>60 THEN left(c.body,60)||'…' ELSE c.body END
 				FROM comments c WHERE c.id=notice.comment_id AND c.doc_id=n.id), '')
-		ELSE notice.preview END AS preview
+		ELSE notice.preview END AS preview, notice.anchor_block, notice.anchor_char, notice.anchor_epoch
 		FROM notifications notice JOIN nodes n ON n.id=notice.doc_id`+roleJoins+`
 		WHERE notice.user_id=$1 AND `+visibleDocumentNotification+` ORDER BY notice.id DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (n Notification, err error) {
-		err = r.Scan(&n.ID, &n.UserID, &n.DocID, &n.DocTitle, &n.ActorID, &n.ActorName, &n.CommentID, &n.Kind, &n.Read, &n.CreatedAt, &n.Preview)
+		err = r.Scan(&n.ID, &n.UserID, &n.DocID, &n.DocTitle, &n.ActorID, &n.ActorName, &n.CommentID, &n.Kind, &n.Read, &n.CreatedAt, &n.Preview, &n.AnchorBlock, &n.AnchorChar, &n.AnchorEpoch)
 		return
 	})
 }
