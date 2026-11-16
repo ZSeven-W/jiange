@@ -1186,7 +1186,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
-                resolveDocumentLink={(target, signal) => docsApi.pasteTarget(target, me.user.id, signal)}
+                resolveDocumentLink={(target, signal) => "id" in target ? docsApi.pasteTarget(target.id, me.user.id, signal) : docsApi.pasteShareTarget(target.token, me.user.id, signal, target.href.startsWith("#/p/"))}
                 upload={canEditContent ? (f, progress) => docsApi.upload(id, f, progress) : undefined}
                 copyClipboardAssets={canEditContent ? (source, ids, request, signal) => docsApi.copyClipboardAssets(id, source, ids, request, me.user.id, signal) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}

@@ -38,6 +38,8 @@ describe("untrusted document links in the editor", () => {
   it("keeps internal document mentions and validated video sources usable", () => {
     const internal = renderDocument("#/doc/42");
     expect(internal).toContain('href="#/doc/42" data-mention');
+    expect(renderDocument("#/s/aBc_123")).toContain('href="#/s/aBc_123" data-mention');
+    expect(renderDocument("#/p/aBc_123")).toContain('href="#/p/aBc_123" data-mention');
     const video = renderDocument("https://example.com/video.mp4");
     expect(video).toContain('src="https://example.com/video.mp4"');
   });

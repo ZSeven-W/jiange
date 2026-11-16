@@ -3,6 +3,7 @@ package collab
 import (
 	"container/heap"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,8 @@ type MentionMatch struct {
 	RecipientID int64
 	FirstChar   OpID
 }
+
+var mentionSharedDocumentLink = regexp.MustCompile(`^#/(s|p)/[A-Za-z0-9_-]{1,256}$`)
 
 type mentionInterval struct {
 	mark     markRec
@@ -139,7 +142,7 @@ func (d *Doc) MentionTargets(refs []MentionRef) map[MentionRef]MentionMatch {
 			if h := active["math"]; h.Len() > 0 && (*h)[0].mark.value != nil && *(*h)[0].mark.value != "" {
 				v.hidden = true
 			}
-			if h := active["link"]; h.Len() > 0 && (*h)[0].mark.value != nil && strings.HasPrefix(*(*h)[0].mark.value, "#/doc/") {
+			if h := active["link"]; h.Len() > 0 && (*h)[0].mark.value != nil && (strings.HasPrefix(*(*h)[0].mark.value, "#/doc/") || mentionSharedDocumentLink.MatchString(*(*h)[0].mark.value)) {
 				v.hidden = true
 			}
 			chars = append(chars, v)

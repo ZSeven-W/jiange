@@ -510,6 +510,10 @@ export const docsApi = {
     if (!result || result.id !== id || typeof result.title !== "string") throw new TypeError("无法确认文档名称");
     return result.title;
   }),
+  pasteShareTarget: (token: string, userId: number, signal: AbortSignal, publicLink = false) => request<{ id?: unknown; title?: unknown }>("GET", `/api/share/${encodeURIComponent(token)}/paste-target${publicLink ? "?public=1" : ""}`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then((result) => {
+    if (!result || !Number.isSafeInteger(result.id) || Number(result.id) <= 0 || typeof result.title !== "string") throw new TypeError("无法确认文档名称");
+    return result.title;
+  }),
   recent: () => request<{ docs: RecentDoc[] }>("GET", "/api/recent").then((r) => r.docs),
   recordVisit: (id: number) => request<void>("POST", `/api/docs/${id}/visit`),
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),

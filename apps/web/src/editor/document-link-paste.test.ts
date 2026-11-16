@@ -14,11 +14,17 @@ describe("pasted document links", () => {
     expect(clip[0].chars.every((c) => c.marks.link === target.href)).toBe(true);
     expect(documentLinkClip(target, "")?.[0].chars.map((c) => c.ch).join("")).toBe("未命名文档");
   });
+  it("preserves a share token in the reference", () => {
+    const target = parse("https://example.test/#/s/aBc_123")!;
+    expect(target).toEqual({ token: "aBc_123", href: "#/s/aBc_123" });
+    expect(documentLinkClip(target, "共享文档")?.[0].chars[0].marks.link).toBe("#/s/aBc_123");
+    expect(parse("https://example.test/#/p/aBc_123")).toEqual({ token: "aBc_123", href: "#/p/aBc_123" });
+  });
   it.each([
     "https://evil.test/#/doc/12", "https://example.test/other/#/doc/12",
     "https://example.test/?extra=1#/doc/12", "https://example.test/#/doc/12?block=1%3A2&x=1",
     "https://example.test/#/doc/12?block=bad", "https://example.test/#/doc/012",
-    "https://example.test/#/doc/9007199254740992", "https://example.test/#/s/token",
+    "https://example.test/#/doc/9007199254740992", "https://example.test/#/s/token?other=1",
     " https://example.test/#/doc/12", "https://example.test/#/doc/12\n",
     "javascript:alert(1)", "https://user@example.test/#/doc/12",
   ])("leaves other or ambiguous input unchanged: %s", (value) => expect(parse(value)).toBeNull());

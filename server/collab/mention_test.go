@@ -81,21 +81,18 @@ func TestMentionTargetRejectsHiddenAndInvalidMarks(t *testing.T) {
 }
 
 func TestMentionTargetRejectsHiddenFormulaAndDocumentLink(t *testing.T) {
-	for _, key := range []string{"math", "link"} {
-		t.Run(key, func(t *testing.T) {
+	for _, hiddenCase := range []struct{ key, value string }{{"math", "x^2"}, {"link", "#/doc/42"}, {"link", "#/s/token"}, {"link", "#/p/token"}} {
+		t.Run(hiddenCase.value, func(t *testing.T) {
 			d := NewDoc()
 			block := d.CreateBlock(4, Root, "V", "paragraph")
 			insert := d.InsertText(4, block.ID, 0, "@人")
 			value := "2"
 			mark := Op{T: TMark, ID: d.next(4, 1), Block: block.ID, Key: "mention", Value: &value, Start: Anchor{Char: insert.ID}, End: Anchor{Char: OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + 1}, Side: 1}}
 			d.Apply(mark)
-			hidden := "x^2"
-			if key == "link" {
-				hidden = "#/doc/42"
-			}
+			hidden := hiddenCase.value
 			over := mark
 			over.ID = d.next(4, 1)
-			over.Key = key
+			over.Key = hiddenCase.key
 			over.Value = &hidden
 			d.Apply(over)
 			if d.MentionTarget(block.ID, mark.ID) != 0 {
@@ -109,5 +106,23 @@ func TestMentionTargetRejectsHiddenFormulaAndDocumentLink(t *testing.T) {
 				t.Fatal("visible mention not restored")
 			}
 		})
+	}
+}
+
+func TestInvalidShareLinkDoesNotHideVisibleMention(t *testing.T) {
+	d := NewDoc()
+	block := d.CreateBlock(4, Root, "V", "paragraph")
+	insert := d.InsertText(4, block.ID, 0, "@人")
+	value := "2"
+	mark := Op{T: TMark, ID: d.next(4, 1), Block: block.ID, Key: "mention", Value: &value, Start: Anchor{Char: insert.ID}, End: Anchor{Char: OpID{Client: insert.ID.Client, Clock: insert.ID.Clock + 1}, Side: 1}}
+	d.Apply(mark)
+	invalid := "#/s/token?invalid"
+	over := mark
+	over.ID = d.next(4, 1)
+	over.Key = "link"
+	over.Value = &invalid
+	d.Apply(over)
+	if d.MentionTarget(block.ID, mark.ID) != 2 {
+		t.Fatal("invalid link hid visible mention")
 	}
 }

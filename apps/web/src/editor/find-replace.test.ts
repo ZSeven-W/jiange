@@ -184,6 +184,17 @@ describe("replaceMatches", () => {
     expect(doc.text(block)).toBe("目标");
   });
 
+  it("does not replace text linked to a share token", () => {
+    const { doc, blocks: [block] } = setup(["paragraph", "共享文档"]);
+    new Tx(doc).format(block, 0, 4, "link", "#/s/valid_token");
+    const match = findMatches(doc, "共享")[0];
+    expect(match.mention).toBe(true);
+    expect(replaceMatches(new Tx(doc), [match], "新")).toEqual({ replaced: 0, skipped: 1 });
+    expect(doc.text(block)).toBe("共享文档");
+    new Tx(doc).format(block, 0, 4, "link", "#/p/public_token");
+    expect(findMatches(doc, "共享")[0].mention).toBe(true);
+  });
+
   it("rejects other document instances and blocks moved under a column", () => {
     const a = setup(["paragraph", "目标"], ["columns", ""]);
     const match = findMatches(a.doc, "目标")[0];

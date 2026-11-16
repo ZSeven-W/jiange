@@ -31,6 +31,8 @@ describe("document mention summary", () => {
       block("1:2", "paragraph", [
         { text: "@math", marks: { mention: "4", math: "x" } },
         { text: "@doc", marks: { mention: "5", link: "#/doc/9" } },
+        { text: "@share", marks: { mention: "5", link: "#/s/token" } },
+        { text: "@public", marks: { mention: "5", link: "#/p/token" } },
         { text: "@invalid", marks: { mention: "9007199254740992" } },
         { text: "@zero", marks: { mention: "0" } },
       ]),
@@ -43,5 +45,10 @@ describe("document mention summary", () => {
     const result = collectDocumentMentions({ blocks: [block("1:1", "paragraph", spans)] });
     expect(result.people).toHaveLength(1);
     expect(result.truncated).toBe(true);
+  });
+
+  it("does not hide a person mention behind an invalid share URL", () => {
+    const result = collectDocumentMentions({ blocks: [block("1:1", "paragraph", [{ text: "@小简", marks: { mention: "2", link: "#/s/token?invalid" } }])] });
+    expect(result.people[0]?.userId).toBe(2);
   });
 });

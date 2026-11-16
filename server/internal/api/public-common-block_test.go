@@ -66,12 +66,12 @@ func TestPublicCommonBlockRejectsInvalidMetadata(t *testing.T) {
 			t.Fatalf("accepted invalid id %q", id)
 		}
 	}
-	for _, value := range []string{"javascript:secret", "https://", "not-url", ""} {
+	for _, value := range []string{"javascript:secret", "https://", "not-url", "", "#/s/token?x=1", "#/s/../private"} {
 		if publicSafeLink(value) {
 			t.Fatalf("accepted %q", value)
 		}
 	}
-	for _, value := range []string{"https://example.test/a", "#/doc/3"} {
+	for _, value := range []string{"https://example.test/a", "#/doc/3", "#/s/valid_token", "#/p/valid_token"} {
 		if !publicSafeLink(value) {
 			t.Fatalf("rejected %q", value)
 		}

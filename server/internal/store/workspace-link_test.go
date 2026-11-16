@@ -17,6 +17,7 @@ type workspaceLinkStore interface {
 	Store
 	ChangeLinkRoleAtRevision(context.Context, RestoreGuard, int64, string, string, int64) (Link, error)
 	JoinLinkGuarded(context.Context, RestoreGuard, string) (int64, error)
+	ResolvePasteShareTarget(context.Context, RestoreGuard, string) (PasteShareTarget, error)
 }
 
 func checkWorkspaceLink(t *testing.T, st workspaceLinkStore, removeMember func(int64, int64), injectOldJoin func(int64, int64)) {
@@ -70,6 +71,12 @@ func checkWorkspaceLink(t *testing.T, st workspaceLinkStore, removeMember func(i
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result, e := st.ResolvePasteShareTarget(ctx, xg, public.Token); e != nil || result.ID != node.ID || result.Title != "Private" {
+		t.Fatalf("eligible signed-in link: %+v %v", result, e)
+	}
+	if _, e := st.GetDoc(ctx, outsider.ID, node.ID); !errors.Is(e, ErrNotFound) {
+		t.Fatalf("reading paste metadata joined the link: %v", e)
+	}
 	if _, err = st.JoinLinkGuarded(ctx, xg, public.Token); err != nil {
 		t.Fatalf("signed-in join: %v", err)
 	}
@@ -91,6 +98,15 @@ func checkWorkspaceLink(t *testing.T, st workspaceLinkStore, removeMember func(i
 	}
 	if _, err = st.JoinLinkGuarded(ctx, xg, scoped.Token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outsider joined workspace link: %v", err)
+	}
+	if _, e := st.ResolvePasteShareTarget(ctx, xg, scoped.Token); !errors.Is(e, ErrNotFound) {
+		t.Fatalf("outsider resolved workspace link: %v", e)
+	}
+	if result, e := st.ResolvePasteShareTarget(ctx, mg, scoped.Token); e != nil || result.ID != node.ID {
+		t.Fatalf("workspace member could not resolve link: %+v %v", result, e)
+	}
+	if _, e := st.GetDoc(ctx, member.ID, node.ID); !errors.Is(e, ErrNotFound) {
+		t.Fatalf("reading workspace metadata joined the link: %v", e)
 	}
 	if _, err = st.JoinLink(ctx, scoped.Token, outsider.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("legacy outsider join: %v", err)
@@ -150,6 +166,9 @@ func checkWorkspaceLink(t *testing.T, st workspaceLinkStore, removeMember func(i
 		t.Fatalf("member edit denied: %v", err)
 	}
 	removeMember(ws.ID, member.ID)
+	if _, e := st.ResolvePasteShareTarget(ctx, mg, edit.Token); !errors.Is(e, ErrNotFound) {
+		t.Fatalf("removed member resolved link: %v", e)
+	}
 	if _, err = st.GetDoc(ctx, member.ID, node.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("removed member retained access: %v", err)
 	}
@@ -236,6 +255,19 @@ func TestMemoryWorkspaceLink(t *testing.T) {
 		}
 		m.sh.joins[doc][uid] = true
 	})
+}
+
+func TestPasteShareTokenValidation(t *testing.T) {
+	for _, value := range []string{"abc-XYZ_123", "0"} {
+		if !validPasteShareToken(value) {
+			t.Fatalf("valid token rejected: %q", value)
+		}
+	}
+	for _, value := range []string{"", "has/slash", "token?query", "含中文", string(make([]byte, 257))} {
+		if validPasteShareToken(value) {
+			t.Fatalf("invalid token accepted: %q", value)
+		}
+	}
 }
 func TestPostgresWorkspaceLink(t *testing.T) {
 	url := os.Getenv("JIANGE_TEST_DATABASE_URL")
@@ -348,6 +380,8 @@ func TestPostgresWorkspaceLinkJoinRacesMembershipRemoval(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() { _, e := st.JoinLinkGuarded(ctx, mg, link.Token); result <- e }()
+	preview := make(chan error, 1)
+	go func() { _, e := st.ResolvePasteShareTarget(ctx, mg, link.Token); preview <- e }()
 	blocked := false
 	for i := 0; i < 100; i++ {
 		var count int
@@ -376,6 +410,9 @@ func TestPostgresWorkspaceLinkJoinRacesMembershipRemoval(t *testing.T) {
 	}
 	if err = <-result; !errors.Is(err, ErrNotFound) {
 		t.Fatalf("join after membership removal: %v", err)
+	}
+	if err = <-preview; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("paste preview after membership removal: %v", err)
 	}
 	if _, err = st.GetDoc(ctx, member.ID, node.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("removed member obtained access: %v", err)

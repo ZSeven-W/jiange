@@ -85,6 +85,15 @@ describe("read-only document snapshots", () => {
     expect(html).not.toContain("flowchart LR");
   });
 
+  it("keeps a shared-document reference clickable and styled in read-only views", () => {
+    const paragraph = b("1:1", "paragraph");
+    paragraph.spans = [{ text: "共享文档", marks: { link: "#/s/valid_token" } }];
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={{ blocks: [paragraph] }} publicToken="public-token" />);
+    expect(html).toContain('href="#/s/valid_token"');
+    expect(html).toContain("bg-[#E1EAFF]");
+    expect(html).not.toContain('target="_blank"');
+  });
+
   it("renders column children only within their parent and rejects unsafe links and file IDs", () => {
     const paragraph = b("1:5", "paragraph");
     paragraph.spans = [{ text: "危险链接", marks: { link: "javascript:alert(1)" } }];

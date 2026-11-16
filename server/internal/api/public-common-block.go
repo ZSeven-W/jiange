@@ -13,6 +13,7 @@ import (
 
 var publicTextColor = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 var publicCharID = regexp.MustCompile(`^(0|[1-9][0-9]*):(0|[1-9][0-9]*)$`)
+var publicShareLink = regexp.MustCompile(`^#/(s|p)/[A-Za-z0-9_-]{1,256}$`)
 
 // publicCommonBlock projects properties used by public and saved-version
 // renderers, including the semantic projection of flowchart registers.
@@ -163,6 +164,9 @@ func publicSafeLink(value string) bool {
 		return false
 	}
 	if strings.HasPrefix(value, "#/doc/") {
+		return true
+	}
+	if publicShareLink.MatchString(value) {
 		return true
 	}
 	u, err := url.Parse(value)

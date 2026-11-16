@@ -5,7 +5,7 @@ import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import type { Presence } from "@/lib/presence";
 import { cn } from "@/lib/utils";
-import { safeURL } from "@/lib/safe-url";
+import { isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
 import { parseMentionNotificationHash } from "@/lib/mention-notification-link";
 import {
   activeMarks,
@@ -89,7 +89,7 @@ import { captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSla
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-assets";
-import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink, type PastedLinkAnchor } from "./document-link-paste";
+import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink, type PastedDocumentURL, type PastedLinkAnchor } from "./document-link-paste";
 import type { SlashInsertion, SlashQuery } from "./slash-insert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./comment-anchor";
 import { searchableLocations, type FindMatch } from "./find-replace";
@@ -141,7 +141,7 @@ interface Props {
   /** docs offered by the @ menu */
   docs?: MentionDoc[];
   /** Recheck access to a single pasted document before displaying its title. */
-  resolveDocumentLink?: (id: number, signal: AbortSignal) => Promise<string>;
+  resolveDocumentLink?: (target: PastedDocumentURL, signal: AbortSignal) => Promise<string>;
   /** workspace members offered by the @ menu（@人提及） */
   people?: MemberInfo[];
   /** stores a file and returns its id; enables image/file blocks */
@@ -1028,7 +1028,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!doc.hasBlock(block) || !doc.view().blocks.some((item) => item.id === anchor.block)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被删除。"); return; }
       const ids = doc.visibleIds(block), index = ids.findIndex((id) => idKey(id) === anchor.char);
       const marks = index < 0 ? undefined : doc.richChars(block)[index]?.marks;
-      if (!marks || marks.mention !== String(userId) || marks.math || marks.link?.startsWith("#/doc/")) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被修改或删除。"); return; }
+      if (!marks || marks.mention !== String(userId) || marks.math || isDocumentReferenceURL(marks.link)) { linkedDone.current = hash; setMentionNavigationNotice("提及位置已被修改或删除。"); return; }
       const point = root.current && posToDom(root.current, { b: block, o: index + 1 });
       const node = point && (point.node.nodeType === Node.ELEMENT_NODE ? point.node as Element : point.node.parentElement);
       const el = node?.closest<HTMLElement>(`[data-member="${userId}"]`);
@@ -1970,7 +1970,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const captured = anchor as PastedLinkAnchor | null, revision = um.revision;
       if (!captured) { um.seal(); return; }
       const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 5000);
-      void resolveDocumentLink(target.id, controller.signal).then((title) => {
+      void resolveDocumentLink(target, controller.signal).then((title) => {
         const rootNode = root.current, selected = sel.current;
         if (!mounted.current || currentClient.current !== client || currentUserId.current !== account || client.doc !== captured.doc || readOnlyRef.current || client.blocked || !client.caughtUp || (client.status !== "synced" && client.status !== "syncing") || um.revision !== revision || !rootNode || !document.activeElement || !rootNode.contains(document.activeElement) || isNativeControl(document.activeElement) || !selected || !collapsed(selected) || !eqId(selected.f.b, captured.block)) return;
         const range = resolvePastedLink(captured.doc, captured), clip = documentLinkClip(target, title);
@@ -3523,7 +3523,7 @@ function Run({ text, marks }: { text: string; marks: Record<string, string> }) {
         <MathView src={marks.math} />
       </span>
     );
-  if (href?.startsWith("#/doc/"))
+  if (isDocumentReferenceURL(href))
     return (
       <a
         style={style}

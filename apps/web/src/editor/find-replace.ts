@@ -1,5 +1,6 @@
 import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
 import { TITLE } from "./model";
+import { isDocumentReferenceURL } from "@/lib/safe-url";
 
 // Body types whose text is visibly and directly editable by the body editor.
 // The title is searched separately; table cells have their own representation.
@@ -78,7 +79,7 @@ function literalRegExp(query: string, caseSensitive: boolean): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "gu" : "giu");
 }
 
-const isMention = (marks: Record<string, string>) => !!marks.mention || !!marks.link?.startsWith("#/doc/");
+const isMention = (marks: Record<string, string>) => !!marks.mention || isDocumentReferenceURL(marks.link);
 
 /**
  * Finds non-overlapping matches in the title and visible body/column blocks.

@@ -1,7 +1,7 @@
 import { eqId, idKey, type Doc, type OpId } from "@jiange/collab";
 import type { ClipBlock } from "./model";
 
-export type PastedDocumentURL = { id: number; href: string };
+export type PastedDocumentURL = { id: number; href: string } | { token: string; href: string };
 
 /** Do not reinterpret arbitrary URLs, clipboard HTML or unrelated app routes. */
 export function pastedDocumentURL(raw: string, plain: string, origin: string, pathname: string): PastedDocumentURL | null {
@@ -9,6 +9,8 @@ export function pastedDocumentURL(raw: string, plain: string, origin: string, pa
   let url: URL;
   try { url = new URL(plain); } catch { return null; }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.origin !== origin || url.pathname !== pathname || url.search || url.username || url.password) return null;
+  const shared = /^#\/(s|p)\/([A-Za-z0-9_-]{1,256})$/.exec(url.hash);
+  if (shared) return { token: shared[2], href: `#/${shared[1]}/${shared[2]}` };
   const match = /^#\/doc\/([1-9]\d*)(?:\?(.*))?$/.exec(url.hash);
   if (!match) return null;
   const id = Number(match[1]);
