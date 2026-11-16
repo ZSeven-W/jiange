@@ -10,6 +10,7 @@ import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
 import { equalizedTableWidths, visibleTableWidths } from "./table-widths";
+import { snapTableWidth, type TableWidthSnapCandidate } from "./table-width-snap";
 import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
 import { tableFormatCells, type TableFormatTarget } from "./table-fill";
 
@@ -101,17 +102,20 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [fillOpen, setFillOpen] = useState(false);
   const [alignOpen, setAlignOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
+  const [widthGuide, setWidthGuide] = useState<TableWidthSnapCandidate | null>(null);
   const [rowBounds, setRowBounds] = useState<{ top: number; height: number }[]>([]);
-  const widthDrag = useRef<{ pointer: number; index: number; startX: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
+  const widthDrag = useRef<{ pointer: number; index: number; startX: number; x: number; edgeX: number; startScroll: number; initial: number[]; next: number[]; session: TableResizeSession; target: HTMLElement } | null>(null);
+  const updateResizeRef = useRef<((x: number, alt: boolean) => void) | null>(null);
   const reorderDrag = useRef<{ pointer: number; kind: "row" | "col"; indices: number[]; startX: number; startY: number; x: number; y: number; active: boolean; before: number | null; valid: boolean; session: TableReorderSession | null; target: HTMLElement; frame: number } | null>(null);
   const suppressGripClick = useRef(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
+      if (event.key === "Alt" && widthDrag.current) { updateResizeRef.current?.(widthDrag.current.x, event.altKey); return; }
       if (event.key !== "Escape") return;
       if (widthDrag.current) {
         event.preventDefault();
-        const drag = widthDrag.current; widthDrag.current = null; setWidthPreview(null); drag.session.cancel();
+        const drag = widthDrag.current; widthDrag.current = null; setWidthPreview(null); setWidthGuide(null); drag.session.cancel();
         if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
       } else if (reorderDrag.current) {
         event.preventDefault();
@@ -120,8 +124,16 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         setReorderGuide(null);setAxisSelection(null);
       }
     };
+    const keyup = (event: KeyboardEvent) => { if (event.key === "Alt" && widthDrag.current) updateResizeRef.current?.(widthDrag.current.x, event.altKey); };
+    const blur = () => {
+      const drag = widthDrag.current;
+      if (!drag) return;
+      widthDrag.current = null; setWidthPreview(null); setWidthGuide(null); drag.session.cancel();
+      if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
+    };
     window.addEventListener("keydown", escape);
-    return () => { window.removeEventListener("keydown", escape); widthDrag.current?.session.cancel(); widthDrag.current = null; };
+    window.addEventListener("keyup", keyup); window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", escape); window.removeEventListener("keyup", keyup); window.removeEventListener("blur", blur); widthDrag.current?.session.cancel(); widthDrag.current = null; };
   }, []);
   useTableStickyHeader(root, header);
   // The row grips sit outside the horizontal scrollport. Measure actual rows,
@@ -315,18 +327,59 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
     if (widthDrag.current || e.button !== 0 || ci < 0 || ci >= nCols) return;
     const session = onBeginResize?.(ci);
     if (!session) return;
+    const scroller = root.current?.querySelector<HTMLElement>("[data-table-scroll]"), column = scroller?.querySelectorAll<HTMLElement>("[data-table-column]")[ci];
+    if (!scroller || !column) { session.cancel(); return; }
     e.preventDefault(); e.stopPropagation();
     const initial = [...columnWidths], target = e.currentTarget;
-    widthDrag.current = { pointer: e.pointerId, index: ci, startX: e.clientX, initial, next: initial, session, target };
-    target.setPointerCapture(e.pointerId);
+    try { target.setPointerCapture(e.pointerId); } catch { session.cancel(); return; }
+    widthDrag.current = { pointer: e.pointerId, index: ci, startX: e.clientX, x: e.clientX, edgeX: column.getBoundingClientRect().right, startScroll: scroller.scrollLeft, initial, next: initial, session, target };
   };
+  const updateResize = (x: number, alt: boolean) => {
+    const drag = widthDrag.current, container = root.current, scroller = container?.querySelector<HTMLElement>("[data-table-scroll]"), table = scroller?.querySelector("table");
+    if (!drag || !container || !scroller || !table) return;
+    drag.x = x;
+    const cols = [...table.querySelectorAll<HTMLElement>("[data-table-column]")], origin = container.getBoundingClientRect(), tableRect = table.getBoundingClientRect(), scrollRect = scroller.getBoundingClientRect();
+    const currentWidth = parseFloat(cols[drag.index]?.style.width ?? ""), offset = scroller.scrollLeft - drag.startScroll;
+    const edge = drag.edgeX - offset, raw = drag.initial[drag.index] + x - drag.startX + offset;
+    const candidates: TableWidthSnapCandidate[] = [];
+    for (const neighbor of [drag.index - 1, drag.index + 1]) {
+      const col = cols[neighbor];
+      if (!col || !Number.isFinite(currentWidth)) continue;
+      const candidateWidth = drag.initial[neighbor], reference = col.getBoundingClientRect().right + (neighbor > drag.index ? candidateWidth - currentWidth : 0);
+      if (reference >= scrollRect.left && reference <= scrollRect.right) candidates.push({ kind: "equal", width: candidateWidth, x: reference, top: tableRect.top, bottom: tableRect.bottom });
+    }
+    // Different horizontal scroll offsets do not represent document alignment.
+    const editor = container.closest<HTMLElement>("[data-editor]");
+    if (editor && Math.abs(scroller.scrollLeft) < 0.5) {
+      const editorRect = editor.getBoundingClientRect(), visibleLeft = Math.max(0, editorRect.left), visibleRight = Math.min(window.innerWidth, editorRect.right);
+      const nearby = [...editor.querySelectorAll<HTMLElement>("[data-table-block]")], at = nearby.indexOf(container);
+      for (const other of [nearby[at - 1], nearby[at + 1]]) {
+        if (!other || other === container) continue;
+        const otherScroll = other.querySelector<HTMLElement>("[data-table-scroll]"), otherTable = otherScroll?.querySelector("table");
+        if (!otherScroll || !otherTable || Math.abs(otherScroll.scrollLeft) >= 0.5) continue;
+        const rect = otherTable.getBoundingClientRect();
+        if (!rect.width || !rect.height || Math.max(rect.top - tableRect.bottom, tableRect.top - rect.bottom, 0) > Math.max(window.innerHeight, 900)) continue;
+        for (const col of otherTable.querySelectorAll<HTMLElement>("[data-table-column]")) {
+          const reference = col.getBoundingClientRect().right;
+          if (reference >= visibleLeft && reference <= visibleRight) candidates.push({ kind: "table", width: drag.initial[drag.index] + reference - edge, x: reference, top: Math.min(tableRect.top, rect.top), bottom: Math.max(tableRect.bottom, rect.bottom) });
+        }
+      }
+      if (drag.index === drag.initial.length - 1) {
+        const reference = editorRect.right;
+        if (reference <= window.innerWidth && reference >= visibleLeft) candidates.push({ kind: "page", width: drag.initial[drag.index] + reference - edge, x: reference, top: tableRect.top - 24, bottom: tableRect.bottom + 24 });
+      }
+    }
+    const result = snapTableWidth(raw, candidates, alt);
+    drag.next = drag.initial.map((width, index) => index === drag.index ? result.width : width);
+    setWidthPreview(drag.next);
+    setWidthGuide(result.guide ? { ...result.guide, x: result.guide.x - origin.left, top: result.guide.top - origin.top, bottom: result.guide.bottom - origin.top } : null);
+  };
+  updateResizeRef.current = updateResize;
   const moveResize = (e: React.PointerEvent<HTMLElement>) => {
     const drag = widthDrag.current;
     if (!drag || drag.pointer !== e.pointerId) return;
     e.preventDefault();
-    const value = Math.max(100, Math.min(100000, Math.round(drag.initial[drag.index] + e.clientX - drag.startX)));
-    drag.next = drag.initial.map((width, index) => index === drag.index ? value : width);
-    setWidthPreview(drag.next);
+    updateResize(e.clientX, e.altKey);
   };
   const commitResize = (session: TableResizeSession, next: number[]) => {
     try {
@@ -340,7 +393,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const endResize = (e: React.PointerEvent<HTMLElement>, cancelled = false) => {
     const drag = widthDrag.current;
     if (!drag || drag.pointer !== e.pointerId) return;
-    widthDrag.current = null;
+    widthDrag.current = null; setWidthGuide(null);
     if (cancelled || drag.initial.every((value, index) => value === drag.next[index])) { setWidthPreview(null); drag.session.cancel(); }
     else commitResize(drag.session, drag.next);
     if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
@@ -574,7 +627,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
       </span></div>}
       <div className={cn("max-w-full overflow-x-auto", editable && "-mt-4 pt-4")} data-table-scroll>
       <table className="table-fixed border-collapse text-[14px] leading-[22px]" style={{ width: columnWidths.reduce((total, width) => total + width, readOnly ? 0 : 24) }}>
-        <colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} />)}{!readOnly && <col style={{ width: 24 }} />}</colgroup>
+        <colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} data-table-column={ci} />)}{!readOnly && <col style={{ width: 24 }} />}</colgroup>
         <tbody>
           {rows.map((row, ri) => (
             <tr key={ri} className="group/row" data-table-title-row={ri === 0 ? "true" : undefined}>
@@ -702,6 +755,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
       </table>
       </div>
       {editable && rows.map((_, index) => <span key={index} className="pointer-events-none absolute left-0 z-20 flex w-[10px] [@media(pointer:coarse)]:w-4" style={{ top: rowBounds[index]?.top ?? 0, height: rowBounds[index]?.height ?? 0 }}>{renderGrip("row", index, 1)}</span>)}
+      {widthGuide && <div aria-hidden="true" data-table-width-guide={widthGuide.kind} className={cn("pointer-events-none absolute z-40 w-0", widthGuide.kind === "equal" ? "border-l-[3px] border-primary" : widthGuide.kind === "table" ? "border-l-2 border-dashed border-primary" : "w-[2px] bg-gradient-to-b from-transparent via-[#3370FF] to-transparent")} style={{ left: widthGuide.x, top: widthGuide.top, height: widthGuide.bottom - widthGuide.top }} />}
       {reorderGuide && <div aria-hidden="true" className={cn("pointer-events-none absolute z-40 rounded-full",reorderGuide.valid?"bg-primary":"bg-destructive")} style={{left:reorderGuide.left,top:reorderGuide.top,width:reorderGuide.width,height:reorderGuide.height}} data-table-reorder-guide data-valid={reorderGuide.valid ? "true" : "false"} />}
       {editable && grip && !gripMenuHidden && (
         <div role="menu" style={{ left: menuAt?.x ?? 16, top: menuAt?.y ?? 16 }} className="absolute z-40 w-36 rounded-lg border bg-surface p-1 text-[13px] font-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)]" data-table-grip-menu={grip.kind}>
