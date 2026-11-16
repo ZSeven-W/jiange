@@ -316,6 +316,9 @@ func (p *Postgres) appendOps(ctx context.Context, doc int64, expectedHead *int64
 		if err := recordDocumentModifier(ctx, tx, doc, actor); err != nil {
 			return err
 		}
+		if err := insertDocumentMentionsTx(ctx, tx, doc, ops, seqs, actor); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotifyChannel, strconv.FormatInt(doc, 10)+":"+strconv.FormatInt(head, 10)); err != nil {
 			return err
 		}

@@ -24,12 +24,12 @@ export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => voi
   const unread = q.data?.unread ?? 0;
   return (
     <div ref={ref} className="relative">
-      <button className="relative grid size-9 place-items-center sm:size-8 rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => setOpen((v) => !v)} aria-label={t("通知")} data-bell>
+      <button className="relative grid size-9 place-items-center sm:size-8 rounded-md text-muted-foreground hover:bg-hover hover:text-foreground" onClick={() => { if (!open) void q.refetch(); setOpen((v) => !v); }} aria-label={t("通知")} aria-expanded={open} data-bell>
         <BellIcon className="size-4" />
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] font-medium text-white" data-unread>{unread > 9 ? "9+" : unread}</span>}
       </button>
       {open && (
-        <div className="absolute right-0 top-10 z-50 w-80 rounded-lg border bg-surface shadow-lg" data-notification-panel>
+        <div className="fixed inset-x-2 top-14 z-50 rounded-lg border bg-surface shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-10 sm:w-80" data-notification-panel>
           <div className="flex items-center border-b px-3 py-2 text-[13px] font-medium">
             {t("通知")}
             {unread > 0 && (
@@ -42,8 +42,10 @@ export function NotificationBell({ onOpenDoc }: { onOpenDoc: (id: number) => voi
             )}
           </div>
           <div className="max-h-96 overflow-y-auto">
-            {(q.data?.notifications ?? []).length === 0 && <p className="py-8 text-center text-[13px] text-subtle">{t("没有通知")}</p>}
-            {(q.data?.notifications ?? []).map((n) => (
+            {q.isPending && <p className="py-8 text-center text-[13px] text-subtle">{t("加载中…")}</p>}
+            {q.isError && <p role="alert" className="py-8 text-center text-[13px] text-destructive">{t("无法加载通知")}</p>}
+            {q.isSuccess && q.data.notifications.length === 0 && <p className="py-8 text-center text-[13px] text-subtle">{t("没有通知")}</p>}
+            {(q.isSuccess ? q.data.notifications : []).map((n) => (
               <button
                 key={n.id}
                 className={`flex w-full flex-col items-start gap-0.5 border-b px-3 py-2.5 text-left text-[13px] last:border-b-0 hover:bg-hover ${n.read ? "opacity-60" : ""}`}

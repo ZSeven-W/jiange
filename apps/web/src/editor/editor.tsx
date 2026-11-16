@@ -161,7 +161,6 @@ interface Props {
   /** 公式块编辑器（默认 askText；返回 null 表示取消） */
   onMathSource?: (src: string) => Promise<string | null>;
   /** @人 提及插入（发通知用） */
-  onMentionPerson?: (userId: number, name: string) => void;
   /** 个人 AI（未提供时隐藏块菜单中的 AI / 翻译）。 */
   ai?: (messages: AIMessage[]) => Promise<string>;
   /** 块菜单「分享」：传入块链接，由页面打开分享面板。 */
@@ -176,7 +175,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, onMentionPerson, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef<Sel | null>(null);
@@ -1624,7 +1623,6 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       });
       if (!applied) setColumnNotice("命令内容已发生变化，原文已保留，请重新输入命令。");
       um.seal();
-      if (applied) onMentionPerson?.(uid, name);
       return;
     }
     if (it.id === "image" || it.id === "file") {

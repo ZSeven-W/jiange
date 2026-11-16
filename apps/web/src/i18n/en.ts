@@ -558,6 +558,7 @@ export const en: Record<string, string> = {
   "没有找到相关文档": "No matching docs",
   "没有符合筛选条件的文档": "No docs match the filters",
   "没有通知": "No notifications",
+  "无法加载通知": "Unable to load notifications",
   "注册并进入": "Register and continue",
   "流程名称": "Workflow name",
   "浏览器无法保存操作状态，请检查存储设置后重试。": "The browser could not persist the operation state. Check storage settings and retry.",

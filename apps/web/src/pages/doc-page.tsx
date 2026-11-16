@@ -1203,15 +1203,6 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: "已复制该段落的链接，可在分享面板中设置访问权限。" }); } : undefined}
                 onSaveTemplate={aiAvailable ? (md) => void saveTemplate(md) : undefined}
                 people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? "所有者" : "协作者" }))}
-                onMentionPerson={(uid, name) => {
-                  // 文档内 @人 → 通知中心（mention）
-                  fetch("/api/docs/" + id + "/comments", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "same-origin",
-                    body: JSON.stringify({ body: `@${name} 在正文中被提及`, block: "", startChar: "", endChar: "", quote: "", mentions: [uid] }),
-                  }).catch(() => {});
-                }}
               />
             </div>
             {pendingStarter && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status">

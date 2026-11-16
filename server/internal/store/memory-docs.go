@@ -315,6 +315,7 @@ func (m *Memory) appendOps(ctx context.Context, doc int64, expectedHead *int64, 
 		actor = guard.UserID
 	}
 	m.setDocumentModifierLocked(d, actor)
+	m.addDocumentMentionsLocked(ctx, d, ops, seqs, actor)
 	head := int64(len(d.ops))
 	subs := slices.Clone(m.d.subs)
 	m.mu.Unlock()
