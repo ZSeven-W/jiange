@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTableWidths, updatedTableWidths, visibleTableWidths } from "./table-widths";
+import { equalizedTableWidths, parseTableWidths, updatedSelectedTableWidths, updatedTableWidths, visibleTableWidths } from "./table-widths";
 
 describe("document table widths", () => {
   it("uses the same minimum and automatic widths for editor and read-only views", () => {
@@ -19,5 +19,19 @@ describe("document table widths", () => {
     expect(updatedTableWidths("bad", 3, 1, 160)).toBeNull();
     expect(updatedTableWidths("", 3, 3, 160)).toBeNull();
     expect(updatedTableWidths("", 3, 1, 99)).toBeNull();
+  });
+  it("equalizes selected nonadjacent columns and preserves their total", () => {
+    expect(equalizedTableWidths([100, 170, 200, 300], [0, 2, 3])).toEqual([200, 170, 200, 200]);
+    expect(equalizedTableWidths([100, 200, 201], [1, 2])).toEqual([100, 200.5, 200.5]);
+    expect(equalizedTableWidths([100, 200], [0, 0])).toBeNull();
+    expect(equalizedTableWidths([100, 200], [2, 0])).toBeNull();
+    expect(equalizedTableWidths([100, 200], [0])).toBeNull();
+  });
+  it("writes only the selected widths and retains automatic and extra values", () => {
+    expect(updatedSelectedTableWidths('[100,null,200,400]', 3, [0, 2], [150, 150])).toBe('[150,null,150,400]');
+    expect(updatedSelectedTableWidths('', 3, [0, 2], [150, 150])).toBe('[150,null,150]');
+    expect(updatedSelectedTableWidths('', 3, [0, 0], [150, 150])).toBeNull();
+    expect(updatedSelectedTableWidths('', 3, [0, 2], [150])).toBeNull();
+    expect(updatedSelectedTableWidths('bad', 3, [0, 2], [150, 150])).toBeNull();
   });
 });

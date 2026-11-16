@@ -85,7 +85,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   count?: number;
   indent?: number;
   align?: string;
-  tableHeaders?: { row: boolean; column: boolean; toggle: (axis: "row" | "column") => void };
+  tableHeaders?: { row: boolean; column: boolean; toggle: (axis: "row" | "column") => void; equalize?: () => void; equalizeDisabled?: boolean };
 }) {
   const root = useRef<HTMLSpanElement>(null);
   const [sub, setSub] = useState<"layout" | "colors" | "translate" | null>(null);
@@ -168,6 +168,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
       </div>}
       {type === "table" && !multi && tableHeaders && <div className={section}>
         {([ ["row", "标题行", Rows3], ["column", "标题列", Columns3] ] as const).map(([axis, label, Icon]) => <button key={axis} type="button" role="menuitemcheckbox" aria-checked={tableHeaders[axis]} className={item} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.toggle(axis); }} data-block-table-header={axis}><Icon size={16} strokeWidth={1.6} className={icon} />{label}{tableHeaders[axis] && <Check size={15} className="ml-auto text-primary" />}</button>)}
+        {tableHeaders.equalize && <button type="button" role="menuitem" className={item} disabled={tableHeaders.equalizeDisabled} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.equalize?.(); }} data-block-table-equal-widths><Columns3 size={16} strokeWidth={1.6} className={icon} />均分列宽</button>}
       </div>}
       {groupB && <div className={section}>
         {can.comment && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "comment" })} data-block-comment><MessageSquarePlus size={16} strokeWidth={1.6} className={icon} />评论</button>}

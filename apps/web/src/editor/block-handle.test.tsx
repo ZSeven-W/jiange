@@ -43,6 +43,12 @@ describe("Feishu-style block handle", () => {
     expect(renderToStaticMarkup(<BlockHandle type="table" count={2} open onOpenChange={noop} tableHeaders={headers} />)).not.toContain("data-block-table-header");
     expect(renderToStaticMarkup(<BlockHandle type="table" open onOpenChange={noop} />)).not.toContain("data-block-table-header");
   });
+  it("offers table-wide column equalization only when the action is available", () => {
+    const headers = { row: false, column: false, toggle: noop, equalize: noop };
+    expect(renderToStaticMarkup(<BlockHandle type="table" open onOpenChange={noop} tableHeaders={headers} />)).toContain('data-block-table-equal-widths');
+    expect(renderToStaticMarkup(<BlockHandle type="table" count={2} open onOpenChange={noop} tableHeaders={headers} />)).not.toContain('data-block-table-equal-widths');
+    expect(renderToStaticMarkup(<BlockHandle type="table" open onOpenChange={noop} />)).not.toContain('data-block-table-equal-widths');
+  });
   it("shows the selected-block count and bulk actions for a multi-block selection", () => {
     const html = renderToStaticMarkup(<BlockHandle type="paragraph" count={3} open onOpenChange={noop} onDragStart={noop} can={blockAbilities("image", true, true, true)} />);
     expect(html).toContain("已选择 3 个块");

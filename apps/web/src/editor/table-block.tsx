@@ -9,7 +9,7 @@ import { parseExternalTableHTML } from "./table-external-clipboard";
 import { tableTabIntent } from "./table-keyboard";
 import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-selection-scroll";
 import { useTableStickyHeader } from "./table-sticky-header";
-import { visibleTableWidths } from "./table-widths";
+import { equalizedTableWidths, visibleTableWidths } from "./table-widths";
 import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
 import { tableFormatCells, type TableFormatTarget } from "./table-fill";
 
@@ -66,7 +66,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
   fillProps?: Record<string, string>; onFill?: (target: TableFormatTarget, fill: string) => string | null;
   onAlign?: (target: TableFormatTarget, axis: TableAlignAxis, align: TableAlign) => string | null;
-  onBeginResize?: (index: number) => TableResizeSession | null;
+  onBeginResize?: (index: number, indices?: readonly number[]) => TableResizeSession | null;
   onBeginReorder?: () => TableReorderSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
   /** 结构/合并修改：一次写入 tableData 与 tableMerges。 */
@@ -441,6 +441,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
   const selected = rawSelected ? expandRange(rawSelected, merges) : null;
+  const selectedColumns = axisSelection?.kind === "col" ? axisSelection.indices : grip?.kind === "col" ? [grip.index] : selected && selected.r0 === 0 && selected.r1 === rows.length - 1 ? Array.from({ length: selected.c1 - selected.c0 + 1 }, (_, index) => selected.c0 + index) : [];
   const touchRange = touchSelecting && selected ? selected : focus ? expandRange({ r0: focus.r, r1: focus.r, c0: focus.c, c1: focus.c }, merges) : null;
   const beginTouchSelection = (event: React.PointerEvent<HTMLButtonElement>, corner: "start" | "end") => {
     if (readOnly || dragSelection.current || !touchRange || !root.current) return;
@@ -556,8 +557,14 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
             {([ ["horizontal", "横向对齐", [["left", "左对齐", AlignLeft], ["center", "水平居中", AlignCenter], ["right", "右对齐", AlignRight]]], ["vertical", "纵向对齐", [["top", "顶部对齐", AlignStartHorizontal], ["middle", "垂直居中", AlignCenterHorizontal], ["bottom", "底部对齐", AlignEndHorizontal]]] ] as const).map(([axis, label, choices]) => <span key={axis} className="block"><span className="block px-1 py-1 text-xs text-muted-foreground">{label}</span><span className="flex gap-1">{choices.map(([value, title, Icon]) => <button key={value} type="button" role="menuitemradio" aria-checked={allAligned(axis, value)} aria-label={title} title={title} className={cn("grid size-10 place-items-center rounded hover:bg-hover", allAligned(axis, value) && "bg-[#E1EAFF] text-primary")} onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onAlign(formatTarget, axis, value) ?? ""); setAlignOpen(false); }} data-table-align-option={`${axis}:${value}`}><Icon size={16} strokeWidth={1.7} /></button>)}</span></span>)}
           </span>}
         </span>}
-        <button type="button" title="在下方插入行" aria-label="在下方插入行" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入行</span></button>
-        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className="flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5" onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入列</span></button>
+        {onBeginResize && selectedColumns.length >= 2 && <button type="button" title="均分所选列宽" aria-label="均分所选列宽" className="grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7" onMouseDown={e => e.preventDefault()} onClick={() => {
+          const next = equalizedTableWidths(columnWidths, selectedColumns);
+          if (!next || next.every((width, index) => width === columnWidths[index])) return;
+          const session = onBeginResize(selectedColumns[0], selectedColumns);
+          if (session) commitResize(session, next);
+        }} data-table-equal-selected-widths><Columns3 size={15} strokeWidth={1.7} /></button>}
+        <button type="button" title="在下方插入行" aria-label="在下方插入行" className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5", selectedColumns.length >= 2 && "max-[480px]:hidden")} onClick={() => onEdit(-1, nCols, "")}><Rows3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入行</span></button>
+        <button type="button" title="在右侧插入列" aria-label="在右侧插入列" className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover hover:text-foreground sm:h-7 sm:px-1.5", selectedColumns.length >= 2 && "max-[480px]:hidden")} onClick={() => onEdit(-2, nCols, "")}><Columns3 size={14} strokeWidth={1.7} /><span className="max-[480px]:sr-only">插入列</span></button>
         {onHeader && <button type="button" title="标题行" aria-label="标题行" aria-pressed={header} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", header ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeader(!header)} data-table-header><Rows3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题行</span></button>}
         {onHeaderColumn && <button type="button" title="标题列" aria-label="标题列" aria-pressed={headerColumn} className={cn("flex h-9 items-center gap-1 rounded px-2 text-[12px] hover:bg-hover sm:h-7 sm:px-1.5", headerColumn ? "text-primary" : "hover:text-foreground")} onMouseDown={(e) => e.preventDefault()} onClick={() => onHeaderColumn(!headerColumn)} data-table-header-column><Columns3 size={14} className="min-[481px]:hidden" /><span className="max-[480px]:sr-only">标题列</span></button>}
         {!multi && !axisSelection && <><span className="mx-0.5 h-4 w-px bg-border" />

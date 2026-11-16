@@ -55,7 +55,7 @@ import { FileCard, fmtSize } from "./file-card";
 import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./image-block";
 import { TableBlock, type TableReorderSession, type TableResizeSession } from "./table-block";
-import { parseTableWidths, updatedTableWidths, validTableWidths } from "./table-widths";
+import { equalizedTableWidths, parseTableWidths, updatedSelectedTableWidths, validTableWidths, visibleTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
 import { coverMap, parseMerges, parseMergesStrict, planSelectionDelete, planTableReorder, remapWidths, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
 import { alignmentCells, deleteSelectionFills, fillCells, readTableAlignments, readTableFills, remapTableFills, tableFormatCells, type TableFormatTarget } from "./table-fill";
@@ -2493,12 +2493,13 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   // collaborator may still send edits to it after undo.
                   if (requestColumnDeletion(doc, cid) === "unsupported") setColumnNotice("暂不支持安全删除分栏：协作者可能仍在编辑，栏内容已保留。");
                 }}
-                onBeginTableResize={readOnly ? undefined : (index) => {
+                onBeginTableResize={readOnly ? undefined : (index, selectedIndices) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return null;
                   if (alignmentPendingRef.current || alignmentBusy.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return null; }
                   const before = tableWidthHistory.capture(doc, b);
                   const structureBefore = tableStructureHistory.capture(doc, b, um);
-                  if (!before || !Number.isInteger(index) || index < 0 || index >= before.columns) { setColumnNotice("表格结构或列宽无效，无法调整。"); return null; }
+                  const indices = selectedIndices ? [...selectedIndices] : [index];
+                  if (!before || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("tableWidths") !== tableSnapshot.widths || tableDataOf(doc.blockInfo(b).props) !== tableDataOf(info.props) || !indices.length || new Set(indices).size !== indices.length || indices.some(i => !Number.isInteger(i) || i < 0 || i >= before.columns) || !indices.includes(index)) { setColumnNotice("表格结构或列宽已变化，无法调整，请重试。"); return null; }
                   return {
                     cancel: () => {},
                     commit: (widths) => {
@@ -2510,7 +2511,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                       }
                       // Preserve other automatic widths and any extra stored
                       // widths which may have been removed by an old client.
-                      const value = updatedTableWidths(before.value, before.columns, index, widths[index]);
+                      const value = updatedSelectedTableWidths(before.value, before.columns, indices, indices.map(i => widths[i]));
                       if (value === null) { setColumnNotice("表格列宽无效，未应用调整。"); return; }
                       if (value === before.value) return;
                       const fallback = () => {
@@ -2928,7 +2929,7 @@ interface BlockProps {
   onAddColumn?: (after: string | null) => void;
   onMoveColumn?: (column: string, after: string | null) => void;
   onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
-  onBeginTableResize?: (index: number) => TableResizeSession | null;
+  onBeginTableResize?: (index: number, indices?: readonly number[]) => TableResizeSession | null;
   onBeginTableReorder?: () => TableReorderSession | null;
   onDeleteColumn?: (col: string) => void;
   anchors?: (number | null)[];
@@ -3072,6 +3073,14 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
   };
   const [handleOpen, setHandleOpen] = useState(false);
   const emptyText = spans.length === 0 && TEXT_BLOCKS.has(type);
+  const tableDisplayWidths = type === "table" ? visibleTableWidths(tableRowsOf(props), parseTableWidths(props.tableWidths)) : [];
+  const equalizeAllTableWidths = () => {
+    const indices = tableDisplayWidths.map((_, index) => index), next = equalizedTableWidths(tableDisplayWidths, indices);
+    if (!next || next.every((width, index) => width === tableDisplayWidths[index])) return;
+    const session = onBeginTableResize?.(0, indices);
+    if (!session) return;
+    try { const result = session.commit(next); if (result) void result.catch(() => {}); } catch { session.cancel(); }
+  };
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
   if (type === "ordered") prefix = <span className="select-none tabular-nums text-primary">{number}.</span>;
@@ -3119,7 +3128,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             type={type}
             indent={indent}
             align={props.align}
-            tableHeaders={type === "table" && onTableHeader ? { row: props.tableHeader !== "none", column: props.tableHeaderColumn === "column", toggle: (axis) => onTableHeader(axis, axis === "row" ? props.tableHeader === "none" : props.tableHeaderColumn !== "column") } : undefined}
+            tableHeaders={type === "table" && onTableHeader ? { row: props.tableHeader !== "none", column: props.tableHeaderColumn === "column", toggle: (axis) => onTableHeader(axis, axis === "row" ? props.tableHeader === "none" : props.tableHeaderColumn !== "column"), equalize: onBeginTableResize ? equalizeAllTableWidths : undefined, equalizeDisabled: tableDisplayWidths.length < 2 } : undefined}
             count={selectionCount ?? 1}
             open={handleOpen}
             onOpenChange={setHandleOpen}
