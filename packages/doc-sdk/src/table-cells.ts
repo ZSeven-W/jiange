@@ -130,6 +130,20 @@ export function tableDataOf(props: Record<string, string>): string {
   return isCellTable(props) && mirrorTrusted(props) ? JSON.stringify(cellGrid(props)) : (props.tableData ?? "");
 }
 
+/**
+ * Reorder stable axes without rewriting cell registers. Reject a stale legacy
+ * mirror or malformed identities rather than guessing which content moves.
+ */
+export function stableTableReorderWrites(props: Record<string, string>, axis: "row" | "column", order: readonly number[]): Record<string, string> | null {
+  const rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
+  if (props[TBL_VERSION] !== "2" || !rows || !cols || !mirrorTrusted(props) || new Set(rows).size !== rows.length || new Set(cols).size !== cols.length || rows.length > 200 || cols.length > 50 || rows.length * cols.length > 5000) return null;
+  const grid = cellGrid(props), count = axis === "row" ? rows.length : axis === "column" ? cols.length : 0;
+  if (!grid || !count || order.length !== count || new Set(order).size !== count || order.some(index => !Number.isSafeInteger(index) || index < 0 || index >= count)) return null;
+  const next = axis === "row" ? order.map(index => [...grid[index]]) : grid.map(row => order.map(index => row[index]));
+  const mirror = JSON.stringify(next);
+  return { [axis === "row" ? TBL_ROWS : TBL_COLS]: JSON.stringify(order.map(index => (axis === "row" ? rows : cols)[index])), tableData: mirror, [TBL_MIRROR]: tableHash(mirror) };
+}
+
 let seq = 0;
 /** Short, collision-resistant row/column ID (client id + counter + random). */
 export function newAxisId(client: number): string {

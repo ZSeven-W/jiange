@@ -31,3 +31,16 @@ func TestTableRowsMatchesClientFingerprint(t *testing.T) {
 		t.Fatalf("legacy: %v", rows)
 	}
 }
+
+func TestTableRowsFollowsReorderedStableAxes(t *testing.T) {
+	mirror := `[["D","C"],["B edited","A"]]`
+	props := map[string]string{
+		"tbl.v": "2", "tbl.rows": `["r1","r0"]`, "tbl.cols": `["c1","c0"]`,
+		"tbl.base": `[["A","B"],["C","D"]]`, "tbl.c.r0.c1": "B edited",
+		"tableData": mirror, "tbl.m": tableHash(mirror),
+	}
+	rows := tableRows(props)
+	if len(rows) != 2 || len(rows[0]) != 2 || rows[0][0] != "D" || rows[0][1] != "C" || rows[1][0] != "B edited" || rows[1][1] != "A" {
+		t.Fatalf("reordered axes must follow cell identities: %v", rows)
+	}
+}

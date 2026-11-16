@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
-import { applyTableWrites, cellGrid, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "../src/table-cells.js";
+import { applyTableWrites, cellGrid, cellTableWrites, stableTableReorderWrites, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "../src/table-cells.js";
 import { applyTableEdit } from "../src/model.js";
 
 function replicas() {
@@ -151,5 +151,86 @@ describe('cell alignment', () => {
     expect(tx.ops).toEqual([]);
     setTableCellAlignments(tx, table, [{ row: 0, col: 0, axis: 'horizontal', align: 'left' }]);
     expect(tableCellAlign(a.blockInfo(table).props, 0, 0, 'horizontal')).toBe('left');
+  });
+});
+
+describe("stable table axis reorder", () => {
+  it("moves row and column identities without rewriting cell text or formatting", async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    edit(doc, table, 0, 0, "甲");
+    const style = new Tx(doc); setTableCellFills(style, table, [{ row: 0, col: 1, fill: "#E3ECFF" }]);
+    const before = doc.blockInfo(table).props, writes = stableTableReorderWrites(before, "row", [1, 0]);
+    expect(writes).not.toBeNull();
+    const move = new Tx(doc); applyTableWrites(move, table, before, writes!);
+    expect(move.ops.every(op => op.t === "bset" && !op.key.startsWith("tbl.c.") && !op.key.startsWith("tbl.fill."))).toBe(true);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["C", "D"], ["甲", "B"]]);
+    expect(tableCellFill(doc.blockInfo(table).props, 1, 1)).toBe("#E3ECFF");
+    const previous = doc.blockInfo(table).props, col = stableTableReorderWrites(previous, "column", [1, 0]);
+    const moveCol = new Tx(doc); applyTableWrites(moveCol, table, previous, col!);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["D", "C"], ["B", "甲"]]);
+    expect(tableCellFill(doc.blockInfo(table).props, 1, 0)).toBe("#E3ECFF");
+  });
+  it("keeps a delayed edit attached to its original row after a reorder", () => {
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    sync(init.ops, b); sync(edit(a, table, 0, 0, "甲"), b);
+    const previous = a.blockInfo(table).props, move = new Tx(a);
+    applyTableWrites(move, table, previous, stableTableReorderWrites(previous, "row", [1, 0])!);
+    const delayed = edit(b, table, 0, 1, "协作者");
+    sync(move.ops, b); sync(delayed, a);
+    for (const doc of [a, b]) expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["C", "D"], ["甲", "协作者"]]);
+    sync(repair(a, table), b);
+    for (const doc of [a, b]) expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["C", "D"], ["甲", "协作者"]]);
+  });
+  it("keeps delayed cell formatting attached to its original column", async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const { a, b, table } = replicas();
+    sync(edit(a, table, 0, 0, "甲"), b);
+    const previous = a.blockInfo(table).props, move = new Tx(a), color = new Tx(b);
+    applyTableWrites(move, table, previous, stableTableReorderWrites(previous, "column", [1, 0])!);
+    setTableCellFills(color, table, [{ row: 0, col: 1, fill: "#E5F5E8" }]);
+    sync(color.ops, a); sync(move.ops, b);
+    for (const doc of [a, b]) {
+      expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["", "甲"], ["", ""]]);
+      expect(tableCellFill(doc.blockInfo(table).props, 0, 0)).toBe("#E5F5E8");
+      expect(tableCellFill(doc.blockInfo(table).props, 0, 1)).toBe("");
+    }
+  });
+  it("combines concurrent row and column reorders without mixing cell contents", () => {
+    const a = new Doc(1), b = new Doc(2), init = new Tx(a);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    sync(init.ops, b); sync(edit(a, table, 0, 0, "甲"), b);
+    const rowProps = a.blockInfo(table).props, colProps = b.blockInfo(table).props, row = new Tx(a), col = new Tx(b);
+    applyTableWrites(row, table, rowProps, stableTableReorderWrites(rowProps, "row", [1, 0])!);
+    applyTableWrites(col, table, colProps, stableTableReorderWrites(colProps, "column", [1, 0])!);
+    sync(row.ops, b); sync(col.ops, a);
+    for (const doc of [a, b]) expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["D", "C"], ["B", "甲"]]);
+    sync(repair(a, table), b);
+    for (const doc of [a, b]) expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["D", "C"], ["B", "甲"]]);
+  });
+  it("refuses stale mirrors, duplicate identities and invalid permutations", () => {
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    edit(doc, table, 0, 0, "甲");
+    const props = doc.blockInfo(table).props;
+    expect(stableTableReorderWrites({ ...props, tableData: '[["old"]]' }, "row", [1, 0])).toBeNull();
+    expect(stableTableReorderWrites({ ...props, 'tbl.rows': '["r0","r0"]' }, "row", [1, 0])).toBeNull();
+    expect(stableTableReorderWrites(props, "row", [0, 0])).toBeNull();
+    expect(stableTableReorderWrites(props, "column", [0, 2])).toBeNull();
+  });
+  it("plans a legacy migration before reordering inherited cells", () => {
+    const doc = new Doc(1), init = new Tx(doc);
+    const table = init.create("table", null, ROOT, { tableData: JSON.stringify([["A", "B"], ["C", "D"]]) });
+    const legacy = doc.blockInfo(table).props;
+    expect(stableTableReorderWrites(legacy, "row", [1, 0])).toBeNull();
+    const migration = cellTableWrites(legacy, tableRowsOf(legacy), doc.client);
+    const reorder = stableTableReorderWrites({ ...legacy, ...migration }, "row", [1, 0]);
+    expect(reorder).not.toBeNull();
+    const tx = new Tx(doc); applyTableWrites(tx, table, legacy, migration);
+    applyTableWrites(tx, table, doc.blockInfo(table).props, reorder!);
+    expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["C", "D"], ["A", "B"]]);
+    expect(tx.ops.every(op => op.t === "bset" && !op.key.startsWith("tbl.c."))).toBe(true);
   });
 });

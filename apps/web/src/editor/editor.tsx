@@ -97,7 +97,7 @@ import { validEditorSelection } from "./selection-safety";
 import { editorClipboardRoute, isNativeControl } from "./native-control";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
-import { applyTableWrites, cellTableWrites, isCellTable, setTableCellAlignments, setTableCellFills, tableDataOf, tableRepairWrites, tableRowsOf, writeTable, type TableAlign, type TableAlignAxis } from "./table-cells";
+import { applyTableWrites, cellTableWrites, isCellTable, setTableCellAlignments, setTableCellFills, stableTableReorderWrites, tableDataOf, tableRepairWrites, tableRowsOf, writeTable, type TableAlign, type TableAlignAxis } from "./table-cells";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -2375,17 +2375,33 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
               return null;
             };
-            const applyTableStructure = (rows: string[][], merges: Merge[], widths?: Widths, operation?: TableOp) => {
-              if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
+            const applyTableStructure = (rows: string[][], merges: Merge[], widths?: Widths, operation?: TableOp): string | null => {
+              if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return "文档状态已变化，表格未修改。";
               const current = doc.blockInfo(b).props, previous = tableRowsOf(current);
-              const fills = operation ? remapTableFills(readTableFills(current, previous.length, previous[0]?.length ?? 0), operation) : null;
-              const horizontal = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "horizontal"), operation) : null;
-              const vertical = operation ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "vertical"), operation) : null;
-              if (!isCellTable(current) && Object.entries(current).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未修改表格，请等待同步后重试。"); return; }
+              let stableMove: Extract<TableOp, { kind: "reorderRows" | "reorderCols" }> | null = null;
+              if (operation?.kind === "reorderRows" || operation?.kind === "reorderCols") stableMove = operation;
+              else if (operation?.kind === "moveRow" || operation?.kind === "moveCol") stableMove = {
+                kind: operation.kind === "moveRow" ? "reorderRows" : "reorderCols",
+                indices: [operation.index], before: operation.to < operation.index ? operation.to : operation.to + 1,
+              };
+              const fills = operation && !stableMove ? remapTableFills(readTableFills(current, previous.length, previous[0]?.length ?? 0), operation) : null;
+              const horizontal = operation && !stableMove ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "horizontal"), operation) : null;
+              const vertical = operation && !stableMove ? remapTableFills(readTableAlignments(current, previous.length, previous[0]?.length ?? 0, "vertical"), operation) : null;
+              if (!isCellTable(current) && Object.entries(current).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未修改表格，请等待同步后重试。"); return "表格数据状态不完整，请等待同步后重试。"; }
+              const migrationWrites = isCellTable(current) ? null : cellTableWrites(current, previous, doc.client);
+              let reorderWrites: Record<string, string> | null = null;
+              if (stableMove) {
+                const sourceMerges = parseMergesStrict(current.tableMerges, previous.length, previous[0]?.length ?? 0);
+                const plan = sourceMerges && planTableReorder(previous, sourceMerges, stableMove);
+                if (!plan || JSON.stringify(plan.rows) !== JSON.stringify(rows) || JSON.stringify(plan.merges) !== JSON.stringify(merges)) { setColumnNotice("表格结构已变化，未移动行列。"); return "表格结构已变化，未移动行列。"; }
+                reorderWrites = stableTableReorderWrites(migrationWrites ? { ...current, ...migrationWrites } : current, stableMove.kind === "reorderRows" ? "row" : "column", plan.order);
+                if (!reorderWrites) { setColumnNotice("表格数据尚未同步完成，未移动行列，请稍后重试。"); return "表格数据尚未同步完成，未移动行列，请稍后重试。"; }
+              }
               const migration = new Tx(doc);
-              if (!isCellTable(current)) applyTableWrites(migration, b, current, cellTableWrites(current, previous, doc.client));
+              if (migrationWrites) applyTableWrites(migration, b, current, migrationWrites);
               const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
-              writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
+              if (reorderWrites) applyTableWrites(tx, b, doc.blockInfo(b).props, reorderWrites);
+              else writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
               if (fills) setTableCellFills(tx, b, fillCells(fills));
               if (horizontal && vertical) setTableCellAlignments(tx, b, [...alignmentCells(horizontal, "horizontal"), ...alignmentCells(vertical, "vertical")]);
               tx.setProp(b, "tableMerges", JSON.stringify(merges));
@@ -2395,6 +2411,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               if (marker) um.recordMarker(marker);
               sync.client.push([...migration.ops, ...tx.ops]);
               um.seal(); force((x) => x + 1); publish();
+              return null;
             };
             const commentProjection = projectCommentAnchors(doc, b, comments, activeThread);
             return (
@@ -2547,8 +2564,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     if (plan.order.every((old,index) => old === index)) return null;
                     const originalWidths = parseTableWidths(props.tableWidths), mappedWidths = remapWidths(originalWidths, op, rows[0].length);
                     const widths = mappedWidths && originalWidths ? [...mappedWidths, ...originalWidths.slice(rows[0].length)] : mappedWidths;
-                    applyTableStructure(plan.rows, plan.merges, widths, op);
-                    return null;
+                    return applyTableStructure(plan.rows, plan.merges, widths, op);
                   } };
                 }}
                 onTableEdit={readOnly ? undefined : (r, c, v, kind) => {
