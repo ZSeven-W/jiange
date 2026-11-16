@@ -104,7 +104,7 @@ export function AskHost() {
       onMouseDown={() => (c ? closeConfirm(false) : p ? closePrompt(null) : closeArea(null))}
       data-ask
     >
-      <div className="w-[360px] rounded-xl bg-surface p-5 shadow-2xl" role={c ? "alertdialog" : undefined} aria-modal={c ? true : undefined} aria-label={c?.title} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(event) => {
+      <div className="w-[min(360px,calc(100vw-32px))] rounded-xl bg-surface p-5 shadow-2xl" role={c ? "alertdialog" : undefined} aria-modal={c ? true : undefined} aria-label={c?.title} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(event) => {
         if (!c) return;
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeConfirm(false); return; }
         if (event.key !== "Tab") return;

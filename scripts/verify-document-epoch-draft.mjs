@@ -41,4 +41,20 @@ await a.run(`(()=>{const old=Storage.prototype.setItem;window.__restoreSetItem=(
 await a.run('document.querySelector("[data-preview-pending-draft]").click()'); await a.run('document.querySelector("[data-keep-pending-draft]").click()'); await a.wait('!!document.querySelector("[data-recovery-drafts]") && !!document.querySelector("[data-status=synced]")'); await a.wait(`Object.keys(localStorage).some(k=>k.startsWith('jiange:recovery:v1:${identity.user}:${identity.doc}:') && localStorage.getItem(k).includes('本地草稿😀'))`); await a.shot('jiange-document-epoch-draft-recovery-20261116.png');
 await a.run(`[...document.querySelectorAll('[data-pending-draft-preview] button')].find(e=>e.textContent==='收起').click()`); await focusEnd(); await a.send('Input.insertText', { text: '继续编辑' }); await a.wait('document.body.innerText.includes("云端正文继续编辑") && !!document.querySelector("[data-status=synced]")'); if (await a.run('document.querySelector("[data-editor]")?.innerText.includes("本地草稿😀")')) throw new Error('archived draft was replayed');
 await a.send('Page.reload'); await new Promise(r => setTimeout(r, 500)); await a.wait('!!document.querySelector("[data-recovery-drafts]") && document.body.innerText.includes("云端正文继续编辑")'); await a.run(`[...document.querySelectorAll('[data-recovery-drafts] button')].find(e=>e.textContent==='查看').click()`); await a.wait('document.querySelector("[data-pending-draft-preview] textarea")?.value.includes("本地草稿😀")'); await a.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await a.shot('jiange-document-epoch-draft-mobile-20261116.png');
-console.log('epoch draft quarantined, backed up, retained across reload and safely archived'); await a.send('Page.close'); a.ws.close();
+// Confirming deletion acts only on the selected, unchanged account-scoped copy.
+await a.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 844, deviceScaleFactor: 1, mobile: true });
+const key = await a.run(`Object.keys(localStorage).find(k=>k.startsWith('jiange:recovery:v1:${identity.user}:${identity.doc}:'))`);
+const raw = await a.run(`localStorage.getItem(${JSON.stringify(key)})`);
+await a.run('document.querySelector("[data-delete-recovery-draft]").click()'); await a.wait('!!document.querySelector("[data-ask-ok]")');
+if (!await a.run(`(()=>{const r=document.querySelector('[role=alertdialog]').getBoundingClientRect();return r.left>=0 && r.right<=innerWidth})()`)) throw new Error('confirmation overflows mobile viewport');
+await a.shot('jiange-document-epoch-delete-confirm-mobile-20261116.png');
+await a.run(`[...document.querySelectorAll('[data-ask] button')].find(e=>e.textContent==='取消').click()`); await a.wait('!document.querySelector("[data-ask]")');
+if (await a.run(`localStorage.getItem(${JSON.stringify(key)})`) !== raw) throw new Error('cancel deleted recovery');
+await a.run('document.querySelector("[data-delete-recovery-draft]").click()'); await a.wait('!!document.querySelector("[data-ask-ok]")');
+await a.run(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(raw + ' ')})`); await a.run('document.querySelector("[data-ask-ok]").click()'); await a.wait('document.body.innerText.includes("草稿已变化或不存在")');
+if (await a.run(`localStorage.getItem(${JSON.stringify(key)})`) !== raw + ' ') throw new Error('changed recovery was deleted');
+await a.run(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(raw)})`); await a.run('document.querySelector("[data-delete-recovery-draft]").click()'); await a.wait('!!document.querySelector("[data-ask-ok]")'); await a.run('document.querySelector("[data-ask-ok]").click()');
+await a.wait('!document.querySelector("[data-recovery-drafts]") && !document.querySelector("[data-pending-draft-preview]")');
+if (await a.run(`localStorage.getItem(${JSON.stringify(key)})`) !== null) throw new Error('confirmed recovery still present');
+await a.send('Page.reload'); await a.wait('document.body.innerText.includes("云端正文继续编辑")'); if (await a.run('!!document.querySelector("[data-recovery-drafts]")')) throw new Error('deleted copy reappeared');
+console.log('epoch draft quarantined, backed up, archived and safely deleted after confirmation'); await a.send('Page.close'); a.ws.close();

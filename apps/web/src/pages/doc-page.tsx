@@ -61,7 +61,7 @@ import { fetchDocxImages } from "./docx-images";
 import { uploadDocxImportImages } from "./docx-import-images";
 import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./doc-ai-panel";
-import { archivePendingDraft, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys } from "@/lib/pending-ops-storage";
+import { archivePendingDraft, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, removeRecoveryDraft } from "@/lib/pending-ops-storage";
 import { createVisitRecorder } from "@/lib/recent-visit";
 import { docMetaKey, docMetaState, isDocAccessDenied, mayConnectDocument, shouldRetryDocMeta } from "./doc-meta-state";
 import { ResourceTypeNotice } from "./resource-type-notice";
@@ -95,7 +95,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
   const metadataState = docMetaState(meta.data, meta.isError, meta.error);
   const sync = useSyncDoc(id, me.user.id, mayConnectDocument(meta.data, metadataState));
   const [recoveryState, setRecoveryState] = useState<{ user: number; doc: number; keys: string[]; selected: string } | null>(null);
-  const [draftPreview, setDraftPreview] = useState<{ user: number; doc: number; ops: Op[]; archived: boolean } | null>(null);
+  const [draftPreview, setDraftPreview] = useState<{ user: number; doc: number; ops: Op[]; archived: boolean; archiveKey?: string } | null>(null);
   const recoveryKeys = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.keys : [];
   useEffect(() => {
     let active = true;
@@ -810,7 +810,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
     try {
       const saved = readRecoveryDraft(localStorage, me.user.id, id, key);
       if (!saved) { setRetrySyncError("本地草稿不存在，请检查浏览器存储。"); return; }
-      setDraftPreview({ user: me.user.id, doc: id, ops: saved.ops, archived: true }); setRetrySyncError("");
+      setDraftPreview({ user: me.user.id, doc: id, ops: saved.ops, archived: true, archiveKey: key }); setRetrySyncError("");
     } catch { setRetrySyncError("无法读取本地草稿；原始备份仍保存在浏览器中。"); }
   };
   const keepDraftAndContinue = () => {
@@ -825,9 +825,26 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
       const keys = recoveryDraftKeys(localStorage, me.user.id, id);
       setRecoveryState({ user: me.user.id, doc: id, keys, selected: key });
       if (!client.discardQuarantined()) { setRetrySyncError("当前文档尚未同步完成；草稿已保留，请稍后重试。"); return; }
-      setDraftPreview((old) => old?.user === me.user.id && old.doc === id && !old.archived ? { ...old, ops, archived: true } : old);
+      setDraftPreview((old) => old?.user === me.user.id && old.doc === id && !old.archived ? { ...old, ops, archived: true, archiveKey: key } : old);
       setRetrySyncError("");
     } catch { setRetrySyncError(archived ? "草稿副本已保存，但无法完成切换；请检查本地备份。" : "无法保存草稿副本，原草稿未清除；请先下载备份。"); }
+  };
+  const deleteArchivedDraft = async () => {
+    const key = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.selected : "";
+    if (!key) return;
+    let raw: string | null;
+    try { raw = localStorage.getItem(key); } catch { setRetrySyncError("无法读取本地草稿，请检查浏览器存储。"); return; }
+    if (raw === null) { setRetrySyncError("本地草稿不存在，请刷新后重试。"); return; }
+    if (!await ask("删除本地草稿？", "删除后无法从本机恢复，请先下载备份。")) return;
+    const current = exportContext.current;
+    if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client) return;
+    try {
+      if (!removeRecoveryDraft(localStorage, me.user.id, id, key, raw)) { setRetrySyncError("草稿已变化或不存在，请重新查看后重试。"); return; }
+      const keys = recoveryDraftKeys(localStorage, me.user.id, id);
+      setRecoveryState((old) => old?.user === me.user.id && old.doc === id ? { ...old, keys, selected: keys.includes(old.selected) ? old.selected : keys[0] ?? "" } : old);
+      setDraftPreview((old) => old?.user === me.user.id && old.doc === id && old.archiveKey === key ? null : old);
+      setRetrySyncError("");
+    } catch { setRetrySyncError("无法删除本地草稿，请检查浏览器存储后重试。"); }
   };
   const retryPending = async () => {
     if (sync.client.blocked === "missing_dependency" || sync.client.blocked === "invalid_history" || sync.client.blocked === "history_changed") {
@@ -1078,6 +1095,7 @@ export function DocPage({ id, me, sidebarDocked = false, onGlobalSearch, onSearc
           {recoveryKeys.length > 1 && <select aria-label="选择本地草稿" value={recoveryState?.selected ?? ""} onChange={(event) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: event.target.value } : old)} className="max-w-36 rounded border bg-surface px-1 py-0.5">{recoveryKeys.map((key, index) => <option key={key} value={key}>草稿 {index + 1}</option>)}</select>}
           <button type="button" onClick={showArchivedDraft} className="text-primary hover:underline">查看</button>
           <button type="button" onClick={downloadStoredDrafts} className="text-primary hover:underline">下载备份</button>
+          <button type="button" onClick={() => void deleteArchivedDraft()} className="text-muted-foreground hover:text-destructive hover:underline" data-delete-recovery-draft>删除本地副本</button>
           {retrySyncError && <span role="alert">{retrySyncError}</span>}
         </div>}
         {draftPreview?.user === me.user.id && draftPreview.doc === id && <PendingDraftPreview ops={draftPreview.ops} onClose={() => setDraftPreview(null)} onDownload={draftPreview.archived ? downloadStoredDrafts : downloadPending} />}

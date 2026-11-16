@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, encodeOps, encodeServerMsg, SyncClient } from "@jiange/collab";
-import { archivePendingDraft, PendingSessionQueue, pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, writePendingOps } from "./pending-ops-storage";
+import { archivePendingDraft, PendingSessionQueue, pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, removeRecoveryDraft, writePendingOps } from "./pending-ops-storage";
 
 function memoryStorage() {
   const items = new Map<string, string>();
@@ -61,6 +61,28 @@ describe("offline draft ownership", () => {
     expect(JSON.parse(local.getItem(key)!)).toMatchObject({ userId: 10, docId: 42, version: 1 });
     expect(readRecoveryDraft(local, 11, 99, key)).toBeNull();
     expect(readRecoveryDraft(local, 10, 42, key)?.ops).toEqual([op]);
+  });
+  it("deletes only the unchanged, confirmed recovery copy within its account and document", () => {
+    const local = memoryStorage(), first = archivePendingDraft(local, 10, 42, fresh(), draft);
+    const second = archivePendingDraft(local, 10, 42, fresh(), draft);
+    const other = archivePendingDraft(local, 11, 42, fresh(), draft);
+    const pending = pendingOpsKey(10, 42, fresh()); writePendingOps(local, pending, draft);
+    const raw = local.getItem(first)!;
+    expect(removeRecoveryDraft(local, 11, 42, first, raw)).toBe(false);
+    expect(removeRecoveryDraft(local, 10, 43, first, raw)).toBe(false);
+    expect(removeRecoveryDraft(local, 10, 42, pending, local.getItem(pending)!)).toBe(false);
+    local.setItem(first, raw + " ");
+    expect(removeRecoveryDraft(local, 10, 42, first, raw)).toBe(false);
+    expect(local.getItem(first)).toBe(raw + " ");
+    expect(removeRecoveryDraft(local, 10, 42, first, raw + " ")).toBe(true);
+    expect(removeRecoveryDraft(local, 10, 42, first, raw + " ")).toBe(false);
+    expect(local.getItem(second)).not.toBeNull(); expect(local.getItem(other)).not.toBeNull(); expect(local.getItem(pending)).not.toBeNull();
+  });
+  it("does not claim deletion succeeded when storage refuses it", () => {
+    const local = memoryStorage(), key = archivePendingDraft(local, 10, 42, fresh(), draft), raw = local.getItem(key)!;
+    local.removeItem = () => { throw new DOMException("storage denied", "SecurityError"); };
+    expect(() => removeRecoveryDraft(local, 10, 42, key, raw)).toThrow();
+    expect(local.getItem(key)).toBe(raw);
   });
   it("restores unsupported table payload bytes for the owning session, including the older JSON form", async () => {
     const local = memoryStorage(), session = memoryStorage(), locks = fakeLocks(), owner = await preparePendingSession(local, session, locks, 10, 42, fresh);

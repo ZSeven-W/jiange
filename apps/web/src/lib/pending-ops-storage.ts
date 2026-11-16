@@ -94,6 +94,13 @@ export function readRecoveryDraft(storage: Storage, userId: number, docId: numbe
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || (metadata as { version?: unknown }).version !== 1 || (metadata as { userId?: unknown }).userId !== userId || (metadata as { docId?: unknown }).docId !== docId) throw new Error("invalid recovery draft scope");
   return parse(raw);
 }
+
+/** Delete only the account/document copy the user confirmed, if it is unchanged. */
+export function removeRecoveryDraft(storage: Storage, userId: number, docId: number, key: string, expectedRaw: string): boolean {
+  if (!key.startsWith(recoveryBase(userId, docId)) || storage.getItem(key) !== expectedRaw) return false;
+  storage.removeItem(key);
+  return storage.getItem(key) === null;
+}
 export function writePendingOps(storage: Storage, key: string, draft: PendingOpsDraft | null): void {
   if (draft?.ops.length) storage.setItem(key, JSON.stringify({ ...draft, ops: draft.ops.map((op) => op.t === "ttable" ? { ...op, payload: Array.from(op.payload) } : op) }));
   else storage.removeItem(key);
