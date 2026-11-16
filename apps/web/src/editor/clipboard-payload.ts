@@ -1,5 +1,5 @@
 import { CLIPPABLE_BLOCKS, parseTableData, parseText, TEXTLESS, type ClipBlock } from "./model";
-import { tableDataOf } from "./table-cells";
+import { cellFillKey, cellTableWrites, tableCellFill, tableDataOf } from "./table-cells";
 import { formatTableTSV } from "./table-clipboard";
 import { coverMap, parseMerges } from "./table-ops";
 
@@ -45,7 +45,8 @@ export function blockClipboardHTML(raw: string, plain: string, blocks?: ClipBloc
       const cell = covered.get(`${r}:${c}`);
       if (cell === "hidden") return "";
       const span = cell?.span;
-      return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ""}${span?.[1] ? ` colspan="${span[1]}"` : ""}>${escapeHTML(value).replace(/\n/g, "<br>")}</td>`;
+      const fill = tableCellFill(block.props, r, c);
+      return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ""}${span?.[1] ? ` colspan="${span[1]}"` : ""}${fill ? ` style="background-color:${fill}"` : ""}>${escapeHTML(value).replace(/\n/g, "<br>")}</td>`;
     }).join("")}</tr>`).join("")}</table>`;
   }
   const html = `<div ${MARKER}="${payload}">${content}</div>`;
@@ -161,6 +162,11 @@ export function clipboardBlocks(raw: string, plain: string): ClipBlock[] | null 
           }
           const props = Object.fromEntries(Object.entries(block.props).filter(([key]) => !key.startsWith("tbl.")));
           props.tableData = tableDataOf(block.props);
+          if (Object.entries(block.props).some(([key, value]) => key.startsWith("tbl.fill.") && value)) {
+            const grid = parseTableData(props.tableData);
+            Object.assign(props, cellTableWrites(props, grid, 0));
+            grid.forEach((row, r) => row.forEach((_, c) => { const fill = tableCellFill(block.props, r, c); if (fill) props[cellFillKey(`r${r}`, `c${c}`)] = fill; }));
+          }
           return { ...block, props };
         });
       }

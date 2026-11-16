@@ -1,4 +1,4 @@
-import { tableDataOf } from "./table-cells.js";
+import { cellFillKey, cellTableWrites, tableCellFill, tableDataOf } from "./table-cells.js";
 import { exportableTableMerges, exportableTableWidths, type TableMerge } from "./docx-tables.js";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
@@ -121,6 +121,7 @@ export function docxExportLosses(view: { blocks: DocxExportBlock[] }, options: {
     else if (block.type === "table") {
       if (!rows) losses.add("表格数据格式异常，原始数据会作为文本导出");
       if (rows && exportableTableMerges(block.props.tableMerges, rows).loss) losses.add("部分合并区域无法无损导出，将拆分并保留单元格内容");
+      if (rows && exportableTableMerges(block.props.tableMerges, rows).merges.length && Object.entries(block.props).some(([key, value]) => key.startsWith("tbl.fill.") && value)) losses.add("合并单元格中隐藏的背景色可能无法保留");
       const widths = rows ? exportableTableWidths(block.props.tableWidths, rows) : null;
       if (widths?.approximate) losses.add("部分表格列宽为自动或无效值，Word 中可能不同");
       if (widths?.oversized) losses.add("表格宽于 Word 正文，列宽可能缩放");
@@ -261,7 +262,8 @@ function tableXml(rows: string[][], props: Record<string, string>): string {
     const heading = (header && r === 0) || (headerColumn && c === 0);
     const paras = cell.split("\n").map((line) => paragraph("", line ? `<w:r>${heading ? "<w:rPr><w:b/><w:bCs/></w:rPr>" : ""}${textContentXml(line)}</w:r>` : "")).join("");
     const width = widths.slice(c, c + span).reduce((sum, n) => sum + n, 0);
-    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ""}${vertical}${heading ? `<w:shd w:val="clear" w:color="auto" w:fill="F5F6F7"/>` : ""}</w:tcPr>${paras}</w:tc>`;
+    const fill = tableCellFill(props, merge?.[0] ?? r, c).slice(1) || (heading ? "F5F6F7" : "");
+    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ""}${vertical}${fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : ""}</w:tcPr>${paras}</w:tc>`;
   }).join("")}</w:tr>`).join("");
   const layout = fixed ? `<w:tblW w:w="${widths.reduce((sum, n) => sum + n, 0)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` : `<w:tblW w:w="0" w:type="auto"/>`;
   return `<w:tbl><w:tblPr><w:tblStyle w:val="JiangeTable"/>${layout}<w:tblLook w:val="${look}" w:firstRow="${header ? 1 : 0}" w:lastRow="0" w:firstColumn="${headerColumn ? 1 : 0}" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
@@ -853,6 +855,7 @@ class DocxReader {
     const gridNodes = children(child(tbl, "w:tblGrid"), "w:gridCol");
     const gridTwips = gridNodes.map((col) => Number(col.attrs["w:w"]));
     const cellWidths: { column: number; span: number; width: XmlElement }[] = [];
+    const fills: { row: number; col: number; span: number; fill: string }[] = [];
     // Only infer first-column semantics from our own style. In third-party Word
     // documents tblLook is conditional styling, not an unambiguous title column.
     const ownTable = child(tablePr, "w:tblStyle")?.attrs["w:val"] === "JiangeTable";
@@ -892,6 +895,9 @@ class DocxReader {
         if (vMerge && !validVertical) unsupportedMerge = true;
         const continued = validVertical && vValue !== "restart";
         const column = row.length;
+        const shading = child(tcPr, "w:shd"), color = shading?.attrs["w:fill"], pattern = shading?.attrs["w:val"];
+        if (shading && (shading.attrs["w:themeFill"] || (pattern && pattern !== "clear" && pattern !== "nil"))) this.warnings.add("部分表格背景样式无法完整导入");
+        else if (pattern !== "nil" && color && /^[0-9a-f]{6}$/i.test(color) && !(ownTable && ((header && rowIndex === 0) || (headerColumn && column === 0)) && color.toUpperCase() === "F5F6F7")) fills.push({ row: rowIndex, col: column, span, fill: `#${color.toUpperCase()}` });
         const preferredWidth = child(tcPr, "w:tcW");
         if (preferredWidth) cellWidths.push({ column, span, width: preferredWidth });
         const cell = this.cellText(tc, (header && rowIndex === 0) || (headerColumn && column === 0));
@@ -920,6 +926,10 @@ class DocxReader {
     if (styled) this.warnings.add("表格单元格中的文字样式不会导入");
     if (unsupportedMerge) this.warnings.add("部分合并单元格无法无损导入，已拆分并保留内容");
     const props: Record<string, string> = { tableData: JSON.stringify(rows) };
+    if (fills.length) {
+      Object.assign(props, cellTableWrites(props, rows, 0));
+      for (const fill of fills) for (let col = fill.col; col < fill.col + fill.span && col < width; col++) props[cellFillKey(`r${fill.row}`, `c${col}`)] = fill.fill;
+    }
     if (!header) props.tableHeader = "none";
     if (headerColumn) props.tableHeaderColumn = "column";
     if (merges.length) props.tableMerges = JSON.stringify(merges);

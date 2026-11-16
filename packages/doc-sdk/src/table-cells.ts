@@ -23,6 +23,7 @@ export const TBL_MIRROR = "tbl.m";
  * identical value, so unchanged cells need no per-cell write (and cannot clobber others). */
 export const TBL_BASE = "tbl.base";
 export const cellKey = (row: string, col: string) => `tbl.c.${row}.${col}`;
+export const cellFillKey = (row: string, col: string) => `tbl.fill.${row}.${col}`;
 
 /** FNV-1a 32-bit over UTF-8, lowercase hex (mirrored in Go for server search). */
 export function tableHash(value: string): string {
@@ -40,6 +41,27 @@ const ids = (raw: string | undefined): string[] | null => {
     return Array.isArray(parsed) && parsed.length && parsed.every((x) => typeof x === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(x)) ? parsed : null;
   } catch { return null; }
 };
+
+/** Explicit cell fill; an empty value inherits the default/header background. */
+export function tableCellFill(props: Record<string, string>, row: number, col: number): string {
+  if (!Number.isSafeInteger(row) || row < 0 || !Number.isSafeInteger(col) || col < 0) return "";
+  const rows = props[TBL_VERSION] === "2" ? ids(props[TBL_ROWS]) : null, cols = props[TBL_VERSION] === "2" ? ids(props[TBL_COLS]) : null;
+  const r = rows ? rows[row] : `r${row}`, c = cols ? cols[col] : `c${col}`;
+  if (!r || !c) return "";
+  const value = props[cellFillKey(r, c)] ?? "";
+  return /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : "";
+}
+
+/** Set only the selected cell registers; existing rows/columns retain their IDs. */
+export function setTableCellFills(tx: Tx, block: OpId, cells: readonly { row: number; col: number; fill: string }[]): void {
+  const props = tx.doc.blockInfo(block).props;
+  const rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
+  if (props[TBL_VERSION] !== "2" || !rows || !cols) throw new Error("table must be migrated before setting cell fill");
+  for (const { row, col, fill } of cells) {
+    if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col) || row < 0 || col < 0 || row >= rows.length || col >= cols.length || (fill !== "" && !/^#[0-9a-f]{6}$/i.test(fill))) throw new Error("invalid table fill");
+  }
+  for (const { row, col, fill } of cells) tx.setProp(block, cellFillKey(rows[row], cols[col]), fill.toUpperCase());
+}
 
 export function isCellTable(props: Record<string, string>): boolean {
   return props[TBL_VERSION] === "2" && !!ids(props[TBL_ROWS]) && !!ids(props[TBL_COLS]);

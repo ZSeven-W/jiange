@@ -57,7 +57,8 @@ import { ImageBlock } from "./image-block";
 import { TableBlock, type TableResizeSession } from "./table-block";
 import { parseTableWidths, updatedTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
-import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./table-ops";
+import { parseMerges, planSelectionDelete, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
+import { deleteSelectionFills, fillCells, readTableFills, remapTableFills } from "./table-fill";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
 import { MemberCard, type MemberInfo } from "./member-card";
@@ -95,7 +96,7 @@ import { validEditorSelection } from "./selection-safety";
 import { editorClipboardRoute, isNativeControl } from "./native-control";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
-import { applyTableWrites, cellTableWrites, isCellTable, tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./table-cells";
+import { applyTableWrites, cellTableWrites, isCellTable, setTableCellFills, tableDataOf, tableRepairWrites, tableRowsOf, writeTable } from "./table-cells";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -2511,6 +2512,22 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (marker) um.recordMarker(marker);
                   sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force((x) => x + 1); publish();
                 }}
+                onTableFill={readOnly ? undefined : (range, fill) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b)) return "文档状态已变化，表格未修改。";
+                  const current = doc.blockInfo(b), rows = tableRowsOf(current.props), cols = rows[0]?.length ?? 0;
+                  if (current.type !== "table" || !tableSnapshot || version("tableData") !== tableSnapshot.data || version("tableMerges") !== tableSnapshot.merges || version("type") !== tableSnapshot.type || tableDataOf(current.props) !== tableDataOf(info.props)) return "表格已变化，请重新选择。";
+                  if (![range.r0, range.r1, range.c0, range.c1].every(Number.isSafeInteger) || range.r0 < 0 || range.c0 < 0 || range.r1 < range.r0 || range.c1 < range.c0 || range.r1 >= rows.length || range.c1 >= cols || rows.length * cols > 5000 || (fill !== "" && !/^#[0-9a-f]{6}$/i.test(fill))) return "选区或颜色无效。";
+                  if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
+                  const migration = new Tx(doc);
+                  if (!isCellTable(current.props)) applyTableWrites(migration, b, current.props, cellTableWrites(current.props, rows, doc.client));
+                  const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
+                  const cells = [];
+                  for (let r = range.r0; r <= range.r1; r++) for (let c = range.c0; c <= range.c1; c++) cells.push({ row: r, col: c, fill });
+                  setTableCellFills(tx, b, cells);
+                  if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
+                  else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
+                  return null;
+                }}
                 onTablePaste={readOnly ? undefined : (row, col, text, literal) => tableClipboard({ kind: "paste", row, col, text, literal })}
                 onTableCut={readOnly || onCopyBlock ? undefined : (range) => tableClipboard({ kind: "cut", range })}
                 onTableClear={readOnly ? undefined : (range) => tableClipboard({ kind: "clear", range })}
@@ -2530,7 +2547,9 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const tx = new Tx(doc);
                   if (plan.kind === "table") tx.setProp(b, "type", "paragraph");
                   else {
+                    const fills = deleteSelectionFills(readTableFills(current.props, rows.length, rows[0].length), plan.kind, range);
                     writeTable(tx, b, current.props, plan.rows, doc.client);
+                    setTableCellFills(tx, b, fillCells(fills));
                     tx.setProp(b, "tableMerges", JSON.stringify(plan.merges));
                     if (plan.widths) tx.setProp(b, "tableWidths", JSON.stringify(plan.widths));
                   }
@@ -2580,15 +2599,22 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   // No publish(): it would drop the flowchart pointer/selection presence.
                   return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? Object.keys(intent.writes) : [] };
                 }}
-                onTableChange={readOnly ? undefined : (rows, merges, widths) => {
+                onTableChange={readOnly ? undefined : (rows, merges, widths, operation) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "table") return;
-                  const tx = new Tx(doc);
+                  const current = doc.blockInfo(b).props, previous = tableRowsOf(current);
+                  const fills = operation ? remapTableFills(readTableFills(current, previous.length, previous[0]?.length ?? 0), operation) : null;
+                  if (!isCellTable(current) && Object.entries(current).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未修改表格，请等待同步后重试。"); return; }
+                  const migration = new Tx(doc);
+                  if (!isCellTable(current)) applyTableWrites(migration, b, current, cellTableWrites(current, previous, doc.client));
+                  const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
                   writeTable(tx, b, doc.blockInfo(b).props, rows, doc.client);
+                  if (fills) setTableCellFills(tx, b, fillCells(fills));
                   tx.setProp(b, "tableMerges", JSON.stringify(merges));
                   if (widths) tx.setProp(b, "tableWidths", JSON.stringify(widths));
                   um.seal(); // 不与此前的列宽拖拽等属性修改合并为同一步撤销
-                  um.record(tx, sel.current, sel.current, "prop");
-                  sync.client.push(tx.ops);
+                  const marker = tableStructureHistory.record(doc, b, tx, um, before);
+                  if (marker) um.recordMarker(marker);
+                  sync.client.push([...migration.ops, ...tx.ops]);
                   um.seal();
                   force((x) => x + 1);
                   publish();
@@ -2859,6 +2885,7 @@ interface BlockProps {
   onSetProp?: (key: string, value: string) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   onTableHeader?: (axis: "row" | "column", enabled: boolean) => void;
+  onTableFill?: (range: CellRange, fill: string) => string | null;
   onTablePaste?: (r: number, c: number, text: string, literal?: boolean) => string | null;
   onTableCut?: (range: CellRange) => string | null;
   onTableClear?: (range: CellRange) => string | null;
@@ -2894,11 +2921,11 @@ interface BlockProps {
   canCopy?: boolean;
   canDownload?: boolean;
   onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
-  onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths) => void;
+  onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => void;
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -3160,6 +3187,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
       {type === "math" || type === "diagram" || type === "columns" || type === "flowchart" ? null : type === "table" ? (
         <TableBlock
           data={tableDataOf(props)}
+          fillProps={props}
           findCells={tableFindCells}
           findNavigation={findNavigation}
           widths={parseTableWidths(props.tableWidths)}
@@ -3176,6 +3204,7 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
           onAppendRow={onTableAppendRow}
           onDeleteSelection={onTableDeleteSelection}
           onChange={onTableChange}
+          onFill={onTableFill}
           onDelete={() => onSetProp?.("type", "paragraph")}
           readOnly={!onTableEdit}
           canCopy={canCopy}

@@ -4,6 +4,7 @@ import { buildDocx, docxExportLosses, DOCX_MAX_BYTES, DocxImportError, imageInfo
 import { createZip, crc32, listZip, readZipEntry } from "../src/zip.js";
 import { parseXml, XmlError } from "../src/xml.js";
 import type { MdBlock } from "../src/markdown.js";
+import { cellFillKey, cellTableWrites, tableCellFill } from "../src/table-cells.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -225,6 +226,18 @@ describe("Word export → import round trip", () => {
 });
 
 describe("Word table structure and headers", () => {
+  it("round-trips explicit cell fills, including white on a header", async () => {
+    const grid = [["标题", "状态"], ["任务", "完成"]];
+    const props: Record<string, string> = { tableData: JSON.stringify(grid), tableHeader: "row" };
+    Object.assign(props, cellTableWrites(props, grid, 1));
+    props[cellFillKey("r0", "c0")] = "#FFFFFF";
+    props[cellFillKey("r1", "c1")] = "#E3ECFF";
+    const bytes = buildDocx({ blocks: [b("table", "", props)] });
+    const imported = (await parseDocx(bytes)).blocks[0];
+    expect(tableCellFill(imported.props, 0, 0)).toBe("#FFFFFF");
+    expect(tableCellFill(imported.props, 1, 1)).toBe("#E3ECFF");
+    expect(tableCellFill(imported.props, 0, 1)).toBe("");
+  });
   it("round-trips explicit column widths, including the total width of a merged cell", async () => {
     const props = { tableData: '[["计划","","团队"],["开发","完成","小简"]]', tableMerges: '[[0,0,1,2]]', tableHeader: "row", tableWidths: '[180,120,240]' };
     const blocks = [b("table", "", props)];

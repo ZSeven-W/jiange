@@ -112,3 +112,22 @@ describe("cell-level table storage", () => {
     expect(tableDataOf(a.blockInfo(table).props)).toBe(JSON.stringify([["", ""], ["", ""]]));
   });
 });
+
+describe('cell background fills', () => {
+  it('keeps concurrent colors in different cells and rejects invalid color values', async () => {
+    const { setTableCellFills, tableCellFill } = await import('../src/table-cells.js');
+    const { a, b, table } = replicas();
+    sync(edit(a, table, 0, 0, '文本'), b);
+    const first = new Tx(a), second = new Tx(b);
+    setTableCellFills(first, table, [{ row: 0, col: 0, fill: '#fbe4e2' }]);
+    setTableCellFills(second, table, [{ row: 1, col: 1, fill: '#E3ECFF' }]);
+    sync(first.ops, b); sync(second.ops, a);
+    for (const doc of [a, b]) {
+      expect(tableCellFill(doc.blockInfo(table).props, 0, 0)).toBe('#FBE4E2');
+      expect(tableCellFill(doc.blockInfo(table).props, 1, 1)).toBe('#E3ECFF');
+    }
+    const invalid = new Tx(a);
+    expect(() => setTableCellFills(invalid, table, [{ row: 0, col: 0, fill: '#FBE4E2' }, { row: 0, col: 1, fill: 'url(evil)' }])).toThrow();
+    expect(invalid.ops).toEqual([]);
+  });
+});

@@ -29,6 +29,7 @@ export function markdownExportLosses(view: { blocks: ExportBlock[] }): string[] 
     if (block.type === "columns") losses.add("分栏布局会被展开");
     else if (block.type === "table") {
       if (!rows) losses.add("表格数据格式异常，原始数据会作为代码块导出，无法还原为表格");
+      if (Object.entries(block.props).some(([key, value]) => key.startsWith("tbl.fill.") && value)) losses.add("表格单元格背景色不会保留");
       if (text || Object.entries(block.props).some(([key, value]) => key !== "tableData" && !key.startsWith("tbl.") && value)) losses.add("表格的额外内容或设置无法完整保留");
     }
     else if (block.type === "image" || block.type === "file") {

@@ -2,9 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx } from "@jiange/collab";
 import { blockClipboardHTML, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, confirmBlockClipboard, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { deleteRange, mathSpans, pasteBlocks } from "./model";
-import { tableRowsOf, writeTable } from "./table-cells";
+import { cellFillKey, cellTableWrites, tableCellFill, tableRowsOf, writeTable } from "./table-cells";
 
 describe("clipboard payload validation", () => {
+  it("retains table cell fills in both structured and standard HTML copies", () => {
+    const grid = [["甲", "乙"]], props: Record<string, string> = { tableData: JSON.stringify(grid) };
+    Object.assign(props, cellTableWrites(props, grid, 1)); props[cellFillKey("r0", "c1")] = "#E3ECFF";
+    const block = { type: "table", props, chars: [] }, raw = JSON.stringify([block]);
+    expect(blockClipboardHTML(raw, "甲\t乙", [block])).toContain('style="background-color:#E3ECFF"');
+    const pasted = clipboardBlocks(raw, "")!;
+    expect(tableCellFill(pasted[0].props, 0, 1)).toBe("#E3ECFF");
+    expect(tableRowsOf(pasted[0].props)).toEqual(grid);
+  });
   it("writes human-readable text and bounded structured HTML, and handles denial", async () => {
     class Item { constructor(readonly entries: Record<string, Blob>) {} }
     const write = vi.fn(async (_items: unknown[]) => {});
