@@ -24,7 +24,7 @@ try {
   }
   writeFileSync(join(consumer, 'smoke.mjs'), `
 import assert from 'node:assert/strict';
-import { Doc, ROOT, Tx, SyncClient } from '@jiange/collab';
+import { Doc, ROOT, Tx, SyncClient, UndoManager } from '@jiange/collab';
 import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights, captureColumnMove, applyColumnMove } from '@jiange/doc-sdk';
 import { columnWeights as columnWidthsSubpath } from '@jiange/doc-sdk/column-widths';
 import { validColumnPosition } from '@jiange/doc-sdk/column-move';
@@ -42,6 +42,8 @@ const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, R
 tx.insert(block, 0, 'Hello'); const next = splitBlock(tx, {b:block,o:2});
 assert.equal(bodyBlocks(doc).length, 2); assert.equal(doc.text(next.b), 'llo');
 assert.equal(new SyncClient(1).unacked, 0);
+const history = new UndoManager(), point = history.markInsertionPoint();
+assert.equal(history.insertMarkerAt(point, 'async'), true); assert.equal(history.peekMarker(false), 'async');
 const word = buildDocx({blocks:[{type:'paragraph',props:{},spans:[{text:'Hello SDK',marks:{}}]}]}, {title:'Test'});
 assert.equal((await parseDocx(word)).blocks[0].text, 'Hello SDK');
 assert.deepEqual(columnWeights('{"1:2":1400,"1:3":600}', ['1:2','1:3']), [1400,600]);
@@ -62,7 +64,7 @@ const graph = {theme:'feishu',nodes:[{id:'n',x:0,y:0,w:140,h:60,shape:'rect',tex
 assert.equal(readFlow(flowWrites({},graph)).nodes[0].text,'Start');
 `);
   writeFileSync(join(consumer, 'types.ts'), `
-import { Doc, Tx, ROOT, SyncClient } from '@jiange/collab';
+import { Doc, Tx, ROOT, SyncClient, UndoManager } from '@jiange/collab';
 import { splitBlock, columnWeights, captureColumnMove, type ColumnWidthSnapshot, type ColumnMoveSnapshot } from '@jiange/doc-sdk';
 import { COLUMN_WIDTHS } from '@jiange/doc-sdk/column-widths';
 import { applyColumnMove } from '@jiange/doc-sdk/column-move';
@@ -71,6 +73,7 @@ import { calculateSheet, writeXlsx, readXlsx, type XlsxWorkbook } from '@jiange/
 import { readFlow, type FlowGraph } from '@jiange/whiteboard-sdk';
 const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, ROOT);
 splitBlock(tx, { b: block, o: 0 }); new SyncClient(1);
+const history = new UndoManager(), point: object = history.markInsertionPoint(); history.insertMarkerAt(point, 'async');
 const weights: number[] = columnWeights(undefined, ['1:2']); const widthKey: string = COLUMN_WIDTHS; let snapshot: ColumnWidthSnapshot | null = null; void [weights, widthKey, snapshot];
 let move: ColumnMoveSnapshot | null = captureColumnMove(doc, block, block); if (move) applyColumnMove(tx, move, null);
 const shapes: SlideShape[] = []; moveShapeOrder(shapes, 'id', 'front');

@@ -10,6 +10,7 @@ interface Entry<S> {
   tag?: string;
   marker?: string;
   time: number;
+  insertion?: { previous: Entry<S> | null; sequence: number };
 }
 
 /**
@@ -23,6 +24,9 @@ export class UndoManager<S = unknown> {
   private redos: Entry<S>[] = [];
   private remap = new Map<string, OpId>();
   private revisionValue = 0;
+  private navigationRevision = 0;
+  private insertionSequence = 0;
+  private readonly insertionPoints = new WeakMap<object, { previous: Entry<S> | null; navigation: number; sequence: number }>();
   mergeWindowMs = 800;
   limit = 500;
 
@@ -54,6 +58,32 @@ export class UndoManager<S = unknown> {
     return this.undos.some((entry) => entry.marker === marker) || this.redos.some((entry) => entry.marker === marker);
   }
 
+  /** Reserve the current boundary without changing either history stack. */
+  markInsertionPoint(): object {
+    // Later typing must not merge into the entry before this boundary.
+    this.seal();
+    const token = Object.freeze({});
+    this.insertionPoints.set(token, { previous: this.undos.at(-1) ?? null, navigation: this.navigationRevision, sequence: ++this.insertionSequence });
+    return token;
+  }
+
+  /** Insert an asynchronously confirmed action before later local edits. */
+  insertMarkerAt(token: object, marker: string): boolean {
+    const point = this.insertionPoints.get(token);
+    if (!point || !marker || this.hasMarker(marker) || point.navigation !== this.navigationRevision || this.limit < 1) return false;
+    let index = point.previous ? this.undos.indexOf(point.previous) + 1 : 0;
+    if (point.previous && index === 0) return false;
+    while (index < this.undos.length && this.undos[index].insertion?.previous === point.previous && this.undos[index].insertion!.sequence < point.sequence) index++;
+    // An insertion at the oldest edge would be immediately evicted.
+    if (index === 0 && this.undos.length >= this.limit) return false;
+    this.undos.splice(index, 0, { items: [], before: null, after: null, marker, time: Date.now(), insertion: { previous: point.previous, sequence: point.sequence } });
+    this.redos = [];
+    if (this.undos.length > this.limit) this.undos.shift();
+    this.revisionValue++;
+    this.insertionPoints.delete(token);
+    return true;
+  }
+
   /** Share identifier remaps with another part of the same editor history. */
   shareRemappings<T>(other: UndoManager<T>): void { this.remap = other.remap; }
 
@@ -76,6 +106,7 @@ export class UndoManager<S = unknown> {
     if (from.at(-1)?.marker !== marker) return false;
     to.push(from.pop()!);
     this.revisionValue++;
+    this.navigationRevision++;
     return true;
   }
 
@@ -85,6 +116,7 @@ export class UndoManager<S = unknown> {
     if (this.revisionValue !== expectedRevision || stack.at(-1)?.marker !== marker) return false;
     stack.pop();
     this.revisionValue++;
+    this.navigationRevision++;
     return true;
   }
 
@@ -135,6 +167,7 @@ export class UndoManager<S = unknown> {
     const e = from.pop();
     if (!e) return null;
     this.revisionValue++;
+    this.navigationRevision++;
     const tx = new Tx(doc);
     const inverse: UndoItem[] = [];
     for (let i = e.items.length - 1; i >= 0; i--) {

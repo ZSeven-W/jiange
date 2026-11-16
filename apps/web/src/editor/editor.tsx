@@ -56,7 +56,7 @@ import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
 import { ImageBlock } from "./image-block";
 import { TableBlock, type TableResizeSession } from "./table-block";
 import { parseTableWidths, updatedTableWidths } from "./table-widths";
-import { TableWidthHistory } from "./table-width-history";
+import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
 import { parseMerges, planSelectionDelete, type CellRange, type Merge, type Widths } from "./table-ops";
 import { planTableAppendRow, planTableClear, planTableCut, planTablePaste } from "./table-clipboard";
 import { TableStructureHistory } from "./table-structure-history";
@@ -223,7 +223,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const currentUserId = useRef(userId); currentUserId.current = userId;
-  const pendingAlignmentPlan = useRef<{ plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory | ColumnMoveHistory | TableWidthHistory } | null>(null);
+  const pendingAlignmentPlan = useRef<
+    | { kind: "history"; plan: ConditionalAlignmentPlan; doc: Doc; key: string; redo: boolean; history: ColumnAlignmentHistory | ColumnWidthHistory | ColumnMoveHistory | TableWidthHistory }
+    | { kind: "table-resize"; plan: ConditionalAlignmentPlan; doc: Doc; structureBefore: string | null }
+    | null
+  >(null);
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
   const alignmentOwnerRelease = useRef<Promise<void>>(Promise.resolve());
   const alignmentRequest = useRef<{ controller: AbortController; owner: ColumnAlignmentCommit } | null>(null);
@@ -231,6 +235,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const alignmentPendingRef = useRef(false);
   const [alignmentPending, setAlignmentPending] = useState(false);
   const [alignmentMessage, setAlignmentMessage] = useState("");
+  const [waitingResizeSync, setWaitingResizeSync] = useState(false);
   const setPendingAlignment = useCallback((pending: boolean) => { alignmentPendingRef.current = pending; setAlignmentPending(pending); }, []);
   const conditionalAlignment = useMemo(() => {
     if (typeof window === "undefined" || !Number.isSafeInteger(userId) || !userId || userId < 1) return null;
@@ -298,10 +303,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   }, [conditionalAlignment, sync.client, userId, releaseAlignmentOwner]);
   useEffect(() => {
     let alive = true;
-    pendingAlignmentPlan.current = null; setPendingAlignment(false); setAlignmentMessage("");
+    pendingAlignmentPlan.current = null; setPendingAlignment(false); setAlignmentMessage(""); setWaitingResizeSync(false);
     const check = () => {
       if (conditionalAlignment) void conditionalAlignment.hasPending().then((pending) => {
         if (!alive || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+        if (alignmentBusy.current && !pendingAlignmentPlan.current && !pending) return;
         if (!pending && pendingAlignmentPlan.current) { setPendingAlignment(true); setAlignmentMessage("本地操作记录已变化，无法确认结果，请检查文档历史。"); return; }
         setPendingAlignment(pending);
         setAlignmentMessage(pending ? "有一项布局操作尚待核对。" : "");
@@ -322,7 +328,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     alignmentBusy.current = true;
     const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
     const timer = window.setTimeout(() => controller.abort(), 10_000);
-    let discarded = false;
+    let discarded = false, superseded = false, historyConflict = false, initialResize = false;
     try {
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在核对该操作，或浏览器不支持跨页面锁。"); return; }
       const result = await conditionalAlignment.finish(controller.signal, (attempt) => {
@@ -330,6 +336,18 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (!pending) return true; // This page has no corresponding in-memory undo stack after recovery.
         if (attempt.batch !== conditionalBatchBase64(encodeOps([pending.plan.op]))) return false;
         const d = sync.client.doc;
+        if (pending.kind === "table-resize") {
+          initialResize = true;
+          if (d !== pending.doc) return false;
+          const result = tableWidthHistory.finishInitial(d, um, pending.plan);
+          if (result.status === "unobserved" || result.status === "invalid") return false;
+          if (result.status === "recorded") tableStructureHistory.recordEdit(d, pending.plan.op.block, result.key, pending.structureBefore, false, um);
+          else if (result.status === "no-history") discarded = true;
+          else if (result.status === "changed") historyConflict = true;
+          else superseded = true;
+          pendingAlignmentPlan.current = null;
+          return true;
+        }
         if (d === pending.doc && pending.history.finishConditional(d, um, pending.plan) === "ready") {
           if (pending.key.startsWith("table-width:")) tableStructureHistory.afterEditStep(d, pending.plan.op.block, pending.key, pending.redo, [pending.plan.op]);
           pendingAlignmentPlan.current = null; return true;
@@ -343,7 +361,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (result === "committed" || result === "not_committed") {
         setPendingAlignment(false); pendingAlignmentPlan.current = null; releaseAlignmentOwner(); force((x) => x + 1);
         setAlignmentMessage("");
-        setColumnNotice(result === "not_committed" ? "文档已变化，布局操作未执行；请重新操作。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : "布局操作已保存。");
+        setColumnNotice(result === "not_committed" ? "文档已变化，布局操作未执行；请重新操作。" : superseded ? "列宽调整已提交，但随后被其他修改覆盖；请检查表格。" : historyConflict ? "列宽调整已保存；后续表格修改可能影响这次撤销。" : discarded ? "操作已保存，但后续修改使本地撤销记录无法继续使用。" : initialResize ? "" : "布局操作已保存。");
       } else if (result === "empty" && !pendingAlignmentPlan.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); }
       else if (result === "needs_finalize") setAlignmentMessage("操作已保存，但本地历史已变化；请先处理较新的撤销记录后再核对。");
       else if (result === "history_changed" || result === "mismatch" || result === "empty") setAlignmentMessage("无法确认操作结果，请保留当前记录并检查文档历史。");
@@ -351,7 +369,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       else setAlignmentMessage("操作结果尚未确认，可核对状态或重试相同操作。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("暂时无法核对操作，原请求仍保存在本地。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment]);
 
   const retryAlignment = useCallback(async () => {
     if (!conditionalAlignment || alignmentBusy.current || !mounted.current) return;
@@ -363,13 +381,13 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("另一页面正在处理该操作，或浏览器不支持跨页面锁。"); return; }
       const result = await conditionalAlignment.retry(controller.signal, () => {
         const pending = pendingAlignmentPlan.current;
-        return !pending || sync.client.doc === pending.doc && pending.history.canSubmitConditional(pending.doc, um, pending.plan);
+        return !pending || sync.client.doc === pending.doc && (pending.kind === "table-resize" ? tableWidthHistory.canSubmitInitial(pending.doc, um, pending.plan) : pending.history.canSubmitConditional(pending.doc, um, pending.plan));
       });
       if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage(result === "sent" ? "已重试，正在核对结果。" : result === "needs_resolution" ? "文档状态已变化，正在核对结果。" : "暂无法重试，原请求仍保存在本地。");
     } catch { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setAlignmentMessage("重试失败，原请求仍保存在本地。"); }
     finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
     void reconcileAlignment();
-  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, um, reconcileAlignment]);
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, tableWidthHistory, um, reconcileAlignment]);
 
   const startAlignmentUndo = useCallback(async (key: string, redo: boolean) => {
     if (!mounted.current) return;
@@ -400,7 +418,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         return;
       }
       const { plan } = prepared;
-      pendingAlignmentPlan.current = { plan, doc: d, key, redo, history };
+      pendingAlignmentPlan.current = { kind: "history", plan, doc: d, key, redo, history };
       setPendingAlignment(true); setAlignmentMessage("正在安全提交布局操作…");
       const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === d && history.canSubmitConditional(d, um, plan));
       if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
@@ -418,6 +436,67 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; } }
     void reconcileAlignment();
   }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, columnAlignmentHistory, columnWidthHistory, columnMoveHistory, tableWidthHistory, tableStructureHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
+
+  /** Submit an online resize against a confirmed server head; keep uncertain requests recoverable. */
+  const startTableResize = useCallback(async (doc: Doc, block: OpId, before: TableWidthBefore, value: string, structureBefore: string | null, fallback: () => boolean) => {
+    if (!mounted.current) return;
+    if (alignmentBusy.current || alignmentPendingRef.current) { setColumnNotice("上一项布局操作仍在核对，请稍后再试。"); return; }
+    if (!conditionalAlignment) { setColumnNotice("当前浏览器无法安全提交列宽调整。"); return; }
+    setColumnNotice("");
+    alignmentBusy.current = true;
+    const controller = new AbortController(); alignmentRequest.current = { controller, owner: conditionalAlignment };
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    let submitted = false;
+    try {
+      if (!await ensureAlignmentOwner()) { if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) setColumnNotice("另一页面正在处理该文档，或浏览器不支持跨页面锁。"); return; }
+      if (!canStepFindBatch(sync.client)) {
+        setWaitingResizeSync(true); setPendingAlignment(true); setAlignmentMessage("正在等待文档同步后提交列宽调整…");
+        const deadline = Date.now() + 2000;
+        while (!canStepFindBatch(sync.client) && sync.client.status !== "offline" && !sync.client.blocked && !controller.signal.aborted && mounted.current && Date.now() < deadline) await new Promise((resolve) => window.setTimeout(resolve, 100));
+        if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+        if (controller.signal.aborted) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("已取消列宽调整。"); return; }
+        if (sync.client.blocked || readOnlyRef.current) { setPendingAlignment(false); setAlignmentMessage(""); releaseAlignmentOwner(); setColumnNotice("文档暂时不可编辑，未调整列宽。"); return; }
+        if (!canStepFindBatch(sync.client)) {
+          setPendingAlignment(false); setAlignmentMessage("");
+          if (fallback() && sync.client.status !== "offline") setColumnNotice("同步较慢，列宽已保存在本地，待同步后上传。");
+          releaseAlignmentOwner();
+          return;
+        }
+        setWaitingResizeSync(false); setPendingAlignment(false); setAlignmentMessage("");
+      }
+      const epoch = sync.client.epoch, head = sync.client.lastSeq;
+      if (sync.client.doc !== doc || !canStepFindBatch(sync.client) || epoch === null || readOnlyRef.current || controller.signal.aborted) { releaseAlignmentOwner(); setColumnNotice("文档同步状态已变化，未调整列宽，请重试。"); return; }
+      um.seal();
+      const prepared = tableWidthHistory.prepareInitial(doc, um, block, before, value);
+      if (prepared.status !== "ready") { releaseAlignmentOwner(); setColumnNotice("表格内容或列宽已变化，未应用调整；请重试。"); return; }
+      const { plan } = prepared;
+      pendingAlignmentPlan.current = { kind: "table-resize", plan, doc, structureBefore };
+      setPendingAlignment(true); setAlignmentMessage("正在安全提交列宽调整…");
+      const result = await conditionalAlignment.start(plan.op, epoch, head, controller.signal, () => sync.client.doc === doc && tableWidthHistory.canSubmitInitial(doc, um, plan), () => { submitted = true; });
+      if (!mounted.current || currentClient.current !== sync.client || currentUserId.current !== userId) return;
+      if (result === "blocked") { pendingAlignmentPlan.current = null; setPendingAlignment(false); releaseAlignmentOwner(); setAlignmentMessage(""); setColumnNotice("文档状态已变化，未调整列宽；请重试。"); }
+      else if (result === "occupied") { pendingAlignmentPlan.current = null; setAlignmentMessage("已有操作待核对，请先处理该记录。"); }
+      else setAlignmentMessage(result === "sent" ? "列宽调整已提交，正在核对同步结果。" : "列宽调整结果尚未确认，可核对状态或重试相同操作。");
+    } catch {
+      let pending = true;
+      try { pending = await conditionalAlignment.hasPending(); } catch { /* Keep a damaged record protected. */ }
+      if (mounted.current && currentClient.current === sync.client && currentUserId.current === userId) {
+        setPendingAlignment(pending);
+        if (pending) setAlignmentMessage("列宽调整结果尚未确认，原请求仍保存在本地。");
+        else if (submitted) { setPendingAlignment(true); setAlignmentMessage("列宽操作可能已提交，但本地记录不可用；请检查文档历史。"); }
+        else {
+          pendingAlignmentPlan.current = null; releaseAlignmentOwner();
+          if (fallback()) setColumnNotice("安全提交暂不可用，列宽已按本地协作方式保存。");
+          else setColumnNotice("无法安全提交列宽调整，请检查浏览器存储。");
+        }
+      }
+    } finally { window.clearTimeout(timer); if (alignmentRequest.current?.controller === controller) { alignmentRequest.current = null; alignmentBusy.current = false; if (mounted.current) setWaitingResizeSync(false); } }
+    await reconcileAlignment();
+    for (let attempt = 0; attempt < 4 && alignmentPendingRef.current && mounted.current; attempt++) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      await reconcileAlignment();
+    }
+  }, [conditionalAlignment, ensureAlignmentOwner, sync.client, userId, tableWidthHistory, um, releaseAlignmentOwner, setPendingAlignment, reconcileAlignment]);
 
   useEffect(() => {
     if (!alignmentPending) return;
@@ -2162,7 +2241,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }}/>}
       {toast && <div role="status" contentEditable={false} className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-[#1F2329]/90 px-3.5 py-2 text-[13px] text-white shadow-lg" data-editor-toast>{toast}</div>}
       {columnNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>{columnNotice}</span><button type="button" className="ml-auto text-primary" onClick={() => setColumnNotice("")}>关闭</button></div>}
-      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对布局操作。"}</span><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></div>}
+      {alignmentPending && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground" data-column-alignment-pending><span>{alignmentMessage || "正在核对布局操作。"}</span>{waitingResizeSync ? <button type="button" className="text-primary" onClick={() => alignmentRequest.current?.controller.abort()} data-table-resize-wait-cancel>取消</button> : <><button type="button" className="text-primary" onClick={() => void reconcileAlignment()}>核对状态</button><button type="button" className="text-primary" onClick={() => void retryAlignment()}>重试相同操作</button></>}</div>}
       {batchSyncNotice && <div role="status" contentEditable={false} className="mb-3 flex items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground"><span>请等待文档同步完成后再{batchSyncNotice === "redo" ? "重做" : "撤销"}批量替换。</span><button type="button" className="ml-auto text-primary" onClick={() => setBatchSyncNotice(null)}>关闭</button></div>}
       {tableHistoryConflict?.client === sync.client && <div role="status" contentEditable={false} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border bg-surface p-2 text-[13px] text-muted-foreground">
         <span>{tableHistoryConflict.reason === "unsupported" ? "当前布局无法安全处理" : tableHistoryConflict.key.startsWith("column-move:") ? "分栏顺序已变化" : tableHistoryConflict.key.startsWith("column-width:") ? "分栏或栏宽已变化" : tableHistoryConflict.key.startsWith("table-width:") ? "表格结构或列宽已变化" : tableHistoryConflict.key.startsWith("column-align:") ? "分栏对齐或位置已变化" : tableHistoryConflict.reason === "size" ? "操作内容过大" : "表格或正文已变化"}，未执行{tableHistoryConflict.redo ? "重做" : "撤销"}。可以跳过此条本地记录，继续处理其他操作。</span>
@@ -2352,7 +2431,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onBeginTableResize={readOnly ? undefined : (index) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return null;
-                  if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return null; }
+                  if (alignmentPendingRef.current || alignmentBusy.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return null; }
                   const before = tableWidthHistory.capture(doc, b);
                   const structureBefore = tableStructureHistory.capture(doc, b, um);
                   if (!before || !Number.isInteger(index) || index < 0 || index >= before.columns) { setColumnNotice("表格结构或列宽无效，无法调整。"); return null; }
@@ -2360,7 +2439,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     cancel: () => {},
                     commit: (widths) => {
                       if (readOnlyRef.current || sync.client.doc !== doc) return;
-                      if (alignmentPendingRef.current && pendingAlignmentPlan.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
+                      if (alignmentPendingRef.current || alignmentBusy.current) { setColumnNotice("请先核对尚未完成的布局操作。"); return; }
                       const current = tableWidthHistory.capture(doc, b);
                       if (!current || current.guard !== before.guard || current.version !== before.version || current.value !== before.value || widths.length !== before.columns || widths.some((width) => !Number.isFinite(width) || width < 100 || width > 100000)) {
                         setColumnNotice("表格内容或列宽已变化，未应用调整；请重试。"); return;
@@ -2370,8 +2449,16 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                       const value = updatedTableWidths(before.value, before.columns, index, widths[index]);
                       if (value === null) { setColumnNotice("表格列宽无效，未应用调整。"); return; }
                       if (value === before.value) return;
-                      const tx = new Tx(doc); tx.setProp(b, "tableWidths", value);
-                      if (tx.ops.length) { const key = tableWidthHistory.record(doc, um, b, before); tableStructureHistory.recordEdit(doc, b, key, structureBefore, false, um); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
+                      const fallback = () => {
+                        if (readOnlyRef.current || sync.client.doc !== doc) return false;
+                        const latest = tableWidthHistory.capture(doc, b);
+                        if (!latest || latest.guard !== before.guard || latest.version !== before.version || latest.value !== before.value) { setColumnNotice("表格内容或列宽已变化，未应用调整；请重试。"); return false; }
+                        const tx = new Tx(doc); tx.setProp(b, "tableWidths", value);
+                        if (tx.ops.length) { const key = tableWidthHistory.record(doc, um, b, before); tableStructureHistory.recordEdit(doc, b, key, structureBefore, false, um); sync.client.push(tx.ops); force((x) => x + 1); publish(); return true; }
+                        return false;
+                      };
+                      if (conditionalAlignment && typeof navigator !== "undefined" && navigator.locks && sync.client.epoch !== null && sync.client.status !== "offline" && !sync.client.blocked) return startTableResize(doc, b, before, value, structureBefore, fallback);
+                      fallback();
                     },
                   };
                 }}

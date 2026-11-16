@@ -9,11 +9,13 @@ const prefix = (block: OpId) => `table-width:${idKey(block)}:`;
 const version = (doc: Doc, block: OpId, key: string) => { const id = doc.propVersion(block, key); return id ? idKey(id) : null; };
 export type TableWidthBefore = { value: string; version: string | null; guard: string; columns: number };
 type Prepared = { doc: Doc; undo: object; key: string; redo: boolean; revision: number; block: OpId; before: TableWidthBefore; target: string; opId: OpId };
+type PreparedInitial = { doc: Doc; undo: object; revision: number; anchor: object; block: OpId; before: TableWidthBefore; oldProps: Record<string, string>; target: string; opId: OpId };
 
 /** Resizing never replaces a width or structure change already seen locally. */
 export class TableWidthHistory {
   private history = new TableCellHistory();
   private prepared = new WeakMap<ConditionalAlignmentPlan, Prepared>();
+  private initial = new WeakMap<ConditionalAlignmentPlan, PreparedInitial>();
 
   capture(doc: Doc, block: OpId): TableWidthBefore | null {
     if (!doc.hasBlock(block)) return null;
@@ -36,6 +38,42 @@ export class TableWidthHistory {
     this.history.record(doc, key, before.value, after.value, before.version, after.version, before.guard, undefined, Date.now(), false);
     undo.seal(); undo.recordMarker(key); undo.seal();
     return key;
+  }
+
+  /** Prepare an initial resize without modifying the local collaborative document. */
+  prepareInitial<S>(doc: Doc, undo: UndoManager<S>, block: OpId, before: TableWidthBefore, value: string): { status: "ready"; plan: ConditionalAlignmentPlan } | { status: "changed" | "invalid" } {
+    const current = this.capture(doc, block);
+    if (!current || current.guard !== before.guard || current.version !== before.version || current.value !== before.value) return { status: "changed" };
+    if (!validTableWidths(value) || value === before.value || doc.client <= 0) return { status: "invalid" };
+    let opId: OpId;
+    try { [opId] = doc.allocateOpIds(1); } catch { return { status: "invalid" }; }
+    const anchor = undo.markInsertionPoint();
+    const op = Object.freeze({ t: "bset" as const, id: Object.freeze({ ...opId }), block: Object.freeze({ ...block }), key: "tableWidths", value });
+    const plan = Object.freeze({ op });
+    this.initial.set(plan, { doc, undo, revision: undo.revision, anchor, block, before, oldProps: doc.blockInfo(block).props, target: value, opId });
+    return { status: "ready", plan };
+  }
+
+  canSubmitInitial<S>(doc: Doc, undo: UndoManager<S>, plan: ConditionalAlignmentPlan): boolean {
+    const entry = this.initial.get(plan);
+    if (!entry || entry.doc !== doc || entry.undo !== undo || entry.revision !== undo.revision) return false;
+    const current = this.capture(doc, entry.block);
+    return !!current && current.guard === entry.before.guard && current.value === entry.before.value && current.version === entry.before.version;
+  }
+
+  /** The caller must first verify both the server receipt and the synced sequence. */
+  finishInitial<S>(doc: Doc, undo: UndoManager<S>, plan: ConditionalAlignmentPlan): { status: "recorded" | "superseded" | "changed"; key: string } | { status: "unobserved" | "no-history" | "invalid" } {
+    const entry = this.initial.get(plan);
+    if (!entry || entry.doc !== doc || entry.undo !== undo) return { status: "invalid" };
+    const current = this.capture(doc, entry.block);
+    if (current && current.value === entry.before.value && current.version === entry.before.version && current.guard === entry.before.guard) return { status: "unobserved" };
+    const status = !current || current.value !== entry.target || current.version !== idKey(entry.opId) ? "superseded" : current.guard !== entry.before.guard ? "changed" : "recorded";
+    const key = `${prefix(entry.block)}${++serial}`;
+    if (!undo.insertMarkerAt(entry.anchor, key)) { this.initial.delete(plan); return { status: "no-history" }; }
+    this.history.record(doc, key, entry.before.value, entry.target, entry.before.version, idKey(entry.opId), entry.before.guard, undefined, Date.now(), false);
+    if (status === "changed") this.rebaseMigration(doc, entry.block, entry.before, entry.oldProps, idKey(entry.opId));
+    this.initial.delete(plan);
+    return { status, key };
   }
 
   prepareConditional<S>(doc: Doc, undo: UndoManager<S>, key: string, redo: boolean): { status: "ready"; plan: ConditionalAlignmentPlan } | { status: "empty" | "conflict" | "unsupported" } {
@@ -102,17 +140,18 @@ export class TableWidthHistory {
   }
 
   /** Local legacy-to-cell migration preserves positional axes and prior text. */
-  rebaseMigration(doc: Doc, block: OpId, before: TableWidthBefore | null, oldProps: Record<string, string>): void {
+  rebaseMigration(doc: Doc, block: OpId, before: TableWidthBefore | null, oldProps: Record<string, string>, expectedWidthVersion = before?.version ?? null): void {
     if (!before || isCellTable(oldProps) || !doc.hasBlock(block)) return;
     const props = doc.blockInfo(block).props, after = this.capture(doc, block), rows = tableRowsOf(oldProps);
-    if (!after || !isCellTable(props) || before.version !== after.version || before.value !== after.value || props[TBL_BASE] !== JSON.stringify(rows)) return;
+    if (!after || !isCellTable(props) || expectedWidthVersion !== after.version || props[TBL_BASE] !== JSON.stringify(rows)) return;
+    if (expectedWidthVersion === before.version && before.value !== after.value) return;
     try {
       const rowIds: unknown = JSON.parse(props[TBL_ROWS]), colIds: unknown = JSON.parse(props[TBL_COLS]);
       if (!Array.isArray(rowIds) || !Array.isArray(colIds) || rowIds.length !== rows.length || colIds.length !== before.columns || rowIds.some((id, i) => id !== `r${i}`) || colIds.some((id, i) => id !== `c${i}`)) return;
       const oldGuard: unknown[] = JSON.parse(before.guard), nextGuard: unknown[] = JSON.parse(after.guard);
       if ([0, 1, 2, 4, 7, 8].some((index) => oldGuard[index] !== nextGuard[index])) return;
       nextGuard[3] = oldGuard[3];
-      this.history.rebaseStructure(doc, prefix(block), before.version, before.version, before.guard, JSON.stringify(nextGuard));
+      this.history.rebaseStructure(doc, prefix(block), expectedWidthVersion, expectedWidthVersion, before.guard, JSON.stringify(nextGuard));
     } catch { /* Unrecognized metadata remains guarded. */ }
   }
 

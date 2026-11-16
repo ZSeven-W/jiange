@@ -45,6 +45,8 @@ const ordered = moveShapeOrder([], "shape-id", "front");
 const graph = readFlow(flowWrites({}, { theme: "feishu", nodes: [], edges: [] }));
 ```
 
+协同 SDK 的 `UndoManager.markInsertionPoint()` 可为异步操作标记当前位置；宿主确认操作已持久化并在本地副本可见后，可调用 `insertMarkerAt(point, marker)` 把记录放在后续本地编辑之前。若用户在等待期间执行撤销/重做、锚点被淘汰或历史不再适用，该方法返回 `false`，宿主必须处理冲突；它本身不执行网络提交，也不会持久化历史。
+
 协同宿主可将二进制传输接到 `SyncClient.open(send)` 和 `receive(bytes)`，断线调用 `close()` 并保存 `pendingOps()`；实际接入还需要实现会话鉴权、可靠存储、重连和权限变化处理。以上示例只演示本地模型，不会自动连接服务器。
 
 ## 集成边界
@@ -58,4 +60,4 @@ const graph = readFlow(flowWrites({}, { theme: "feishu", nodes: [], edges: [] })
 
 五个公开的 headless SDK 均可在各自包目录独立运行 `pnpm test`；仓库根目录执行 `pnpm test:sdk:coverage` 可汇总源代码 V8 覆盖率，并对每个包执行语句及行覆盖率至少 85%、分支至少 75%、函数至少 80% 的最低门槛。文档、表格、幻灯片和白板的纯模型测试已从 Web 应用迁入对应 SDK，涉及浏览器、服务端和跨包集成的测试继续保留在应用层。
 
-2026-11-16 本地覆盖率（语句 / 分支）：协同 96.01% / 89.07%，文档 93.36% / 81.35%，表格 98.56% / 81.61%，幻灯片 100% / 87.23%，白板 90.01% / 82.30%。当前 `SyncClient` 对实验性 `ttable` 操作、快照和待发送草稿一律停止同步并保留草稿；它尚不是支持表格 CRDT 的可用传输。上述数字不等于功能完整性或所有并发情形已验证；服务端条件提交、浏览器交互、实体设备和 DOCX/XLSX 与第三方软件的全部互通仍需各自的集成验证。内部共享 `@jiange/ooxml` 保留独立测试，不计入上述五个 SDK。
+2026-11-16 本轮协同 SDK 本地覆盖率（语句 / 分支）为 96.76% / 89.13%；其他包的当前结果以 `pnpm test:sdk:coverage` 输出为准。当前 `SyncClient` 对实验性 `ttable` 操作、快照和待发送草稿一律停止同步并保留草稿；它尚不是支持表格 CRDT 的可用传输。上述数字不等于功能完整性或所有并发情形已验证；服务端条件提交、浏览器交互、实体设备和 DOCX/XLSX 与第三方软件的全部互通仍需各自的集成验证。内部共享 `@jiange/ooxml` 保留独立测试，不计入上述五个 SDK。

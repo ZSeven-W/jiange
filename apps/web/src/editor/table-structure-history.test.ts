@@ -91,6 +91,21 @@ describe("guarded table selection deletion history", () => {
     expect(ctx.widths.finishConditional(ctx.doc, ctx.undo, result.plan)).toBe("ready");
     expect(ctx.doc.blockInfo(ctx.table).props.tableWidths).toBe("[100,200]");
   });
+  it("keeps an accepted resize undoable when the first cell edit arrives before its receipt", () => {
+    const ctx = setup(), before = ctx.widths.capture(ctx.doc, ctx.table)!;
+    const initial = ctx.widths.prepareInitial(ctx.doc, ctx.undo, ctx.table, before, "[150,200]");
+    expect(initial.status).toBe("ready"); if (initial.status !== "ready") return;
+    ctx.doc.apply(initial.plan.op);
+    const cell = editCell(ctx, 0, "A!");
+    const recorded = ctx.widths.finishInitial(ctx.doc, ctx.undo, initial.plan);
+    expect(recorded.status).toBe("changed"); if (recorded.status !== "changed") return;
+    expect(stepCell(ctx, cell)).toBe("ready");
+    const resize = ctx.widths.prepareConditional(ctx.doc, ctx.undo, recorded.key, false);
+    expect(resize.status).toBe("ready"); if (resize.status !== "ready") return;
+    ctx.doc.apply(resize.plan.op);
+    expect(ctx.widths.finishConditional(ctx.doc, ctx.undo, resize.plan)).toBe("ready");
+    expect(ctx.doc.blockInfo(ctx.table).props.tableWidths).toBe("[100,200]");
+  });
   it("keeps a resize and a preceding row deletion in undo and redo order", () => {
     const ctx = setup(), structure = deleteFirstRow(ctx), widths = ctx.widths;
     const before = widths.capture(ctx.doc, ctx.table)!, snapshot = ctx.history.capture(ctx.doc, ctx.table, ctx.undo);

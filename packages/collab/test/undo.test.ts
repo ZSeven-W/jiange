@@ -25,6 +25,47 @@ describe("Peritext expand", () => {
 });
 
 describe("UndoManager", () => {
+  it("inserts a confirmed asynchronous marker before newer typing", () => {
+    const doc = new Doc(1), block = doc.createBlock("paragraph").id, undo = new UndoManager();
+    const first = new Tx(doc); first.insert(block, 0, "A"); undo.record(first, null, null, "typing");
+    const anchor = undo.markInsertionPoint();
+    const later = new Tx(doc); later.insert(block, 1, "B"); undo.record(later, null, null, "typing");
+    expect(undo.insertMarkerAt(anchor, "async")).toBe(true);
+    expect(undo.undo(doc)).not.toBeNull(); expect(doc.text(block)).toBe("A");
+    expect(undo.peekMarker(false)).toBe("async"); expect(undo.moveMarker(false, "async")).toBe(true);
+    expect(undo.undo(doc)).not.toBeNull(); expect(doc.text(block)).toBe("");
+    expect(undo.redo(doc)).not.toBeNull(); expect(undo.moveMarker(true, "async")).toBe(true);
+    expect(undo.redo(doc)).not.toBeNull(); expect(doc.text(block)).toBe("AB");
+  });
+
+  it("refuses stale insertion points after navigation or history eviction", () => {
+    const doc = new Doc(1), block = doc.createBlock("paragraph").id, undo = new UndoManager();
+    const tx = new Tx(doc); tx.insert(block, 0, "A"); undo.record(tx, null, null);
+    const anchor = undo.markInsertionPoint();
+    expect(undo.undo(doc)).not.toBeNull();
+    expect(undo.insertMarkerAt(anchor, "late")).toBe(false);
+    expect(undo.canRedo).toBe(true); expect(undo.redo(doc)).not.toBeNull();
+    undo.limit = 1; const evicted = undo.markInsertionPoint();
+    const later = new Tx(doc); later.insert(block, 1, "B"); undo.record(later, null, null);
+    expect(undo.insertMarkerAt(evicted, "late")).toBe(false);
+    expect(undo.undo(doc)).not.toBeNull(); expect(doc.text(block)).toBe("A");
+    const empty = new UndoManager(); empty.limit = 1;
+    const oldest = empty.markInsertionPoint(), op = new Tx(doc); op.insert(block, 1, "C"); empty.record(op, null, null);
+    expect(empty.insertMarkerAt(oldest, "late")).toBe(false);
+    expect(empty.undo(doc)).not.toBeNull(); expect(doc.text(block)).toBe("A");
+  });
+
+  it("orders multiple reservations by creation even when confirmations arrive out of order", () => {
+    for (const reverse of [false, true]) {
+      const undo = new UndoManager(), first = undo.markInsertionPoint(), second = undo.markInsertionPoint();
+      const actions: [object, string][] = [[first, "first"], [second, "second"]];
+      for (const [anchor, marker] of reverse ? actions.reverse() : actions) expect(undo.insertMarkerAt(anchor, marker)).toBe(true);
+      expect(undo.peekMarker(false)).toBe("second");
+      expect(undo.moveMarker(false, "second")).toBe(true);
+      expect(undo.peekMarker(false)).toBe("first");
+    }
+  });
+
   it("previews an undo on a replica without consuming or remapping the live history", () => {
     const doc = new Doc(1), block = doc.createBlock("paragraph").id, tx = new Tx(doc), undo = new UndoManager();
     tx.insert(block, 0, "测试"); undo.record(tx, null, null);

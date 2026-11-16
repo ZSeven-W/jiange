@@ -10,7 +10,7 @@ import { useTableStickyHeader } from "./table-sticky-header";
 import { visibleTableWidths } from "./table-widths";
 
 type GripSel = { kind: "row" | "col"; index: number };
-export type TableResizeSession = { commit: (widths: number[]) => void; cancel: () => void };
+export type TableResizeSession = { commit: (widths: number[]) => void | Promise<void>; cancel: () => void };
 
 /** 行/列菜单项（飞书：上方/下方插入行、左侧/右侧插入列、删除、清空）。 */
 export function gripMenu(sel: GripSel, rows: number, cols: number, cells: string[][] = [], merges: Merge[] = []): { label: string; op: TableOp; danger?: boolean; disabled?: boolean }[] {
@@ -221,12 +221,21 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
     drag.next = drag.initial.map((width, index) => index === drag.index ? value : width);
     setWidthPreview(drag.next);
   };
+  const commitResize = (session: TableResizeSession, next: number[]) => {
+    try {
+      const result = session.commit(next);
+      if (result && typeof result.then === "function") {
+        setWidthPreview(next);
+        void result.then(() => setWidthPreview((current) => current === next ? null : current), () => setWidthPreview((current) => current === next ? null : current));
+      } else setWidthPreview(null);
+    } catch { setWidthPreview(null); }
+  };
   const endResize = (e: React.PointerEvent<HTMLElement>, cancelled = false) => {
     const drag = widthDrag.current;
     if (!drag || drag.pointer !== e.pointerId) return;
-    widthDrag.current = null; setWidthPreview(null);
-    if (cancelled || drag.initial.every((value, index) => value === drag.next[index])) drag.session.cancel();
-    else drag.session.commit(drag.next);
+    widthDrag.current = null;
+    if (cancelled || drag.initial.every((value, index) => value === drag.next[index])) { setWidthPreview(null); drag.session.cancel(); }
+    else commitResize(drag.session, drag.next);
     if (drag.target.hasPointerCapture(drag.pointer)) drag.target.releasePointerCapture(drag.pointer);
   };
   const rawSelected: CellRange | null = grip ? (grip.kind === "row" ? { r0: grip.index, r1: grip.index, c0: 0, c1: nCols - 1 } : { r0: 0, r1: rows.length - 1, c0: grip.index, c1: grip.index }) : range;
@@ -376,7 +385,7 @@ export function TableBlock({ data, merges: rawMerges, widths, header = true, hea
                       if (!session) return;
                       e.preventDefault(); e.stopPropagation();
                       const next = [...columnWidths]; next[index] = Math.max(100, Math.min(100000, next[index] + (e.key === "ArrowLeft" ? -10 : 10)));
-                      if (next[index] === columnWidths[index]) session.cancel(); else session.commit(next);
+                      if (next[index] === columnWidths[index]) session.cancel(); else commitResize(session, next);
                     }} data-table-resize={index} />;
                     })}
                   </td>

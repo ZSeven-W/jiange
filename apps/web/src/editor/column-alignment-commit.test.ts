@@ -97,6 +97,14 @@ describe("conditional column alignment request", () => {
     expect(await ctx.commit.start(op,2,3,signal())).toBe("occupied");
     expect(ctx.send).toHaveBeenCalledTimes(1);
   });
+  it("marks transport start only after persistence and before any send", async () => {
+    const ctx = setup(); let submitting = false;
+    ctx.send.mockImplementation(async (attempt) => { expect(submitting).toBe(true); expect((await ctx.journal.read())?.requestId).toBe(attempt.requestId); });
+    expect(await ctx.commit.start(op, 2, 3, signal(), () => true, () => { submitting = true; })).toBe("sent");
+    const blocked = setup(), onSubmitting = vi.fn();
+    expect(await blocked.commit.start(op, 2, 3, signal(), () => false, onSubmitting)).toBe("blocked");
+    expect(onSubmitting).not.toHaveBeenCalled();
+  });
   it("keeps an uncertain submission and retries only the identical request", async () => {
     const ctx = setup(); ctx.send.mockRejectedValueOnce(new TypeError("network"));
     expect(await ctx.commit.start(op,2,3,signal())).toBe("pending");

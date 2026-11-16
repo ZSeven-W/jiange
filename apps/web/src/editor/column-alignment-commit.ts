@@ -43,7 +43,7 @@ export class ColumnAlignmentCommit {
   }
 
   /** Save the exact request before sending; an uncertain response remains recoverable. */
-  async start(op: AlignmentOp, epoch: number, head: number, signal: AbortSignal, stillValid: () => boolean = () => true): Promise<SendResult> {
+  async start(op: AlignmentOp, epoch: number, head: number, signal: AbortSignal, stillValid: () => boolean = () => true, onSubmitting: () => void = () => {}): Promise<SendResult> {
     const bytes = encodeOps([op]);
     if (!columnLayoutOp(bytes)) throw new Error("invalid column layout operation");
     return this.journal.run(async (lease) => {
@@ -55,6 +55,7 @@ export class ColumnAlignmentCommit {
       const saved = await lease.batch(attempt);
       if (signal.aborted || !stillValid() || !this.matches(attempt, this.context.observe())) { await lease.discardUnsubmitted(attempt); return "blocked"; }
       lease.markSubmitting(attempt);
+      onSubmitting();
       try { await this.transport.send(attempt, saved, signal); return "sent"; }
       catch { return "pending"; }
     });
