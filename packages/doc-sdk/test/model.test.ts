@@ -38,12 +38,12 @@ describe("block editing", () => {
   });
 
   it("applies markdown block and inline shortcuts", () => {
-    const { d, blocks } = setup("## ", "todo **x**", "1. ");
+    const { d, blocks } = setup("## ", "todo **x** ", "1. ");
     const tx = new Tx(d);
     markdownShortcut(tx, { b: blocks[0], o: 3 }, " ");
-    markdownShortcut(tx, { b: blocks[1], o: 10 }, "*");
+    markdownShortcut(tx, { b: blocks[1], o: 11 }, " ");
     markdownShortcut(tx, { b: blocks[2], o: 3 }, " ");
-    expect(texts(d)).toEqual(["h2:", "paragraph:todo x", "ordered:"]);
+    expect(texts(d)).toEqual(["h2:", "paragraph:todo x ", "ordered:"]);
     expect(d.richChars(blocks[1])[5].marks.bold).toBe("true");
   });
 

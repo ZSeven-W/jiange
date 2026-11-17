@@ -53,14 +53,14 @@ describe("inline formula atomic selection", () => {
   });
   it("does not match markdown syntax through an existing formula", () => {
     const doc = new Doc(1), tx = new Tx(doc), a = tx.create("paragraph", null, ROOT);
-    tx.insert(a, 0, "*x*"); tx.format(a, 1, 2, "math", "x");
-    expect(markdownShortcut(tx, { b: a, o: 3 }, "*")).toBeNull();
-    expect(doc.text(a)).toBe("*x*");
+    tx.insert(a, 0, "*x* "); tx.format(a, 1, 2, "math", "x");
+    expect(markdownShortcut(tx, { b: a, o: 4 }, " ")).toBeNull();
+    expect(doc.text(a)).toBe("*x* ");
     expect(doc.richChars(a)[1].marks.math).toBe("x");
   });
   it("distinguishes adjacent identical formulas after copy and paste", () => {
     const doc = new Doc(1), tx = new Tx(doc), a = tx.create("paragraph", null, ROOT);
-    tx.insert(a, 0, "$x^2$"); markdownShortcut(tx, { b: a, o: 5 }, "$");
+    tx.insert(a, 0, "$$x^2$$"); markdownShortcut(tx, { b: a, o: 7 }, "$");
     const clip = copyRange(doc, { a: { b: a, o: 0 }, f: { b: a, o: 3 } });
     pasteBlocks(new Tx(doc), { b: a, o: 3 }, clip);
     const spans = mathSpans(doc, a);

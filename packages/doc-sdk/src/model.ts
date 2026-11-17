@@ -225,6 +225,9 @@ const BLOCK_RULES: [RegExp, string, Record<string, string>?][] = [
   [/^#$/, "h1"],
   [/^##$/, "h2"],
   [/^###$/, "h3"],
+  [/^####$/, "h4"],
+  [/^#####$/, "h5"],
+  [/^######$/, "h6"],
   [/^[-*+]$/, "bullet"],
   [/^1[.)]$/, "ordered"],
   [/^\[ ?\]$/, "todo"],
@@ -250,31 +253,37 @@ export function markdownShortcut(tx: Tx, pos: Pos, typed: string): Pos | null {
       }
     }
   }
-  if (typed === "-" && info.type === "paragraph" && text.join("") === "---") {
+  if ((typed === "-" || typed === "*") && info.type === "paragraph" && (text.join("") === "---" || text.join("") === "***")) {
     tx.delete(pos.b, 0, 3);
     tx.setProp(pos.b, "type", "divider");
     const nb = tx.create("paragraph", pos.b, info.parent);
     return { b: nb, o: 0 };
   }
   if (info.type === "code") return null;
-  for (const [re, key, w, useSource] of [
-    [/\*\*([^*]+)\*\*$/, "bold", 2],
-    [/~~([^~]+)~~$/, "strike", 2],
-    [/`([^`]+)`$/, "code", 1],
-    [/(?:^|[^*])\*([^*]+)\*$/, "italic", 1],
-    [/\$([^$]+)\$$/, "math", 1, true],
-  ] as const) {
-    const m = re.exec(before);
-    if (!m || !before.endsWith(typed)) continue;
-    const inner = [...m[1]].length;
-    const end = pos.o; // after closing marker
-    const s = end - w - inner - w;
-    if (doc.richChars(pos.b).slice(s, end).some((c) => !!c.marks.math)) continue;
-    tx.delete(pos.b, end - w, end);
-    tx.delete(pos.b, s, s + w);
-    tx.format(pos.b, s, s + inner, key, useSource ? m[1] : "true");
-    if (key === "math") tx.format(pos.b, s, s + inner, "mathId", idKey(doc.visibleIds(pos.b)[s]));
-    return { b: pos.b, o: s + inner };
+  // Feishu commits text styles on the following space. Inline code and
+  // formulas are committed by their closing delimiter instead.
+  const rules: [RegExp, string, number, boolean, boolean][] = [
+    [/\*\*([^*]+)\*\*$/, "bold", 2, false, true],
+    [/~~([^~]+)~~$/, "strike", 2, false, true],
+    [/(?:^|[^~])~([^~]+)~$/, "underline", 1, false, true],
+    [/(?:^|[^*])\*([^*]+)\*$/, "italic", 1, false, true],
+    [/`([^`]+)`$/, "code", 1, false, false],
+    [/(?:^|[^$])\$\$([^$]+)\$\$$/, "math", 2, true, false],
+  ];
+  for (const [re, key, width, useSource, spaceTriggered] of rules) {
+    if (spaceTriggered ? typed !== " " : typed !== (key === "code" ? "`" : "$")) continue;
+    const preceding = spaceTriggered ? before.slice(0, -1) : before;
+    const match = re.exec(preceding);
+    if (!match) continue;
+    const inner = [...match[1]].length;
+    const end = pos.o - (spaceTriggered ? 1 : 0);
+    const start = end - width - inner - width;
+    if (doc.richChars(pos.b).slice(start, end).some((char) => !!char.marks.math || !!char.marks.code)) continue;
+    tx.delete(pos.b, end - width, end);
+    tx.delete(pos.b, start, start + width);
+    tx.format(pos.b, start, start + inner, key, useSource ? match[1] : "true");
+    if (key === "math") tx.format(pos.b, start, start + inner, "mathId", idKey(doc.visibleIds(pos.b)[start]));
+    return { b: pos.b, o: start + inner + (spaceTriggered ? 1 : 0) };
   }
   return null;
 }
