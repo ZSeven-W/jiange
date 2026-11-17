@@ -1,5 +1,6 @@
 import { eqId, idKey, type OpId } from "./id.js";
 import { ExperimentalTable, validTableMarkValue, type TableMarkKey, type TableMarkState, type TableOp } from "./table-experimental.js";
+import { type Op } from "./ops.js";
 
 /** Internal prototype: the host owns ID allocation, authorization and transport. */
 const MAX_SELECTED = 4096;
@@ -53,7 +54,7 @@ function validIDs(ids: readonly OpId[], count: number, afterClock: number): bool
   if (!Array.isArray(ids) || ids.length !== count || count < 1 || !validId(ids[0])) return false;
   const unique = new Set<string>(), client = ids[0].client;
   for (let i = 0; i < ids.length; i++) {
-    const id = ids[i]; if (!validId(id) || id.clock <= afterClock || id.client !== client || unique.has(idKey(id))) return false;
+    const id = ids[i]; if (!validId(id) || id.clock <= afterClock || i > 0 && id.clock <= ids[i - 1].clock || id.client !== client || unique.has(idKey(id))) return false;
     unique.add(idKey(id));
   }
   return true;
@@ -117,4 +118,19 @@ export function tableMarkPlanIsCurrent(table: ExperimentalTable, plan: TableMark
   const data = plans.get(plan);
   if (!data || data.table !== table) return false;
   try { return table.snapshot() === data.base; } catch { return false; }
+}
+
+/** Wrap a current plan in document table frames without exposing mutable plan state. */
+export function tableMarkPlanFrames(table: ExperimentalTable, plan: TableMarkPlan, block: OpId): Extract<Op, { t: "ttable" }>[] | null {
+  if (!block || !Number.isSafeInteger(block.client) || block.client < 0 || !Number.isSafeInteger(block.clock) || block.clock <= 0 || !tableMarkPlanIsCurrent(table, plan)) return null;
+  const encoder = new TextEncoder(), frames: Extract<Op, { t: "ttable" }>[] = [];
+  let total = 0;
+  for (const op of plan.ops) {
+    if (eqId(op.id, block)) return null;
+    const payload = encoder.encode(JSON.stringify(op));
+    total += payload.length;
+    if (!payload.length || payload.length > 512 || total > (2 << 20)) return null;
+    frames.push({ t: "ttable", id: copyId(op.id), block: copyId(block), payload });
+  }
+  return frames.length ? frames : null;
 }

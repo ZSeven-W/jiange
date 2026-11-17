@@ -260,6 +260,18 @@ func (t *Table) Snapshot() ([]byte, error) {
 	return raw, nil
 }
 
+// Clone retains this instance's admission limits and never shares state.
+func (t *Table) Clone() (*Table, error) {
+	if t == nil {
+		return nil, errors.New("nil table")
+	}
+	snapshot, err := t.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	return FromSnapshotWithLimits(snapshot, t.limits)
+}
+
 // FromSnapshot rejects malformed Unicode escape sequences instead of silently
 // replacing unpaired UTF-16 surrogates with U+FFFD during Go JSON decoding.
 func FromSnapshot(raw []byte) (*Table, error) {

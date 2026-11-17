@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { decodeOps, encodeOps } from "../src/encoding";
 import { DEFAULT_TABLE_LIMITS, ExperimentalTable, type TableOp } from "../src/table-experimental";
-import { captureTableTextSelection, captureTableUTF16Selection, prepareTableTextMark, prepareTableTextMarkInverse, tableMarkPlanIsCurrent } from "../src/table-rich-selection-experimental";
+import { captureTableTextSelection, captureTableUTF16Selection, prepareTableTextMark, prepareTableTextMarkInverse, tableMarkPlanFrames, tableMarkPlanIsCurrent } from "../src/table-rich-selection-experimental";
 
 function fixture() {
   const table = new ExperimentalTable(), row = { client: 1, clock: 1 }, col = { client: 1, clock: 2 }, a = { client: 1, clock: 3 }, b = { client: 1, clock: 4 }, c = { client: 1, clock: 5 };
@@ -19,6 +21,26 @@ describe("experimental table text selection plans", () => {
     expect(captureTableUTF16Selection(f.table, f.row, f.col, "甲😀乙", 2, 3)).toBeNull();
     expect(captureTableUTF16Selection(f.table, f.row, f.col, "甲😀乙", 1, 2)).toBeNull();
     expect(captureTableUTF16Selection(f.table, f.row, f.col, "甲😀丙", 1, 3)).toBeNull();
+  });
+  it("encodes detached document frames with matching nested identities", () => {
+    const f = fixture(), selection = captureTableTextSelection(f.table, f.row, f.col, 0, 2)!;
+    const result = prepareTableTextMark(f.table, selection, "bold", "1", ids(3, 6, 2)); if (result.status !== "ready") throw new Error(result.status);
+    const block = { client: 0, clock: 2 }, frames = tableMarkPlanFrames(f.table, result.plan, block)!;
+    expect(frames).toHaveLength(2); expect(frames.map((frame) => JSON.parse(new TextDecoder().decode(frame.payload)))).toEqual(result.plan.ops);
+    const roundTrip = decodeOps(encodeOps(frames)); expect(roundTrip).toEqual(frames);
+    frames[0].payload.fill(0); expect(tableMarkPlanFrames(f.table, result.plan, block)![0].payload.some((byte) => byte !== 0)).toBe(true);
+    expect(tableMarkPlanFrames(f.table, result.plan, { client: 0, clock: 0 })).toBeNull();
+    f.table.apply(result.plan.ops[0]); expect(tableMarkPlanFrames(f.table, result.plan, block)).toBeNull();
+  });
+  it("matches the shared wire fixture consumed by the Go admission prototype", () => {
+    const table = new ExperimentalTable(), row = { client: 1, clock: 2 }, col = { client: 1, clock: 3 }, first = { client: 1, clock: 4 }, second = { client: 1, clock: 5 };
+    const ops: TableOp[] = [{ kind: "axis-insert", id: row, axis: "row", after: null }, { kind: "axis-insert", id: col, axis: "column", after: null }, { kind: "text-insert", id: first, row, column: col, after: null, char: "甲" }, { kind: "text-insert", id: second, row, column: col, after: first, char: "😀" }];
+    ops.forEach((op) => table.apply(op));
+    const selected = captureTableTextSelection(table, row, col, 0, 2)!;
+    const result = prepareTableTextMark(table, selected, "bold", "1", ids(2, 6, 2)); if (result.status !== "ready") throw new Error(result.status);
+    const frames = tableMarkPlanFrames(table, result.plan, { client: 1, clock: 1 })!;
+    const fixture = JSON.parse(readFileSync(new URL("../testdata/table-rich-mark-frames.json", import.meta.url), "utf8"));
+    expect(fixture.version).toBe(1); expect(Buffer.from(encodeOps(frames)).toString("base64")).toBe(fixture.batch);
   });
   it("formats only selected original IDs when another peer inserts between them, then undoes and redoes", () => {
     const f = fixture(), selected = captureTableTextSelection(f.table, f.row, f.col, 0, 2)!;
@@ -85,6 +107,7 @@ describe("experimental table text selection plans", () => {
     expect(captureTableTextSelection(f.table, f.row, f.col, 0, 4)).toBeNull();
     expect(prepareTableTextMark(f.table, selected, "bold", "1", [ids(3, 6, 1)[0], ids(3, 6, 1)[0]]).status).toBe("invalid");
     expect(prepareTableTextMark(f.table, selected, "bold", "1", ids(3, 4, 2)).status).toBe("invalid");
+    expect(prepareTableTextMark(f.table, selected, "bold", "1", [{ client: 3, clock: 7 }, { client: 3, clock: 6 }]).status).toBe("invalid");
     expect(prepareTableTextMark(f.table, selected, "color", "red", ids(3, 6, 2)).status).toBe("invalid");
     f.table.apply({ kind: "axis-delete", id: { client: 2, clock: 6 }, axis: "row", target: f.row });
     expect(prepareTableTextMark(f.table, selected, "bold", "1", ids(3, 7, 2)).status).toBe("stale");
