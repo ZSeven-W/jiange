@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "concurrent marks and a clearing mark",
+      "ops": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"text-insert","id":{"client":1,"clock":3},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":null,"char":"甲"},
+        {"kind":"text-insert","id":{"client":1,"clock":4},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":1,"clock":3},"char":"😀"},
+        {"kind":"text-mark","id":{"client":2,"clock":5},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":3},"key":"bold","value":"1"},
+        {"kind":"text-mark","id":{"client":3,"clock":5},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":3},"key":"bold","value":null},
+        {"kind":"text-mark","id":{"client":2,"clock":6},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":3},"key":"italic","value":"1"},
+        {"kind":"text-mark","id":{"client":3,"clock":6},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":4},"key":"color","value":"#3370FF"},
+        {"kind":"text-mark","id":{"client":4,"clock":7},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":4},"key":"underline","value":"1"}
+      ],
+      "expected": {"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"grid":[["甲😀"]],"rich":[{"id":{"client":1,"clock":3},"text":"甲","marks":{"italic":"1"}},{"id":{"client":1,"clock":4},"text":"😀","marks":{"color":"#3370FF","underline":"1"}}],"pending":0,"rejected":[]}
+    },
+    {
+      "name": "wrong cell and missing character",
+      "ops": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":3},"axis":"column","after":{"client":1,"clock":2}},
+        {"kind":"text-insert","id":{"client":1,"clock":4},"row":{"client":1,"clock":1},"column":{"client":1,"clock":3},"after":null,"char":"X"},
+        {"kind":"text-mark","id":{"client":2,"clock":4},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":1,"clock":4},"key":"bold","value":"1"},
+        {"kind":"text-mark","id":{"client":2,"clock":5},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":9,"clock":9},"key":"color","value":"#F54A45"}
+      ],
+      "expected": {"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"grid":[["","X"]],"rich":[],"pending":1,"rejected":[{"id":{"client":2,"clock":4},"reason":"character dependency belongs to another cell"}]}
+    },
+    {
+      "name": "mark cannot serve as a character anchor",
+      "ops": [
+        {"kind":"axis-insert","id":{"client":1,"clock":1},"axis":"row","after":null},
+        {"kind":"axis-insert","id":{"client":1,"clock":2},"axis":"column","after":null},
+        {"kind":"text-insert","id":{"client":2,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"after":{"client":3,"clock":1},"char":"A"},
+        {"kind":"text-mark","id":{"client":3,"clock":1},"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"target":{"client":2,"clock":1},"key":"bold","value":"1"}
+      ],
+      "expected": {"row":{"client":1,"clock":1},"column":{"client":1,"clock":2},"grid":[[""]],"rich":[],"pending":0,"rejected":[{"id":{"client":2,"clock":1},"reason":"character dependency belongs to another cell"},{"id":{"client":3,"clock":1},"reason":"character dependency belongs to another cell"}]}
+    }
+  ]
+}

@@ -19,14 +19,16 @@ type ID struct {
 const maxSafeInteger = int64(1<<53 - 1)
 
 type Op struct {
-	Kind   string `json:"kind"`
-	ID     ID     `json:"id"`
-	Axis   string `json:"axis,omitempty"`
-	After  *ID    `json:"after,omitempty"`
-	Target *ID    `json:"target,omitempty"`
-	Row    *ID    `json:"row,omitempty"`
-	Column *ID    `json:"column,omitempty"`
-	Char   string `json:"char,omitempty"`
+	Kind   string  `json:"kind"`
+	ID     ID      `json:"id"`
+	Axis   string  `json:"axis,omitempty"`
+	After  *ID     `json:"after,omitempty"`
+	Target *ID     `json:"target,omitempty"`
+	Row    *ID     `json:"row,omitempty"`
+	Column *ID     `json:"column,omitempty"`
+	Char   string  `json:"char,omitempty"`
+	Key    string  `json:"key,omitempty"`
+	Value  *string `json:"value,omitempty"`
 }
 
 var ErrIdentityConflict = errors.New("table operation identity conflict")
@@ -62,6 +64,11 @@ type node struct {
 	after   *ID
 	deleted bool
 	char    string
+	marks   map[string]markRegister
+}
+type markRegister struct {
+	id    ID
+	value *string
 }
 
 type cellKey struct{ row, column ID }
@@ -123,6 +130,9 @@ func normalize(in Op) (Op, error) {
 		return Op{}, errors.New("invalid table operation id")
 	}
 	op := Op{Kind: in.Kind, ID: in.ID}
+	if in.Kind != "text-mark" && (in.Key != "" || in.Value != nil) {
+		return Op{}, errors.New("invalid table operation fields")
+	}
 	switch in.Kind {
 	case "axis-insert":
 		if in.Target != nil || in.Row != nil || in.Column != nil || in.Char != "" || (in.Axis != "row" && in.Axis != "column") || (in.After != nil && !validID(*in.After)) || sameID(in.ID, in.After) {
@@ -144,15 +154,49 @@ func normalize(in Op) (Op, error) {
 			return Op{}, errors.New("invalid text deletion")
 		}
 		op.Row, op.Column, op.Target = copyID(in.Row), copyID(in.Column), copyID(in.Target)
+	case "text-mark":
+		if in.Axis != "" || in.After != nil || in.Char != "" || in.Row == nil || in.Column == nil || in.Target == nil || !validID(*in.Row) || !validID(*in.Column) || !validID(*in.Target) || sameID(in.ID, in.Row) || sameID(in.ID, in.Column) || sameID(in.ID, in.Target) || !validMark(in.Key, in.Value) {
+			return Op{}, errors.New("invalid text mark")
+		}
+		op.Row, op.Column, op.Target, op.Key = copyID(in.Row), copyID(in.Column), copyID(in.Target), in.Key
+		if in.Value != nil {
+			value := *in.Value
+			op.Value = &value
+		}
 	default:
 		return Op{}, errors.New("unknown table operation")
 	}
 	return op, nil
 }
 
+func validMark(key string, value *string) bool {
+	switch key {
+	case "bold", "italic", "underline", "strike":
+		return value == nil || *value == "1"
+	case "color":
+		if value == nil {
+			return true
+		}
+		if len(*value) != 7 || (*value)[0] != '#' {
+			return false
+		}
+		for _, c := range (*value)[1:] {
+			if !(c >= '0' && c <= '9' || c >= 'A' && c <= 'F') {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func equalPtr(a, b *ID) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+func equalStringPtr(a, b *string) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
 func equalOp(a, b Op) bool {
-	return a.Kind == b.Kind && a.ID == b.ID && a.Axis == b.Axis && equalPtr(a.After, b.After) && equalPtr(a.Target, b.Target) && equalPtr(a.Row, b.Row) && equalPtr(a.Column, b.Column) && a.Char == b.Char
+	return a.Kind == b.Kind && a.ID == b.ID && a.Axis == b.Axis && equalPtr(a.After, b.After) && equalPtr(a.Target, b.Target) && equalPtr(a.Row, b.Row) && equalPtr(a.Column, b.Column) && a.Char == b.Char && a.Key == b.Key && equalStringPtr(a.Value, b.Value)
 }
 
 func cmp(a, b ID) int {
@@ -221,7 +265,11 @@ func operationBudget(op Op) int {
 			n++
 		}
 	}
-	return 128 + 64*n + len(op.Char)
+	extra := len(op.Char) + len(op.Key)
+	if op.Value != nil {
+		extra += len(*op.Value)
+	}
+	return 128 + 64*n + extra
 }
 
 // Conservative snapshot reservation for an operation and its separator.
@@ -232,7 +280,11 @@ func snapshotOperationBudget(op Op) int {
 			n++
 		}
 	}
-	return 129 + 64*n + len(op.Char)
+	extra := len(op.Char) + len(op.Key)
+	if op.Value != nil {
+		extra += len(*op.Value)
+	}
+	return 129 + 64*n + extra
 }
 
 func (t *Table) checkAdmission(op Op, pending bool) error {
@@ -329,7 +381,7 @@ func (t *Table) dependency(op Op) (string, *ID) {
 	}
 	key := cellKey{*op.Row, *op.Column}
 	dep := op.After
-	if op.Kind == "text-delete" {
+	if op.Kind == "text-delete" || op.Kind == "text-mark" {
 		dep = op.Target
 	}
 	if dep == nil || t.cells[key][*dep] != nil {
@@ -347,15 +399,29 @@ func (t *Table) integrate(op Op) {
 		t.axis(op.Axis)[op.ID] = &node{id: op.ID, after: copyID(op.After)}
 	case "axis-delete":
 		t.axis(op.Axis)[*op.Target].deleted = true
-	case "text-insert", "text-delete":
+	case "text-insert", "text-delete", "text-mark":
 		key := cellKey{*op.Row, *op.Column}
 		if t.cells[key] == nil {
 			t.cells[key] = map[ID]*node{}
 		}
 		if op.Kind == "text-insert" {
 			t.cells[key][op.ID] = &node{id: op.ID, after: copyID(op.After), char: op.Char}
-		} else {
+		} else if op.Kind == "text-delete" {
 			t.cells[key][*op.Target].deleted = true
+		} else {
+			n := t.cells[key][*op.Target]
+			if n.marks == nil {
+				n.marks = map[string]markRegister{}
+			}
+			old, exists := n.marks[op.Key]
+			if !exists || cmp(op.ID, old.id) > 0 {
+				var value *string
+				if op.Value != nil {
+					v := *op.Value
+					value = &v
+				}
+				n.marks[op.Key] = markRegister{id: op.ID, value: value}
+			}
 		}
 	}
 }
@@ -543,6 +609,34 @@ func (t *Table) CellText(row, column ID, includeDeleted bool) (string, bool) {
 		}
 	}
 	return out.String(), true
+}
+
+// RichChar is a detached projection of one visible character and its marks.
+type RichChar struct {
+	ID    ID                `json:"id"`
+	Text  string            `json:"text"`
+	Marks map[string]string `json:"marks"`
+}
+
+func (t *Table) CellRich(row, column ID, includeDeleted bool) ([]RichChar, bool) {
+	r, c := t.rows[row], t.columns[column]
+	if r == nil || c == nil || (!includeDeleted && (r.deleted || c.deleted)) {
+		return nil, false
+	}
+	result := []RichChar{}
+	for _, n := range ordered(t.cells[cellKey{row, column}]) {
+		if n.deleted {
+			continue
+		}
+		marks := map[string]string{}
+		for key, register := range n.marks {
+			if register.value != nil {
+				marks[key] = *register.value
+			}
+		}
+		result = append(result, RichChar{ID: n.id, Text: n.char, Marks: marks})
+	}
+	return result, true
 }
 
 func (t *Table) View() [][]string {

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "cases": [
+    {"name":"version one cannot contain marks","snapshot":"{\"version\":1,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"bold\",\"value\":\"1\"}]}"},
+    {"name":"missing value","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"bold\"}]}"},
+    {"name":"duplicate value","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"bold\",\"value\":\"1\",\"value\":null}]}"},
+    {"name":"boolean mark value","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"bold\",\"value\":true}]}"},
+    {"name":"lowercase color","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"color\",\"value\":\"#ff0000\"}]}"},
+    {"name":"unsupported link","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"link\",\"value\":\"javascript:evil\"}]}"},
+    {"name":"extra field","snapshot":"{\"version\":2,\"ops\":[{\"kind\":\"text-mark\",\"id\":{\"client\":2,\"clock\":1},\"row\":{\"client\":1,\"clock\":1},\"column\":{\"client\":1,\"clock\":2},\"target\":{\"client\":1,\"clock\":3},\"key\":\"bold\",\"value\":\"1\",\"extra\":true}]}"}
+  ]
+}

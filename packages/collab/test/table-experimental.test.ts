@@ -105,7 +105,7 @@ describe("experimental table CRDT", () => {
     expect(restored.view()).toEqual([["AB"]]);
     expect(restored.pendingCount).toBe(0);
     expect(table.snapshot()).toBe(saved);
-    expect(() => ExperimentalTable.fromSnapshot('{"version":2,"ops":[]}')).toThrow();
+    expect(() => ExperimentalTable.fromSnapshot('{"version":3,"ops":[]}')).toThrow();
   });
 
   it("detects identity conflicts even for buffered or rejected operations", () => {

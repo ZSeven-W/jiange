@@ -167,6 +167,8 @@ func (op *Op) UnmarshalJSON(data []byte) error {
 		valid = exactFields(fields, "kind", "id", "row", "column", "after", "char")
 	case "text-delete":
 		valid = exactFields(fields, "kind", "id", "row", "column", "target")
+	case "text-mark":
+		valid = exactFields(fields, "kind", "id", "row", "column", "target", "key", "value")
 	}
 	if !valid {
 		return errors.New("invalid table operation fields")
@@ -215,6 +217,16 @@ func (op Op) MarshalJSON() ([]byte, error) {
 			Column *ID    `json:"column"`
 			Target *ID    `json:"target"`
 		}{op.Kind, op.ID, op.Row, op.Column, op.Target})
+	case "text-mark":
+		return json.Marshal(struct {
+			Kind   string  `json:"kind"`
+			ID     ID      `json:"id"`
+			Row    *ID     `json:"row"`
+			Column *ID     `json:"column"`
+			Target *ID     `json:"target"`
+			Key    string  `json:"key"`
+			Value  *string `json:"value"`
+		}{op.Kind, op.ID, op.Row, op.Column, op.Target, op.Key, op.Value})
 	default:
 		return nil, errors.New("unknown table operation")
 	}
@@ -228,10 +240,17 @@ func (t *Table) Snapshot() ([]byte, error) {
 		ops = append(ops, e.op)
 	}
 	sort.Slice(ops, func(i, j int) bool { return cmp(ops[i].ID, ops[j].ID) < 0 })
+	version := 1
+	for _, op := range ops {
+		if op.Kind == "text-mark" {
+			version = 2
+			break
+		}
+	}
 	raw, err := json.Marshal(struct {
 		Version int  `json:"version"`
 		Ops     []Op `json:"ops"`
-	}{1, ops})
+	}{version, ops})
 	if err != nil {
 		return nil, err
 	}
@@ -272,12 +291,19 @@ func FromSnapshotWithLimits(raw []byte, limits Limits) (*Table, error) {
 		return nil, errors.New("invalid snapshot fields")
 	}
 	version, err := number(fields["version"])
-	if err != nil || version != 1 || bytes.Equal(bytes.TrimSpace(fields["ops"]), []byte("null")) {
+	if err != nil || version != 1 && version != 2 || bytes.Equal(bytes.TrimSpace(fields["ops"]), []byte("null")) {
 		return nil, errors.New("invalid experimental table snapshot")
 	}
 	var ops []Op
 	if err := json.Unmarshal(fields["ops"], &ops); err != nil {
 		return nil, err
+	}
+	if version == 1 {
+		for _, op := range ops {
+			if op.Kind == "text-mark" {
+				return nil, errors.New("table marks require snapshot version 2")
+			}
+		}
 	}
 	replayLimits := limits
 	if replayLimits.MaxPending < replayLimits.MaxOperations {

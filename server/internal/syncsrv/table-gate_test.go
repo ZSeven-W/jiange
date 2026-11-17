@@ -157,15 +157,17 @@ func TestTableOpsGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := collab.Op{T: collab.TBlockCreate, ID: collab.OpID{Client: 9, Clock: 1}, Parent: collab.Root, Pos: "V", Type: "table"}
-	table := collab.Op{T: collab.TTable, ID: collab.OpID{Client: 9, Clock: 2}, Block: block.ID, Payload: []byte(`{"kind":"axis-insert"}`)}
-	for _, v2 := range []bool{false, true} {
-		c := &conn{clientID: 9, v2: v2, out: make(chan []byte, 10), cancel: func() {}}
-		if err := r.handleOps(ctx, c, []collab.Op{block, table}); err != errBatchRejected {
-			t.Fatalf("v2=%v: %v", v2, err)
-		}
-		expectTableUnsupported(t, c)
-		if got, _ := st.Head(ctx, id); got != head || r.head != head {
-			t.Fatalf("v2=%v partial commit: %d/%d", v2, got, r.head)
+	for _, payload := range []string{`{"kind":"axis-insert"}`, `{"kind":"text-mark","key":"bold","value":"1"}`} {
+		table := collab.Op{T: collab.TTable, ID: collab.OpID{Client: 9, Clock: 2}, Block: block.ID, Payload: []byte(payload)}
+		for _, v2 := range []bool{false, true} {
+			c := &conn{clientID: 9, v2: v2, out: make(chan []byte, 10), cancel: func() {}}
+			if err := r.handleOps(ctx, c, []collab.Op{block, table}); err != errBatchRejected {
+				t.Fatalf("payload=%s v2=%v: %v", payload, v2, err)
+			}
+			expectTableUnsupported(t, c)
+			if got, _ := st.Head(ctx, id); got != head || r.head != head {
+				t.Fatalf("payload=%s v2=%v partial commit: %d/%d", payload, v2, got, r.head)
+			}
 		}
 	}
 }

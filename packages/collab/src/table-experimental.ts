@@ -30,10 +30,15 @@ export type TableOp =
   | { kind: "axis-insert"; id: OpId; axis: TableAxis; after: OpId | null }
   | { kind: "axis-delete"; id: OpId; axis: TableAxis; target: OpId }
   | { kind: "text-insert"; id: OpId; row: OpId; column: OpId; after: OpId | null; char: string }
-  | { kind: "text-delete"; id: OpId; row: OpId; column: OpId; target: OpId };
+  | { kind: "text-delete"; id: OpId; row: OpId; column: OpId; target: OpId }
+  | { kind: "text-mark"; id: OpId; row: OpId; column: OpId; target: OpId; key: TableMarkKey; value: string | null };
+
+export type TableMarkKey = "bold" | "italic" | "underline" | "strike" | "color";
+export interface TableRichChar { id: OpId; text: string; marks: Partial<Record<TableMarkKey, string>> }
+const TABLE_MARK_KEYS: readonly TableMarkKey[] = ["bold", "color", "italic", "strike", "underline"];
 
 type Node = { id: OpId; after: OpId | null; deleted: boolean };
-type TextNode = Node & { char: string };
+type TextNode = Node & { char: string; marks?: Map<TableMarkKey, { id: OpId; value: string | null }> };
 type Cell = { chars: Map<string, TextNode> };
 type Entry = { op: TableOp; signature: string; state: "pending" | "applied" | "rejected"; reason?: string };
 type Dependency = { kind: "ready" } | { kind: "missing"; key: string } | { kind: "rejected"; reason: string };
@@ -73,7 +78,7 @@ function operationBudget(op: TableOp): number {
   else if (op.kind === "axis-delete") ids++;
   else if (op.kind === "text-insert") ids += 2 + (op.after === null ? 0 : 1);
   else ids += 3;
-  return 128 + 64 * ids + (op.kind === "text-insert" ? byteLength(op.char) : 0);
+  return 128 + 64 * ids + (op.kind === "text-insert" ? byteLength(op.char) : op.kind === "text-mark" ? byteLength(op.key) + byteLength(op.value ?? "") : 0);
 }
 
 function exactKeys(input: object, keys: string[]): void {
@@ -130,6 +135,13 @@ function normalize(input: TableOp): TableOp {
       validateId(input.row); validateId(input.column); validateId(input.target);
       if (sameId(input.id, input.target) || sameId(input.id, input.row) || sameId(input.id, input.column)) throw new TypeError("invalid delete identity");
       return { kind: input.kind, id: copyId(input.id), row: copyId(input.row), column: copyId(input.column), target: copyId(input.target) };
+    }
+    case "text-mark": {
+      exactKeys(input, ["kind", "id", "row", "column", "target", "key", "value"]);
+      validateId(input.row); validateId(input.column); validateId(input.target);
+      if (sameId(input.id, input.target) || sameId(input.id, input.row) || sameId(input.id, input.column)) throw new TypeError("invalid mark identity");
+      if (!["bold", "italic", "underline", "strike", "color"].includes(input.key) || input.value !== null && (typeof input.value !== "string" || (input.key === "color" ? !/^#[0-9A-F]{6}$/.test(input.value) : input.value !== "1"))) throw new TypeError("invalid table text mark");
+      return { kind: input.kind, id: copyId(input.id), row: copyId(input.row), column: copyId(input.column), target: copyId(input.target), key: input.key, value: input.value };
     }
     default: throw new TypeError("unknown table operation");
   }
@@ -259,7 +271,11 @@ export class ExperimentalTable {
       let cell = this.cells.get(key);
       if (!cell) { cell = { chars: new Map() }; this.cells.set(key, cell); }
       if (op.kind === "text-insert") cell.chars.set(idKey(op.id), { id: op.id, after: op.after, char: op.char, deleted: false });
-      else cell.chars.get(idKey(op.target))!.deleted = true;
+      else if (op.kind === "text-delete") cell.chars.get(idKey(op.target))!.deleted = true;
+      else {
+        const node = cell.chars.get(idKey(op.target))!, marks = node.marks ??= new Map(), current = marks.get(op.key);
+        if (!current || cmpId(op.id, current.id) > 0) marks.set(op.key, { id: op.id, value: op.value });
+      }
     }
   }
   private component(key: string): string {
@@ -341,6 +357,16 @@ export class ExperimentalTable {
     if (!r || !c || (!includeDeleted && (r.deleted || c.deleted))) return null;
     return ordered(this.cells.get(cellKey(row, column))?.chars ?? new Map<string, TextNode>()).filter((n) => !n.deleted).map((n) => n.char).join("");
   }
+  /** Characters and visible style values, copied so callers cannot alter state. */
+  cellRich(row: OpId, column: OpId, includeDeleted = false): TableRichChar[] | null {
+    const r = this.rows.get(idKey(row)), c = this.columns.get(idKey(column));
+    if (!r || !c || (!includeDeleted && (r.deleted || c.deleted))) return null;
+    return ordered(this.cells.get(cellKey(row, column))?.chars ?? new Map<string, TextNode>()).filter((node) => !node.deleted).map((node) => {
+      const marks: Partial<Record<TableMarkKey, string>> = {};
+      for (const key of TABLE_MARK_KEYS) { const register = node.marks?.get(key); if (register && register.value !== null) marks[key] = register.value; }
+      return { id: copyId(node.id), text: node.char, marks };
+    });
+  }
   view(): string[][] {
     const cols = this.axisIds("column");
     return this.axisIds("row").map((row) => cols.map((column) => this.cellText(row, column)!));
@@ -348,7 +374,8 @@ export class ExperimentalTable {
 
   /** Prototype snapshot retains the complete operation ledger and pending ops. */
   snapshot(): string {
-    const result = JSON.stringify({ version: 1, ops: [...this.entries.values()].map((e) => e.op).sort((a, b) => cmpId(a.id, b.id)) });
+    const ops = [...this.entries.values()].map((e) => e.op).sort((a, b) => cmpId(a.id, b.id));
+    const result = JSON.stringify({ version: ops.some((op) => op.kind === "text-mark") ? 2 : 1, ops });
     if (byteLength(result) > this.limits.maxSnapshotBytes) throw new RangeError("table resource limit: maxSnapshotBytes");
     return result;
   }
@@ -357,10 +384,11 @@ export class ExperimentalTable {
     if (typeof snapshot !== "string") throw new TypeError("snapshot must be text");
     if (snapshot.length > checked.maxSnapshotBytes || byteLength(snapshot) > checked.maxSnapshotBytes) throw new RangeError("table resource limit: maxSnapshotBytes");
     const parsed = parseTableSnapshotJson(snapshot, checked.maxOperations);
-    if (!parsed || typeof parsed !== "object" || (parsed as { version?: unknown }).version !== 1 || !Array.isArray((parsed as { ops?: unknown }).ops)) {
+    if (!parsed || typeof parsed !== "object" || ![1, 2].includes((parsed as { version?: number }).version ?? 0) || !Array.isArray((parsed as { ops?: unknown }).ops)) {
       throw new TypeError("invalid experimental table snapshot");
     }
     exactKeys(parsed, ["version", "ops"]);
+    if ((parsed as { version: number }).version === 1 && (parsed as { ops: TableOp[] }).ops.some((op) => op?.kind === "text-mark")) throw new TypeError("table marks require snapshot version 2");
     const table = new ExperimentalTable(checked);
     // The canonical snapshot order may place dependencies after dependents.
     // Bound transient pending by the total ledger limit; validate the final
