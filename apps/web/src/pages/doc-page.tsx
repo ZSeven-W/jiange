@@ -1165,6 +1165,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         />
   ) : null;
 
+  const showReferences = metadataVerified && !history && !presenting && !!referenceSetting?.visible;
+
   return (
     <div className="flex min-w-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col">
@@ -1253,7 +1255,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
-          <div className="flex min-h-full">
+          <div className={cn("flex", (showTemplates || !showReferences) && "min-h-full")}>
           {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history} onToggle={() => setOutlineOpen((value) => !value)} />}
           {outlineVisible && (
             <OutlinePanel
@@ -1281,7 +1283,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : showReferences ? "pb-0" : "pb-40")}>
             <div className="group/doc-cover relative" data-outline-anchor data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -1358,10 +1360,17 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
-            {metadataVerified && !history && !presenting && referenceSetting?.visible && <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />}
           </article>}</DocumentCover>
           </div>
           </div>
+          {showReferences && <div className="flex">
+            {outlineVisible && <div aria-hidden="true" className={cn("hidden xl:block xl:shrink-0", outlinePinned ? "xl:w-[248px]" : "xl:w-14", ((commentsAvailable && commentsOpen) || history) && "xl:hidden min-[1680px]:block")} />}
+            <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
+              <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-7 pb-40 sm:px-16", docWidthClass(width))}>
+                <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />
+              </div>
+            </div>
+          </div>}
           {findOpen && <div aria-hidden="true" className="h-[60dvh] min-[480px]:hidden" />}
         </div>
         {findOpen && <div ref={findPanel}>
