@@ -35,7 +35,11 @@ export type TableOp =
 
 export type TableMarkKey = "bold" | "italic" | "underline" | "strike" | "color";
 export interface TableRichChar { id: OpId; text: string; marks: Partial<Record<TableMarkKey, string>> }
+export interface TableMarkState { value: string | null; version: OpId | null }
 const TABLE_MARK_KEYS: readonly TableMarkKey[] = ["bold", "color", "italic", "strike", "underline"];
+export function validTableMarkValue(key: unknown, value: unknown): key is TableMarkKey {
+  return typeof key === "string" && TABLE_MARK_KEYS.includes(key as TableMarkKey) && (value === null || typeof value === "string" && (key === "color" ? /^#[0-9A-F]{6}$/.test(value) : value === "1"));
+}
 
 type Node = { id: OpId; after: OpId | null; deleted: boolean };
 type TextNode = Node & { char: string; marks?: Map<TableMarkKey, { id: OpId; value: string | null }> };
@@ -140,7 +144,7 @@ function normalize(input: TableOp): TableOp {
       exactKeys(input, ["kind", "id", "row", "column", "target", "key", "value"]);
       validateId(input.row); validateId(input.column); validateId(input.target);
       if (sameId(input.id, input.target) || sameId(input.id, input.row) || sameId(input.id, input.column)) throw new TypeError("invalid mark identity");
-      if (!["bold", "italic", "underline", "strike", "color"].includes(input.key) || input.value !== null && (typeof input.value !== "string" || (input.key === "color" ? !/^#[0-9A-F]{6}$/.test(input.value) : input.value !== "1"))) throw new TypeError("invalid table text mark");
+      if (!validTableMarkValue(input.key, input.value)) throw new TypeError("invalid table text mark");
       return { kind: input.kind, id: copyId(input.id), row: copyId(input.row), column: copyId(input.column), target: copyId(input.target), key: input.key, value: input.value };
     }
     default: throw new TypeError("unknown table operation");
@@ -175,6 +179,7 @@ export class ExperimentalTable {
   private entries = new Map<string, Entry>();
   private readonly limits: TableLimits;
   private pending = 0;
+  private observedClock = 0;
   private reservedRows = 0;
   private reservedColumns = 0;
   private reservedCharacters = new Map<string, number>();
@@ -193,6 +198,8 @@ export class ExperimentalTable {
   }
 
   get pendingCount(): number { return this.pending; }
+  /** Highest admitted Lamport clock, including pending and rejected operations. */
+  get maxClock(): number { return this.observedClock; }
   get rejected(): { id: OpId; reason: string }[] {
     return [...this.entries.values()].filter((e) => e.state === "rejected")
       .map((e) => ({ id: copyId(e.op.id), reason: e.reason! })).sort((a, b) => cmpId(a.id, b.id));
@@ -232,6 +239,7 @@ export class ExperimentalTable {
     }
     const entry: Entry = { op, signature, state: state.kind === "ready" ? "applied" : state.kind === "missing" ? "pending" : "rejected", ...(state.kind === "rejected" ? { reason: state.reason } : {}) };
     this.entries.set(key, entry);
+    this.observedClock = Math.max(this.observedClock, op.id.clock);
     const queue = [key], cycles: string[] = [];
     if (state.kind === "ready") this.integrate(op);
     else if (state.kind === "missing") { this.pending++; this.registerWait(key, state.key, cycles); }
@@ -367,6 +375,16 @@ export class ExperimentalTable {
       return { id: copyId(node.id), text: node.char, marks };
     });
   }
+  /** Read a visible character's exact register version for guarded history. */
+  cellMark(row: OpId, column: OpId, target: OpId, key: TableMarkKey, includeDeleted = false): TableMarkState | null {
+    if (!TABLE_MARK_KEYS.includes(key)) return null;
+    const r = this.rows.get(idKey(row)), c = this.columns.get(idKey(column));
+    if (!r || !c || (!includeDeleted && (r.deleted || c.deleted))) return null;
+    const node = this.cells.get(cellKey(row, column))?.chars.get(idKey(target));
+    if (!node || node.deleted) return null;
+    const register = node.marks?.get(key);
+    return { value: register?.value ?? null, version: register ? copyId(register.id) : null };
+  }
   view(): string[][] {
     const cols = this.axisIds("column");
     return this.axisIds("row").map((row) => cols.map((column) => this.cellText(row, column)!));
@@ -379,6 +397,8 @@ export class ExperimentalTable {
     if (byteLength(result) > this.limits.maxSnapshotBytes) throw new RangeError("table resource limit: maxSnapshotBytes");
     return result;
   }
+  /** Clone with the same admission limits for non-mutating operation plans. */
+  fork(): ExperimentalTable { return ExperimentalTable.fromSnapshot(this.snapshot(), this.limits); }
   static fromSnapshot(snapshot: string, limits: TableLimits = DEFAULT_TABLE_LIMITS): ExperimentalTable {
     const checked = validateLimits(limits);
     if (typeof snapshot !== "string") throw new TypeError("snapshot must be text");

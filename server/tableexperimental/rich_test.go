@@ -47,6 +47,14 @@ func TestSharedRichVectors(t *testing.T) {
 	if rich, ok := fromTS.CellRich(fixture.Cases[0].Expected.Row, fixture.Cases[0].Expected.Column, false); !ok || !reflect.DeepEqual(rich, fixture.Cases[0].Expected.Rich) {
 		t.Fatalf("typescript snapshot: %+v", rich)
 	}
+	cleared, ok := fromTS.CellMark(fixture.Cases[0].Expected.Row, fixture.Cases[0].Expected.Column, fixture.Cases[0].Expected.Rich[0].ID, "bold", false)
+	if !ok || cleared.Value != nil || cleared.Version == nil || *cleared.Version != (ID{3, 5}) {
+		t.Fatalf("cleared mark: %+v %v", cleared, ok)
+	}
+	unset, ok := fromTS.CellMark(fixture.Cases[0].Expected.Row, fixture.Cases[0].Expected.Column, fixture.Cases[0].Expected.Rich[0].ID, "strike", false)
+	if !ok || unset.Value != nil || unset.Version != nil {
+		t.Fatalf("unset mark: %+v %v", unset, ok)
+	}
 	goSnapshot, err := os.ReadFile("../../packages/collab/testdata/table-experimental-rich-go-snapshot.json")
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +158,16 @@ func TestRichValidationAndDetachedProjection(t *testing.T) {
 	again, _ := table.CellRich(row, col, false)
 	if again[0].Marks["bold"] != "1" || again[0].ID != ch {
 		t.Fatal("projection mutated internal state")
+	}
+	register, ok := table.CellMark(row, col, ch, "bold", false)
+	if !ok || register.Version == nil || register.Value == nil {
+		t.Fatal("mark register missing")
+	}
+	register.Version.Clock = 99
+	*register.Value = "changed"
+	register, ok = table.CellMark(row, col, ch, "bold", false)
+	if !ok || *register.Version != (ID{3, 1}) || *register.Value != "1" {
+		t.Fatal("register projection mutated internal state")
 	}
 	snapshot, err := table.Snapshot()
 	if err != nil {
@@ -264,5 +282,38 @@ func TestRichPendingMarksAreBoundedAndWake(t *testing.T) {
 	chars, ok := table.CellRich(row, col, false)
 	if !ok || chars[0].Marks["bold"] != "1" || chars[0].Marks["italic"] != "1" {
 		t.Fatalf("marks: %+v", chars)
+	}
+}
+
+func TestRichMaxClockIncludesPendingButNotRejectedInput(t *testing.T) {
+	table := New()
+	row, col, ch := ID{1, 1}, ID{1, 2}, ID{1, 3}
+	value := "1"
+	op := Op{Kind: "text-mark", ID: ID{2, 100}, Row: &row, Column: &col, Target: &ch, Key: "bold", Value: &value}
+	if _, err := table.Apply(op); err != nil {
+		t.Fatal(err)
+	}
+	if table.MaxClock() != 100 {
+		t.Fatalf("clock %d", table.MaxClock())
+	}
+	bad := "invalid"
+	op.ID.Clock = 101
+	op.Value = &bad
+	if _, err := table.Apply(op); err == nil {
+		t.Fatal("invalid mark accepted")
+	}
+	if table.MaxClock() != 100 {
+		t.Fatal("invalid input advanced clock")
+	}
+	snapshot, err := table.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := FromSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.MaxClock() != 100 {
+		t.Fatalf("restored clock %d", restored.MaxClock())
 	}
 }

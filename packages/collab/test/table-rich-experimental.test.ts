@@ -19,7 +19,10 @@ describe("experimental table character marks", () => {
     const fixtures = JSON.parse(readFileSync(new URL("../testdata/table-experimental-rich.json", import.meta.url), "utf8")) as { cases: { ops: TableOp[]; expected: { row: OpId; column: OpId; rich: TableRichChar[] } }[] };
     const scenario = fixtures.cases[0];
     const go = readFileSync(new URL("../testdata/table-experimental-rich-go-snapshot.json", import.meta.url), "utf8");
-    expect(ExperimentalTable.fromSnapshot(go).cellRich(scenario.expected.row, scenario.expected.column)).toEqual(scenario.expected.rich);
+    const fromGo = ExperimentalTable.fromSnapshot(go);
+    expect(fromGo.cellRich(scenario.expected.row, scenario.expected.column)).toEqual(scenario.expected.rich);
+    expect(fromGo.cellMark(scenario.expected.row, scenario.expected.column, scenario.expected.rich[0].id, "bold")).toEqual({ value: null, version: { client: 3, clock: 5 } });
+    expect(fromGo.cellMark(scenario.expected.row, scenario.expected.column, scenario.expected.rich[0].id, "strike")).toEqual({ value: null, version: null });
     const table = new ExperimentalTable(); scenario.ops.forEach((op) => table.apply(op));
     const expected = readFileSync(new URL("../testdata/table-experimental-rich-ts-snapshot.json", import.meta.url), "utf8");
     expect(JSON.parse(table.snapshot())).toEqual(JSON.parse(expected));
@@ -50,6 +53,8 @@ describe("experimental table character marks", () => {
     t.apply(mark); mark.target.clock = 99;
     const rich = t.cellRich(row, column)!; rich[0].id.clock = 99; rich[0].marks.bold = "changed";
     expect(t.cellRich(row, column)).toEqual([{ id: { client: 1, clock: 3 }, text: "字", marks: { bold: "1" } }]);
+    const register = t.cellMark(row, column, { client: 1, clock: 3 }, "bold")!; register.version!.clock = 99;
+    expect(t.cellMark(row, column, { client: 1, clock: 3 }, "bold")?.version).toEqual({ client: 2, clock: 1 });
   });
   it("validates values, rejects downgrade and keeps tombstoned content hidden", () => {
     const t = new ExperimentalTable(), row = { client: 1, clock: 1 }, column = { client: 1, clock: 2 }, char = { client: 1, clock: 3 };
@@ -83,5 +88,12 @@ describe("experimental table character marks", () => {
     expect(t.pendingCount).toBe(0);
     expect(t.apply({ kind: "text-mark", id: { client: 2, clock: 2 }, row, column, target: char, key: "italic", value: "1" })).toBe(true);
     expect(t.cellRich(row, column)?.[0].marks).toEqual({ bold: "1", italic: "1" });
+  });
+  it("tracks admitted clocks through pending operations and snapshot reload", () => {
+    const t = new ExperimentalTable(), row = { client: 1, clock: 1 }, column = { client: 1, clock: 2 }, char = { client: 1, clock: 3 };
+    t.apply({ kind: "text-mark", id: { client: 2, clock: 100 }, row, column, target: char, key: "bold", value: "1" });
+    expect(t.maxClock).toBe(100);
+    expect(() => t.apply({ kind: "text-mark", id: { client: 2, clock: 101 }, row, column, target: char, key: "bold", value: "bad" })).toThrow();
+    expect(t.maxClock).toBe(100); expect(ExperimentalTable.fromSnapshot(t.snapshot()).maxClock).toBe(100);
   });
 });

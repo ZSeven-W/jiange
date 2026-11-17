@@ -89,6 +89,7 @@ type Table struct {
 	parents                       map[ID]ID
 	ranks                         map[ID]uint8
 	pending                       int
+	maxClock                      int64
 	reservedRows, reservedColumns int
 	reservedChars                 map[cellKey]int
 	snapshotBudget                int
@@ -243,6 +244,9 @@ func (t *Table) Apply(input Op) (bool, error) {
 		e.state, e.reason = "rejected", state
 	}
 	t.entries[op.ID] = e
+	if op.ID.Clock > t.maxClock {
+		t.maxClock = op.ID.Clock
+	}
 	t.reserve(op)
 	var cycles []ID
 	if state == "ready" {
@@ -618,6 +622,36 @@ type RichChar struct {
 	Marks map[string]string `json:"marks"`
 }
 
+// MarkState distinguishes an unset register from an explicit clearing write.
+type MarkState struct {
+	Value   *string `json:"value"`
+	Version *ID     `json:"version"`
+}
+
+func (t *Table) CellMark(row, column, target ID, key string, includeDeleted bool) (MarkState, bool) {
+	if !validMark(key, nil) {
+		return MarkState{}, false
+	}
+	r, c := t.rows[row], t.columns[column]
+	if r == nil || c == nil || (!includeDeleted && (r.deleted || c.deleted)) {
+		return MarkState{}, false
+	}
+	n := t.cells[cellKey{row, column}][target]
+	if n == nil || n.deleted {
+		return MarkState{}, false
+	}
+	register, ok := n.marks[key]
+	if !ok {
+		return MarkState{}, true
+	}
+	var value *string
+	if register.value != nil {
+		v := *register.value
+		value = &v
+	}
+	return MarkState{Value: value, Version: copyID(&register.id)}, true
+}
+
 func (t *Table) CellRich(row, column ID, includeDeleted bool) ([]RichChar, bool) {
 	r, c := t.rows[row], t.columns[column]
 	if r == nil || c == nil || (!includeDeleted && (r.deleted || c.deleted)) {
@@ -656,6 +690,9 @@ func (t *Table) View() [][]string {
 func (t *Table) PendingCount() int {
 	return t.pending
 }
+
+// MaxClock includes all admitted IDs, even pending or rejected operations.
+func (t *Table) MaxClock() int64 { return t.maxClock }
 
 type Rejected struct {
 	ID     ID     `json:"id"`
