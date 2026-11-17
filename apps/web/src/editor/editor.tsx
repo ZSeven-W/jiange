@@ -732,7 +732,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
 
   const startColumnArchive = useCallback(async (request: { kind: "initial"; parent: OpId; block: OpId } | { kind: "step"; key: string; redo: boolean }) => {
     const client = sync.client, d = client.doc;
-    if (!conditionalArchive || !conditionalAlignment || !d || !userId || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) { setColumnNotice("请等待文档同步完成后再操作分栏。"); return; }
+    if (!conditionalArchive || !conditionalAlignment || !userId || typeof navigator === "undefined" || !navigator.locks || client.epoch === null && client.status === "synced") {
+      if (request.kind === "step" && um.peekMarker(request.redo) === request.key) setTableHistoryConflict({ client, key: request.key, redo: request.redo, revision: um.revision, reason: "unsupported" });
+      else setColumnNotice("当前环境暂不支持安全处理分栏操作。");
+      return;
+    }
+    if (!d || readOnlyRef.current || !canStepFindBatch(client) || client.epoch === null) { setColumnNotice("请等待文档同步完成后再操作分栏。"); return; }
     if (alignmentBusy.current || alignmentPendingRef.current) { setColumnNotice("请先核对尚未完成的文档操作。"); return; }
     setColumnNotice(""); setTableHistoryConflict(null);
     setAlignmentBusy(true);
@@ -1062,7 +1067,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
 
   /** Runs an edit as one undoable transaction. */
   const run = useCallback(
-    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false, guardColumnAlignment = false) => {
+    (fn: (tx: Tx, s: Sel) => Pos | Sel | void, tag?: string, preserveCreatedBlocks = false, guardColumnAlignment = false, recordCustom?: (tx: Tx, before: Sel, after: Sel | null) => boolean) => {
       const d = sync.client.doc,
         original = sel.current;
       if (!d || !original || readOnlyRef.current) return;
@@ -1080,7 +1085,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const next: Sel | null = r ? ("a" in r ? r : { a: r, f: r }) : s;
       if (tx.ops.length) {
         if (column && alignmentBefore) columnAlignmentHistory.record(d, um, column, alignmentBefore);
-        else um.record(preserveCreatedBlocks ? safeSlashUndo(tx) : tx, s, next, tag);
+        else if (!recordCustom?.(tx, s, next)) um.record(preserveCreatedBlocks ? safeSlashUndo(tx) : tx, s, next, tag);
         sync.client.push(tx.ops);
       }
       sel.current = next;
@@ -2082,6 +2087,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       return;
     }
     let applied = false;
+    let createdColumnGroup: OpId | null = null;
     run((tx) => {
       // Validate before creating a block, so a stale query cannot leave partial
       // mutations behind.
@@ -2133,6 +2139,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (it.id === "columns") {
         const info = tx.doc.blockInfo(b);
         const cb = tx.create("columns", b, info.parent);
+        createdColumnGroup = cb;
         let previous: OpId | null = null;
         for (let i = 0; i < (columnCount ?? COLUMN_PICKER_MIN); i++) previous = createColumn(tx, cb, previous);
         const nb = tx.create("paragraph", cb, info.parent);
@@ -2140,7 +2147,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
       return { b, o: offset };
-    }, undefined, it.id === "columns");
+    }, undefined, it.id === "columns", false, it.id === "columns" ? (tx, before, after) => {
+      if (!createdColumnGroup) return false;
+      const prefix = safeSlashUndo(tx);
+      prefix.items = prefix.items.filter((item) => item.k !== "prop" || item.key !== "_column_created");
+      const recorded = columnArchiveHistory.recordCreation(tx.doc, um, { client: 0, clock: 0 }, createdColumnGroup, { tx: prefix, before, after });
+      if (!recorded) setColumnNotice("分栏已创建，但当前结构无法安全撤销。");
+      return recorded;
+    } : undefined);
     if (!applied) setColumnNotice("命令内容或编辑位置已变化，原文已保留，请重试。");
     um.seal();
   };
@@ -3032,7 +3046,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const anchor = after ? { client: Number(after.split(":")[0]), clock: Number(after.split(":")[1]) } : null;
                   const result = insertColumnAfter(tx, b, anchor);
                   if (result !== "created") { setColumnNotice(result === "limit" ? "每组分栏最多支持 10 栏。" : "分栏已变化，请重新操作。"); return; }
-                  um.record(safeColumnUndo(tx), sel.current, sel.current, "column");
+                  const created = tx.ops.find((op) => op.t === "bcreate" && eqId(op.parent, b));
+                  if (!created || !columnArchiveHistory.recordCreation(doc, um, b, created.id)) { um.record(safeColumnUndo(tx), sel.current, sel.current, "column"); setColumnNotice("分栏已添加，但当前结构无法安全撤销。"); }
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();

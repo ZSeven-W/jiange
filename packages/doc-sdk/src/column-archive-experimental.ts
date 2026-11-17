@@ -47,11 +47,11 @@ function freezeArchivePlan(doc: Doc, base: Uint8Array, tx: Tx, result: ColumnArc
 export function prepareColumnArchive(doc: Doc, author: number, parent: OpId, block: OpId): PreparedColumnArchive | null {
   if (!Number.isSafeInteger(author) || author <= 0 || author === doc.client || doc.pendingCount !== 0) return null;
   try {
-    const captured = captureArchiveTarget(doc, parent, block);
+    const captured = captureColumnArchiveTarget(doc, parent, block);
     if (!captured) return null;
     const base = doc.encodeState();
     if (base.byteLength > MAX_PLAN_STATE_BYTES) return null;
-    const copy = Doc.fromState(author, base), clone = captureArchiveTarget(copy, parent, block);
+    const copy = Doc.fromState(author, base), clone = captureColumnArchiveTarget(copy, parent, block);
     if (!clone || clone.pos !== captured.pos || clone.version !== captured.version || clone.guard !== captured.guard) return null;
     const tx = new Tx(copy), result = archiveColumn(tx, clone);
     if (!result) return null;
@@ -112,7 +112,7 @@ function siblingGuard(doc: Doc, parent: OpId, block: OpId): string | null {
 }
 
 /** Capture a complete root-level columns group with its surrounding positions. */
-function captureArchiveTarget(doc: Doc, parent: OpId, block: OpId): ColumnMoveSnapshot | null {
+export function captureColumnArchiveTarget(doc: Doc, parent: OpId, block: OpId): ColumnMoveSnapshot | null {
   if (!eqId(parent, ROOT)) return captureColumnMove(doc, parent, block);
   if (!doc.hasBlock(block)) return null;
   const info = doc.blockInfo(block), guard = siblingGuard(doc, ROOT, block);
@@ -126,7 +126,7 @@ function captureArchiveTarget(doc: Doc, parent: OpId, block: OpId): ColumnMoveSn
 export function archiveColumn(tx: Tx, captured: ColumnMoveSnapshot): ColumnArchive | null {
   const doc = tx.doc;
   if (doc !== captured.doc || doc.pendingCount !== 0) return null;
-  const current = captureArchiveTarget(doc, captured.parent, captured.block);
+  const current = captureColumnArchiveTarget(doc, captured.parent, captured.block);
   if (!current || current.pos !== captured.pos || current.version !== captured.version || current.guard !== captured.guard || current.ids.length !== captured.ids.length || current.ids.some((id, i) => id !== captured.ids[i])) return null;
   let ids: OpId[];
   try { ids = doc.allocateOpIds(4); } catch { return null; }
