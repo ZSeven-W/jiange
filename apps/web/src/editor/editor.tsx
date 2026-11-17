@@ -37,6 +37,7 @@ import { blockEl, caretRect, domToPos, posToDom } from "./dom";
 import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./slash-menu";
 import { TABLE_PICKER_LIMIT, validTablePickerSize, type TableSize } from "./table-size-picker";
+import { COLUMN_PICKER_MIN, nextColumnPickerCount, validColumnPickerCount } from "./column-count-picker";
 import { SlashLinkPopover } from "./slash-link-popover";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slash-link";
 import { toggleTextLink } from "./link-kind";
@@ -897,6 +898,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     insertAfter?: OpId;
     buttonQuery?: string;
     tableSize?: TableSize;
+    columnCount?: number;
     query?: SlashQuery;
     buttonContext?: { doc: Doc; parent: OpId; type: string };
   } | null>(null);
@@ -1645,12 +1647,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         if (e.inputType === "insertText" || e.inputType === "insertReplacementText") {
           e.preventDefault();
           const value = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
-          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + value).slice(0, 32), tableSize: undefined, index: 0 } : m);
+          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + value).slice(0, 32), tableSize: undefined, columnCount: undefined, index: 0 } : m);
           return;
         }
         if (e.inputType.startsWith("delete")) {
           e.preventDefault();
-          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), tableSize: undefined, index: 0 } : m);
+          changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), tableSize: undefined, columnCount: undefined, index: 0 } : m);
           return;
         }
       }
@@ -1796,7 +1798,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         const block = menuComposition.current;
         menuComposition.current = null;
         setRemount((m) => ({ ...m, [idKey(block)]: (m[idKey(block)] ?? 0) + 1 }));
-        if (e.data) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + e.data).slice(0, 32), tableSize: undefined, index: 0 } : m);
+        if (e.data) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + e.data).slice(0, 32), tableSize: undefined, columnCount: undefined, index: 0 } : m);
         return;
       }
       if (!c) return;
@@ -1934,10 +1936,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     um.seal();
   };
 
-  const applySlash = async (it: MenuItem, size?: TableSize) => {
+  const applySlash = async (it: MenuItem, size?: TableSize, columnCount?: number) => {
     if (readOnlyRef.current) return;
     const m = slashRef.current;
     if (size && (!m?.fromButton || it.id !== "table" || !validTablePickerSize(size))) return;
+    if (columnCount !== undefined && (!m?.fromButton || it.id !== "columns" || !validColumnPickerCount(columnCount))) return;
     const chosenTable = size ? createBlankTable(size.rows, size.columns) : NEW_TABLE;
     if (!chosenTable) return;
     changeSlash(null);
@@ -2130,8 +2133,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (it.id === "columns") {
         const info = tx.doc.blockInfo(b);
         const cb = tx.create("columns", b, info.parent);
-        const c1 = createColumn(tx, cb, null);
-        createColumn(tx, cb, c1);
+        let previous: OpId | null = null;
+        for (let i = 0; i < (columnCount ?? COLUMN_PICKER_MIN); i++) previous = createColumn(tx, cb, previous);
         const nb = tx.create("paragraph", cb, info.parent);
         return { b: nb, o: 0 };
       }
@@ -2142,9 +2145,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     um.seal();
   };
 
-  const openTablePicker = () => changeSlash((current) => current?.fromButton ? { ...current, tableSize: current.tableSize ?? { rows: 1, columns: 1 } } : current);
+  const openTablePicker = () => changeSlash((current) => current?.fromButton ? { ...current, columnCount: undefined, tableSize: current.tableSize ?? { rows: 1, columns: 1 } } : current);
+  const openColumnPicker = () => changeSlash((current) => current?.fromButton ? { ...current, tableSize: undefined, columnCount: current.columnCount ?? COLUMN_PICKER_MIN } : current);
   const pickSlashItem = (item: MenuItem) => {
     if (item.id === "table" && slashRef.current?.fromButton) openTablePicker();
+    else if (item.id === "columns" && slashRef.current?.fromButton) openColumnPicker();
     else void applySlash(item);
   };
   const pickTableSize = (size: TableSize) => {
@@ -2152,6 +2157,12 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!current?.fromButton || !current.tableSize || !item || !validTablePickerSize(size)) return;
     root.current?.focus({ preventScroll: true });
     void applySlash(item, size);
+  };
+  const pickColumnCount = (count: number) => {
+    const current = slashRef.current, item = slashItems.find((candidate) => candidate.id === "columns");
+    if (!current?.fromButton || current.columnCount === undefined || !item || !validColumnPickerCount(count)) return;
+    root.current?.focus({ preventScroll: true });
+    void applySlash(item, undefined, count);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -2166,6 +2177,13 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (e.nativeEvent.isComposing || composing.current) return;
     readSel();
     const mod = e.metaKey || e.ctrlKey;
+    if (slash?.columnCount !== undefined) {
+      if (e.key === "Escape") { e.preventDefault(); changeSlash((current) => current ? { ...current, columnCount: undefined } : null); return; }
+      if (e.key === "Tab") { e.preventDefault(); document.querySelector<HTMLElement>("[data-column-count-picker]")?.focus(); return; }
+      const next = nextColumnPickerCount(slash.columnCount, e.key);
+      if (next !== null) { e.preventDefault(); changeSlash((current) => current?.columnCount !== undefined ? { ...current, columnCount: next } : current); return; }
+      if (e.key === "Enter") { e.preventDefault(); pickColumnCount(slash.columnCount); return; }
+    }
     if (slash?.tableSize) {
       if (e.key === "Escape") { e.preventDefault(); changeSlash((current) => current ? { ...current, tableSize: undefined } : null); return; }
       if (e.key === "Tab") { e.preventDefault(); document.querySelector<HTMLElement>("[data-table-size-picker]")?.focus(); return; }
@@ -2180,7 +2198,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (slash && e.key === "Escape") { e.preventDefault(); changeSlash(null); return; }
     if (slash?.fromButton && (e.key === "Backspace" || e.key === "Delete")) {
       e.preventDefault();
-      if (e.key === "Backspace") changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), tableSize: undefined, index: 0 } : m);
+      if (e.key === "Backspace") changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: [...(m.buttonQuery ?? "")].slice(0, -1).join(""), tableSize: undefined, columnCount: undefined, index: 0 } : m);
       return;
     }
     if (slash?.fromButton && e.key === "Tab") {
@@ -2192,6 +2210,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (slash && slashItems.length) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (e.key === "ArrowRight" && slash.fromButton && slashItems[Math.min(slash.index, slashItems.length - 1)]?.id === "table") { e.preventDefault(); openTablePicker(); return; }
+        if (e.key === "ArrowRight" && slash.fromButton && slashItems[Math.min(slash.index, slashItems.length - 1)]?.id === "columns") { e.preventDefault(); openColumnPicker(); return; }
         const grid = slashGridSize(slashItems, slash.fromButton ? slash.buttonQuery : undefined);
         const next = nextSlashIndex(slash.index, e.key, slashItems.length, grid);
         if (next !== null) {
@@ -2319,7 +2338,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const raw = e.clipboardData.getData(CLIP_MIME) || blockPayloadFromHTML(e.clipboardData.getData("text/html")) || "";
     if (slashRef.current?.fromButton) {
       if (files.length) { setColumnNotice("请先选择图片或附件命令，再选择文件。"); return; }
-      if (plain) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), tableSize: undefined, index: 0 } : m);
+      if (plain) changeSlash((m) => m?.fromButton ? { ...m, buttonQuery: ((m.buttonQuery ?? "") + plain).slice(0, 32), tableSize: undefined, columnCount: undefined, index: 0 } : m);
       else setColumnNotice("插入菜单中只能粘贴文字，请先选择命令或关闭菜单。");
       return;
     }
@@ -3352,12 +3371,17 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           items={slashItems}
           index={Math.min(slash.index, Math.max(0, slashItems.length - 1))}
           onPick={pickSlashItem}
-          onHover={(i) => changeSlash((current) => current ? { ...current, index: i, tableSize: slashItems[i]?.id === "table" ? current.tableSize : undefined } : null)}
+          onHover={(i) => changeSlash((current) => current ? { ...current, index: i, tableSize: slashItems[i]?.id === "table" ? current.tableSize : undefined, columnCount: slashItems[i]?.id === "columns" ? current.columnCount : undefined } : null)}
           tableSize={slash.tableSize}
           onTableOpen={slash.fromButton ? openTablePicker : undefined}
           onTableSizeChange={(size) => { if (validTablePickerSize(size)) changeSlash((current) => current?.tableSize ? { ...current, tableSize: size } : current); }}
           onTableSizePick={pickTableSize}
           onTableSizeClose={() => { changeSlash((current) => current ? { ...current, tableSize: undefined } : null); root.current?.focus({ preventScroll: true }); }}
+          columnCount={slash.columnCount}
+          onColumnOpen={slash.fromButton ? openColumnPicker : undefined}
+          onColumnCountChange={(count) => { if (validColumnPickerCount(count)) changeSlash((current) => current?.columnCount !== undefined ? { ...current, columnCount: count } : current); }}
+          onColumnCountPick={pickColumnCount}
+          onColumnCountClose={() => { changeSlash((current) => current ? { ...current, columnCount: undefined } : null); root.current?.focus({ preventScroll: true }); }}
         />
       )}
     </div>

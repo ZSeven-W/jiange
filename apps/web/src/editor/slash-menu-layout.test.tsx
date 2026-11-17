@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SlashMenu } from "./slash-menu";
 import { filterItems, SLASH_ITEMS } from "./pinyin";
 import { validTablePickerSize } from "./table-size-picker";
+import { nextColumnPickerCount, validColumnPickerCount } from "./column-count-picker";
 
 const render = (items = SLASH_ITEMS, query?: string) => renderToStaticMarkup(<SlashMenu x={0} y={0} items={items} index={2} query={query} onPick={() => {}} onHover={() => {}} />);
 
@@ -28,6 +29,14 @@ describe("Feishu-style slash menu layout", () => {
     expect(validTablePickerSize({ rows: 9, columns: 9 })).toBe(true);
     for (const size of [{ rows: 0, columns: 1 }, { rows: 10, columns: 1 }, { rows: 1, columns: 2.5 }]) expect(validTablePickerSize(size)).toBe(false);
   });
+  it("exposes the column count submenu only when the plus path supports it", () => {
+    const props = { x: 0, y: 0, items: SLASH_ITEMS, index: 0, onPick: () => {}, onHover: () => {} };
+    const plus = renderToStaticMarkup(<SlashMenu {...props} onColumnOpen={() => {}} />);
+    expect(plus).toMatch(/aria-haspopup="listbox" aria-expanded="false"[^>]*data-value="columns"/);
+    expect(renderToStaticMarkup(<SlashMenu {...props} />)).not.toContain('aria-haspopup="listbox"');
+    for (const count of [2, 3, 4, 5]) expect(validColumnPickerCount(count)).toBe(true);
+    for (const count of [0, 1, 6, 2.5, NaN]) expect(validColumnPickerCount(count)).toBe(false);
+  });
 });
 
 import { nextSlashIndex, slashGridSize } from "./slash-menu";
@@ -45,5 +54,14 @@ describe("slash menu keyboard navigation", () => {
     expect(nextSlashIndex(3, "ArrowRight", n, 0)).toBeNull();
     // The grid branch is kept for callers that still pass a grid size.
     expect(nextSlashIndex(1, "ArrowDown", 12, 10, 5)).toBe(6);
+  });
+  it("moves and clamps the column count with keyboard navigation", () => {
+    expect(nextColumnPickerCount(2, "ArrowLeft")).toBe(2);
+    expect(nextColumnPickerCount(2, "ArrowRight")).toBe(3);
+    expect(nextColumnPickerCount(5, "ArrowDown")).toBe(5);
+    expect(nextColumnPickerCount(4, "Home")).toBe(2);
+    expect(nextColumnPickerCount(2, "End")).toBe(5);
+    expect(nextColumnPickerCount(2, "Enter")).toBeNull();
+    expect(nextColumnPickerCount(9, "ArrowLeft")).toBeNull();
   });
 });
