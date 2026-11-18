@@ -89,17 +89,10 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d, err := s.Store.CreateDoc(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title, syncsrv.InitialOps(title))
+	d, err := s.Store.CreateDocWithType(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title, in.DocType, syncsrv.InitialOps(title))
 	if err != nil {
 		s.fail(w, r, err)
 		return
-	}
-	if in.DocType != "" {
-		if err := s.Store.SetCreatedDocType(r.Context(), d.ID, u.ID, in.DocType); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		d.DocType = in.DocType
 	}
 	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
 	httpx.JSON(w, http.StatusCreated, d)

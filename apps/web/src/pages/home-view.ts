@@ -10,3 +10,11 @@ export function writeHomeView(storage: HomeViewStorage | null, userId: number, v
   if (!Number.isSafeInteger(userId) || userId <= 0) return;
   try { storage?.setItem(homeViewKey(userId), view); } catch { /* Keep the current view usable without storage. */ }
 }
+
+export function matchesHomeTypeFilter(doc: { kind?: string; docType?: string }, selectedKind: string): boolean {
+  if (selectedKind === "all") return true;
+  const kind = doc.kind ?? "doc";
+  if (selectedKind === "board") return kind === "doc" && doc.docType === "board";
+  if (selectedKind === "doc") return kind === "doc" && doc.docType !== "board";
+  return kind === selectedKind;
+}

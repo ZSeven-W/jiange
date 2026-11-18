@@ -137,7 +137,11 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		base := strings.TrimSpace(src.Text(collab.OpID{Client: 0, Clock: 1}))
 		if base == "" {
-			base = "未命名文档"
+			if d.DocType == store.DocTypeBoard {
+				base = "未命名画板"
+			} else {
+				base = "未命名文档"
+			}
 		}
 		runes := []rune(base)
 		if len(runes) > 197 {
@@ -214,10 +218,6 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.fail(w, r, err)
 	default:
-		// A copy of a 画板 is a 画板 too.
-		if d.DocType != "" && s.Store.SetCreatedDocType(r.Context(), nd.ID, u.ID, d.DocType) == nil {
-			nd.DocType = d.DocType
-		}
 		nd = s.sanitizeWrittenDocMeta(r.Context(), u.ID, nd)
 		httpx.JSON(w, http.StatusCreated, nd)
 	}

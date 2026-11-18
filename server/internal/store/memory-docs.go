@@ -68,7 +68,14 @@ func (m *Memory) CanCreateIn(_ context.Context, uid, ws int64) (bool, error) {
 	return m.member(uid, ws), nil
 }
 
-func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, title string, initial []RawOp) (DocMeta, error) {
+func (m *Memory) CreateDoc(ctx context.Context, ws, creator int64, parent *int64, title string, initial []RawOp) (DocMeta, error) {
+	return m.CreateDocWithType(ctx, ws, creator, parent, title, "", initial)
+}
+
+func (m *Memory) CreateDocWithType(_ context.Context, ws, creator int64, parent *int64, title, docType string, initial []RawOp) (DocMeta, error) {
+	if !ValidDocType(docType) {
+		return DocMeta{}, ErrConflict
+	}
 	m.mu.Lock()
 	if parent != nil {
 		if p := m.doc(*parent); p != nil && p.meta.Kind == "file" {
@@ -78,7 +85,7 @@ func (m *Memory) CreateDoc(_ context.Context, ws, creator int64, parent *int64, 
 	}
 	now := time.Now()
 	d := &memDoc{
-		meta:     DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView},
+		meta:     DocMeta{ID: int64(len(m.d.docs) + 1), Kind: "doc", DocType: docType, WorkspaceID: ws, ParentID: parent, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView},
 		ids:      map[[2]int64]bool{},
 		snaps:    map[int64][]byte{},
 		versions: map[int64]memVersion{},

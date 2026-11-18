@@ -124,6 +124,7 @@ export interface DocMeta {
   updatedAt: string;
   role?: Role;
   kind?: "doc" | "base" | "folder" | "slides" | "file";
+  docType?: string;
   workspaceName?: string;
   copyProtected?: boolean;
   copyMinRole?: Role;
@@ -429,6 +430,7 @@ export interface DriveEntry {
   lastModifierName?: string;
   parentId: number | null;
   kind: string;
+  docType?: string;
   title: string;
   icon?: string;
   role: Role;
@@ -448,10 +450,10 @@ export const driveApi = {
   file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
   create: (title: string, parentId: number | null = null, personal = false, signal?: AbortSignal, expectedUserId?: number) =>
     request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
-  createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
-    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
-  createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number) =>
-    request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared" }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
+    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }),
+  createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number, docType?: "board") =>
+    request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }, undefined, { "X-Jiange-User-Id": String(userId) }),
   children: (parentId: number | null = null, personal = false, workspaceId?: number) => {
     const params = new URLSearchParams();
     if (parentId !== null) params.set("parent", String(parentId));
@@ -550,7 +552,7 @@ export const docsApi = {
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   getIcon: (id: number) => request<{ icon: string; revision: number }>("GET", `/api/docs/${id}/icon`),
   setIcon: (id: number, icon: string, expectedRevision: number) => request<{ icon: string; revision: number } | undefined>("PUT", `/api/docs/${id}/icon`, { icon, expectedRevision }),
-  create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
+  create: (title = "", parentId: number | null = null, workspaceId?: number, docType?: "board") => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }), ...(docType ? { docType } : {}) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   sharesForAccount: (id: number, userId: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares-account`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),

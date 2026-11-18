@@ -8,10 +8,14 @@ const DocTypeBoard = "board"
 // ValidDocType reports whether t is an allowed document subtype.
 func ValidDocType(t string) bool { return t == "" || t == DocTypeBoard }
 
-// DocTypeStore sets the subtype of a freshly created document. Only the
-// creator may set it, only once, and only on kind='doc'.
+// DocTypeStore sets or creates documents with a validated document subtype.
+// SetCreatedDocType only allows the creator to set it once on kind='doc';
+// CreateDocWithType and CreateDriveNodeWithType publish the subtype atomically
+// inside the creation transaction.
 type DocTypeStore interface {
 	SetCreatedDocType(ctx context.Context, docID, creatorID int64, docType string) error
+	CreateDocWithType(ctx context.Context, ws, creator int64, parent *int64, title, docType string, initial []RawOp) (DocMeta, error)
+	CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, docType, title string, personal bool) (DriveEntry, error)
 }
 
 func (p *Postgres) SetCreatedDocType(ctx context.Context, docID, creatorID int64, docType string) error {

@@ -160,16 +160,9 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		return
 	}
-	entry, err := s.Store.CreateDriveNode(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, title, in.Scope == "personal")
+	entry, err := s.Store.CreateDriveNodeWithType(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, in.DocType, title, in.Scope == "personal")
 	if driveWriteErr(w, err, "create node") {
 		return
-	}
-	if in.DocType != "" {
-		if err := s.Store.SetCreatedDocType(r.Context(), entry.ID, u.ID, in.DocType); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		entry.DocType = in.DocType
 	}
 	httpx.JSON(w, http.StatusCreated, entry)
 }

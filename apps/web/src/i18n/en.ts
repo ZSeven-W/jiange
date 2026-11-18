@@ -508,6 +508,7 @@ export const en: Record<string, string> = {
   "未命名幻灯片": "Untitled slides",
   "文档应用": "Document apps",
   "未命名文档": "Untitled doc",
+  "未命名画板": "Untitled Whiteboard",
   "未命名记录": "Untitled record",
   "未填写": "Empty",
   "未导入数据：{msg}": "No data imported: {msg}",

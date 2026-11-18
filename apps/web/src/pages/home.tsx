@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
 import { DocumentGlyph } from "@/components/document-glyph";
 import { go } from "@/lib/route";
-import { docTitle, hrefOf } from "@/components/sidebar";
+import { docTitle, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { BaseColorIcon, DocColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
@@ -25,7 +25,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { ChevronDown, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { formatDriveTime } from "./drive-sort";
-import { browserHomeViewStorage, homeViewKey, readHomeView, writeHomeView, type HomeView } from "./home-view";
+import { browserHomeViewStorage, homeViewKey, matchesHomeTypeFilter, readHomeView, writeHomeView, type HomeView } from "./home-view";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
 const LIST_GRID = "grid grid-cols-[minmax(0,1fr)_100px] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
@@ -173,11 +173,13 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const createBoard = useMutation({
     mutationFn: async (kind: BoardStarterKind) => {
       const owner = me.user.id;
-      const doc = kind === "mindmap" ? await driveApi.createWordImportNode(MINDMAP_TITLE, null, true, owner) : await docsApi.create(BOARD_TITLE);
-      if (!Number.isSafeInteger(doc.id) || doc.id <= 0 || (kind === "mindmap" && doc.kind !== "doc") || ("creatorId" in doc && doc.creatorId !== undefined && doc.creatorId !== owner)) throw new Error("invalid document response");
+      const doc = kind === "mindmap"
+        ? await driveApi.createWordImportNode(MINDMAP_TITLE, null, true, owner)
+        : await driveApi.createWordImportNode(BOARD_TITLE, null, true, owner, "board");
+      if (!Number.isSafeInteger(doc.id) || doc.id <= 0 || doc.kind !== "doc" || (kind === "board" && doc.docType !== "board") || ("creatorId" in doc && doc.creatorId !== undefined && doc.creatorId !== owner)) throw new Error("invalid document response");
       stageBoard(owner, doc.id, kind); return { doc, owner };
     },
-    onSuccess: ({ doc, owner }) => { void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === owner) go(hrefOf({ id: doc.id, kind: "doc" })); else setImportError(t("创建结果未确认，请检查文档库。")); },
+    onSuccess: ({ doc, owner }) => { void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); if (currentUser.current === owner) go(hrefOf({ id: doc.id, kind: "doc" })); else setImportError(t("创建结果未确认，请检查文档库。")); },
     onError: () => setImportError(t("创建结果未确认，请检查文档库。")),
   });
   const createDriveItem = useMutation({
@@ -241,7 +243,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   };
   const query = selected === "favorites" ? favs : selected === "shared" ? shared : selected === "recent" ? recentDocs : docs;
   const items = [...(query.data ?? [])]
-    .filter((d) => (kind === "all" || (d.kind ?? "doc") === kind) && (selected !== "mine" || d.creatorId === me.user.id))
+    .filter((d) => matchesHomeTypeFilter(d, kind) && (selected !== "mine" || d.creatorId === me.user.id))
     .sort((a, b) => selected === "recent" ? 0 : Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   const pageTitle = favorites ? t("收藏") : recent ? t("最近访问") : t("主页");
   const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
@@ -307,17 +309,18 @@ function HomeViewToggle({ view, onChange }: { view: HomeView; onChange: (view: H
   return <div role="group" aria-label={t("展示方式")} className="mb-2 flex h-8 items-center rounded-md bg-[#f5f6f7] p-0.5"><button type="button" title={t("列表视图")} aria-label={t("列表视图")} aria-pressed={view === "list"} onClick={() => onChange("list")} className={`grid size-7 place-items-center rounded ${view === "list" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><List size={16}/></button><button type="button" title={t("卡片视图")} aria-label={t("卡片视图")} aria-pressed={view === "grid"} onClick={() => onChange("grid")} className={`grid size-7 place-items-center rounded ${view === "grid" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><Grid2X2 size={15}/></button></div>;
 }
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
-  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
+  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="board">{t("画板")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
 function BoardBadge() {
   return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;
 }
 
-function FileBadge({ kind, icon, large = false }: { kind: "doc" | "base" | "slides" | "folder" | "file"; icon?: string; large?: boolean }) {
+function FileBadge({ kind, docType, icon, large = false }: { kind: "doc" | "base" | "slides" | "folder" | "file"; docType?: string; icon?: string; large?: boolean }) {
   const sizeClass = large ? "size-14" : "size-5";
   if (kind === "folder") return <Folder size={large ? 56 : 20} fill="#ffcc4d" stroke="#f5a623" />;
   if (kind === "slides") return <SlidesColorIcon className={`${sizeClass} shrink-0`} />;
   if (kind === "file") return <span className={`grid ${sizeClass} shrink-0 place-items-center rounded bg-[#e8efff] text-[#3370ff]`}><FileText size={large ? 36 : 15}/></span>;
+  if (isBoardDoc({ kind, docType })) return <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<WhiteboardIcon className={`${sizeClass} shrink-0 text-[#34c759]`} />} />;
   return kind === "doc" ? <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<DocColorIcon className={`${sizeClass} shrink-0`} />} /> : <BaseColorIcon className={`${sizeClass} shrink-0`} />;
 }
 function ActionCard({ icon, title, subtitle, disabled, onClick }: { icon: React.ReactNode; title: string; subtitle?: string; disabled?: boolean; onClick: () => void }) {
@@ -328,7 +331,7 @@ function dateLabel(value: string) {
 }
 function DocumentRow({ doc, viewedAt, workspaceName, actions }: { doc: DocMeta; viewedAt?: string; workspaceName?: string; actions: React.ReactNode }) {
   return <div className="group relative border-b" data-home-row><button type="button" onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} h-14 w-full items-center gap-3 px-2 pr-10 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
-    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
+    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
     <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
     <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
     <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
@@ -338,7 +341,7 @@ function DocumentRow({ doc, viewedAt, workspaceName, actions }: { doc: DocMeta; 
 
 function DocumentCard({ doc, actions }: { doc: DocMeta; actions: React.ReactNode }) {
   return <div className="group relative min-w-0 overflow-hidden rounded-md border border-[#dee0e3] bg-white transition-shadow hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)]" data-home-card><button type="button" onClick={() => go(hrefOf(doc))} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-primary">
-    <span className="grid h-36 place-items-center bg-[#f5f6f7]"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon} large/></span>
-    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] pl-3 pr-10"><FileBadge kind={doc.kind ?? "doc"} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
+    <span className="grid h-36 place-items-center bg-[#f5f6f7]"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} large/></span>
+    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] pl-3 pr-10"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
   </button><span className="absolute bottom-[11px] right-1">{actions}</span></div>;
 }

@@ -148,8 +148,8 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		}
 		// lockCopySource holds the source node through commit, so the download
 		// threshold cannot change between this read and publishing the copy.
-		var downloadMinRole string
-		if err := tx.QueryRow(ctx, `SELECT download_min_role FROM nodes WHERE id=$1`, c.SourceID).Scan(&downloadMinRole); err != nil {
+		var downloadMinRole, sourceDocType string
+		if err := tx.QueryRow(ctx, `SELECT download_min_role, doc_type FROM nodes WHERE id=$1`, c.SourceID).Scan(&downloadMinRole, &sourceDocType); err != nil {
 			return err
 		}
 		if !DocumentDownloadAllowed(DocMeta{Kind: kind, CopyProtected: protected, DownloadMinRole: downloadMinRole}, sourceRole) {
@@ -175,8 +175,8 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 				return ErrNotFound
 			}
 		}
-		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
-			VALUES ($1,$2,'doc','V',$3,$4) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, c.Title, c.UserID))
+		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id)
+			VALUES ($1,$2,'doc',$3,'V',$4,$5) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, sourceDocType, c.Title, c.UserID))
 		if err != nil {
 			return err
 		}

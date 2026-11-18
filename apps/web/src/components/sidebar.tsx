@@ -9,7 +9,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
-import { BaseColorIcon, DocColorIcon, DriveNavIcon, SidebarFoldIcon, SlidesColorIcon } from "./feishu-icons";
+import { BaseColorIcon, DocColorIcon, DriveNavIcon, SidebarFoldIcon, SlidesColorIcon, WhiteboardIcon } from "./feishu-icons";
 import { DocumentGlyph } from "./document-glyph";
 import { GlobalSearch } from "./global-search";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./search-focus";
@@ -19,7 +19,10 @@ import { browserSidebarStorage } from "@/lib/sidebar-preference";
 import { decodeSidebarSection, readSidebarSection, sidebarSectionKey, writeSidebarSection, type SidebarSection } from "@/lib/sidebar-sections";
 
 export const hrefOf = nodeHref;
-export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || t("未命名文档");
+export function isBoardDoc(d: { kind?: string; docType?: string } | null | undefined): boolean {
+  return (d?.kind ?? "doc") === "doc" && d?.docType === "board";
+}
+export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
 
 export function renameErrorMessage(error: unknown): string {
   if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return t("无法重命名：文档不存在或当前没有编辑权限。");
@@ -202,6 +205,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
             depth={depth}
             label={docTitle(d)}
             kind={d.kind}
+            docType={d.docType}
             icon={d.icon}
             muted={!d.title.trim()}
             active={activeId === d.id}
@@ -289,7 +293,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       <div className="mt-6 px-3">
         <button ref={pinnedTrigger} type="button" aria-expanded={pinnedOpen} aria-controls={`${sectionId}-pinned`} onClick={() => setSection("pinned", !pinnedOpen)} className="flex items-center gap-1 rounded px-2 pb-1 text-xs font-medium text-subtle hover:text-foreground"><span>{t("置顶文档")}</span><ChevronRight size={12} className={cn("transition-transform", pinnedOpen && "rotate-90")}/></button>
         <div id={`${sectionId}-pinned`} ref={pinnedBody} hidden={!pinnedOpen} data-pinned-docs>
-          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} docType={d.docType} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
           {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
         </div>
       </div>
@@ -320,7 +324,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">{t("与我共享")}</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
+              <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} docType={d.docType} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
@@ -393,10 +397,11 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
   </aside>;
 }
 
-function SidebarNodeIcon({ kind, icon }: { kind: DocMeta["kind"]; icon?: string }) {
+function SidebarNodeIcon({ kind, docType, icon }: { kind: DocMeta["kind"]; docType?: string; icon?: string }) {
   if (kind === "base") return <BaseColorIcon className="size-[18px] shrink-0" />;
   if (kind === "slides") return <SlidesColorIcon className="size-[18px] shrink-0" />;
   if (kind === "folder") return <FolderIcon size={18} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
+  if (isBoardDoc({ kind, docType })) return <DocumentGlyph icon={icon} fallback={<WhiteboardIcon className="size-[18px] shrink-0 text-[#34c759]" />} />;
   return <DocumentGlyph icon={icon} fallback={<DocColorIcon className="size-[18px] shrink-0" />} />;
 }
 
@@ -411,6 +416,7 @@ function TreeRow({
   onClick,
   onAdd,
   kind,
+  docType,
   icon,
   starred,
   onStar,
@@ -421,6 +427,7 @@ function TreeRow({
   onDelete,
 }: {
   kind?: DocMeta["kind"];
+  docType?: string;
   icon?: string;
   depth: number;
   label: string;
@@ -475,7 +482,7 @@ function TreeRow({
         title={label}
         className="flex h-9 min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-primary/50"
       >
-        <SidebarNodeIcon kind={kind} icon={icon} />
+        <SidebarNodeIcon kind={kind} docType={docType} icon={icon} />
         <span className="min-w-0 truncate">{label}</span>
       </button>
       <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">

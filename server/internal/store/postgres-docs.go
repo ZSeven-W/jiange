@@ -52,11 +52,28 @@ func (p *Postgres) CanCreateIn(ctx context.Context, uid, ws int64) (ok bool, err
 }
 
 func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int64, title string, initial []RawOp) (d DocMeta, err error) {
+	return p.CreateDocWithType(ctx, ws, creator, parent, title, "", initial)
+}
+
+func (p *Postgres) CreateDocWithType(ctx context.Context, ws, creator int64, parent *int64, title, docType string, initial []RawOp) (d DocMeta, err error) {
+	if !ValidDocType(docType) {
+		return DocMeta{}, ErrConflict
+	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var e error
-		d, e = scanDoc(tx.QueryRow(ctx,
-			`INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
-			 VALUES ($1, $2, 'doc', 'V', $3, $4) RETURNING `+docCols+creatorName, ws, parent, title, creator))
+		if docType == "" {
+			row := tx.QueryRow(ctx,
+				`INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
+				 VALUES ($1, $2, 'doc', 'V', $3, $4) RETURNING id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind`+creatorName, ws, parent, title, creator)
+			e = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName)
+			if errors.Is(e, pgx.ErrNoRows) {
+				e = ErrNotFound
+			}
+		} else {
+			d, e = scanDoc(tx.QueryRow(ctx,
+				`INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id)
+				 VALUES ($1, $2, 'doc', $3, 'V', $4, $5) RETURNING `+docCols+creatorName, ws, parent, docType, title, creator))
+		}
 		if e != nil {
 			return e
 		}
