@@ -293,7 +293,9 @@ func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bo
 		}
 		return RoleView, RoleView, false, nil
 	}
-	if meta.Kind != "doc" || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
+	// Spreadsheets have copy/download policies but no comments yet.
+	policyKind := meta.Kind == "doc" || meta.Kind == "sheet" && patch.CommentMinRole == nil
+	if !policyKind || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
 		return "", "", false, ErrConflict
 	}
 	copyRole, downloadRole := meta.CopyMinRole, meta.DownloadMinRole

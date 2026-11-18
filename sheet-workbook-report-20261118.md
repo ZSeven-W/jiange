@@ -31,7 +31,15 @@
 - 隔离 PostgreSQL 跨包集成验证：`JIANGE_TEST_DATABASE_URL=... go test -p 1 -count=1 ./internal/store ./internal/api ./internal/sheetsync` 全部通过（注：`internal/store` 与 `internal/api` 共用测试库 `public` schema 时，并发跨包运行曾触发 `TestPostgresTitleReconcile` `401`，按包顺序 `-p 1` 执行全量通过）。
 - 前端、SDK 与构建验证：`pnpm typecheck`（7 个 workspace 项目全通过）、`pnpm test`（`@jiange/web` 共 228 个测试文件 / 1292 项测试全部通过，含 [workbook-engine.test.ts](apps/web/src/pages/sheet/workbook-engine.test.ts)、[sheet-page.test.tsx](apps/web/src/pages/sheet/sheet-page.test.tsx)、`i18n.test.ts`、`home-view.test.tsx`、`global-search.test.ts` 等）、`pnpm test:sdk:pack`（5 个 headless SDK 与 OOXML 库 ESM/NodeNext 校验通过）、`pnpm --filter @jiange/web build` 与 `pnpm lint:names` 全通过。
 
+## Review 后修复（2026-11-18）
+
+- **XLSX 格式保真**：`@jiange/sheet-sdk` 的 XLSX 读写新增单元格样式（粗体/斜体/下划线/删除线、字体与字号、文字色、填充色、水平/垂直对齐、自动换行、细边框与边框色、数字格式）、合并单元格与冻结窗格；网页端在导出时写入、导入时还原，货币/百分比/小数/整数/日期格式按 Excel 格式代码互转。导出再导入后样式、合并与冻结不再丢失（见 `workbook-xlsx.test.ts` 与 SDK 往返测试）。仍不保留：列宽/行高、主题色与索引色（回退为默认颜色并提示）、渐变填充、粗/虚线边框样式（导入为细边框并提示）、条件格式与数据验证。
+- **复制/下载限制**：分享弹窗的「权限设置」对表格开放（「谁可以复制内容」「谁可以创建副本、打印和下载」，表格暂无评论项）；服务端 `PATCH /api/docs/{id}` 与 `PatchManagedDocGuarded` 接受表格的复制/下载策略并拒绝评论策略。表格页按策略拦截单元格复制/剪切、编辑栏与单元格输入框复制，并隐藏导出 XLSX 与创建副本入口；服务端创建副本继续按下载策略校验。与文档相同，复制/导出限制在客户端执行，查看者仍能读取工作簿数据。
+- **写入回执清理**：`sheet_write_receipts` 保留 24 小时，每次写同一工作簿时顺带删除过期回执（迁移 `0066_sheet_receipt_retention.sql` 增加 `(node_id, created_at)` 索引）；过期后重试会因版本校验冲突而失败，不会重复写入。内存存储同步实现。
+- **全局搜索**：表格内容匹配改为在 PostgreSQL 内用 `strpos(lower(...))` 判断并提前返回，不再把所有单元格传到 Go 逐个折叠比较。注意这仍是按工作簿的顺序扫描而非索引查找：任意子串匹配需要 `pg_trgm` 三元组索引，本次未引入数据库扩展；`lower()` 与 Unicode 完整折叠在少数字符（如 `ß`→`ss`）上不一致。
+- **写入锁**：单元格写入不再对 `nodes` 行加 `FOR UPDATE`，改为共享锁，写入方在 `sheet_workbooks` 行上串行；列表用的 `updated_at` 最多每 5 秒更新一次且用 `SKIP LOCKED` 不等待，避免与读者死锁。读取和其他鉴权操作不再排在写入后面。同一工作簿的写入仍按工作簿修订号串行（修订号必须单调且按提交顺序递增，才能保证客户端的版本推送不漏更新）。
+
 ## 已知边界
 
-- 表格的高级增强项（单元格数据验证规则、条件格式、嵌入式图表与数据透视表、基于单格坐标的锚点评论、受保护单元格区域细粒度权限以及 `.xlsx` 导入导出时字体颜色/边框/合并属性的完整保真）仍属于 **P1** 后续扩展范围。
+- 表格的高级增强项（单元格数据验证规则、条件格式、嵌入式图表与数据透视表、基于单格坐标的锚点评论、受保护单元格区域细粒度权限，以及 `.xlsx` 中列宽/行高、主题色和复杂边框的保真）仍属于 **P1** 后续扩展范围。
 - 本次跨端验证基于 macOS 本地无头 Chrome（桌面 `1440 × 900` 与模拟移动端 `390 × 844`），真机移动端触控与中文输入法组合输入，以及针对当前登录态飞书实页的逐像素样式校对仍待补充核验。

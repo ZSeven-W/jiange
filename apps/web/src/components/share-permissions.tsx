@@ -51,7 +51,7 @@ const OPTIONS: { value: Role; label: string }[] = [
 ];
 
 export function SharePermissions({
-  permissions, busy, loading, enabled, error, backRef, onBack, onChange,
+  permissions, busy, loading, enabled, error, backRef, onBack, onChange, showComment = true,
 }: {
   permissions: ContentPermissions | undefined;
   busy: boolean;
@@ -61,6 +61,8 @@ export function SharePermissions({
   backRef?: RefObject<HTMLButtonElement | null>;
   onBack: () => void;
   onChange: (key: ContentPermissionKey, next: Role) => void;
+  /** Spreadsheets have no comments yet, so their policy has no comment row. */
+  showComment?: boolean;
 }) {
   return <>
     <header className="flex h-[72px] shrink-0 items-center justify-between border-b px-6">
@@ -72,7 +74,7 @@ export function SharePermissions({
         ["copyMinRole", t("谁可以复制内容")],
         ["downloadMinRole", t("谁可以创建副本、打印和下载")],
         ["commentMinRole", t("谁可以评论")],
-      ] as const).map(([key, label]) => <div key={key} className="mb-7 last:mb-0">
+      ] as const).filter(([key]) => showComment || key !== "commentMinRole").map(([key, label]) => <div key={key} className="mb-7 last:mb-0">
         <label htmlFor={`permission-${key}`} className="block font-medium leading-5">{label}</label>
         <span className="relative mt-2 inline-flex border-b border-border">
           <select id={`permission-${key}`} value={permissions?.[key] ?? ""} disabled={busy || !enabled || !permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined)} onChange={(event) => onChange(key, event.target.value as Role)} className="h-9 cursor-pointer appearance-none bg-transparent pr-6 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 sm:text-[14px]">

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/text/cases"
 )
 
 func sheetDigestTag(prefix string, sum []byte) []byte {
@@ -60,16 +59,20 @@ func lockSheetPG(ctx context.Context, tx pgx.Tx, g RestoreGuard, nodeID int64, m
 	if !validSheetID(nodeID) {
 		return pgSheetNode{}, time.Time{}, ErrNotFound
 	}
-	lockMode := "FOR SHARE"
+	// The node row is only share-locked, even for writes: it fences trash,
+	// move and permission changes without making readers (and every other
+	// guarded operation on the node) queue behind cell writes. Writers
+	// serialize on the sheet_workbooks row below, which owns the revision.
+	workbookLock := "FOR SHARE"
 	if write {
-		lockMode = "FOR UPDATE"
+		workbookLock = "FOR UPDATE"
 	}
 	var info pgSheetNode
 	var kind string
 	var deleted bool
 	err = tx.QueryRow(ctx,
 		`SELECT n.id, n.workspace_id, n.parent_id, n.title, n.kind, n.creator_id, COALESCE((SELECT u.name FROM users u WHERE u.id = n.creator_id), ''), n.drive_revision, n.deleted_at IS NOT NULL, n.updated_at
-		 FROM nodes n WHERE n.id=$1 `+lockMode, nodeID).
+		 FROM nodes n WHERE n.id=$1 FOR SHARE`, nodeID).
 		Scan(&info.nodeID, &info.workspaceID, &info.parentID, &info.title, &kind, &info.creatorID, &info.creatorName, &info.driveRevision, &deleted, &info.updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgSheetNode{}, time.Time{}, ErrNotFound
@@ -97,7 +100,7 @@ func lockSheetPG(ctx context.Context, tx pgx.Tx, g RestoreGuard, nodeID int64, m
 		return pgSheetNode{}, time.Time{}, ErrForbidden
 	}
 	info.role = role
-	err = tx.QueryRow(ctx, `SELECT revision FROM sheet_workbooks WHERE node_id=$1 `+lockMode, nodeID).Scan(&info.workbookRevision)
+	err = tx.QueryRow(ctx, `SELECT revision FROM sheet_workbooks WHERE node_id=$1 `+workbookLock, nodeID).Scan(&info.workbookRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgSheetNode{}, time.Time{}, ErrNotFound
 	}
@@ -316,12 +319,23 @@ func (p *Postgres) RenameSheetTitle(ctx context.Context, g RestoreGuard, nodeID 
 	return out, drivePGError(err)
 }
 
+// pruneSheetReceiptsPG drops expired idempotency receipts for the workbook
+// being written; the caller holds the workbook row lock.
+func pruneSheetReceiptsPG(ctx context.Context, tx pgx.Tx, nodeID int64) error {
+	_, err := tx.Exec(ctx, `DELETE FROM sheet_write_receipts WHERE node_id=$1 AND created_at < now() - make_interval(secs => $2)`, nodeID, sheetReceiptRetention.Seconds())
+	return err
+}
+
 func touchSheetWorkbookPG(ctx context.Context, tx pgx.Tx, nodeID, userID int64) (int64, error) {
 	var nextRev int64
 	if err := tx.QueryRow(ctx, `UPDATE sheet_workbooks SET revision=revision+1, updated_at=now() WHERE node_id=$1 RETURNING revision`, nodeID).Scan(&nextRev); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=$1`, nodeID); err != nil {
+	// Bump the listing timestamp at most every few seconds and never wait
+	// for it: readers hold share locks on the node row, and waiting here while
+	// holding the workbook lock could deadlock with them.
+	if _, err := tx.Exec(ctx, `UPDATE nodes SET updated_at=now() WHERE id=(
+		SELECT id FROM nodes WHERE id=$1 AND updated_at < now() - interval '5 seconds' FOR UPDATE SKIP LOCKED)`, nodeID); err != nil {
 		return 0, err
 	}
 	if err := recordDocumentModifier(ctx, tx, nodeID, userID); err != nil {
@@ -491,6 +505,9 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 		rawOut, e := json.Marshal(out)
 		if e != nil {
+			return e
+		}
+		if e = pruneSheetReceiptsPG(ctx, tx, nodeID); e != nil {
 			return e
 		}
 		if _, e = tx.Exec(ctx, `INSERT INTO sheet_write_receipts (node_id, user_id, mutation_id, digest, result) VALUES ($1,$2,$3,$4,$5)`, nodeID, g.UserID, prepared.MutationID, digest, rawOut); e != nil {
@@ -1079,6 +1096,9 @@ func (p *Postgres) ReplaceSheetWorkbook(ctx context.Context, g RestoreGuard, nod
 		if e != nil {
 			return e
 		}
+		if e = pruneSheetReceiptsPG(ctx, tx, nodeID); e != nil {
+			return e
+		}
 		if _, e = tx.Exec(ctx, `INSERT INTO sheet_write_receipts (node_id, user_id, mutation_id, digest, result) VALUES ($1,$2,$3,$4,$5)`, nodeID, g.UserID, mutationID, digest, rawSnap); e != nil {
 			return e
 		}
@@ -1318,41 +1338,19 @@ func (p *Postgres) SearchSheetContent(ctx context.Context, userID, nodeID int64,
 	if err != nil || meta.Kind != "sheet" || RoleRank(meta.Role) < RoleRank(RoleView) {
 		return false, nil
 	}
-	fold := cases.Fold()
-	titleRows, err := p.Pool.Query(ctx, `SELECT title FROM sheet_worksheets WHERE node_id=$1`, nodeID)
-	if err != nil {
-		return false, err
+	if foldedNeedle == "" {
+		return true, nil
 	}
-	for titleRows.Next() {
-		var title string
-		if err := titleRows.Scan(&title); err != nil {
-			titleRows.Close()
-			return false, err
-		}
-		if strings.Contains(fold.String(title), foldedNeedle) {
-			titleRows.Close()
-			return true, nil
-		}
-	}
-	if err := titleRows.Err(); err != nil {
-		titleRows.Close()
-		return false, err
-	}
-	titleRows.Close()
-
-	cellRows, err := p.Pool.Query(ctx, `SELECT c.raw FROM sheet_cells c JOIN sheet_worksheets w ON w.id = c.worksheet_id WHERE w.node_id=$1 AND c.raw <> ''`, nodeID)
-	if err != nil {
-		return false, err
-	}
-	defer cellRows.Close()
-	for cellRows.Next() {
-		var raw string
-		if err := cellRows.Scan(&raw); err != nil {
-			return false, err
-		}
-		if strings.Contains(fold.String(raw), foldedNeedle) {
-			return true, nil
-		}
-	}
-	return false, cellRows.Err()
+	// Match inside PostgreSQL with an early exit instead of streaming every
+	// cell to Go. lower() agrees with Unicode case folding for CJK and the
+	// common Latin alphabets; rare full-folding cases (e.g. "ß" → "ss")
+	// still match by title through the generic search path.
+	var matched bool
+	err = p.Pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM sheet_worksheets w WHERE w.node_id=$1 AND strpos(lower(w.title), $2) > 0
+		) OR EXISTS (
+			SELECT 1 FROM sheet_worksheets w JOIN sheet_cells c ON c.worksheet_id = w.id
+			WHERE w.node_id=$1 AND c.raw <> '' AND strpos(lower(c.raw), $2) > 0
+		)`, nodeID, foldedNeedle).Scan(&matched)
+	return matched, err
 }

@@ -13,20 +13,22 @@ import (
 )
 
 const (
-	sheetInitialRows       = 100
-	sheetInitialCols       = 26
-	sheetMaxWorksheets     = 50
-	sheetMaxRows           = 10000
-	sheetMaxCols           = 256
-	sheetMaxBatchCells     = 2000
-	sheetMaxCellBytes      = 32 * 1024
-	sheetMaxFormulaBytes   = 8192
-	sheetMaxBatchBytes     = 4 << 20
-	sheetMaxImportCells    = 50000
-	sheetMaxImportBytes    = 16 << 20
-	sheetMaxRevision       = int64(9007199254740991)
-	sheetMaxFrozenRows     = 50
-	sheetMaxFrozenCols     = 20
+	sheetInitialRows     = 100
+	sheetInitialCols     = 26
+	sheetMaxWorksheets   = 50
+	sheetMaxRows         = 10000
+	sheetMaxCols         = 256
+	sheetMaxBatchCells   = 2000
+	sheetMaxCellBytes    = 32 * 1024
+	sheetMaxFormulaBytes = 8192
+	sheetMaxBatchBytes   = 4 << 20
+	sheetMaxImportCells  = 50000
+	sheetMaxImportBytes  = 16 << 20
+	sheetMaxRevision     = int64(9007199254740991)
+	sheetMaxFrozenRows   = 50
+	sheetMaxFrozenCols   = 20
+	// Idempotency receipts only need to outlive client retries.
+	sheetReceiptRetention = 24 * time.Hour
 )
 
 var (

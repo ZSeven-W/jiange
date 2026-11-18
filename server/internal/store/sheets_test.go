@@ -165,6 +165,22 @@ func exerciseSheetStore(t *testing.T, st store.Store) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Cell text search is case-insensitive and respects access.
+	if _, err = st.WriteSheetCells(ctx, ownerGuard, entry.ID, store.SheetCellBatch{
+		MutationID:  "ffffffffffffffffffffffffffffffff",
+		WorksheetID: ws1.ID,
+		Cells:       []store.SheetCellWrite{{RowID: ws1.Rows[3].ID, ColumnID: ws1.Columns[2].ID, ExpectedRevision: 0, Raw: strPtr("Quarterly Revenue 季度营收")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for needle, want := range map[string]bool{"quarterly revenue": true, "季度营收": true, "1500": true, "不存在的内容": false} {
+		if ok, err := st.SearchSheetContent(ctx, viewer.ID, entry.ID, needle); err != nil || ok != want {
+			t.Fatalf("SearchSheetContent(%q) = %v err=%v, want %v", needle, ok, err, want)
+		}
+	}
+	if ok, err := st.SearchSheetContent(ctx, outsider.ID, entry.ID, "季度营收"); err != nil || ok {
+		t.Fatalf("outsider cell search = %v err=%v", ok, err)
+	}
 
 	// Create Sheet2, rename, freeze, merge, reorder, and search content.
 	ws2, wbRev, err := st.CreateWorksheet(ctx, editorGuard, entry.ID, "汇总")
@@ -236,6 +252,21 @@ func exerciseSheetStore(t *testing.T, st store.Store) {
 	})
 	if err != nil || copied.Kind != "sheet" || copied.Title != "Q4 预算表 副本" {
 		t.Fatalf("CopySheetWorkbook got %+v err=%v", copied, err)
+	}
+	// Spreadsheets support the split copy/download policy, but not comments.
+	ownerMeta, err := st.GetDoc(ctx, owner.ID, entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manageOnly, viewRole, revision := store.RoleManage, store.RoleView, ownerMeta.PermissionsRevision
+	if err = st.PatchManagedDocGuarded(ctx, ownerGuard, entry.ID, store.ManagedDocPatch{CommentMinRole: &viewRole, ExpectedPermissionsRevision: &revision}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("sheet comment policy should be rejected, got %v", err)
+	}
+	if err = st.PatchManagedDocGuarded(ctx, ownerGuard, entry.ID, store.ManagedDocPatch{DownloadMinRole: &manageOnly, ExpectedPermissionsRevision: &revision}); err != nil {
+		t.Fatalf("sheet download policy: %v", err)
+	}
+	if _, err = st.CopySheetWorkbook(ctx, store.SheetWorkbookCopy{SourceID: entry.ID, UserID: viewer.ID, WorkspaceID: viewerWS.ID, Title: "policy copy", Guard: &viewerGuard}); !errors.Is(err, store.ErrCopyProtected) {
+		t.Fatalf("download policy should block viewer copy, got %v", err)
 	}
 	if err = st.SetCopyProtected(ctx, entry.ID, true); err != nil {
 		t.Fatal(err)
@@ -328,5 +359,80 @@ func TestPostgresSheetStore(t *testing.T) {
 	if _, err = migrate.Up(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	exerciseSheetStore(t, &store.Postgres{Pool: pool})
+	pg := &store.Postgres{Pool: pool}
+	exerciseSheetStore(t, pg)
+	exercisePostgresSheetWrites(t, pg)
+}
+
+// exercisePostgresSheetWrites covers receipt retention and concurrent
+// writers/readers on one workbook (no deadlocks, every write applied).
+func exercisePostgresSheetWrites(t *testing.T, pg *store.Postgres) {
+	t.Helper()
+	ctx := context.Background()
+	owner, ws, err := pg.CreateUser(ctx, "sheet-concurrency@example.test", "Concurrency", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := store.RestoreGuard{UserID: owner.ID, SessionHash: []byte("sheet-concurrency-sess")}
+	if err = pg.CreateSession(ctx, guard.SessionHash, owner.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := pg.CreateDriveNodeWithType(ctx, guard, ws.ID, nil, "sheet", "", "并发表", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := pg.GetSheetWorkbook(ctx, guard, entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := snap.Sheets[0]
+
+	// Expired receipts are pruned by the next write; fresh ones are kept.
+	if _, err = pg.Pool.Exec(ctx, `INSERT INTO sheet_write_receipts (node_id,user_id,mutation_id,digest,result,created_at)
+		VALUES ($1,$2,$3,$4,'{}'::jsonb, now() - interval '2 days')`, entry.ID, owner.ID, "11111111111111111111111111111111", make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.WriteSheetCells(ctx, guard, entry.ID, store.SheetCellBatch{MutationID: "22222222222222222222222222222222", WorksheetID: sheet.ID,
+		Cells: []store.SheetCellWrite{{RowID: sheet.Rows[0].ID, ColumnID: sheet.Columns[0].ID, Raw: strPtr("x")}}}); err != nil {
+		t.Fatal(err)
+	}
+	var expired, fresh int
+	if err = pg.Pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE mutation_id='11111111111111111111111111111111'), count(*) FILTER (WHERE mutation_id='22222222222222222222222222222222') FROM sheet_write_receipts WHERE node_id=$1`, entry.ID).Scan(&expired, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if expired != 0 || fresh != 1 {
+		t.Fatalf("receipt retention: expired=%d fresh=%d", expired, fresh)
+	}
+
+	const writers = 8
+	errs := make(chan error, writers*2)
+	for i := 0; i < writers; i++ {
+		go func(i int) {
+			_, err := pg.WriteSheetCells(ctx, guard, entry.ID, store.SheetCellBatch{MutationID: fmt.Sprintf("%032x", 0xabc000+i), WorksheetID: sheet.ID,
+				Cells: []store.SheetCellWrite{{RowID: sheet.Rows[1+i].ID, ColumnID: sheet.Columns[1].ID, Raw: strPtr(fmt.Sprint(i))}}})
+			errs <- err
+		}(i)
+		go func() {
+			_, err := pg.GetSheetWorkbook(ctx, guard, entry.ID)
+			errs <- err
+		}()
+	}
+	deadline := time.After(20 * time.Second)
+	for i := 0; i < writers*2; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Fatalf("concurrent sheet access: %v", err)
+			}
+		case <-deadline:
+			t.Fatal("concurrent sheet access did not finish (possible deadlock)")
+		}
+	}
+	final, err := pg.GetSheetWorkbook(ctx, guard, entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.WorkbookRevision != snap.WorkbookRevision+1+writers {
+		t.Fatalf("workbook revision = %d, want %d", final.WorkbookRevision, snap.WorkbookRevision+1+writers)
+	}
 }

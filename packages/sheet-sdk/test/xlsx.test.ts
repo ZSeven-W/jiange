@@ -39,7 +39,11 @@ describe("XLSX export", () => {
     bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,value:"a\u0000b"}]}]});
     bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,formula:"SUM(A1:A2)"}]}]});
     bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,formula:'=""',value:""}]}]});
-    bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,value:1,style:{bold:true}}]}]});
+    bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,value:1,style:{blink:true}}]}]});
+    bad({sheets:[{name:"Sheet",cells:[{row:0,col:0,value:1,style:{color:"red"}}]}]});
+    bad({sheets:[{name:"Sheet",cells:[],merges:[{top:0,left:0,bottom:0,right:0}]}]});
+    bad({sheets:[{name:"Sheet",cells:[],merges:[{top:0,left:0,bottom:1,right:1},{top:1,left:1,bottom:2,right:2}]}]});
+    bad({sheets:[{name:"Sheet",cells:[],frozen:{rows:-1,cols:0}}]});
     bad({sheets:[{name:"Sheet",cells:Array.from({length:XLSX_MAX_CELLS+1},()=>({row:0,col:0,value:1}))}]});
   });
   it("supports Excel's last address and leaves missing formula caches absent", async () => {

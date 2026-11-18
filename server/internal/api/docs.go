@@ -160,8 +160,8 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "comment role must be view or edit")
 		return
 	}
-	if splitPermissions && d.Kind != "doc" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "separate policies are only available for documents")
+	if splitPermissions && d.Kind != "doc" && !(d.Kind == "sheet" && in.CommentMinRole == nil) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "separate policies are only available for documents and spreadsheets")
 		return
 	}
 	// Check the permissions of the whole request before applying any changes.

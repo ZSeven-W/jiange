@@ -23,6 +23,7 @@ type memSheetReceiptKey struct {
 }
 
 type memSheetReceipt struct {
+	created time.Time
 	digest  string
 	batch   *SheetCellBatch
 	result  *SheetBatchResult
@@ -316,7 +317,8 @@ func (m *Memory) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID int
 	}
 	saved := out
 	saved.Cells = slices.Clone(revisions)
-	wb.receipts[rKey] = memSheetReceipt{digest: digest, result: &saved}
+	pruneMemSheetReceipts(wb, time.Now())
+	wb.receipts[rKey] = memSheetReceipt{created: time.Now(), digest: digest, result: &saved}
 	return out, nil
 }
 
@@ -689,7 +691,8 @@ func (m *Memory) ReplaceSheetWorkbook(ctx context.Context, g RestoreGuard, nodeI
 	d.meta.UpdatedAt = time.Now()
 	m.setDocumentModifierLocked(d, g.UserID)
 	snap := m.sheetSnapshotLocked(d, wb, role)
-	wb.receipts[rKey] = memSheetReceipt{digest: digest, replace: &snap}
+	pruneMemSheetReceipts(wb, time.Now())
+	wb.receipts[rKey] = memSheetReceipt{created: time.Now(), digest: digest, replace: &snap}
 	return snap, nil
 }
 
@@ -844,4 +847,15 @@ func (m *Memory) SearchSheetContent(ctx context.Context, userID, nodeID int64, f
 		}
 	}
 	return false, nil
+}
+
+// pruneMemSheetReceipts mirrors the PostgreSQL retention window: retries are
+// expected within seconds, and an expired retry fails its revision checks
+// instead of being applied twice.
+func pruneMemSheetReceipts(wb *memWorkbook, now time.Time) {
+	for key, receipt := range wb.receipts {
+		if now.Sub(receipt.created) > sheetReceiptRetention {
+			delete(wb.receipts, key)
+		}
+	}
 }

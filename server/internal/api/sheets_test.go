@@ -245,4 +245,31 @@ func TestSheetAPILifecycleAndSecurity(t *testing.T) {
 	if len(ownerBody.Docs) != 2 {
 		t.Fatalf("expected both original and copied sheets for u1 in search, got %+v", ownerBody.Docs)
 	}
+
+	// Spreadsheets accept the split copy/download policy but not comment policy.
+	current, err := st.GetDoc(ctx, u1.ID, entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := sheetReq(t, c1, http.MethodPatch, ts.URL+"/api/docs/"+idStr, uid1, "", map[string]any{"commentMinRole": "view", "expectedPermissionsRevision": current.PermissionsRevision}); r.StatusCode != http.StatusBadRequest {
+		r.Body.Close()
+		t.Fatalf("sheet comment policy: expected 400, got %d", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+	if r := sheetReq(t, c1, http.MethodPatch, ts.URL+"/api/docs/"+idStr, uid1, "", map[string]any{"downloadMinRole": "manage", "copyMinRole": "edit", "expectedPermissionsRevision": current.PermissionsRevision}); r.StatusCode != http.StatusOK {
+		r.Body.Close()
+		t.Fatalf("sheet copy/download policy: expected 200, got %d", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+	if updated, err := st.GetDoc(ctx, u2.ID, entry.ID); err != nil || updated.DownloadMinRole != store.RoleManage || updated.CopyMinRole != store.RoleEdit {
+		t.Fatalf("sheet policy not stored: %+v err=%v", updated, err)
+	}
+	if r := sheetReq(t, c2, http.MethodPost, ts.URL+"/api/docs/"+idStr+"/account-duplicate", uid2, "", nil); r.StatusCode == http.StatusCreated {
+		r.Body.Close()
+		t.Fatal("download policy must block duplicating the sheet")
+	} else {
+		r.Body.Close()
+	}
 }

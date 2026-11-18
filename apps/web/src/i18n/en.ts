@@ -1050,4 +1050,6 @@ export const en: Record<string, string> = {
   "财务报销": "Expense & Finance",
   "团队值班排班表": "Team On-Call Schedule",
   "团队协作": "Team Collaboration",
+  "该表格已禁止复制内容": "Copying is disabled for this spreadsheet",
+  "该表格已禁止下载和创建副本": "Downloads and copies are disabled for this spreadsheet",
 };

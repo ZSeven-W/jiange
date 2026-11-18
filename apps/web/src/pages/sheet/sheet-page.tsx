@@ -22,6 +22,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { SheetColorIcon } from "@/components/feishu-icons";
 import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
+import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
 import { ChevronRight, Home, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
@@ -190,6 +191,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const role = meta.data?.role ?? workbook.data?.role ?? "view";
   const canEdit = !!isSheetKind && !meta.isError && !workbook.isError && (role === "edit" || role === "manage");
+  // Copy protection follows the workbook's copy/download policy (分享 → 权限设置).
+  const canCopy = canCopyContent(meta.data);
+  const canDownload = canDownloadDocument(meta.data);
 
   useEffect(() => {
     setNameBoxText(formatSelectionAddress(selection));
@@ -683,6 +687,10 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const handleExportXlsx = () => {
     if (!sheets.length) return;
+    if (!canDownload) {
+      setErrorMessage(t("该表格已禁止下载和创建副本"));
+      return;
+    }
     try {
       const bytes = exportWorkbookToXlsx(sheets);
       const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -737,6 +745,10 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   };
 
   const handleDuplicate = async () => {
+    if (!canDownload) {
+      setErrorMessage(t("该表格已禁止下载和创建副本"));
+      return;
+    }
     try {
       const copy = await sheetsApi.duplicate(sheetId, userId);
       void qc.invalidateQueries({ queryKey: ["docs"] });
@@ -808,6 +820,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   };
 
   const handleCopy = (e: React.ClipboardEvent) => {
+    if (!canCopy) {
+      e.preventDefault();
+      setStatusMessage(t("该表格已禁止复制内容"));
+      return;
+    }
     if (editing || !activeSheet) return;
     e.preventDefault();
     const b = selectionBounds(selection);
@@ -1129,8 +1146,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           {moreMenuOpen && (
             <div role="menu" className="absolute right-0 top-10 z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg">
               {canEdit && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); fileInputRef.current?.click(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导入 XLSX")}</button>}
-              <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); handleExportXlsx(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导出 XLSX")}</button>
-              <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleDuplicate(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("创建副本")}</button>
+              {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); handleExportXlsx(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导出 XLSX")}</button>}
+              {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleDuplicate(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("创建副本")}</button>}
               {meta.data.role === "manage" && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleTrash(); }} className="flex h-9 w-full items-center px-3 text-left text-[#d83931] hover:bg-[#fff2f0]">{t("移至回收站")}</button>}
             </div>
           )}
@@ -1180,8 +1197,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         frozenCols={activeSheet.frozenCols}
         importing={importing}
         onTriggerImport={() => fileInputRef.current?.click()}
-        onExport={handleExportXlsx}
-        onDuplicate={() => void handleDuplicate()}
+        onExport={canDownload ? handleExportXlsx : undefined}
+        onDuplicate={canDownload ? () => void handleDuplicate() : undefined}
         onUndo={() => void runUndoRedo("undo")}
         onRedo={() => void runUndoRedo("redo")}
         onToggleFormatBrush={() => setFormatBrush((cur) => (cur ? null : { ...focusedStyle }))}
@@ -1268,6 +1285,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           aria-label={t("公式编辑栏")}
           data-sheet-formula
           readOnly={!canEdit}
+          onCopy={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+          onCut={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
           value={displayedFormulaValue}
           onFocus={() => {
             if (canEdit && !editing) {
@@ -1609,6 +1628,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             ref={cellInputRef}
                             aria-label={t("编辑 {addr}", { addr: sheetAddress(point) })}
                             value={editing.value}
+                            onCopy={(evCopy) => { if (!canCopy) { evCopy.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+                            onCut={(evCut) => { if (!canCopy) { evCut.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
                             onChange={(evChange) => setEditing({ ...editing, value: evChange.target.value })}
                             onKeyDown={(evKey) => {
                               evKey.stopPropagation();

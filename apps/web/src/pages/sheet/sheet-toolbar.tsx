@@ -229,8 +229,9 @@ export interface SheetToolbarProps {
   frozenCols: number;
   importing: boolean;
   onTriggerImport: () => void;
-  onExport: () => void;
-  onDuplicate: () => void;
+  /** Omitted when the workbook's download policy forbids export/copies. */
+  onExport?: () => void;
+  onDuplicate?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onToggleFormatBrush: () => void;
@@ -342,8 +343,8 @@ export function SheetToolbar(props: SheetToolbarProps) {
         {openMenu === "file" && (
           <div role="menu" className="fixed left-3 top-[148px] z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg">
             {canEdit && <button type="button" role="menuitem" disabled={importing} onClick={() => { setOpenMenu(null); onTriggerImport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><FileUp size={14} />{t("导入 XLSX")}</button>}
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onExport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Download size={14} />{t("导出 XLSX")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onDuplicate(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><MoreHorizontal size={14} />{t("创建副本")}</button>
+            {onExport && <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onExport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Download size={14} />{t("导出 XLSX")}</button>}
+            {onDuplicate && <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onDuplicate(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><MoreHorizontal size={14} />{t("创建副本")}</button>}
           </div>
         )}
       </div>
