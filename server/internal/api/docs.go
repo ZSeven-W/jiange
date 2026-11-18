@@ -16,6 +16,8 @@ type docInput struct {
 	WorkspaceID int64   `json:"workspaceId"`
 	ParentID    *int64  `json:"parentId"`
 	Title       *string `json:"title"`
+	// DocType: only on create; "board" makes a 画板 document.
+	DocType string `json:"docType"`
 	// Move: when true, ParentID (null = root) re-parents the doc.
 	Move bool `json:"move"`
 	// CopyProtected: watermark + copy/download restrictions (manage only).
@@ -76,6 +78,10 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !store.ValidDocType(in.DocType) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_doc_type", "docType 只能是 board 或留空")
+		return
+	}
 	title := ""
 	if in.Title != nil {
 		var ok bool
@@ -87,6 +93,13 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if in.DocType != "" {
+		if err := s.Store.SetCreatedDocType(r.Context(), d.ID, u.ID, in.DocType); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		d.DocType = in.DocType
 	}
 	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
 	httpx.JSON(w, http.StatusCreated, d)

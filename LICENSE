@@ -1,68 +1,141 @@
-Jiange 个人与商业双轨许可协议
+Jiange 许可协议（应用双轨许可 / SDK 免费与来源署名许可）
 Copyright (c) 2026 ZSeven-W
+https://github.com/ZSeven-W/jiange
 
-一、授予
+一、组件范围
 
-1. 个人与非商业使用：在遵守本协议的前提下，任何个人及非商业组织可免费
-   使用、复制、修改本软件，并为个人学习、研究、评估或非商业目的分发
-   修改后的版本，但必须保留本协议全文与原作者版权声明。
+1. “SDK 部分”指本仓库 `packages/` 目录下的全部无 UI（Headless）软件开发工具包
+   及内部共享库，包括但不限于 `@jiange/collab`、`@jiange/doc-sdk`、
+   `@jiange/sheet-sdk`、`@jiange/slides-sdk`、`@jiange/whiteboard-sdk`、
+   `@jiange/ooxml`。
 
-2. 商业使用：任何以营利为目的的使用（包括但不限于：企业内部生产经营
-   使用、向最终用户提供托管/SaaS 服务、集成进商业产品销售、用于提供
-   收费服务）须事先取得商业授权。未取得有效商业授权前，不得将本软件
-   或其修改版用于任何商业用途。
+2. “应用部分”指本仓库除“SDK 部分”以外的全部软件、源码、配置与产品资源，包括
+   但不限于 `apps/`（Web 前端应用）、`server/`（后端与同步服务）及部署文件。
 
-3. 商业授权请联系版权所有者洽谈授权范围、期限与费用。取得商业授权后，
-   相应使用行为以商业授权合同条款为准。
+二、应用部分许可（个人免费 / 商业收费）
 
-二、限制
+1. 个人与非商业使用：在遵守本协议的前提下，任何个人及非商业组织可免费使用、
+   复制、修改应用部分，并为个人学习、研究、评估或非商业目的分发修改后的版本，
+   但必须保留本协议全文与原作者版权声明。
 
-1. 未经版权所有者书面许可，不得将本软件申请专利或将其中的原创内容
-   登记为他人知识产权。
-2. 不得移除或遮挡本软件中的版权声明与作者信息。
-3. 本协议不授予商标使用权。
+2. 商业使用：任何以营利或商业为目的使用应用部分或其修改版的行为（包括但不限于：
+   企业内部生产经营使用、向最终用户提供托管/SaaS 服务、集成进商业产品销售、
+   用于提供收费服务）须事先取得版权所有者的商业授权。未取得有效商业授权前，
+   不得将应用部分或其修改版用于任何商业用途。
 
-三、免责
+3. 商业授权请联系版权所有者洽谈授权范围、期限与费用。取得商业授权后，相应使用
+   行为以另行签署的商业授权合同条款为准。
 
-本软件按"原样"提供，不提供任何明示或默示的担保，包括但不限于适销性、
-特定用途适用性的担保。在任何情况下，作者或版权持有人都不对任何索赔、
-损害或其他责任负责，无论这些责任源自合同、侵权或其他行为，也不论与
-本软件的使用或其他交易是否相关。
+三、SDK 部分许可（全部免费 / 企业二开须公开说明来源）
+
+1. 免费使用授权：在保留本协议全文与原作者版权声明的前提下，任何个人、非商业组织
+   及企业（含商业主体）均可免费使用、复制、集成及分发 SDK 部分，可用于个人项目、
+   企业内部系统、商业产品或商业服务，无需支付商业授权费用。
+
+2. 企业二次开发来源说明义务：若企业（或任何商业组织、营利性主体）对 SDK 部分
+   进行二次开发（包括但不限于修改源码、扩展功能、裁剪模块、翻译移植或基于 SDK
+   源码衍生新库或组件），无论是用于内部系统、商业产品/服务还是对外发布源码或
+   软件包，均必须公开说明来源——在相关产品的官方文档、关于页面、官方网站或源码
+   仓库说明（如 `README`、`NOTICE`）等公众或最终用户清晰可见的位置，明确声明
+   其基于 Jiange SDK（Copyright (c) ZSeven-W，https://github.com/ZSeven-W/jiange）
+   进行二次开发。
+
+3. 边界说明：本条对 SDK 部分的免费授权不延伸至应用部分；使用或二次开发 SDK
+   部分不自动授予应用部分的任何商业使用权。
+
+四、通用限制
+
+1. 未经版权所有者书面许可，不得将本软件（含应用部分与 SDK 部分）申请专利或将
+   其中的原创内容登记为他人知识产权。
+2. 不得移除、篡改或遮挡本软件中的版权声明、本许可协议及作者信息。
+3. 本协议不授予“Jiange”及相关名称、标识的商标使用权（按第三条第 2 款履行真实
+   来源说明义务所需的合理引述除外）。
+
+五、免责
+
+本软件按“原样”提供，不提供任何明示或默示的担保，包括但不限于适销性、特定用途
+适用性及不侵权的担保。在任何情况下，作者或版权持有人均不对任何索赔、损害或其他
+责任负责，无论这些责任源自合同、侵权或其他行为，也不论与本软件的使用或其他交易
+是否相关。
 
 ---
 
-Jiange Dual-Track License (Personal Free / Commercial Paid)
+Jiange License Agreement (Application Dual-Track / SDK Free with Attribution)
 Copyright (c) 2026 ZSeven-W
+https://github.com/ZSeven-W/jiange
 
-1. Grants
+1. Definitions & Scope
+
+   a) "SDK Components" means all headless software development kits and shared
+      libraries under the `packages/` directory of this repository, including
+      without limitation `@jiange/collab`, `@jiange/doc-sdk`,
+      `@jiange/sheet-sdk`, `@jiange/slides-sdk`, `@jiange/whiteboard-sdk`, and
+      `@jiange/ooxml`.
+
+   b) "Application Components" means all software, source code, configurations,
+      and product assets in this repository outside the SDK Components,
+      including without limitation `apps/` (web application), `server/`
+      (backend and sync server), and deployment configurations.
+
+2. Application License (Personal Free / Commercial Paid)
 
    a) Personal & non-commercial use: any individual or non-commercial
-      organization may use, copy, and modify this software free of charge
-      for personal study, research, evaluation, or other non-commercial
-      purposes, provided that this license and the original copyright
-      notice are retained.
+      organization may use, copy, and modify the Application Components free of
+      charge for personal study, research, evaluation, or other non-commercial
+      purposes, and distribute modified versions for non-commercial purposes,
+      provided that this license and the original copyright notice are retained.
 
-   b) Commercial use: any revenue-generating use — including but not
-      limited to internal business operations, hosting/SaaS offerings,
-      embedding in commercial products, or providing paid services —
-      requires a separately purchased commercial license from the
-      copyright holder before such use.
+   b) Commercial use: any commercial or revenue-generating use of the
+      Application Components or modifications thereof — including without
+      limitation internal business operations, hosting/SaaS offerings, bundling
+      into commercial products, or providing paid services — requires a
+      separately purchased commercial license from the copyright holder prior
+      to such use.
 
-   c) Commercial licensing terms (scope, duration, fees) are governed by
-      the commercial license agreement negotiated with the copyright
+   c) Commercial licensing terms (scope, duration, fees) are governed by a
+      separate commercial license agreement negotiated with the copyright
       holder.
 
-2. Restrictions
+3. SDK License (Free for All Uses / Public Attribution for Enterprise Forks)
 
-   a) You may not patent the software or claim its original content as
-      third-party intellectual property without written permission.
-   b) You may not remove or obscure copyright notices or attribution.
-   c) This license grants no trademark rights.
+   a) Free grant: subject to retaining this license and the original copyright
+      notice, any individual, non-commercial organization, or enterprise
+      (including commercial entities) may use, copy, integrate, and distribute
+      the SDK Components free of charge — including in personal projects,
+      internal business systems, commercial products, and paid services —
+      without purchasing a commercial license.
 
-3. Disclaimer
+   b) Enterprise secondary-development attribution: if an enterprise (or any
+      commercial or for-profit entity) performs secondary development on the
+      SDK Components (including modifying, extending, trimming, porting, or
+      creating derivative libraries or components from the SDK source code), it
+      must publicly state the source — prominently disclosing in public-facing
+      product documentation, About pages, official websites, or source
+      repository notices (such as `README` or `NOTICE`) visible to users or the
+      public that the work is derived from Jiange SDK (Copyright (c) ZSeven-W,
+      https://github.com/ZSeven-W/jiange).
 
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-   OR IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-   LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-   OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+   c) Scope boundary: this free grant for SDK Components does not extend to the
+      Application Components; using or modifying the SDK Components grants no
+      commercial rights in the Application Components.
+
+4. General Restrictions
+
+   a) You may not patent this software (Application or SDK Components) or claim
+      its original content as third-party intellectual property without prior
+      written permission from the copyright holder.
+   b) You may not remove, alter, or obscure copyright notices, this license, or
+      author attribution.
+   c) This license grants no trademark rights in "Jiange" or associated marks,
+      except as reasonably necessary for truthful source attribution required
+      under Section 3(b).
+
+5. Disclaimer
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+   IN THE SOFTWARE.

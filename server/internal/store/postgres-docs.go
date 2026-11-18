@@ -14,13 +14,13 @@ import (
 // NotifyChannel carries "docID:head" payloads after each append.
 const NotifyChannel = "jiange_ops"
 
-const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind`
+const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind, doc_type`
 
 // creatorName is appended to every doc SELECT/RETURNING list.
 const creatorName = `, (SELECT name FROM users WHERE users.id = creator_id)`
 
 func scanDoc(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -28,7 +28,7 @@ func scanDoc(row pgx.Row) (d DocMeta, err error) {
 }
 
 func scanDocWithPermissions(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -39,7 +39,7 @@ func scanDocWithPermissions(row pgx.Row) (d DocMeta, err error) {
 // append `drive_revision, COALESCE(trash_batch_id,0)` after the permission
 // columns); trash/delete UIs use the revision for optimistic concurrency.
 func scanDocDrive(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -116,7 +116,7 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	var d DocMeta
 	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0) FROM nodes n`+roleJoins+`
 		WHERE n.id = $2 AND n.deleted_at IS NULL`, uid, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
 		return DocMeta{}, ErrNotFound
 	}
@@ -127,7 +127,7 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 func (p *Postgres) GetDocSystem(ctx context.Context, id int64) (DocMeta, error) {
 	var d DocMeta
 	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0) FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DocMeta{}, ErrNotFound
 	}

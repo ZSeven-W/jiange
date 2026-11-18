@@ -7,10 +7,12 @@ import (
 
 // DocMeta is a document node in a workspace's directory tree.
 type DocMeta struct {
-	ID          int64     `json:"id"`
-	WorkspaceID int64     `json:"workspaceId"`
-	ParentID    *int64    `json:"parentId"`
-	Kind        string    `json:"kind"` // doc | base | folder | slides | file
+	ID          int64  `json:"id"`
+	WorkspaceID int64  `json:"workspaceId"`
+	ParentID    *int64 `json:"parentId"`
+	Kind        string `json:"kind"` // doc | base | folder | slides | file
+	// DocType is a document subtype ("board" = 画板); empty for plain documents.
+	DocType     string    `json:"docType,omitempty"`
 	Title       string    `json:"title"`
 	Icon        string    `json:"icon"`
 	CreatorID   int64     `json:"creatorId"`

@@ -5,3 +5,7 @@ Headless document editing operations over `@jiange/collab`: block selection, tex
 Build `@jiange/collab`, `@jiange/whiteboard-sdk` and `@jiange/ooxml` first, then run `pnpm --filter @jiange/doc-sdk build`. The packaged ESM output depends on those matching packages.
 
 The `@jiange/doc-sdk/column-archive-experimental` subpath contains an unstable identity-preserving column archive model. Its plans do not perform network writes, verify receipts, enforce permissions or persist recovery handles; hosts must supply those guarantees and scope any stored data to the current account and document.
+
+## License
+
+Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See [LICENSE](../../LICENSE) for full terms.

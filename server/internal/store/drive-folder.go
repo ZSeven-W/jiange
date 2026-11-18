@@ -18,6 +18,7 @@ type DriveEntry struct {
 	WorkspaceID      int64     `json:"workspaceId"`
 	ParentID         *int64    `json:"parentId"`
 	Kind             string    `json:"kind"`
+	DocType          string    `json:"docType,omitempty"`
 	Title            string    `json:"title"`
 	Icon             string    `json:"icon,omitempty"`
 	CreatorID        int64     `json:"creatorId"`
@@ -792,14 +793,14 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var d DriveEntry
-			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.LastModifierName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
+			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.DocType, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.LastModifierName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
 				return e
 			}
 			out = append(out, d)

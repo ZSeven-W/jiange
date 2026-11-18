@@ -139,13 +139,18 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 		ParentID    *int64 `json:"parentId"`
 		Kind        string `json:"kind"`
 		Title       string `json:"title"`
-		Scope       string `json:"scope"` // personal = 我的空间（顶层有效，子目录继承父目录）
+		Scope       string `json:"scope"`   // personal = 我的空间（顶层有效，子目录继承父目录）
+		DocType     string `json:"docType"` // board = 画板（仅 kind=doc）
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
 	if in.Kind != "doc" && in.Kind != "base" && in.Kind != "folder" && in.Kind != "slides" {
 		httpx.Error(w, http.StatusBadRequest, "invalid_kind", "kind 必须是 doc/base/folder/slides")
+		return
+	}
+	if !store.ValidDocType(in.DocType) || in.DocType != "" && in.Kind != "doc" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_doc_type", "docType 只能用于文档且只能是 board")
 		return
 	}
 	if in.WorkspaceID, ok = s.driveWorkspace(w, r, u.ID, in.WorkspaceID, in.ParentID); !ok {
@@ -158,6 +163,13 @@ func (s *Server) postDriveNode(w http.ResponseWriter, r *http.Request) {
 	entry, err := s.Store.CreateDriveNode(r.Context(), g, in.WorkspaceID, in.ParentID, in.Kind, title, in.Scope == "personal")
 	if driveWriteErr(w, err, "create node") {
 		return
+	}
+	if in.DocType != "" {
+		if err := s.Store.SetCreatedDocType(r.Context(), entry.ID, u.ID, in.DocType); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		entry.DocType = in.DocType
 	}
 	httpx.JSON(w, http.StatusCreated, entry)
 }

@@ -9,3 +9,7 @@ Import is limited to a 20 MiB archive, 20 MiB per XML part, 64 MiB expanded XML,
 Build `@jiange/ooxml` first, then `pnpm --filter @jiange/sheet-sdk build`; `pnpm pack` emits ESM and TypeScript declarations. The package remains private.
 
 `readXlsx` returns `{ workbook, warnings }`. Warning codes include `styles_not_preserved`, `cell_formatting_not_preserved`, `rich_text_formatting_not_preserved`, `worksheet_features_not_preserved`, `workbook_metadata_not_preserved`, `package_parts_not_preserved`, and `empty_formula_cache_not_preserved`; other `*_not_preserved` codes identify additional ignored metadata. Callers should surface warnings before saving a result that may lose information. The SDK itself never overwrites files.
+
+## License
+
+Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See [LICENSE](../../LICENSE) for full terms.

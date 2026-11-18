@@ -114,17 +114,17 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	} else if workspaceID == d.WorkspaceID {
 		parentID = d.ParentID
 	}
-		if parentID != nil {
-			parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
-			if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
-				httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
-				return
-			}
-		}
-		if d.Kind == "slides" {
-			s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
+	if parentID != nil {
+		parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
+		if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
+			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
 			return
 		}
+	}
+	if d.Kind == "slides" {
+		s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
+		return
+	}
 
 	src, _, err := StateAtHead(r.Context(), s.Store, d.ID)
 	if err != nil {
@@ -214,6 +214,10 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.fail(w, r, err)
 	default:
+		// A copy of a 画板 is a 画板 too.
+		if d.DocType != "" && s.Store.SetCreatedDocType(r.Context(), nd.ID, u.ID, d.DocType) == nil {
+			nd.DocType = d.DocType
+		}
 		nd = s.sanitizeWrittenDocMeta(r.Context(), u.ID, nd)
 		httpx.JSON(w, http.StatusCreated, nd)
 	}
@@ -303,7 +307,8 @@ func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d s
 // Shared immutable object keys avoid copying blobs outside the database
 // transaction. Verify every source object is readable before creating the
 // target; future blob GC must account for all references to an object key.
-func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
+func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {
+	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
 	defer cancelAll()
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {

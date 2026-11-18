@@ -1,6 +1,7 @@
 {
   "name": "jiange",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "version": "0.1.0",
   "packageManager": "pnpm@10.34.6",
   "scripts": {
