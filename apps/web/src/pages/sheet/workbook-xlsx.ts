@@ -59,15 +59,17 @@ export async function parseXlsxForWorkbook(file: File): Promise<WorkbookImportPr
   }
   let cellCount = 0;
   const sheets: ImportedWorksheet[] = parsed.workbook.sheets.map((sheet) => {
-    let maxRow = 99;
-    let maxCol = 25;
+    // Row/column counts (not indexes): keep the default 100×26 grid and leave
+    // headroom after the last imported cell.
+    let maxRow = 100;
+    let maxCol = 26;
     const cells: ImportedSheetCell[] = [];
     for (const c of sheet.cells) {
       if (c.row >= 5000 || c.col >= 256) {
         throw new Error(`工作表「${sheet.name}」超出 5000 行或 256 列的上限。`);
       }
-      maxRow = Math.max(maxRow, c.row + 10);
-      maxCol = Math.max(maxCol, c.col + 4);
+      maxRow = Math.max(maxRow, c.row + 11);
+      maxCol = Math.max(maxCol, c.col + 5);
       let raw = "";
       if (c.formula) {
         raw = c.formula;

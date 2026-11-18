@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	outBuffer    = 256
-	storeTimeout = 5 * time.Second
+	outBuffer         = 256
+	storeTimeout      = 5 * time.Second
+	checkTTL          = 2 * time.Second
+	cursorMinInterval = 30 * time.Millisecond
 )
 
 type Collaborator struct {
@@ -289,13 +291,37 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// Re-authorizing on every frame turns each cursor move into N database
+	// reads (one per receiving connection). Cache a successful check briefly;
+	// the ping loop always forces a fresh check, so revocation still closes
+	// the socket within checkTTL or one ping interval.
+	var checkMu sync.Mutex
+	var lastOK time.Time
+	authorize := func(ctx context.Context, force bool) error {
+		if check == nil {
+			return nil
+		}
+		checkMu.Lock()
+		defer checkMu.Unlock()
+		if !force && !lastOK.IsZero() && time.Since(lastOK) < checkTTL {
+			return nil
+		}
+		if err := check(ctx); err != nil {
+			lastOK = time.Time{}
+			return err
+		}
+		lastOK = time.Now()
+		return nil
+	}
+	cachedCheck := func(ctx context.Context) error { return authorize(ctx, false) }
+
 	c := &conn{
 		out:    make(chan []byte, outBuffer),
 		cancel: cancel,
 		userID: user.ID,
 		name:   user.Name,
 	}
-	go c.writeLoop(ctx, ws, check, cancel)
+	go c.writeLoop(ctx, ws, cachedCheck, cancel)
 
 	room := h.acquireRoom(sheetID)
 	defer h.releaseRoom(room)
@@ -303,6 +329,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 	defer room.removeConn(c)
 
 	go func() {
+		var lastCursor time.Time
 		for {
 			_, data, err := ws.Read(ctx)
 			if err != nil {
@@ -318,11 +345,14 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 			if json.Unmarshal(data, &msg) != nil {
 				continue
 			}
-			if check != nil && check(ctx) != nil {
+			if cachedCheck(ctx) != nil {
 				cancel()
 				return
 			}
-			if msg.Type == "cursor" && msg.WorksheetID > 0 && msg.Row >= 0 && msg.Row < 10000 && msg.Col >= 0 && msg.Col < 256 {
+			// Throttle presence fan-out: each accepted cursor frame is
+			// broadcast to every connection in the room.
+			if msg.Type == "cursor" && msg.WorksheetID > 0 && msg.Row >= 0 && msg.Row < 10000 && msg.Col >= 0 && msg.Col < 256 && time.Since(lastCursor) >= cursorMinInterval {
+				lastCursor = time.Now()
 				room.updateCursor(c, msg.WorksheetID, msg.Row, msg.Col)
 			}
 		}
@@ -336,7 +366,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 			case <-ctx.Done():
 				return
 			case <-ping.C:
-				if check != nil && check(ctx) != nil {
+				if authorize(ctx, true) != nil {
 					cancel()
 					return
 				}
