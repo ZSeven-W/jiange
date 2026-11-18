@@ -12,4 +12,4 @@ Build `@jiange/ooxml` first, then `pnpm --filter @jiange/sheet-sdk build`; `pnpm
 
 ## License
 
-Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See [LICENSE](../../LICENSE) for full terms.
+Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See `LICENSE` (bundled in the package archive; repository root `LICENSE`) for full terms.
