@@ -183,7 +183,7 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		v := *parent
 		pp = &v
 	}
-	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1, personal: personal}
+	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}, driveRevision: 1, personal: personal}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -237,7 +237,7 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 		pp = &v
 	}
 	id := int64(len(m.d.docs) + 1)
-	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, DocType: docType, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}
+	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, DocType: docType, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}
 	if kind == "doc" {
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
@@ -355,6 +355,9 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 	if err = ctx.Err(); err != nil {
 		return err
 	}
+	if err = m.bumpSubtreePermissionRevisionLocked(id, true); err != nil {
+		return err
+	}
 	d.meta.ParentID = cloneDriveParent(parent)
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
@@ -464,8 +467,9 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
 		return ErrConflict
 	}
-	// 个人空间节点只有创建者能还原（空间 owner 也不行）
-	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+	// 个人空间节点只有创建者能还原（空间 owner/admin 也不行）
+	wsRole := m.workspaceRoleLocked(d.meta.WorkspaceID, g.UserID)
+	if wsRole == "" || (d.meta.CreatorID != g.UserID && (d.personal || !isWorkspaceAdminRole(wsRole))) {
 		return ErrForbidden
 	}
 	if d.meta.ParentID != nil {
@@ -517,7 +521,8 @@ func (m *Memory) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
 		return nil, ErrConflict
 	}
-	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+	wsRole := m.workspaceRoleLocked(d.meta.WorkspaceID, g.UserID)
+	if wsRole == "" || (d.meta.CreatorID != g.UserID && (d.personal || !isWorkspaceAdminRole(wsRole))) {
 		return nil, ErrForbidden
 	}
 	items, err := m.safeDriveSubtreeLocked(d)
@@ -885,6 +890,9 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 			}
 		}
 		if e = drivePGEnd(ctx, g, exp); e != nil {
+			return e
+		}
+		if e = bumpPGSubtreePermissionsRevision(ctx, tx, id, true); e != nil {
 			return e
 		}
 		_, e = tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1`, id, parent)

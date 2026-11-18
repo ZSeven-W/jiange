@@ -20,33 +20,52 @@ type memShare struct {
 // included; only the creator and explicit shares apply.
 func (m *Memory) roleLocked(uid int64, d *memDoc) string {
 	ws := d.meta.WorkspaceID
+	wsRole := m.workspaceRoleLocked(ws, uid)
+	isMember := wsRole != ""
 	best := ""
 	if d.personal {
 		if d.meta.CreatorID == uid {
 			return RoleManage
 		}
-	} else if m.member(uid, ws) {
-		if d.meta.CreatorID == uid || (int(ws) <= len(m.workspaces) && m.workspaces[ws-1].OwnerID == uid) {
+	} else if isMember {
+		if d.meta.CreatorID == uid || wsRole == WorkspaceRoleOwner || wsRole == WorkspaceRoleAdmin {
 			return RoleManage
 		}
-		best = RoleEdit
 	}
+	var depts, groups map[int64]bool
+	if isMember && (len(m.org.deptMembers) > 0 || len(m.org.groupMembers) > 0) {
+		depts = m.userDeptSetLocked(ws, uid)
+		groups = m.userGroupSetLocked(ws, uid)
+	}
+	inheritsWS := true
 	visited := make(map[int64]bool)
 	for cur := d; cur != nil && !visited[cur.meta.ID]; {
 		visited[cur.meta.ID] = true
 		if r := m.sh.shares[cur.meta.ID][uid]; RoleRank(r) > RoleRank(best) {
 			best = r
 		}
+		if isMember && len(m.org.subjectShares[cur.meta.ID]) > 0 {
+			if r := m.subjectShareRankLocked(ws, cur.meta.ID, depts, groups); RoleRank(r) > RoleRank(best) {
+				best = r
+			}
+		}
 		if m.sh.joins[cur.meta.ID][uid] && !cur.deleted {
-			r := linkGrantRole(m.sh.links[cur.meta.ID].Role, m.member(uid, cur.meta.WorkspaceID))
+			r := linkGrantRole(m.sh.links[cur.meta.ID].Role, isMember)
 			if RoleRank(r) > RoleRank(best) {
 				best = r
 			}
+		}
+		if cur.noInheritParentACL {
+			inheritsWS = false
+			break
 		}
 		if cur.meta.ParentID == nil {
 			break
 		}
 		cur = m.doc(*cur.meta.ParentID)
+	}
+	if !d.personal && isMember && inheritsWS && RoleRank(RoleEdit) > RoleRank(best) {
+		best = RoleEdit
 	}
 	return best
 }
@@ -229,10 +248,20 @@ func (m *Memory) SharedWithMe(_ context.Context, uid int64) ([]DocMeta, error) {
 			docs[doc] = true
 		}
 	}
+	for doc := range m.org.subjectShares {
+		d := m.doc(doc)
+		if d == nil || !m.member(uid, d.meta.WorkspaceID) {
+			continue
+		}
+		if m.subjectShareRankLocked(d.meta.WorkspaceID, doc, m.userDeptSetLocked(d.meta.WorkspaceID, uid), m.userGroupSetLocked(d.meta.WorkspaceID, uid)) != "" {
+			docs[doc] = true
+		}
+	}
 	for doc := range docs {
 		d := m.doc(doc)
 		if d != nil && !d.deleted && (!m.member(uid, d.meta.WorkspaceID) || d.personal && d.meta.CreatorID != uid) && RoleRank(m.roleLocked(uid, d)) >= RoleRank(RoleView) {
 			meta := d.meta
+			meta.InheritParentACL = !d.noInheritParentACL
 			meta.Role = m.roleLocked(uid, d)
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)

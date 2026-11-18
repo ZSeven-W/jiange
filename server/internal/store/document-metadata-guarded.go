@@ -60,6 +60,9 @@ func (m *Memory) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGuard
 		return err
 	}
 	if patch.Move {
+		if err := m.bumpSubtreePermissionRevisionLocked(docID, true); err != nil {
+			return err
+		}
 		doc.meta.ParentID = cloneDriveParent(patch.ParentID)
 	}
 	if patch.Title != nil {
@@ -158,6 +161,11 @@ func (p *Postgres) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGua
 		}
 		if e = drivePGEnd(ctx, guard, expires); e != nil {
 			return e
+		}
+		if patch.Move {
+			if e = bumpPGSubtreePermissionsRevision(ctx, tx, docID, true); e != nil {
+				return e
+			}
 		}
 		switch {
 		case patch.Move && patch.Title != nil:

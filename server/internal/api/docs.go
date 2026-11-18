@@ -77,6 +77,11 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
 			return
 		}
+		// 关闭继承后成员不再默认可编辑：只读协作者不能在受限节点下新建子文档
+		if store.RoleRank(p.Role) < store.RoleRank(store.RoleEdit) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "没有在该位置新建文档的权限")
+			return
+		}
 	}
 	if !store.ValidDocType(in.DocType) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_doc_type", "docType 只能是 board 或留空")

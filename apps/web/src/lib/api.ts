@@ -132,6 +132,7 @@ export interface DocMeta {
   /** Missing on older servers, which only permit editors to comment. */
   commentMinRole?: "view" | "edit";
   permissionsRevision?: number;
+  inheritParentAcl?: boolean;
   /** Versioned-drive optimistic concurrency (move/trash/restore); 0 on nodes never touched by the drive API. */
   driveRevision?: number;
   /** Groups the subtree of one guarded trash operation; 0 for legacy deletions. */
@@ -394,11 +395,89 @@ export interface Share {
   email: string;
   role: Role;
 }
-export interface ShareInfo {
-  members: Share[];
-  link: { role: "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit"; token?: string; revision?: number };
+export interface SubjectShare {
+  subjectType: "department" | "group";
+  subjectId: number;
+  name: string;
+  memberCount: number;
   role: Role;
 }
+export interface ShareInfo {
+  members: Share[];
+  subjects?: SubjectShare[];
+  link: { role: "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit"; token?: string; revision?: number };
+  role: Role;
+  inheritParentAcl?: boolean;
+  workspaceId?: number;
+}
+export type WorkspaceRole = "owner" | "admin" | "member";
+export interface WorkspaceMemberInfo {
+  userId: number;
+  email: string;
+  name: string;
+  role: WorkspaceRole;
+  createdAt: string;
+}
+export interface OrgDepartmentMember {
+  userId: number;
+  name: string;
+  email: string;
+  isLeader: boolean;
+}
+export interface OrgDepartment {
+  id: number;
+  workspaceId: number;
+  parentId: number | null;
+  name: string;
+  sortOrder: number;
+  members: OrgDepartmentMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface OrgGroupMember {
+  userId: number;
+  name: string;
+  email: string;
+}
+export interface OrgGroup {
+  id: number;
+  workspaceId: number;
+  name: string;
+  description: string;
+  members: OrgGroupMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WorkspaceOrgSnapshot {
+  workspaceId: number;
+  workspaceName: string;
+  callerRole: WorkspaceRole;
+  members: WorkspaceMemberInfo[];
+  departments: OrgDepartment[];
+  groups: OrgGroup[];
+}
+export const orgApi = {
+  get: (wsId: number, userId: number) =>
+    request<WorkspaceOrgSnapshot>("GET", `/api/workspaces/${wsId}/org`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  upsertMember: (wsId: number, userId: number, email: string, role: "member" | "admin" | "remove") =>
+    request<WorkspaceMemberInfo | undefined>("POST", `/api/workspaces/${wsId}/members`, { email, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createDepartment: (wsId: number, userId: number, name: string, parentId: number | null = null, sortOrder = 0) =>
+    request<OrgDepartment>("POST", `/api/workspaces/${wsId}/departments`, { name, parentId, sortOrder }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateDepartment: (wsId: number, deptId: number, userId: number, patch: { name?: string; parentId?: number | null; sortOrder?: number }) =>
+    request<OrgDepartment>("PATCH", `/api/workspaces/${wsId}/departments/${deptId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteDepartment: (wsId: number, deptId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/departments/${deptId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setDepartmentMember: (wsId: number, deptId: number, userId: number, memberUserId: number, present: boolean, isLeader = false) =>
+    request<void>("PUT", `/api/workspaces/${wsId}/departments/${deptId}/members`, { userId: memberUserId, present, isLeader }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createGroup: (wsId: number, userId: number, name: string, description = "") =>
+    request<OrgGroup>("POST", `/api/workspaces/${wsId}/groups`, { name, description }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateGroup: (wsId: number, groupId: number, userId: number, patch: { name?: string; description?: string }) =>
+    request<OrgGroup>("PATCH", `/api/workspaces/${wsId}/groups/${groupId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteGroup: (wsId: number, groupId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/groups/${groupId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setGroupMember: (wsId: number, groupId: number, userId: number, memberUserId: number, present: boolean) =>
+    request<void>("PUT", `/api/workspaces/${wsId}/groups/${groupId}/members`, { userId: memberUserId, present }, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
 export interface FileMeta {
   id: number;
   name: string;
@@ -738,6 +817,10 @@ export const docsApi = {
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   sharesForAccount: (id: number, userId: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares-account`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
+  setSubjectShare: (id: number, subjectType: "department" | "group", subjectId: number, role: Role | "", userId: number) =>
+    request<ShareInfo | undefined>("PUT", `/api/docs/${id}/subject-shares`, { subjectType, subjectId, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setInheritance: (id: number, inheritParentAcl: boolean, userId: number) =>
+    request<ShareInfo | undefined>("PUT", `/api/docs/${id}/inheritance`, { inheritParentAcl }, undefined, { "X-Jiange-User-Id": String(userId) }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
   setLinkAtRevision: (id: number, role: ShareInfo["link"]["role"], expectedRevision: number, userId: number, signal?: AbortSignal) => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link-guarded`, { role, expectedRevision }, signal, { "X-Jiange-User-Id": String(userId) }).then((link) => {
     if (link !== undefined && (link.role !== role || !Number.isSafeInteger(link.revision) || link.revision! < expectedRevision)) throw new TypeError("链接修改结果无法确认");

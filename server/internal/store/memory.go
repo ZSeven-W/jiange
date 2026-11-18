@@ -17,7 +17,9 @@ type Memory struct {
 	mu               sync.Mutex
 	users            []User
 	workspaces       []Workspace
-	members          map[int64][]int64 // user -> workspace ids
+	members          map[int64][]int64   // user -> workspace ids
+	workspaceRoles   map[[2]int64]string // (workspace, user) -> owner | admin | member
+	org              memOrg
 	sessions         map[string]session
 	d                memDocs
 	sh               memShare
@@ -42,7 +44,13 @@ type Memory struct {
 }
 
 func NewMemory() *Memory {
-	return &Memory{members: map[int64][]int64{}, sessions: map[string]session{}, favorites: map[int64][]int64{}, links: map[[2]int64][]int64{}}
+	return &Memory{
+		members:        map[int64][]int64{},
+		workspaceRoles: map[[2]int64]string{},
+		sessions:       map[string]session{},
+		favorites:      map[int64][]int64{},
+		links:          map[[2]int64][]int64{},
+	}
 }
 
 func (m *Memory) CreateUser(_ context.Context, email, name, hash string) (User, Workspace, error) {
@@ -58,6 +66,10 @@ func (m *Memory) CreateUser(_ context.Context, email, name, hash string) (User, 
 	w := Workspace{ID: int64(len(m.workspaces) + 1), Name: name + " 的空间", OwnerID: u.ID}
 	m.workspaces = append(m.workspaces, w)
 	m.members[u.ID] = append(m.members[u.ID], w.ID)
+	if m.workspaceRoles == nil {
+		m.workspaceRoles = map[[2]int64]string{}
+	}
+	m.workspaceRoles[[2]int64{w.ID, u.ID}] = WorkspaceRoleOwner
 	return u, w, nil
 }
 

@@ -20,6 +20,7 @@ import { DrivePage } from "@/pages/drive-page";
 import { SlidesDeck } from "@/pages/slides-page";
 import { DriveFilePage } from "@/pages/drive-file-page";
 import { DriveUploadManager } from "@/pages/drive-upload";
+import { OrgPage } from "@/pages/org/org-page";
 import { DriveUploadStatus } from "@/components/drive-upload-status";
 import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/ai-settings";
@@ -180,6 +181,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
       ) : route.page === "sheet" ? (
         <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
+      ) : route.page === "org" ? (
+        <OrgPage me={me} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (

@@ -35,8 +35,8 @@ type Server struct {
 	Hub                     *syncsrv.Hub   // nil disables /api/sync
 	BtHub                   *btsync.Hub    // nil disables base realtime
 	SheetHub                *sheetsync.Hub // nil disables sheet realtime
-	Blobs                   blob.Store   // nil disables attachments
-	WebUI                   http.Handler // embedded frontend; nil serves nothing at /
+	Blobs                   blob.Store     // nil disables attachments
+	WebUI                   http.Handler   // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
 	// AISecret (32 bytes, from JIANGE_SECRET_KEY) encrypts saved AI API keys; nil disables saving.
@@ -80,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/docs/{id}/cover":                            s.putDocCover,
 		"GET /api/docs/{id}/cover/image":                      s.getDocCoverImage,
 		"PUT /api/docs/{id}/shares":                           s.putShare,
+		"PUT /api/docs/{id}/subject-shares":                   s.putSubjectShare,
+		"PUT /api/docs/{id}/inheritance":                      s.putInheritance,
 		"PUT /api/docs/{id}/link":                             s.putLink,
 		"PUT /api/docs/{id}/link-guarded":                     s.putLinkAtRevision,
 		"POST /api/share/{token}":                             s.joinLink,
@@ -234,6 +236,18 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/sheets/{id}/worksheets/{wid}":    s.deleteWorksheet,
 		"POST /api/sheets/{id}/worksheets/{wid}/axes": s.mutateSheetAxis,
 		"POST /api/sheets/{id}/import-xlsx":           s.importSheetXlsx,
+
+		// 企业组织架构（成员角色 / 部门 / 用户组）
+		"GET /api/workspaces/{wsId}/org":                          s.getWorkspaceOrg,
+		"POST /api/workspaces/{wsId}/members":                     s.upsertWorkspaceMember,
+		"POST /api/workspaces/{wsId}/departments":                 s.createDepartment,
+		"PATCH /api/workspaces/{wsId}/departments/{deptId}":       s.updateDepartment,
+		"DELETE /api/workspaces/{wsId}/departments/{deptId}":      s.deleteDepartment,
+		"PUT /api/workspaces/{wsId}/departments/{deptId}/members": s.setDepartmentMember,
+		"POST /api/workspaces/{wsId}/groups":                      s.createUserGroup,
+		"PATCH /api/workspaces/{wsId}/groups/{groupId}":           s.updateUserGroup,
+		"DELETE /api/workspaces/{wsId}/groups/{groupId}":          s.deleteUserGroup,
+		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":     s.setUserGroupMember,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

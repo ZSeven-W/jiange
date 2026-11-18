@@ -29,6 +29,7 @@ type DocMeta struct {
 	DownloadMinRole     string `json:"downloadMinRole,omitempty"`
 	CommentMinRole      string `json:"commentMinRole,omitempty"`
 	PermissionsRevision int64  `json:"permissionsRevision"`
+	InheritParentACL    bool   `json:"inheritParentAcl"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
 	// DriveRevision is the optimistic-concurrency version of directory

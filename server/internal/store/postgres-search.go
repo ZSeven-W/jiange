@@ -10,10 +10,9 @@ import (
 // follows ListDocs (workspace membership) plus explicit shares.
 func (p *Postgres) SearchDocs(ctx context.Context, uid int64, q string) ([]DocMeta, error) {
 	like := "%" + strings.ReplaceAll(strings.ReplaceAll(q, "\\", "\\\\"), "%", "\\%") + "%"
-	rows, err := p.Pool.Query(ctx, `SELECT DISTINCT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision
-		FROM nodes n
-		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.deleted_at IS NULL AND (
+	rows, err := p.Pool.Query(ctx, `SELECT DISTINCT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl
+		FROM nodes n`+roleJoins+`
+		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NULL AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' AND (
 			n.title ILIKE $2
 			OR EXISTS (SELECT 1 FROM doc_ops o WHERE o.doc_id = n.id AND position(convert_to($3, 'UTF8') in o.op) > 0)
 		)
@@ -25,7 +24,7 @@ func (p *Postgres) SearchDocs(ctx context.Context, uid int64, q string) ([]DocMe
 	out := []DocMeta{}
 	for rows.Next() {
 		var d DocMeta
-		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision); err != nil {
+		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -54,7 +53,7 @@ func (p *Postgres) RemovePin(ctx context.Context, uid, doc int64) error {
 
 // listMarked lists visible docs in a (user_id,node_id,created_at) table; table is a constant.
 func (p *Postgres) listMarked(ctx context.Context, uid int64, table string) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl
 		FROM nodes n`+roleJoins+`
 		JOIN `+table+` f ON f.node_id = n.id AND f.user_id = $1
 		WHERE n.deleted_at IS NULL AND (`+roleSQL+`) <> '' ORDER BY f.created_at DESC, n.id DESC`, uid)
@@ -65,7 +64,7 @@ func (p *Postgres) listMarked(ctx context.Context, uid int64, table string) ([]D
 	out := []DocMeta{}
 	for rows.Next() {
 		var d DocMeta
-		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision); err != nil {
+		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -100,7 +99,7 @@ func (p *Postgres) Ancestors(ctx context.Context, uid, doc int64) ([]DocMeta, er
 		FROM nodes n JOIN up ON n.id = up.parent_id
 		WHERE NOT n.id = ANY(up.visited)
 	)
-	SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision
+	SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl
 		FROM up c JOIN nodes n ON n.id = c.id`+roleJoins+`
 		WHERE c.depth > 0 AND n.deleted_at IS NULL AND (`+roleSQL+`) <> ''
 		ORDER BY c.depth DESC`, uid, doc)
@@ -111,7 +110,7 @@ func (p *Postgres) Ancestors(ctx context.Context, uid, doc int64) ([]DocMeta, er
 	out := []DocMeta{}
 	for rows.Next() {
 		var d DocMeta
-		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision); err != nil {
+		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

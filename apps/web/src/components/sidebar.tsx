@@ -297,6 +297,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         <NavItem icon={<DriveNavIcon className="size-[18px]" />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
+        <NavItem icon={<Building2 size={18} strokeWidth={1.7} />} label={t("组织架构")} active={route.page === "org"} onClick={() => go("#/org")} />
         <NavItem icon={<TrashIcon />} label={t("回收站")} active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-6 px-3">
@@ -633,4 +634,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, Building2, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";

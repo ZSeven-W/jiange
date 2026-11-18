@@ -26,6 +26,7 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 	var workspaceID, creatorID int64
 	var protected, personal bool
 	var kind string
+	inheritsWS := true
 	for current != 0 {
 		if seen[current] {
 			return "", false, "", ErrConflict
@@ -43,6 +44,10 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		if err != nil {
 			return "", false, "", err
 		}
+		var inheritParent bool
+		if err := tx.QueryRow(ctx, `SELECT inherit_parent_acl FROM nodes WHERE id=$1 FOR SHARE`, current).Scan(&inheritParent); err != nil {
+			return "", false, "", err
+		}
 		if len(chain) == 0 {
 			if a.deleted {
 				return "", false, "", ErrNotFound
@@ -51,6 +56,10 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		}
 		a.workspace = ws
 		chain = append(chain, a)
+		if !inheritParent {
+			inheritsWS = false
+			break
+		}
 		if a.parent == nil {
 			break
 		}
@@ -62,16 +71,76 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, "", err
 	}
-	if err == nil {
+	isMember := err == nil
+	if isMember {
 		// 我的空间：成员身份不授予任何角色（与 roleSQL 一致），创建者保持 manage
 		if !personal {
-			best = RoleEdit
 			if memberRole == "owner" || memberRole == "admin" || creatorID == userID {
 				best = RoleManage
+			} else if inheritsWS {
+				best = RoleEdit
 			}
 		} else if creatorID == userID {
 			best = RoleManage
 		}
+	}
+	deptSet := map[int64]bool{}
+	groupSet := map[int64]bool{}
+	if isMember {
+		dmRows, e := tx.Query(ctx, `SELECT department_id FROM org_department_members WHERE user_id=$1 FOR SHARE`, userID)
+		if e != nil {
+			return "", false, "", e
+		}
+		var seedDepts []int64
+		for dmRows.Next() {
+			var did int64
+			if e = dmRows.Scan(&did); e != nil {
+				dmRows.Close()
+				return "", false, "", e
+			}
+			seedDepts = append(seedDepts, did)
+		}
+		if e = dmRows.Err(); e != nil {
+			dmRows.Close()
+			return "", false, "", e
+		}
+		dmRows.Close()
+		for _, startDept := range seedDepts {
+			cur := startDept
+			for cur != 0 && !deptSet[cur] {
+				var dws int64
+				var dparent *int64
+				e = tx.QueryRow(ctx, `SELECT workspace_id, parent_id FROM org_departments WHERE id=$1 FOR SHARE`, cur).Scan(&dws, &dparent)
+				if errors.Is(e, pgx.ErrNoRows) || (e == nil && dws != workspaceID) {
+					break
+				}
+				if e != nil {
+					return "", false, "", e
+				}
+				deptSet[cur] = true
+				if dparent == nil {
+					break
+				}
+				cur = *dparent
+			}
+		}
+		gmRows, e := tx.Query(ctx, `SELECT gm.group_id FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.user_id=$1 AND g.workspace_id=$2 FOR SHARE`, userID, workspaceID)
+		if e != nil {
+			return "", false, "", e
+		}
+		for gmRows.Next() {
+			var gid int64
+			if e = gmRows.Scan(&gid); e != nil {
+				gmRows.Close()
+				return "", false, "", e
+			}
+			groupSet[gid] = true
+		}
+		if e = gmRows.Err(); e != nil {
+			gmRows.Close()
+			return "", false, "", e
+		}
+		gmRows.Close()
 	}
 	for _, a := range chain {
 		var grant string
@@ -81,6 +150,29 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 		}
 		if err == nil && RoleRank(grant) > RoleRank(best) {
 			best = grant
+		}
+		if isMember {
+			ssRows, e := tx.Query(ctx, `SELECT subject_type, subject_id, role FROM node_subject_shares WHERE doc_id=$1 FOR SHARE`, a.id)
+			if e != nil {
+				return "", false, "", e
+			}
+			for ssRows.Next() {
+				var sType, sRole string
+				var sID int64
+				if e = ssRows.Scan(&sType, &sID, &sRole); e != nil {
+					ssRows.Close()
+					return "", false, "", e
+				}
+				matched := (sType == SubjectTypeDepartment && deptSet[sID]) || (sType == SubjectTypeGroup && groupSet[sID])
+				if matched && RoleRank(sRole) > RoleRank(best) {
+					best = sRole
+				}
+			}
+			if e = ssRows.Err(); e != nil {
+				ssRows.Close()
+				return "", false, "", e
+			}
+			ssRows.Close()
 		}
 		var joined int
 		err = tx.QueryRow(ctx, `SELECT 1 FROM doc_link_joins WHERE doc_id=$1 AND user_id=$2 FOR SHARE`, a.id, userID).Scan(&joined)

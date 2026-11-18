@@ -752,17 +752,18 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 	now := time.Now()
 	newID := int64(len(m.d.docs) + 1)
 	meta := DocMeta{
-		ID:            newID,
-		Kind:          "sheet",
-		WorkspaceID:   c.WorkspaceID,
-		ParentID:      parentID,
-		Title:         c.Title,
-		CreatorID:     c.UserID,
-		CreatorName:   m.users[c.UserID-1].Name,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		DriveRevision: 1,
-		Role:          RoleManage,
+		ID:               newID,
+		Kind:             "sheet",
+		WorkspaceID:      c.WorkspaceID,
+		ParentID:         parentID,
+		Title:            c.Title,
+		CreatorID:        c.UserID,
+		CreatorName:      m.users[c.UserID-1].Name,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		DriveRevision:    1,
+		Role:             RoleManage,
+		InheritParentACL: true,
 	}
 	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
 	dstBook := &memWorkbook{
