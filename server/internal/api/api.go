@@ -16,6 +16,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
+	"github.com/ZSeven-W/jiange/server/internal/sheetsync"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
@@ -31,8 +32,9 @@ type Server struct {
 	EnableConditionalCancel bool
 	Iterations              int // PBKDF2 iterations; tests lower this
 	Now                     func() time.Time
-	Hub                     *syncsrv.Hub // nil disables /api/sync
-	BtHub                   *btsync.Hub  // nil disables base realtime
+	Hub                     *syncsrv.Hub   // nil disables /api/sync
+	BtHub                   *btsync.Hub    // nil disables base realtime
+	SheetHub                *sheetsync.Hub // nil disables sheet realtime
 	Blobs                   blob.Store   // nil disables attachments
 	WebUI                   http.Handler // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
@@ -222,6 +224,16 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/me/templates":          s.listUserTemplates,
 		"POST /api/me/templates":         s.addUserTemplate,
 		"DELETE /api/me/templates/{tid}": s.deleteUserTemplate,
+
+		// 独立电子表格（Sheet）
+		"GET /api/sheets/{id}":                        s.getSheetWorkbook,
+		"POST /api/sheets/{id}/account-title":         s.postAccountSheetTitle,
+		"POST /api/sheets/{id}/cells":                 s.writeSheetCells,
+		"POST /api/sheets/{id}/worksheets":            s.createWorksheet,
+		"PATCH /api/sheets/{id}/worksheets/{wid}":     s.updateWorksheetMeta,
+		"DELETE /api/sheets/{id}/worksheets/{wid}":    s.deleteWorksheet,
+		"POST /api/sheets/{id}/worksheets/{wid}/axes": s.mutateSheetAxis,
+		"POST /api/sheets/{id}/import-xlsx":           s.importSheetXlsx,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
@@ -257,6 +269,9 @@ func (s *Server) Handler() http.Handler {
 			}
 			s.BtHub.Serve(w, r, b.ID, check)
 		})))
+	}
+	if s.SheetHub != nil {
+		mux.Handle("GET /api/sheets/{id}/ws", s.requireUser(http.HandlerFunc(s.serveSheetWS)))
 	}
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

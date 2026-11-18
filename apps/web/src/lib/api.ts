@@ -123,7 +123,7 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base" | "folder" | "slides" | "file";
+  kind?: "doc" | "base" | "folder" | "slides" | "file" | "sheet";
   docType?: string;
   workspaceName?: string;
   copyProtected?: boolean;
@@ -450,7 +450,7 @@ export const driveApi = {
   file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
   create: (title: string, parentId: number | null = null, personal = false, signal?: AbortSignal, expectedUserId?: number) =>
     request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
-  createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
+  createNode: (kind: "doc" | "base" | "folder" | "slides" | "sheet", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }),
   createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number, docType?: "board") =>
     request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }, undefined, { "X-Jiange-User-Id": String(userId) }),
@@ -512,6 +512,188 @@ export const slidesApi = {
     if (!res.ok) throw new ApiError(res.status, result.error ?? "error", result.message ?? res.statusText);
     return result as FileMeta & { docId: number };
   },
+};
+
+export interface SheetBorders {
+  top?: boolean;
+  right?: boolean;
+  bottom?: boolean;
+  left?: boolean;
+  color?: string;
+}
+
+export type SheetNumFmt = "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date";
+
+export interface SheetCellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
+  bg?: string;
+  align?: "left" | "center" | "right" | "";
+  valign?: "top" | "middle" | "bottom" | "";
+  wrap?: boolean;
+  borders?: SheetBorders;
+  numFmt?: SheetNumFmt;
+}
+
+export interface SheetMerge {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+export interface SheetColumnFilter {
+  query?: string;
+  values?: string[];
+}
+
+export interface SheetSortRule {
+  col: number;
+  ascending: boolean;
+}
+
+export interface SheetFilterConfig {
+  enabled?: boolean;
+  headerRow?: number;
+  rules?: Record<string, SheetColumnFilter>;
+  sort?: SheetSortRule;
+}
+
+export interface SheetAxis {
+  id: number;
+  pos: number;
+  size?: number;
+}
+
+export interface SheetCell {
+  rowId: number;
+  columnId: number;
+  raw: string;
+  style?: SheetCellStyle;
+  revision: number;
+}
+
+export interface SheetWorksheet {
+  id: number;
+  nodeId: number;
+  title: string;
+  pos: number;
+  frozenRows: number;
+  frozenCols: number;
+  merges: SheetMerge[];
+  filter: SheetFilterConfig;
+  revision: number;
+  rows: SheetAxis[];
+  columns: SheetAxis[];
+  cells: SheetCell[];
+}
+
+export interface SheetSnapshot {
+  nodeId: number;
+  workspaceId: number;
+  parentId: number | null;
+  title: string;
+  role: Role;
+  creatorId: number;
+  creatorName: string;
+  driveRevision: number;
+  workbookRevision: number;
+  sheets: SheetWorksheet[];
+  updatedAt: string;
+}
+
+export interface SheetCellWrite {
+  rowId: number;
+  columnId: number;
+  expectedRevision: number;
+  raw?: string;
+  style?: SheetCellStyle;
+}
+
+export interface SheetCellBatch {
+  mutationId: string;
+  worksheetId: number;
+  cells: SheetCellWrite[];
+}
+
+export interface SheetCellRevision {
+  rowId: number;
+  columnId: number;
+  revision: number;
+}
+
+export interface SheetBatchResult {
+  mutationId: string;
+  worksheetId: number;
+  workbookRevision: number;
+  cells: SheetCellRevision[];
+  replayed: boolean;
+}
+
+export interface WorksheetPatch {
+  title?: string;
+  pos?: number;
+  frozenRows?: number;
+  frozenCols?: number;
+  merges?: SheetMerge[];
+  filter?: SheetFilterConfig;
+  expectedRevision?: number;
+}
+
+export interface SheetAxisOp {
+  op: "insert_row" | "delete_row" | "resize_row" | "insert_col" | "delete_col" | "resize_col";
+  index: number;
+  count?: number;
+  size?: number;
+  expectedRevision?: number;
+}
+
+export interface ImportedSheetCell {
+  row: number;
+  col: number;
+  raw: string;
+  style?: SheetCellStyle;
+}
+
+export interface ImportedWorksheet {
+  title: string;
+  rows: number;
+  cols: number;
+  frozenRows?: number;
+  frozenCols?: number;
+  merges?: SheetMerge[];
+  cells: ImportedSheetCell[];
+}
+
+const sheetHeaders = (userId: number) => ({
+  "X-Jiange-User-Id": String(userId),
+  "X-Jiange-Sheet-Version": "1",
+});
+
+export const sheetsApi = {
+  get: (nodeId: number, userId: number) =>
+    request<SheetSnapshot>("GET", `/api/sheets/${nodeId}`, undefined, undefined, sheetHeaders(userId)),
+  renameTitle: (nodeId: number, userId: number, title: string, expectedTitle: string, expected: number) =>
+    request<DriveEntry>("POST", `/api/sheets/${nodeId}/account-title`, { title, expectedTitle, expected }, undefined, sheetHeaders(userId)),
+  writeCells: (nodeId: number, userId: number, batch: SheetCellBatch, signal?: AbortSignal) =>
+    request<SheetBatchResult>("POST", `/api/sheets/${nodeId}/cells`, batch, signal, sheetHeaders(userId)),
+  createWorksheet: (nodeId: number, userId: number, title = "") =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("POST", `/api/sheets/${nodeId}/worksheets`, { title }, undefined, sheetHeaders(userId)),
+  updateWorksheet: (nodeId: number, worksheetId: number, userId: number, patch: WorksheetPatch) =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("PATCH", `/api/sheets/${nodeId}/worksheets/${worksheetId}`, patch, undefined, sheetHeaders(userId)),
+  deleteWorksheet: (nodeId: number, worksheetId: number, userId: number) =>
+    request<{ workbookRevision: number }>("DELETE", `/api/sheets/${nodeId}/worksheets/${worksheetId}`, undefined, undefined, sheetHeaders(userId)),
+  mutateAxis: (nodeId: number, worksheetId: number, userId: number, op: SheetAxisOp) =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("POST", `/api/sheets/${nodeId}/worksheets/${worksheetId}/axes`, op, undefined, sheetHeaders(userId)),
+  importXlsx: (nodeId: number, userId: number, expectedWorkbookRevision: number, mutationId: string, sheets: ImportedWorksheet[]) =>
+    request<SheetSnapshot>("POST", `/api/sheets/${nodeId}/import-xlsx`, { expectedWorkbookRevision, mutationId, sheets }, undefined, sheetHeaders(userId)),
+  duplicate: (nodeId: number, userId: number, signal?: AbortSignal) =>
+    request<DocMeta>("POST", `/api/docs/${nodeId}/account-duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
 };
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {

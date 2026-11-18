@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { versionFromHash } from "./version-link";
 
-export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number; versionId?: string | null } | { page: "unsupported"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
+export type Route = { page: "home" } | { page: "recent" } | { page: "doc"; id: number; versionId?: string | null } | { page: "unsupported"; id: number } | { page: "playground" } | { page: "trash" } | { page: "favorites" } | { page: "join"; token: string } | { page: "base"; id: number } | { page: "slides"; id: number } | { page: "sheet"; id: number } | { page: "file"; id: number } | { page: "form"; token: string } | { page: "legacy-form" } | { page: "public"; token: string } | { page: "drive"; folderId: number | null; personal: boolean };
 
 export function parseHash(h: string): Route {
   const unsupported = /^#\/unsupported\/(\d+)\/?$/.exec(h);
@@ -14,6 +14,8 @@ export function parseHash(h: string): Route {
   if (file) return { page: "file", id: Number(file[1]) };
   const sm = /^#\/slides\/(\d+)/.exec(h);
   if (sm) return { page: "slides", id: Number(sm[1]) };
+  const shm = /^#\/sheet\/(\d+)/.exec(h);
+  if (shm) return { page: "sheet", id: Number(shm[1]) };
   const j = /^#\/s\/([0-9a-f]+)/.exec(h);
   if (j) return { page: "join", token: j[1] };
   if (h.startsWith("#/recent")) return { page: "recent" };
@@ -49,8 +51,8 @@ export const go = (hash: string) => {
   location.hash = hash;
 };
 
-export function isKnownNodeKind(kind: unknown): kind is "doc" | "base" | "slides" | "file" | "folder" {
-  return kind === "doc" || kind === "base" || kind === "slides" || kind === "file" || kind === "folder";
+export function isKnownNodeKind(kind: unknown): kind is "doc" | "base" | "slides" | "sheet" | "file" | "folder" {
+  return kind === "doc" || kind === "base" || kind === "slides" || kind === "sheet" || kind === "file" || kind === "folder";
 }
 
 /** Route known node kinds to their dedicated editor or viewer. */
@@ -59,6 +61,7 @@ export function nodeHref(d: { id: number; kind?: string }): string {
   if (d.kind === "doc") return `#/doc/${d.id}`;
   if (d.kind === "base") return `#/base/${d.id}`;
   if (d.kind === "slides") return `#/slides/${d.id}`;
+  if (d.kind === "sheet") return `#/sheet/${d.id}`;
   if (d.kind === "file") return `#/file/${d.id}`;
   if (d.kind === "folder") return `#/drive/${d.id}`;
   return `#/unsupported/${d.id}`;

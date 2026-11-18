@@ -178,8 +178,8 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, anon, view or edit")
 		return
 	}
-	if d.Kind == "file" && in.Role == "anon" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_role", "云盘文件暂不支持匿名分享")
+	if (d.Kind == "file" || d.Kind == "sheet") && in.Role == "anon" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_role", "暂不支持匿名分享")
 		return
 	}
 
@@ -395,7 +395,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if d.Kind == "file" || d.Kind == "folder" || d.Kind == "slides" {
+	if d.Kind == "file" || d.Kind == "folder" || d.Kind == "slides" || d.Kind == "sheet" {
 		httpx.Error(w, http.StatusConflict, "invalid_kind", "此类型不支持添加文档附件")
 		return
 	}

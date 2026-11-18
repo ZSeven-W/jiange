@@ -13,6 +13,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Trash } from "@/pages/trash";
 import { JoinLink } from "@/pages/join-link";
 import { BasePage } from "@/pages/base-page";
+import { SheetPage } from "@/pages/sheet/sheet-page";
 import { PublicForm } from "@/pages/public-form";
 import { PublicDoc } from "@/pages/public-doc";
 import { DrivePage } from "@/pages/drive-page";
@@ -151,7 +152,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   };
   const sidebarClass = docLayout
     ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
-    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" ? "md:hidden" : "md:static md:block"}`;
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
@@ -177,6 +178,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <DriveFilePage key={route.id} id={route.id} userId={me.user.id} />
       ) : route.page === "slides" ? (
         <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
+      ) : route.page === "sheet" ? (
+        <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (

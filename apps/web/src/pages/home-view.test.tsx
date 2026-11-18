@@ -32,16 +32,22 @@ describe("home view preferences", () => {
     expect(html).toContain("最近修改于");
     expect(html).toContain('aria-label="卡片视图" aria-pressed="true"');
   });
-  it("separates board documents from plain documents in the home type filter", () => {
+  it("separates board documents and sheets in the home type filter", () => {
     const plain = { kind: "doc" };
     const board = { kind: "doc", docType: "board" };
     const base = { kind: "base" };
+    const sheet = { kind: "sheet" };
     expect(matchesHomeTypeFilter(plain, "all")).toBe(true);
     expect(matchesHomeTypeFilter(board, "all")).toBe(true);
+    expect(matchesHomeTypeFilter(sheet, "all")).toBe(true);
     expect(matchesHomeTypeFilter(plain, "doc")).toBe(true);
     expect(matchesHomeTypeFilter(board, "doc")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "doc")).toBe(false);
     expect(matchesHomeTypeFilter(plain, "board")).toBe(false);
     expect(matchesHomeTypeFilter(board, "board")).toBe(true);
     expect(matchesHomeTypeFilter(base, "board")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "sheet")).toBe(true);
+    expect(matchesHomeTypeFilter(base, "sheet")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "base")).toBe(false);
   });
 });

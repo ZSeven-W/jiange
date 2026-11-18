@@ -24,6 +24,7 @@ type Memory struct {
 	b                memBase
 	slides           []SlidesPage
 	slidesSequence   int64
+	sheets           memSheets
 	comments         []Comment
 	commentSequence  int64
 	reactions        map[reactionKey]time.Time

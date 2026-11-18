@@ -10,7 +10,7 @@ type DocMeta struct {
 	ID          int64  `json:"id"`
 	WorkspaceID int64  `json:"workspaceId"`
 	ParentID    *int64 `json:"parentId"`
-	Kind        string `json:"kind"` // doc | base | folder | slides | file
+	Kind        string `json:"kind"` // doc | base | folder | slides | file | sheet
 	// DocType is a document subtype ("board" = 画板); empty for plain documents.
 	DocType     string    `json:"docType,omitempty"`
 	Title       string    `json:"title"`

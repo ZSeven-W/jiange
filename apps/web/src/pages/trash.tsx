@@ -5,7 +5,7 @@ import { driveApi, type DocMeta } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
 import { BaseIcon, DocIcon, docTitle, isBoardDoc } from "@/components/sidebar";
 import { DocumentGlyph } from "@/components/document-glyph";
-import { SlidesColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
+import { SheetColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
 import { FileText, FolderIcon } from "lucide-react";
 
 /** 回收站：还原走版本化云盘 API（列表带回 driveRevision，乐观并发）。 */
@@ -43,10 +43,11 @@ export function Trash() {
           {entries.map((d) => (
             <div key={d.id} className="flex min-h-[52px] items-center gap-3 border-b px-2 py-2 hover:bg-hover/60" data-trash-row={d.id}>
               <span className="text-primary">
-                {d.kind === "base" ? <BaseIcon /> : d.kind === "folder" ? <FolderIcon size={16} strokeWidth={1.7} /> : d.kind === "slides" ? <SlidesColorIcon className="size-4 shrink-0" /> : d.kind === "file" ? <FileText size={16} strokeWidth={1.7} /> : isBoardDoc(d) ? <DocumentGlyph icon={d.icon} fallback={<WhiteboardIcon className="size-4 shrink-0 text-[#34c759]" />} /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />}
+                {d.kind === "base" ? <BaseIcon /> : d.kind === "sheet" ? <SheetColorIcon className="size-4 shrink-0" /> : d.kind === "folder" ? <FolderIcon size={16} strokeWidth={1.7} /> : d.kind === "slides" ? <SlidesColorIcon className="size-4 shrink-0" /> : d.kind === "file" ? <FileText size={16} strokeWidth={1.7} /> : isBoardDoc(d) ? <DocumentGlyph icon={d.icon} fallback={<WhiteboardIcon className="size-4 shrink-0 text-[#34c759]" />} /> : <DocumentGlyph icon={d.icon} fallback={<DocIcon />} />}
               </span>
               <span className="min-w-0 flex-1 truncate text-[13px]">{docTitle(d)}</span>
               {d.kind === "base" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle" data-base-tag>{t("多维表格")}</span>}
+              {d.kind === "sheet" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle" data-sheet-tag>{t("表格")}</span>}
               {d.kind === "folder" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle">{t("文件夹")}</span>}
               {d.kind === "slides" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle">{t("幻灯片")}</span>}
               {d.kind === "file" && <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-subtle">{t("文件")}</span>}

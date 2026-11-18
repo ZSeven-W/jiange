@@ -54,7 +54,7 @@ func (s *Server) putLinkAtRevision(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.ExpectedRevision == nil || *in.ExpectedRevision < 0 || *in.ExpectedRevision > 9007199254740991 || (in.Role != "none" && in.Role != "anon" && in.Role != store.RoleView && in.Role != store.RoleEdit && in.Role != store.LinkWorkspaceView && in.Role != store.LinkWorkspaceEdit) || (d.Kind == "file" && in.Role == "anon") {
+	if in.ExpectedRevision == nil || *in.ExpectedRevision < 0 || *in.ExpectedRevision > 9007199254740991 || (in.Role != "none" && in.Role != "anon" && in.Role != store.RoleView && in.Role != store.RoleEdit && in.Role != store.LinkWorkspaceView && in.Role != store.LinkWorkspaceEdit) || ((d.Kind == "file" || d.Kind == "sheet") && in.Role == "anon") {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "链接权限或版本无效")
 		return
 	}

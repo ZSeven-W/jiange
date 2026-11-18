@@ -9,7 +9,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
-import { BaseColorIcon, DocColorIcon, DriveNavIcon, SidebarFoldIcon, SlidesColorIcon, WhiteboardIcon } from "./feishu-icons";
+import { BaseColorIcon, DocColorIcon, DriveNavIcon, SheetColorIcon, SidebarFoldIcon, SlidesColorIcon, WhiteboardIcon } from "./feishu-icons";
 import { DocumentGlyph } from "./document-glyph";
 import { GlobalSearch } from "./global-search";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./search-focus";
@@ -22,7 +22,7 @@ export const hrefOf = nodeHref;
 export function isBoardDoc(d: { kind?: string; docType?: string } | null | undefined): boolean {
   return (d?.kind ?? "doc") === "doc" && d?.docType === "board";
 }
-export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
+export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (d.kind === "sheet" ? t("未命名表格") : isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
 
 export function renameErrorMessage(error: unknown): string {
   if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return t("无法重命名：文档不存在或当前没有编辑权限。");
@@ -153,6 +153,15 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       if (d.parentId) setOpen((o) => ({ ...o, [d.parentId!]: true }));
       qc.invalidateQueries({ queryKey: ["docs"] });
       go(`#/doc/${d.id}`);
+    },
+  });
+  const createSheet = useMutation({
+    mutationFn: () => driveApi.createNode("sheet", t("未命名表格"), null, true),
+    onSuccess: (entry) => {
+      setSection("documents", true);
+      qc.invalidateQueries({ queryKey: ["docs"] });
+      qc.invalidateQueries({ queryKey: ["drive"] });
+      go(`#/sheet/${entry.id}`);
     },
   });
   const createBase = useMutation({
@@ -300,6 +309,9 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
         <button ref={documentsTrigger} type="button" aria-expanded={documentsOpen} aria-controls={`${sectionId}-documents`} onClick={() => setSection("documents", !documentsOpen)} className="flex items-center gap-1 rounded hover:text-foreground"><span>{t("我的文档库")}</span><ChevronRight size={12} className={cn("transition-transform", documentsOpen && "rotate-90")}/></button>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          <button aria-label={t("新建表格")} title={t("新建表格")} onClick={() => createSheet.mutate()} disabled={createSheet.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-sheet>
+            <SheetColorIcon className="size-3.5" />
+          </button>
           <button aria-label={t("新建多维表格")} title={t("新建多维表格")} onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
             <Table2 size={14} strokeWidth={1.7} />
           </button>
@@ -398,6 +410,7 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
 }
 
 function SidebarNodeIcon({ kind, docType, icon }: { kind: DocMeta["kind"]; docType?: string; icon?: string }) {
+  if (kind === "sheet") return <SheetColorIcon className="size-[18px] shrink-0" />;
   if (kind === "base") return <BaseColorIcon className="size-[18px] shrink-0" />;
   if (kind === "slides") return <SlidesColorIcon className="size-[18px] shrink-0" />;
   if (kind === "folder") return <FolderIcon size={18} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
