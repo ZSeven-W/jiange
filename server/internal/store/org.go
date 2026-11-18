@@ -70,6 +70,47 @@ type WorkspaceOrgSnapshot struct {
 	Members       []WorkspaceMemberInfo `json:"members"`
 	Departments   []OrgDepartment       `json:"departments"`
 	Groups        []OrgGroup            `json:"groups"`
+	// Invitations lists pending invitations; only owners/admins see them.
+	Invitations []WorkspaceInvitation `json:"invitations"`
+}
+
+// WorkspaceInvitation is a pending request for someone to join a workspace.
+// Nothing about the invitee's account is exposed to the inviter.
+type WorkspaceInvitation struct {
+	ID            int64     `json:"id"`
+	WorkspaceID   int64     `json:"workspaceId"`
+	WorkspaceName string    `json:"workspaceName,omitempty"`
+	Email         string    `json:"email"`
+	Role          string    `json:"role"` // member | admin
+	InviterName   string    `json:"inviterName,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+const (
+	MemberChangeUpdated = "updated"
+	MemberChangeInvited = "invited"
+	MemberChangeRemoved = "removed"
+)
+
+// maxPendingInvitations bounds how many open invitations one workspace keeps.
+const maxPendingInvitations = 200
+
+// WorkspaceMemberChange reports what an admin's member request did. A
+// non-member email always yields an invitation, whether or not an account
+// exists for it.
+type WorkspaceMemberChange struct {
+	Status     string               `json:"status"` // updated | invited | removed
+	Member     *WorkspaceMemberInfo `json:"member,omitempty"`
+	Invitation *WorkspaceInvitation `json:"invitation,omitempty"`
+}
+
+// NormalizeInviteEmail trims and lower-cases an email; ok is false when it
+// cannot be an address.
+func NormalizeInviteEmail(raw string) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(raw))
+	at := strings.IndexByte(email, '@')
+	n := utf8.RuneCountInString(email)
+	return email, n >= 3 && n <= 320 && at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t\r\n")
 }
 
 // SubjectShare is an explicit department or user-group grant on a node.
@@ -85,7 +126,15 @@ type SubjectShare struct {
 // subject-based sharing, and node ACL inheritance controls.
 type OrgStore interface {
 	GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID int64) (WorkspaceOrgSnapshot, error)
-	UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, email, role string) (WorkspaceMemberInfo, error)
+	// UpsertWorkspaceMemberGuarded changes an existing member's role, removes
+	// a member/invitation ("remove"), or invites a non-member email.
+	UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, email, role string) (WorkspaceMemberChange, error)
+	RevokeInvitationGuarded(ctx context.Context, guard RestoreGuard, wsID, invitationID int64) error
+	// ListMyInvitations returns invitations addressed to the caller's email.
+	ListMyInvitations(ctx context.Context, guard RestoreGuard) ([]WorkspaceInvitation, error)
+	// RespondInvitationGuarded accepts (joins with the invited role) or
+	// declines; either way the invitation is consumed.
+	RespondInvitationGuarded(ctx context.Context, guard RestoreGuard, invitationID int64, accept bool) error
 
 	CreateDepartmentGuarded(ctx context.Context, guard RestoreGuard, wsID int64, parentID *int64, name string, sortOrder int) (OrgDepartment, error)
 	UpdateDepartmentGuarded(ctx context.Context, guard RestoreGuard, wsID, deptID int64, parentID *int64, moveParent bool, name *string, sortOrder *int) (OrgDepartment, error)

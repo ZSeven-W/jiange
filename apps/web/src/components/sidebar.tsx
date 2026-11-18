@@ -12,6 +12,7 @@ import { colorFor } from "@/lib/presence";
 import { BaseColorIcon, DocColorIcon, DriveNavIcon, SheetColorIcon, SidebarFoldIcon, SlidesColorIcon, WhiteboardIcon } from "./feishu-icons";
 import { DocumentGlyph } from "./document-glyph";
 import { GlobalSearch } from "./global-search";
+import { WorkspaceInvitations } from "./workspace-invitations";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./search-focus";
 import { LocaleToggle } from "./locale-toggle";
 import { t, useI18n } from "@/lib/i18n";
@@ -33,7 +34,7 @@ export function renameErrorMessage(error: unknown): string {
   return t("无法确认重命名是否完成，请刷新后查看。");
 }
 
-export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, captureSearchGuard }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void; onSearchRegistrar?: (open: (() => void) | null) => void; captureSearchGuard?: () => SearchFocusGuard | null }) {
+export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, captureSearchGuard, onWorkspacesChanged }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void; onSearchRegistrar?: (open: (() => void) | null) => void; captureSearchGuard?: () => SearchFocusGuard | null; onWorkspacesChanged?: () => void }) {
   const { t } = useI18n();
   const shortcutModifier = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
   const qc = useQueryClient();
@@ -343,6 +344,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         )}
         </div>
       </div>
+      <WorkspaceInvitations userId={me.user.id} onJoined={onWorkspacesChanged} />
       <div ref={accountMenu} className="relative border-t px-3 py-2">
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>

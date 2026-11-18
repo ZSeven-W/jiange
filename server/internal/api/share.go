@@ -262,6 +262,8 @@ func (s *Server) shareMutationError(w http.ResponseWriter, r *http.Request, err 
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrWouldLoseAccess):
+		httpx.Error(w, http.StatusConflict, "would_lose_access", "你的管理权限来自上级授权，关闭继承后将无法访问。请先为自己添加直接授权")
 	case errors.Is(err, store.ErrForbidden), errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有管理权限")
 	case errors.Is(err, store.ErrConflict):

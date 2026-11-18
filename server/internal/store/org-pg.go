@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -177,14 +176,21 @@ func (p *Postgres) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID
 		gmRows.Close()
 		out.Groups = groups
 
+		out.Invitations = []WorkspaceInvitation{}
+		if isWorkspaceAdminRole(callerRole) {
+			if out.Invitations, e = pgPendingInvitations(ctx, tx, wsID); e != nil {
+				return e
+			}
+		}
+
 		return drivePGEnd(ctx, guard, expires)
 	})
 	return out, orgPGError(err)
 }
 
-func (p *Postgres) UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, email, role string) (out WorkspaceMemberInfo, err error) {
-	email = strings.TrimSpace(email)
-	if email == "" || (role != WorkspaceRoleMember && role != WorkspaceRoleAdmin && role != "remove") {
+func (p *Postgres) UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, rawEmail, role string) (out WorkspaceMemberChange, err error) {
+	email, ok := NormalizeInviteEmail(rawEmail)
+	if !ok || (role != WorkspaceRoleMember && role != WorkspaceRoleAdmin && role != "remove") {
 		return out, ErrConflict
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
@@ -192,44 +198,163 @@ func (p *Postgres) UpsertWorkspaceMemberGuarded(ctx context.Context, guard Resto
 		if e != nil {
 			return e
 		}
+		// Serialize invitation writes per workspace so the pending cap holds.
+		if _, e = tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, wsID); e != nil {
+			return e
+		}
+		// Only an existing member is resolved to an account; anyone else is
+		// addressed purely by email so the response reveals no account data.
 		var target WorkspaceMemberInfo
-		e = tx.QueryRow(ctx, `SELECT id, email, name, created_at FROM users WHERE lower(email)=lower($1) FOR SHARE`, email).
+		e = tx.QueryRow(ctx, `SELECT u.id, u.email, u.name, u.created_at FROM workspace_members wm JOIN users u ON u.id = wm.user_id
+			WHERE wm.workspace_id=$1 AND lower(u.email)=$2 FOR SHARE OF wm`, wsID, email).
 			Scan(&target.UserID, &target.Email, &target.Name, &target.CreatedAt)
+		isMember := e == nil
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+		if isMember {
+			var ownerID int64
+			if e = tx.QueryRow(ctx, `SELECT owner_id FROM workspaces WHERE id=$1`, wsID).Scan(&ownerID); e != nil {
+				return e
+			}
+			if ownerID == target.UserID {
+				return ErrForbidden
+			}
+		}
+		if role == "remove" {
+			if _, e = tx.Exec(ctx, `DELETE FROM workspace_invitations WHERE workspace_id=$1 AND email=$2`, wsID, email); e != nil {
+				return e
+			}
+			if isMember {
+				if _, e = tx.Exec(ctx, `DELETE FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, wsID, target.UserID); e != nil {
+					return e
+				}
+				if _, e = tx.Exec(ctx, `DELETE FROM org_department_members WHERE department_id IN (SELECT id FROM org_departments WHERE workspace_id=$1) AND user_id=$2`, wsID, target.UserID); e != nil {
+					return e
+				}
+				if _, e = tx.Exec(ctx, `DELETE FROM org_group_members WHERE group_id IN (SELECT id FROM org_groups WHERE workspace_id=$1) AND user_id=$2`, wsID, target.UserID); e != nil {
+					return e
+				}
+			}
+			out = WorkspaceMemberChange{Status: MemberChangeRemoved}
+			return drivePGEnd(ctx, guard, expires)
+		}
+		if isMember {
+			if _, e = tx.Exec(ctx, `UPDATE workspace_members SET role=$3 WHERE workspace_id=$1 AND user_id=$2`, wsID, target.UserID, role); e != nil {
+				return e
+			}
+			target.Role = role
+			out = WorkspaceMemberChange{Status: MemberChangeUpdated, Member: &target}
+			return drivePGEnd(ctx, guard, expires)
+		}
+		var pending int
+		var exists bool
+		if e = tx.QueryRow(ctx, `SELECT count(*), COALESCE(bool_or(email=$2), false) FROM workspace_invitations WHERE workspace_id=$1`, wsID, email).Scan(&pending, &exists); e != nil {
+			return e
+		}
+		if !exists && pending >= maxPendingInvitations {
+			return ErrConflict
+		}
+		inv := WorkspaceInvitation{WorkspaceID: wsID, Email: email, Role: role}
+		if e = tx.QueryRow(ctx, `INSERT INTO workspace_invitations (workspace_id, email, role, inviter_id) VALUES ($1,$2,$3,$4)
+			ON CONFLICT (workspace_id, email) DO UPDATE SET role=EXCLUDED.role, inviter_id=EXCLUDED.inviter_id
+			RETURNING id, created_at, (SELECT name FROM users WHERE id=$4), (SELECT name FROM workspaces WHERE id=$1)`,
+			wsID, email, role, guard.UserID).Scan(&inv.ID, &inv.CreatedAt, &inv.InviterName, &inv.WorkspaceName); e != nil {
+			return e
+		}
+		out = WorkspaceMemberChange{Status: MemberChangeInvited, Invitation: &inv}
+		return drivePGEnd(ctx, guard, expires)
+	})
+	return out, orgPGError(err)
+}
+
+func pgPendingInvitations(ctx context.Context, tx pgx.Tx, wsID int64) ([]WorkspaceInvitation, error) {
+	rows, err := tx.Query(ctx, `SELECT i.id, i.workspace_id, i.email, i.role, COALESCE(u.name,''), i.created_at
+		FROM workspace_invitations i LEFT JOIN users u ON u.id = i.inviter_id
+		WHERE i.workspace_id=$1 ORDER BY i.id`, wsID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (inv WorkspaceInvitation, err error) {
+		err = r.Scan(&inv.ID, &inv.WorkspaceID, &inv.Email, &inv.Role, &inv.InviterName, &inv.CreatedAt)
+		return
+	})
+}
+
+func (p *Postgres) RevokeInvitationGuarded(ctx context.Context, guard RestoreGuard, wsID, invitationID int64) error {
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		expires, e := orgPGRequireAdmin(ctx, tx, guard, wsID)
+		if e != nil {
+			return e
+		}
+		tag, e := tx.Exec(ctx, `DELETE FROM workspace_invitations WHERE id=$1 AND workspace_id=$2`, invitationID, wsID)
+		if e != nil {
+			return e
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return drivePGEnd(ctx, guard, expires)
+	})
+	return orgPGError(err)
+}
+
+func (p *Postgres) ListMyInvitations(ctx context.Context, guard RestoreGuard) (out []WorkspaceInvitation, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		expires, e := drivePGSession(ctx, tx, guard)
+		if e != nil {
+			return e
+		}
+		rows, e := tx.Query(ctx, `SELECT i.id, i.workspace_id, w.name, i.email, i.role, COALESCE(inviter.name,''), i.created_at
+			FROM workspace_invitations i
+			JOIN users me ON me.id=$1 AND lower(me.email)=i.email
+			JOIN workspaces w ON w.id = i.workspace_id
+			LEFT JOIN users inviter ON inviter.id = i.inviter_id
+			ORDER BY i.id`, guard.UserID)
+		if e != nil {
+			return e
+		}
+		out, e = pgx.CollectRows(rows, func(r pgx.CollectableRow) (inv WorkspaceInvitation, err error) {
+			err = r.Scan(&inv.ID, &inv.WorkspaceID, &inv.WorkspaceName, &inv.Email, &inv.Role, &inv.InviterName, &inv.CreatedAt)
+			return
+		})
+		if e != nil {
+			return e
+		}
+		return drivePGEnd(ctx, guard, expires)
+	})
+	if out == nil {
+		out = []WorkspaceInvitation{}
+	}
+	return out, orgPGError(err)
+}
+
+func (p *Postgres) RespondInvitationGuarded(ctx context.Context, guard RestoreGuard, invitationID int64, accept bool) error {
+	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		expires, e := drivePGSession(ctx, tx, guard)
+		if e != nil {
+			return e
+		}
+		var wsID int64
+		var role string
+		// Another account's invitation is indistinguishable from a missing one.
+		e = tx.QueryRow(ctx, `DELETE FROM workspace_invitations i USING users me
+			WHERE i.id=$1 AND me.id=$2 AND lower(me.email)=i.email
+			RETURNING i.workspace_id, i.role`, invitationID, guard.UserID).Scan(&wsID, &role)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if e != nil {
 			return e
 		}
-		var ownerID int64
-		if e = tx.QueryRow(ctx, `SELECT owner_id FROM workspaces WHERE id=$1`, wsID).Scan(&ownerID); e != nil {
-			return e
-		}
-		if ownerID == target.UserID {
-			return ErrForbidden
-		}
-		if role == "remove" {
-			if _, e = tx.Exec(ctx, `DELETE FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, wsID, target.UserID); e != nil {
+		if accept {
+			if _, e = tx.Exec(ctx, `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT (workspace_id, user_id) DO NOTHING`, wsID, guard.UserID, role); e != nil {
 				return e
 			}
-			if _, e = tx.Exec(ctx, `DELETE FROM org_department_members WHERE department_id IN (SELECT id FROM org_departments WHERE workspace_id=$1) AND user_id=$2`, wsID, target.UserID); e != nil {
-				return e
-			}
-			if _, e = tx.Exec(ctx, `DELETE FROM org_group_members WHERE group_id IN (SELECT id FROM org_groups WHERE workspace_id=$1) AND user_id=$2`, wsID, target.UserID); e != nil {
-				return e
-			}
-			out = WorkspaceMemberInfo{UserID: target.UserID, Email: target.Email, Name: target.Name}
-			return drivePGEnd(ctx, guard, expires)
 		}
-		if _, e = tx.Exec(ctx, `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1,$2,$3)
-			ON CONFLICT (workspace_id, user_id) DO UPDATE SET role=EXCLUDED.role`, wsID, target.UserID, role); e != nil {
-			return e
-		}
-		target.Role = role
-		out = target
 		return drivePGEnd(ctx, guard, expires)
 	})
-	return out, orgPGError(err)
+	return orgPGError(err)
 }
 
 func (p *Postgres) CreateDepartmentGuarded(ctx context.Context, guard RestoreGuard, wsID int64, parentID *int64, rawName string, sortOrder int) (out OrgDepartment, err error) {
@@ -604,6 +729,20 @@ func (p *Postgres) SetSubjectShareGuarded(ctx context.Context, guard RestoreGuar
 		return ErrConflict
 	}
 	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		// Lock the subject row first, matching DeleteDepartment/Group (subject
+		// FOR UPDATE, then node_subject_shares). lockShareManager below takes
+		// FOR SHARE on existing share rows, so the reverse order can deadlock.
+		var subjectWS int64
+		var err error
+		if subjectType == SubjectTypeDepartment {
+			err = tx.QueryRow(ctx, `SELECT workspace_id FROM org_departments WHERE id=$1 FOR SHARE`, subjectID).Scan(&subjectWS)
+		} else {
+			err = tx.QueryRow(ctx, `SELECT workspace_id FROM org_groups WHERE id=$1 FOR SHARE`, subjectID).Scan(&subjectWS)
+		}
+		subjectMissing := errors.Is(err, pgx.ErrNoRows)
+		if err != nil && !subjectMissing {
+			return err
+		}
 		expiry, err := lockShareManager(ctx, tx, guard, docID)
 		if err != nil {
 			return err
@@ -615,17 +754,8 @@ func (p *Postgres) SetSubjectShareGuarded(ctx context.Context, guard RestoreGuar
 		if permRev >= maxDriveRevision {
 			return ErrConflict
 		}
-		var subjectWS int64
-		if subjectType == SubjectTypeDepartment {
-			err = tx.QueryRow(ctx, `SELECT workspace_id FROM org_departments WHERE id=$1 FOR SHARE`, subjectID).Scan(&subjectWS)
-		} else {
-			err = tx.QueryRow(ctx, `SELECT workspace_id FROM org_groups WHERE id=$1 FOR SHARE`, subjectID).Scan(&subjectWS)
-		}
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && subjectWS != docWS) {
+		if subjectMissing || subjectWS != docWS {
 			return ErrNotFound
-		}
-		if err != nil {
-			return err
 		}
 		if role == "" {
 			if _, err := tx.Exec(ctx, `DELETE FROM node_subject_shares WHERE doc_id=$1 AND subject_type=$2 AND subject_id=$3`, docID, subjectType, subjectID); err != nil {
@@ -660,6 +790,17 @@ func (p *Postgres) SetNodeInheritParentACLGuarded(ctx context.Context, guard Res
 		}
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET inherit_parent_acl=$2 WHERE id=$1`, docID, inherit); err != nil {
 			return err
+		}
+		if !inherit {
+			// Re-evaluate inside this transaction: a manager whose access came
+			// only from an ancestor grant would otherwise lock themselves out.
+			role, _, _, err := lockCopySource(ctx, tx, docID, guard.UserID)
+			if err != nil {
+				return err
+			}
+			if role != RoleManage {
+				return ErrWouldLoseAccess
+			}
 		}
 		if !guard.currentTime().Before(expiry) {
 			return ErrUnauthenticated

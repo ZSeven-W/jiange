@@ -240,6 +240,10 @@ func (s *Server) Handler() http.Handler {
 		// 企业组织架构（成员角色 / 部门 / 用户组）
 		"GET /api/workspaces/{wsId}/org":                          s.getWorkspaceOrg,
 		"POST /api/workspaces/{wsId}/members":                     s.upsertWorkspaceMember,
+		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":    s.revokeWorkspaceInvitation,
+		"GET /api/invitations":                                    s.listMyInvitations,
+		"POST /api/invitations/{inviteId}/accept":                 s.respondInvitation(true),
+		"POST /api/invitations/{inviteId}/decline":                s.respondInvitation(false),
 		"POST /api/workspaces/{wsId}/departments":                 s.createDepartment,
 		"PATCH /api/workspaces/{wsId}/departments/{deptId}":       s.updateDepartment,
 		"DELETE /api/workspaces/{wsId}/departments/{deptId}":      s.deleteDepartment,

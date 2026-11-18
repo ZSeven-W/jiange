@@ -37,15 +37,73 @@ func TestOrgAndInheritanceAPI(t *testing.T) {
 	aliceUser, _ := registerUser(aliceClient, "api-org-alice@example.test", "Alice")
 	bobUser, _ := registerUser(bobClient, "api-org-bob@example.test", "Bob")
 
-	// Invite Alice and Bob to owner's workspace.
+	// Invite Alice and Bob to owner's workspace; they must accept to join.
+	invitations := map[int64]int64{}
 	for _, u := range []store.User{aliceUser, bobUser} {
 		res := send(t, owner, http.MethodPost, fmt.Sprintf("%s/api/workspaces/%d/members", ts.URL, ws.ID), map[string]any{
 			"email": u.Email, "role": "member",
 		})
+		var change store.WorkspaceMemberChange
+		json.NewDecoder(res.Body).Decode(&change)
 		res.Body.Close()
-		if res.StatusCode != http.StatusOK {
-			t.Fatalf("invite %s: %d", u.Email, res.StatusCode)
+		if res.StatusCode != http.StatusOK || change.Status != store.MemberChangeInvited || change.Invitation == nil || change.Member != nil {
+			t.Fatalf("invite %s: %d %+v", u.Email, res.StatusCode, change)
 		}
+		invitations[u.ID] = change.Invitation.ID
+	}
+	// An unregistered email yields the same response shape (no enumeration).
+	ghost := send(t, owner, http.MethodPost, fmt.Sprintf("%s/api/workspaces/%d/members", ts.URL, ws.ID), map[string]any{
+		"email": "nobody-registered@example.test", "role": "member",
+	})
+	var ghostChange store.WorkspaceMemberChange
+	json.NewDecoder(ghost.Body).Decode(&ghostChange)
+	ghost.Body.Close()
+	if ghost.StatusCode != http.StatusOK || ghostChange.Status != store.MemberChangeInvited || ghostChange.Invitation == nil {
+		t.Fatalf("unregistered invite: %d %+v", ghost.StatusCode, ghostChange)
+	}
+	// Not joined before accepting.
+	pendingDenied := send(t, aliceClient, http.MethodGet, fmt.Sprintf("%s/api/workspaces/%d/org", ts.URL, ws.ID), nil)
+	pendingDenied.Body.Close()
+	if pendingDenied.StatusCode != http.StatusForbidden {
+		t.Fatalf("invitee read org before accepting = %d, want 403", pendingDenied.StatusCode)
+	}
+	// Bob cannot accept Alice's invitation.
+	stolen := send(t, bobClient, http.MethodPost, fmt.Sprintf("%s/api/invitations/%d/accept", ts.URL, invitations[aliceUser.ID]), nil)
+	stolen.Body.Close()
+	if stolen.StatusCode != http.StatusNotFound {
+		t.Fatalf("accept another user's invitation = %d, want 404", stolen.StatusCode)
+	}
+	for _, c := range []struct {
+		client *http.Client
+		user   store.User
+	}{{aliceClient, aliceUser}, {bobClient, bobUser}} {
+		res := send(t, c.client, http.MethodGet, ts.URL+"/api/invitations", nil)
+		var mine struct {
+			Invitations []store.WorkspaceInvitation `json:"invitations"`
+		}
+		json.NewDecoder(res.Body).Decode(&mine)
+		res.Body.Close()
+		if len(mine.Invitations) != 1 || mine.Invitations[0].ID != invitations[c.user.ID] || mine.Invitations[0].WorkspaceName == "" {
+			t.Fatalf("%s invitations: %+v", c.user.Email, mine.Invitations)
+		}
+		res = send(t, c.client, http.MethodPost, fmt.Sprintf("%s/api/invitations/%d/accept", ts.URL, invitations[c.user.ID]), nil)
+		res.Body.Close()
+		if res.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s accept: %d", c.user.Email, res.StatusCode)
+		}
+	}
+	// Owner still sees the unregistered invitation pending and can revoke it.
+	snapRes := send(t, owner, http.MethodGet, fmt.Sprintf("%s/api/workspaces/%d/org", ts.URL, ws.ID), nil)
+	var pendingSnap store.WorkspaceOrgSnapshot
+	json.NewDecoder(snapRes.Body).Decode(&pendingSnap)
+	snapRes.Body.Close()
+	if len(pendingSnap.Members) != 3 || len(pendingSnap.Invitations) != 1 || pendingSnap.Invitations[0].Email != "nobody-registered@example.test" {
+		t.Fatalf("snapshot after accept: members=%d invitations=%+v", len(pendingSnap.Members), pendingSnap.Invitations)
+	}
+	revoke := send(t, owner, http.MethodDelete, fmt.Sprintf("%s/api/workspaces/%d/invitations/%d", ts.URL, ws.ID, pendingSnap.Invitations[0].ID), nil)
+	revoke.Body.Close()
+	if revoke.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke invitation = %d", revoke.StatusCode)
 	}
 
 	// Non-admin member cannot create a department (403).

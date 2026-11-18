@@ -20,6 +20,8 @@ type memOrg struct {
 	groups        map[int64]OrgGroup
 	groupMembers  map[int64]map[int64]bool // groupID -> userID -> true
 	subjectShares map[int64]map[subjectShareKey]string
+	nextInviteID  int64
+	invitations   map[int64]WorkspaceInvitation
 }
 
 func (m *Memory) workspaceRoleLocked(ws, uid int64) string {
@@ -221,6 +223,10 @@ func (m *Memory) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID i
 	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
 		return WorkspaceOrgSnapshot{}, err
 	}
+	invitations := []WorkspaceInvitation{}
+	if isWorkspaceAdminRole(callerRole) {
+		invitations = m.pendingInvitationsLocked(wsID)
+	}
 	return WorkspaceOrgSnapshot{
 		WorkspaceID:   wsID,
 		WorkspaceName: m.workspaces[wsID-1].Name,
@@ -228,19 +234,20 @@ func (m *Memory) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID i
 		Members:       members,
 		Departments:   depts,
 		Groups:        groups,
+		Invitations:   invitations,
 	}, nil
 }
 
-func (m *Memory) UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, email, role string) (WorkspaceMemberInfo, error) {
-	email = strings.TrimSpace(email)
-	if email == "" || (role != WorkspaceRoleMember && role != WorkspaceRoleAdmin && role != "remove") {
-		return WorkspaceMemberInfo{}, ErrConflict
+func (m *Memory) UpsertWorkspaceMemberGuarded(ctx context.Context, guard RestoreGuard, wsID int64, rawEmail, role string) (WorkspaceMemberChange, error) {
+	email, ok := NormalizeInviteEmail(rawEmail)
+	if !ok || (role != WorkspaceRoleMember && role != WorkspaceRoleAdmin && role != "remove") {
+		return WorkspaceMemberChange{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	expires, err := m.checkWorkspaceAdminLocked(ctx, guard, wsID)
 	if err != nil {
-		return WorkspaceMemberInfo{}, err
+		return WorkspaceMemberChange{}, err
 	}
 	var target *User
 	for i := range m.users {
@@ -249,52 +256,166 @@ func (m *Memory) UpsertWorkspaceMemberGuarded(ctx context.Context, guard Restore
 			break
 		}
 	}
-	if target == nil {
-		return WorkspaceMemberInfo{}, ErrNotFound
+	// Only an existing member is treated as a member; anyone else is
+	// addressed purely by email so the response reveals no account data.
+	isMember := target != nil && m.member(target.ID, wsID)
+	if isMember && m.workspaces[wsID-1].OwnerID == target.ID {
+		return WorkspaceMemberChange{}, ErrForbidden
 	}
-	if m.workspaces[wsID-1].OwnerID == target.ID {
-		return WorkspaceMemberInfo{}, ErrForbidden
+	inviteID := int64(0)
+	pending := 0
+	for id, inv := range m.org.invitations {
+		if inv.WorkspaceID != wsID {
+			continue
+		}
+		pending++
+		if inv.Email == email {
+			inviteID = id
+		}
+	}
+	if !isMember && role != "remove" && inviteID == 0 && pending >= maxPendingInvitations {
+		return WorkspaceMemberChange{}, ErrConflict
 	}
 	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
-		return WorkspaceMemberInfo{}, err
+		return WorkspaceMemberChange{}, err
 	}
 	if role == "remove" {
-		filtered := m.members[target.ID][:0]
-		for _, id := range m.members[target.ID] {
-			if id != wsID {
-				filtered = append(filtered, id)
+		if inviteID != 0 {
+			delete(m.org.invitations, inviteID)
+		}
+		if isMember {
+			filtered := m.members[target.ID][:0]
+			for _, id := range m.members[target.ID] {
+				if id != wsID {
+					filtered = append(filtered, id)
+				}
+			}
+			m.members[target.ID] = filtered
+			if m.workspaceRoles != nil {
+				delete(m.workspaceRoles, [2]int64{wsID, target.ID})
+			}
+			for deptID, d := range m.org.depts {
+				if d.WorkspaceID == wsID {
+					delete(m.org.deptMembers[deptID], target.ID)
+				}
+			}
+			for groupID, g := range m.org.groups {
+				if g.WorkspaceID == wsID {
+					delete(m.org.groupMembers[groupID], target.ID)
+				}
 			}
 		}
-		m.members[target.ID] = filtered
-		if m.workspaceRoles != nil {
-			delete(m.workspaceRoles, [2]int64{wsID, target.ID})
-		}
-		for deptID, d := range m.org.depts {
-			if d.WorkspaceID == wsID {
-				delete(m.org.deptMembers[deptID], target.ID)
-			}
-		}
-		for groupID, g := range m.org.groups {
-			if g.WorkspaceID == wsID {
-				delete(m.org.groupMembers[groupID], target.ID)
-			}
-		}
-		return WorkspaceMemberInfo{UserID: target.ID, Email: target.Email, Name: target.Name}, nil
+		return WorkspaceMemberChange{Status: MemberChangeRemoved}, nil
 	}
-	if !m.member(target.ID, wsID) {
-		m.members[target.ID] = append(m.members[target.ID], wsID)
+	if isMember {
+		if m.workspaceRoles == nil {
+			m.workspaceRoles = map[[2]int64]string{}
+		}
+		m.workspaceRoles[[2]int64{wsID, target.ID}] = role
+		return WorkspaceMemberChange{Status: MemberChangeUpdated, Member: &WorkspaceMemberInfo{
+			UserID:    target.ID,
+			Email:     target.Email,
+			Name:      target.Name,
+			Role:      role,
+			CreatedAt: target.CreatedAt,
+		}}, nil
 	}
+	if m.org.invitations == nil {
+		m.org.invitations = map[int64]WorkspaceInvitation{}
+	}
+	inv, exists := m.org.invitations[inviteID]
+	if !exists {
+		m.org.nextInviteID++
+		inv = WorkspaceInvitation{ID: m.org.nextInviteID, WorkspaceID: wsID, Email: email, CreatedAt: time.Now()}
+	}
+	inv.Role = role
+	inv.InviterName = m.users[guard.UserID-1].Name
+	m.org.invitations[inv.ID] = inv
+	out := inv
+	out.WorkspaceName = m.workspaces[wsID-1].Name
+	return WorkspaceMemberChange{Status: MemberChangeInvited, Invitation: &out}, nil
+}
+
+func (m *Memory) pendingInvitationsLocked(wsID int64) []WorkspaceInvitation {
+	out := make([]WorkspaceInvitation, 0)
+	for _, inv := range m.org.invitations {
+		if inv.WorkspaceID == wsID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (m *Memory) RevokeInvitationGuarded(ctx context.Context, guard RestoreGuard, wsID, invitationID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.checkWorkspaceAdminLocked(ctx, guard, wsID)
+	if err != nil {
+		return err
+	}
+	inv, ok := m.org.invitations[invitationID]
+	if !ok || inv.WorkspaceID != wsID {
+		return ErrNotFound
+	}
+	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+		return err
+	}
+	delete(m.org.invitations, invitationID)
+	return nil
+}
+
+func (m *Memory) ListMyInvitations(ctx context.Context, guard RestoreGuard) ([]WorkspaceInvitation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.driveSessionLocked(ctx, guard)
+	if err != nil {
+		return nil, err
+	}
+	u := m.userByID(guard.UserID)
+	if u == nil {
+		return nil, ErrUnauthenticated
+	}
+	out := make([]WorkspaceInvitation, 0)
+	for _, inv := range m.org.invitations {
+		if strings.EqualFold(inv.Email, u.Email) {
+			inv.WorkspaceName = m.wsName(inv.WorkspaceID)
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *Memory) RespondInvitationGuarded(ctx context.Context, guard RestoreGuard, invitationID int64, accept bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.driveSessionLocked(ctx, guard)
+	if err != nil {
+		return err
+	}
+	u := m.userByID(guard.UserID)
+	inv, ok := m.org.invitations[invitationID]
+	// Another account's invitation is indistinguishable from a missing one.
+	if u == nil || !ok || !strings.EqualFold(inv.Email, u.Email) {
+		return ErrNotFound
+	}
+	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+		return err
+	}
+	delete(m.org.invitations, invitationID)
+	if !accept || m.member(u.ID, inv.WorkspaceID) {
+		return nil
+	}
+	m.members[u.ID] = append(m.members[u.ID], inv.WorkspaceID)
 	if m.workspaceRoles == nil {
 		m.workspaceRoles = map[[2]int64]string{}
 	}
-	m.workspaceRoles[[2]int64{wsID, target.ID}] = role
-	return WorkspaceMemberInfo{
-		UserID:    target.ID,
-		Email:     target.Email,
-		Name:      target.Name,
-		Role:      role,
-		CreatedAt: target.CreatedAt,
-	}, nil
+	m.workspaceRoles[[2]int64{inv.WorkspaceID, u.ID}] = inv.Role
+	return nil
 }
 
 func (m *Memory) CreateDepartmentGuarded(ctx context.Context, guard RestoreGuard, wsID int64, parentID *int64, rawName string, sortOrder int) (OrgDepartment, error) {
@@ -688,7 +809,14 @@ func (m *Memory) SetNodeInheritParentACLGuarded(ctx context.Context, guard Resto
 	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
 		return err
 	}
+	prevNoInherit := d.noInheritParentACL
 	d.noInheritParentACL = !inherit
+	if !inherit && m.roleLocked(guard.UserID, d) != RoleManage {
+		// A manager whose access came only from an ancestor grant would
+		// otherwise lock themselves out.
+		d.noInheritParentACL = prevNoInherit
+		return ErrWouldLoseAccess
+	}
 	d.meta.InheritParentACL = inherit
 	for _, node := range subtree {
 		node.meta.PermissionsRevision++

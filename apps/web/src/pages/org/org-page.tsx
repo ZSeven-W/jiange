@@ -76,15 +76,15 @@ export function OrgPage({ me }: { me: Me }) {
     return map;
   }, [departments]);
 
-  const runMutation = async (fn: () => Promise<void>, successMessage: string) => {
+  const runMutation = async (fn: () => Promise<void | string>, successMessage: string) => {
     if (busy || !effectiveWsId) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      await fn();
+      const override = await fn();
       await qc.invalidateQueries({ queryKey });
-      setNotice(successMessage);
+      setNotice(override || successMessage);
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
       else if (e instanceof Error) setError(e.message);
@@ -526,8 +526,9 @@ export function OrgPage({ me }: { me: Me }) {
                     e.preventDefault();
                     if (!inviteEmail.trim()) return;
                     void runMutation(async () => {
-                      await orgApi.upsertMember(effectiveWsId, me.user.id, inviteEmail.trim(), inviteRole);
+                      const change = await orgApi.upsertMember(effectiveWsId, me.user.id, inviteEmail.trim(), inviteRole);
                       setInviteEmail("");
+                      return change?.status === "invited" ? t("已发送邀请，对方接受后加入空间") : t("成员角色已更新");
                     }, t("已更新空间成员"));
                   }}
                 >
@@ -535,7 +536,7 @@ export function OrgPage({ me }: { me: Me }) {
                     type="email"
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder={t("输入已注册用户的邮箱加入当前企业空间")}
+                    placeholder={t("输入邮箱邀请加入当前企业空间")}
                     className="h-9 min-w-52 flex-1 rounded-md border px-3 text-[14px]"
                   />
                   <select
@@ -595,6 +596,29 @@ export function OrgPage({ me }: { me: Me }) {
                   </div>
                 ))}
               </div>
+              {canAdmin && (data.invitations?.length ?? 0) > 0 && (
+                <div className="mt-5" data-org-invitations>
+                  <p className="mb-2 text-[12px] font-medium text-subtle">{t("待接受的邀请")}</p>
+                  <div className="space-y-2">
+                    {data.invitations!.map((inv) => (
+                      <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed px-3 py-2" data-org-invitation>
+                        <div className="min-w-0">
+                          <p className="truncate text-[14px]">{inv.email}</p>
+                          <p className="truncate text-[12px] text-subtle">{t(WS_ROLE_LABELS[inv.role] ?? "普通成员")} · {t("等待对方接受")}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void runMutation(() => orgApi.revokeInvitation(effectiveWsId, inv.id, me.user.id), t("已撤销邀请"))}
+                          className="h-8 rounded-md border px-2.5 text-[12px] text-muted-foreground hover:bg-hover"
+                        >
+                          {t("撤销邀请")}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </div>

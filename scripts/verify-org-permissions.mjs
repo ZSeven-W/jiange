@@ -107,7 +107,16 @@ const registerAccount = async (email, name) => {
     body: JSON.stringify({ email, name, password: "password123" }),
   });
   if (!res.ok) throw new Error(`Register ${email} failed: ${res.status}`);
-  return res.json();
+  const cookie = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  return { me: await res.json(), cookie };
+};
+
+// Joining requires consent: the invitee accepts their pending invitation.
+const acceptInvitation = async (account) => {
+  const list = await (await fetch(`${app}/api/invitations`, { headers: { Cookie: account.cookie } })).json();
+  if (list.invitations?.length !== 1) throw new Error(`Expected 1 invitation, got ${JSON.stringify(list)}`);
+  const res = await fetch(`${app}/api/invitations/${list.invitations[0].id}/accept`, { method: "POST", headers: { Cookie: account.cookie } });
+  if (res.status !== 204) throw new Error(`Accept failed: ${res.status}`);
 };
 
 await send("Page.enable");
@@ -120,8 +129,8 @@ const suffix = Date.now();
 const ownerEmail = `org-owner-${suffix}@example.test`;
 const aliceEmail = `org-alice-${suffix}@example.test`;
 const bobEmail = `org-bob-${suffix}@example.test`;
-await registerAccount(aliceEmail, "Alice Dev");
-await registerAccount(bobEmail, "Bob Mkt");
+const aliceAccount = await registerAccount(aliceEmail, "Alice Dev");
+const bobAccount = await registerAccount(bobEmail, "Bob Mkt");
 
 await run(`(() => {
   const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('免费注册') || b.textContent.includes('注册'));
@@ -155,8 +164,16 @@ await wait(`!!document.querySelector('[data-org-page] input[type="email"]')`);
 for (const email of [aliceEmail, bobEmail]) {
   await setInput('[data-org-page] input[type="email"]', email);
   await run(`document.querySelector('[data-org-page] form button[type="submit"]').click()`);
-  await wait(`document.body.innerText.includes(${JSON.stringify(email)})`);
+  await wait(`document.body.innerText.includes('已发送邀请') && [...document.querySelectorAll('[data-org-invitation]')].some((el) => el.textContent.includes(${JSON.stringify(email)}))`);
 }
+await screenshot("org-invitations-desktop.png");
+await acceptInvitation(aliceAccount);
+await acceptInvitation(bobAccount);
+// Reload so the owner's org snapshot shows Alice and Bob as members.
+await send("Page.reload");
+await wait(`!!document.querySelector('[data-org-tab="members"]') && !document.body.innerText.includes('正在加载组织架构')`);
+await run(`document.querySelector('[data-org-tab="members"]').click()`);
+await wait(`document.body.innerText.includes('Alice Dev') && document.body.innerText.includes('Bob Mkt') && !document.querySelector('[data-org-invitation]')`);
 
 // Create department hierarchy: 研发中心 -> 前端组 (Alice leader) and 市场部 (Bob)
 await run(`document.querySelector('[data-org-tab="departments"]').click()`);

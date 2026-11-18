@@ -15,6 +15,9 @@ var (
 	ErrForbidden       = errors.New("store: forbidden")
 	ErrUnauthenticated = errors.New("store: session expired")
 	ErrCopyProtected   = errors.New("store: copying prohibited")
+	// ErrWouldLoseAccess rejects a permission change that would remove the
+	// caller's own manage access (e.g. turning off inherited grants).
+	ErrWouldLoseAccess = errors.New("store: change would remove caller's manage access")
 )
 
 type User struct {

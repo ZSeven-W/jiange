@@ -50,12 +50,65 @@ func exerciseOrgPermissions(t *testing.T, st store.Store) {
 		t.Fatalf("outsider GetWorkspaceOrg = %v, want ErrForbidden", err)
 	}
 
-	// Owner invites Alice and Bob as regular members.
-	if _, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, alice.Email, store.WorkspaceRoleMember); err != nil {
+	// Owner invites Alice and Bob; joining requires their consent.
+	invite := func(u store.User) int64 {
+		change, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, u.Email, store.WorkspaceRoleMember)
+		if err != nil || change.Status != store.MemberChangeInvited || change.Invitation == nil || change.Member != nil {
+			t.Fatalf("invite %s = %+v err=%v", u.Email, change, err)
+		}
+		return change.Invitation.ID
+	}
+	aliceInvite, bobInvite := invite(alice), invite(bob)
+	if _, err := st.GetWorkspaceOrg(ctx, aliceGuard, ws.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("invitee joined before accepting: %v", err)
+	}
+	// Unregistered email: identical outcome, nothing reveals account existence.
+	ghost, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, "  Ghost@Example.Test ", store.WorkspaceRoleAdmin)
+	if err != nil || ghost.Status != store.MemberChangeInvited || ghost.Invitation == nil || ghost.Invitation.Email != "ghost@example.test" {
+		t.Fatalf("unregistered invite = %+v err=%v", ghost, err)
+	}
+	if err := st.RespondInvitationGuarded(ctx, bobGuard, aliceInvite, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("bob accepting alice's invitation = %v, want ErrNotFound", err)
+	}
+	mine, err := st.ListMyInvitations(ctx, aliceGuard)
+	if err != nil || len(mine) != 1 || mine[0].ID != aliceInvite || mine[0].WorkspaceName == "" {
+		t.Fatalf("alice invitations = %+v err=%v", mine, err)
+	}
+	// Declining consumes the invitation without joining; a re-invite works.
+	if err := st.RespondInvitationGuarded(ctx, bobGuard, bobInvite, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, bob.Email, store.WorkspaceRoleMember); err != nil {
+	if _, err := st.GetWorkspaceOrg(ctx, bobGuard, ws.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("declined invitee joined: %v", err)
+	}
+	bobInvite = invite(bob)
+	for _, tc := range []struct {
+		g  store.RestoreGuard
+		id int64
+	}{{aliceGuard, aliceInvite}, {bobGuard, bobInvite}} {
+		if err := st.RespondInvitationGuarded(ctx, tc.g, tc.id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.RespondInvitationGuarded(ctx, aliceGuard, aliceInvite, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("reusing consumed invitation = %v, want ErrNotFound", err)
+	}
+	ownerSnap, err := st.GetWorkspaceOrg(ctx, ownerGuard, ws.ID)
+	if err != nil || len(ownerSnap.Members) != 3 || len(ownerSnap.Invitations) != 1 || ownerSnap.Invitations[0].ID != ghost.Invitation.ID {
+		t.Fatalf("owner snapshot after accept = %+v err=%v", ownerSnap, err)
+	}
+	if aliceSnap, err := st.GetWorkspaceOrg(ctx, aliceGuard, ws.ID); err != nil || len(aliceSnap.Invitations) != 0 {
+		t.Fatalf("member must not see pending invitations: %+v err=%v", aliceSnap.Invitations, err)
+	}
+	if err := st.RevokeInvitationGuarded(ctx, aliceGuard, ws.ID, ghost.Invitation.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("member revoke = %v, want ErrForbidden", err)
+	}
+	if err := st.RevokeInvitationGuarded(ctx, ownerGuard, ws.ID, ghost.Invitation.ID); err != nil {
 		t.Fatal(err)
+	}
+	// Existing member: same call changes the role directly.
+	if change, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, alice.Email, store.WorkspaceRoleMember); err != nil || change.Status != store.MemberChangeUpdated || change.Member == nil || change.Member.UserID != alice.ID {
+		t.Fatalf("role update for member = %+v err=%v", change, err)
 	}
 	// Regular member cannot mutate org structure.
 	if _, err := st.CreateDepartmentGuarded(ctx, aliceGuard, ws.ID, nil, "Denied", 0); !errors.Is(err, store.ErrForbidden) {
@@ -253,6 +306,24 @@ func exerciseOrgPermissions(t *testing.T, st store.Store) {
 	}
 	if err := st.PatchManagedDocGuarded(ctx, bobGuard, bobPage.ID, store.ManagedDocPatch{Move: true, ParentID: &restrictedPage.ID}); err != nil {
 		t.Fatalf("edit grantee move into restricted page: %v", err)
+	}
+	// A manager whose manage comes only from an ancestor grant cannot turn off
+	// inheritance on a child (they would lock themselves out); state is kept.
+	inheritedChild, err := st.CreateDoc(ctx, ws.ID, owner.ID, &restrictedPage.ID, "继承页", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSubjectShareGuarded(ctx, ownerGuard, restrictedPage.ID, store.SubjectTypeGroup, grp.ID, store.RoleManage); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNodeInheritParentACLGuarded(ctx, bobGuard, inheritedChild.ID, false); !errors.Is(err, store.ErrWouldLoseAccess) {
+		t.Fatalf("self-lockout inheritance toggle = %v, want ErrWouldLoseAccess", err)
+	}
+	if d, err := st.GetDoc(ctx, bob.ID, inheritedChild.ID); err != nil || d.Role != store.RoleManage || !d.InheritParentACL {
+		t.Fatalf("after rejected toggle bob = %+v err=%v, want manage + inheriting", d, err)
+	}
+	if err := st.SetNodeInheritParentACLGuarded(ctx, ownerGuard, inheritedChild.ID, false); err != nil {
+		t.Fatalf("owner may still turn off inheritance: %v", err)
 	}
 
 	// Move openDoc INTO secretFolder -> Bob's role drops from default edit to group view & permissionsRevision bumps.

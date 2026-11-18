@@ -75,21 +75,86 @@ func (s *Server) upsertWorkspaceMember(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	email := strings.TrimSpace(in.Email)
-	if email == "" || (in.Role != store.WorkspaceRoleMember && in.Role != store.WorkspaceRoleAdmin && in.Role != "remove") {
+	email, valid := store.NormalizeInviteEmail(in.Email)
+	if !valid || (in.Role != store.WorkspaceRoleMember && in.Role != store.WorkspaceRoleAdmin && in.Role != "remove") {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "请填写有效邮箱和成员角色")
 		return
 	}
-	member, err := s.Store.UpsertWorkspaceMemberGuarded(r.Context(), guard, wsID, email, in.Role)
+	change, err := s.Store.UpsertWorkspaceMemberGuarded(r.Context(), guard, wsID, email, in.Role)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) && in.Role != "remove" {
+			httpx.Error(w, http.StatusConflict, "invitation_limit", "待接受的邀请过多，请先撤销部分邀请")
+			return
+		}
+		s.orgError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, change)
+}
+
+func (s *Server) revokeWorkspaceInvitation(w http.ResponseWriter, r *http.Request) {
+	wsID, ok := s.parsePositivePathID(w, r, "wsId")
+	if !ok {
+		return
+	}
+	inviteID, ok := s.parsePositivePathID(w, r, "inviteId")
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	if err := s.Store.RevokeInvitationGuarded(r.Context(), guard, wsID, inviteID); err != nil {
+		s.orgError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listMyInvitations(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	invites, err := s.Store.ListMyInvitations(r.Context(), guard)
 	if err != nil {
 		s.orgError(w, r, err)
 		return
 	}
-	if in.Role == "remove" {
+	httpx.JSON(w, http.StatusOK, map[string]any{"invitations": invites})
+}
+
+func (s *Server) respondInvitation(accept bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		inviteID, ok := s.parsePositivePathID(w, r, "inviteId")
+		if !ok {
+			return
+		}
+		guard, ok := s.driveGuard(w, r)
+		if !ok {
+			return
+		}
+		if !driveExpectedUser(w, r, guard.UserID) {
+			return
+		}
+		if err := s.Store.RespondInvitationGuarded(r.Context(), guard, inviteID, accept); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				httpx.Error(w, http.StatusNotFound, "not_found", "邀请不存在或已失效")
+				return
+			}
+			s.orgError(w, r, err)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
-		return
 	}
-	httpx.JSON(w, http.StatusOK, member)
 }
 
 func (s *Server) createDepartment(w http.ResponseWriter, r *http.Request) {

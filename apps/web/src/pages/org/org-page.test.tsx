@@ -33,6 +33,7 @@ describe("OrgPage", () => {
         },
       ],
       groups: [],
+      invitations: [{ id: 5, workspaceId: 10, email: "pending@example.test", role: "member", createdAt: "2026-11-18T00:00:00Z" }],
     };
     qc.setQueryData(["workspace-org", 10, 1], snapshot);
     const html = renderToStaticMarkup(<QueryClientProvider client={qc}><OrgPage me={me} /></QueryClientProvider>);

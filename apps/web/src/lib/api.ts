@@ -455,12 +455,37 @@ export interface WorkspaceOrgSnapshot {
   members: WorkspaceMemberInfo[];
   departments: OrgDepartment[];
   groups: OrgGroup[];
+  /** Pending invitations; empty unless the caller is an owner/admin. */
+  invitations?: WorkspaceInvitation[];
 }
+export interface WorkspaceInvitation {
+  id: number;
+  workspaceId: number;
+  workspaceName?: string;
+  email: string;
+  role: "member" | "admin";
+  inviterName?: string;
+  createdAt: string;
+}
+/** A non-member email always yields "invited", whether or not it is registered. */
+export interface WorkspaceMemberChange {
+  status: "updated" | "invited" | "removed";
+  member?: WorkspaceMemberInfo;
+  invitation?: WorkspaceInvitation;
+}
+export const invitationsApi = {
+  mine: (userId: number) =>
+    request<{ invitations: WorkspaceInvitation[] }>("GET", "/api/invitations", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.invitations ?? []),
+  respond: (invitationId: number, userId: number, accept: boolean) =>
+    request<void>("POST", `/api/invitations/${invitationId}/${accept ? "accept" : "decline"}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
 export const orgApi = {
   get: (wsId: number, userId: number) =>
     request<WorkspaceOrgSnapshot>("GET", `/api/workspaces/${wsId}/org`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   upsertMember: (wsId: number, userId: number, email: string, role: "member" | "admin" | "remove") =>
-    request<WorkspaceMemberInfo | undefined>("POST", `/api/workspaces/${wsId}/members`, { email, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+    request<WorkspaceMemberChange>("POST", `/api/workspaces/${wsId}/members`, { email, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  revokeInvitation: (wsId: number, invitationId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/invitations/${invitationId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   createDepartment: (wsId: number, userId: number, name: string, parentId: number | null = null, sortOrder = 0) =>
     request<OrgDepartment>("POST", `/api/workspaces/${wsId}/departments`, { name, parentId, sortOrder }, undefined, { "X-Jiange-User-Id": String(userId) }),
   updateDepartment: (wsId: number, deptId: number, userId: number, patch: { name?: string; parentId?: number | null; sortOrder?: number }) =>
