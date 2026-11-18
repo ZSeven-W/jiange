@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useId, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, commentsApi, docsApi, type DocMeta, type Role, type ShareInfo } from "@/lib/api";
+import { ApiError, commentsApi, docsApi, orgApi, type DocMeta, type Role, type ShareInfo } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { Avatar } from "@/components/brand";
 import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/feishu-icons";
-import { Check, QrCode, X } from "lucide-react";
+import { Check, FolderTree, QrCode, Users, X } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "@/components/share-link";
 import { invitationConflict, inviteCandidates } from "@/components/share-invite";
@@ -19,6 +19,8 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   const info = useQuery({ queryKey: key, queryFn: () => docsApi.sharesForAccount(meta.id, userId), refetchOnMount: "always", refetchOnWindowFocus: true, refetchInterval: 15000 });
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("edit");
+  const [inviteMode, setInviteMode] = useState<"user" | "subject">("user");
+  const [subjectPick, setSubjectPick] = useState("");
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -76,8 +78,28 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const memberKey = ["share-member-suggestions", meta.id];
   const directory = useQuery({ queryKey: memberKey, queryFn: () => commentsApi.members(meta.id), enabled: manage && !info.isFetching && suggestOpen && !!email.trim(), refetchOnMount: "always", refetchOnWindowFocus: true, gcTime: 0 });
+  const workspaceId = info.data?.workspaceId ?? meta.workspaceId;
+  const orgKey = ["share-org-subjects", workspaceId, userId];
+  const orgDirectory = useQuery({ queryKey: orgKey, queryFn: () => orgApi.get(workspaceId, userId), enabled: manage && !info.isFetching && inviteMode === "subject" && workspaceId > 0, refetchOnMount: "always", gcTime: 0 });
   useEffect(() => () => { qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); qc.removeQueries({ queryKey: ["share-settings", meta.id], exact: true }); qc.removeQueries({ queryKey: ["shares", meta.id, userId], exact: true }); }, [qc, meta.id, userId]);
   useEffect(() => { if (!manage) qc.removeQueries({ queryKey: ["share-member-suggestions", meta.id], exact: true }); }, [manage, qc, meta.id]);
+  const subjects = info.data?.subjects ?? [];
+  const grantedSubjectKeys = new Set(subjects.map((s) => `${s.subjectType}:${s.subjectId}`));
+  const subjectOptions = [
+    ...(orgDirectory.data?.departments ?? []).filter((d) => !grantedSubjectKeys.has(`department:${d.id}`)).map((d) => ({
+      value: `department:${d.id}`,
+      subjectType: "department" as const,
+      subjectId: d.id,
+      label: `${t("部门")} · ${d.name}${t("（含下级）")}`,
+    })),
+    ...(orgDirectory.data?.groups ?? []).filter((g) => !grantedSubjectKeys.has(`group:${g.id}`)).map((g) => ({
+      value: `group:${g.id}`,
+      subjectType: "group" as const,
+      subjectId: g.id,
+      label: `${t("用户组")} · ${g.name}`,
+    })),
+  ];
+  const selectedSubject = subjectOptions.find((opt) => opt.value === subjectPick) ?? subjectOptions[0];
   const candidates = !directory.isFetching && !directory.isError && manage && !info.isFetching && suggestOpen && email.trim()
     ? inviteCandidates(email, directory.data ?? [], info.data!, meta.creatorId) : [];
   const selectCandidate = (address: string) => { setEmail(address); setSuggestOpen(false); setSuggestIndex(-1); emailRef.current?.focus(); };
@@ -174,6 +196,7 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
           enabled={!!settingsReady}
           error={settingsMessage}
           backRef={settingsBackRef}
+          showComment={meta.kind !== "sheet"}
           onBack={() => { restoreSettingsFocus.current = true; setShowSettings(false); setSettingsError(""); }}
           onChange={(permissionKey, next) => {
             if (!settingsReady || !permissions) return;
@@ -183,7 +206,7 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
           }}
         /> : <>
         <header className="flex h-[45px] items-center justify-between px-4">
-          <h2 id="share-title" className="flex items-center gap-1 text-[16px] font-semibold">分享{meta.kind === "base" ? t("多维表格") : meta.kind === "slides" ? t("幻灯片") : meta.kind === "file" ? t("文件") : t("文档")}<HelpIcon className="size-[13px] text-muted-foreground" /></h2>
+          <h2 id="share-title" className="flex items-center gap-1 text-[16px] font-semibold">分享{meta.kind === "base" ? t("多维表格") : meta.kind === "sheet" ? t("表格") : meta.kind === "slides" ? t("幻灯片") : meta.kind === "file" ? t("文件") : t("文档")}<HelpIcon className="size-[13px] text-muted-foreground" /></h2>
           <div className="flex items-center gap-1">{meta.kind === "base" || meta.kind === "slides" || meta.kind === "file" ? <button type="button" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover" title={t("查看协作者及权限")}><SettingIcon className="size-[14px]" />{t("协作者")}</button> : manage && <button ref={settingsButtonRef} type="button" aria-disabled={busy || info.isFetching} onClick={() => { if (busy || info.isFetching) return; setSettingsError(""); setShowSettings(true); }} className="flex h-7 items-center gap-1 rounded-md px-1 text-[13px] text-muted-foreground hover:bg-hover aria-disabled:opacity-50"><SettingIcon className="size-[14px]" />{t("权限设置")}</button>}<button type="button" onClick={onClose} aria-label={t("关闭分享")} className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover sm:sr-only sm:focus:not-sr-only"><X size={15}/></button></div>
         </header>
         {info.isPending && <p className="px-4 py-2 text-[13px] text-subtle">{t("正在加载分享设置…")}</p>}
@@ -191,13 +214,47 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
         {info.data && !info.isError && <>
           <div className="flex h-[54px] items-center justify-between px-4">
             <span className="font-medium">{t("邀请协作者")}</span>
-            <button type="button" className="flex items-center gap-1 rounded-md px-1 py-1 hover:bg-hover" onClick={() => setShowMembers((v) => !v)} aria-label={t("查看协作者")} aria-expanded={showMembers}><Avatar name={meta.creatorName} color={colorFor(meta.creatorId - 1)} size={26} /><ArrowRightIcon className={`size-3 text-subtle transition-transform ${showMembers ? "rotate-90" : ""}`} /></button>
+            <button type="button" className="flex items-center gap-1 rounded-md px-1 py-1 hover:bg-hover" onClick={() => setShowMembers((v) => !v)} aria-label={t("查看协作者")} aria-expanded={showMembers}>
+              {info.data.members.length + subjects.length > 0 && <span className="rounded-full bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">+{info.data.members.length + subjects.length}</span>}
+              <Avatar name={meta.creatorName} color={colorFor(meta.creatorId - 1)} size={26} />
+              <ArrowRightIcon className={`size-3 text-subtle transition-transform ${showMembers ? "rotate-90" : ""}`} />
+            </button>
           </div>
-          {showMembers && <div className="mx-4 mb-3 max-h-44 space-y-3 overflow-y-auto rounded-md bg-sidebar/60 p-3">
+          {showMembers && <div className="mx-4 mb-3 max-h-48 space-y-3 overflow-y-auto rounded-md bg-sidebar/60 p-3">
             <div className="flex items-center gap-2"><Avatar name={meta.creatorName} color={colorFor(meta.creatorId - 1)} size={28}/><span className="min-w-0 flex-1 truncate">{meta.creatorName}</span><span className="text-[13px] text-muted-foreground">{t("所有者")}</span></div>
+            {subjects.map((s) => (
+              <div key={`${s.subjectType}:${s.subjectId}`} data-share-subject-row={`${s.subjectType}:${s.subjectId}`} className="flex items-center gap-2">
+                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                  {s.subjectType === "department" ? <FolderTree size={14} /> : <Users size={14} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{s.name}</span>
+                  <span className="block truncate text-[11px] text-subtle">{s.subjectType === "department" ? t("部门 · 含下级") : t("用户组")}</span>
+                </span>
+                {manage ? (
+                  <RoleSelect
+                    label={t("{name}的权限", { name: s.name })}
+                    value={s.role}
+                    options={["view", "edit", "manage", "remove"]}
+                    disabled={busy || info.isFetching}
+                    onChange={(r) => {
+                      void update(async () => {
+                        await docsApi.setSubjectShare(meta.id, s.subjectType, s.subjectId, r === "remove" ? "" : r as Role, userId);
+                      }, "invite");
+                    }}
+                  />
+                ) : (
+                  <span className="text-[13px] text-muted-foreground">{t(ROLE_LABEL[s.role])}</span>
+                )}
+              </div>
+            ))}
             {info.data.members.map((m) => <div key={m.userId} className="flex items-center gap-2"><Avatar name={m.name} color={colorFor(m.userId - 1)} size={28}/><span className="min-w-0 flex-1 truncate">{m.name}</span>{manage ? <RoleSelect label={t("{name}的权限", { name: m.name })} value={m.role} options={["view", "edit", "manage", "remove"]} disabled={busy || info.isFetching} onChange={(r) => { void update(async () => { await docsApi.share(meta.id, m.email, r === "remove" ? "" : r as Role); }, "invite"); }} /> : <span className="text-[13px] text-muted-foreground">{t(ROLE_LABEL[m.role])}</span>}</div>)}
           </div>}
-          {manage && <form className="relative mx-4 flex h-9 items-center rounded-md border border-input focus-within:border-primary" onSubmit={(e) => { e.preventDefault(); if (email.trim()) { setSuggestOpen(false); void inviteNew(email.trim()); } }}>
+          {manage && <div className="mx-4 mb-2 flex items-center gap-1 text-[12px]">
+            <button type="button" data-share-target-mode="user" onClick={() => setInviteMode("user")} className={`rounded-md px-2.5 py-1 ${inviteMode === "user" ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-hover"}`}>{t("按用户")}</button>
+            <button type="button" data-share-target-mode="subject" onClick={() => setInviteMode("subject")} className={`rounded-md px-2.5 py-1 ${inviteMode === "subject" ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-hover"}`}>{t("按部门或用户组")}</button>
+          </div>}
+          {manage && inviteMode === "user" && <form className="relative mx-4 flex h-9 items-center rounded-md border border-input focus-within:border-primary" onSubmit={(e) => { e.preventDefault(); if (email.trim()) { setSuggestOpen(false); void inviteNew(email.trim()); } }}>
             <input ref={emailRef} aria-label={t("搜索协作者姓名或邮箱")} role="combobox" disabled={busy} aria-autocomplete="list" aria-expanded={candidates.length > 0} aria-controls={listId} aria-activedescendant={suggestIndex >= 0 && candidates[suggestIndex] ? `${listId}-${candidates[suggestIndex].id}` : undefined} value={email} onFocus={() => setSuggestOpen(true)} onBlur={() => setSuggestOpen(false)} onChange={(e) => { setEmail(e.target.value); setSuggestOpen(true); setSuggestIndex(-1); }} onKeyDown={(e) => {
               if (e.key === "ArrowDown" && candidates.length) { e.preventDefault(); setSuggestIndex((i) => (i + 1) % candidates.length); }
               if (e.key === "ArrowUp" && candidates.length) { e.preventDefault(); setSuggestIndex((i) => (i <= 0 ? candidates.length - 1 : i - 1)); }
@@ -208,12 +265,65 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
             {email.trim() && <RoleSelect label={t("邀请权限")} disabled={busy} value={role} options={["view", "edit", "manage"]} onChange={(r) => setRole(r as Role)} />}
             <button type="submit" disabled={!email.trim() || busy} aria-label={t("邀请协作者")} className="grid h-full w-9 shrink-0 place-items-center border-l text-muted-foreground hover:bg-hover disabled:opacity-45"><AddIcon className="size-4"/></button>
           </form>}
+          {manage && inviteMode === "subject" && <form className="mx-4 flex h-9 items-center rounded-md border border-input focus-within:border-primary" onSubmit={(e) => {
+            e.preventDefault();
+            if (!selectedSubject) return;
+            void update(async () => {
+              await docsApi.setSubjectShare(meta.id, selectedSubject.subjectType, selectedSubject.subjectId, role, userId);
+              setSubjectPick("");
+              setShowMembers(true);
+            }, "invite");
+          }}>
+            <select
+              aria-label={t("选择部门或用户组")}
+              disabled={busy || orgDirectory.isFetching || subjectOptions.length === 0}
+              value={selectedSubject?.value ?? ""}
+              onChange={(e) => setSubjectPick(e.target.value)}
+              className="h-full min-w-0 flex-1 bg-transparent px-3 text-[13px] outline-none disabled:opacity-60"
+            >
+              {orgDirectory.isPending ? (
+                <option value="">{t("正在加载组织架构…")}</option>
+              ) : subjectOptions.length === 0 ? (
+                <option value="">{t("暂无可添加的部门或用户组")}</option>
+              ) : (
+                subjectOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)
+              )}
+            </select>
+            {selectedSubject && <RoleSelect label={t("邀请权限")} disabled={busy} value={role} options={["view", "edit", "manage"]} onChange={(r) => setRole(r as Role)} />}
+            <button type="submit" disabled={!selectedSubject || busy} aria-label={t("添加部门或用户组")} className="grid h-full w-9 shrink-0 place-items-center border-l text-muted-foreground hover:bg-hover disabled:opacity-45"><AddIcon className="size-4"/></button>
+          </form>}
+          {typeof info.data.inheritParentAcl === "boolean" && (
+            <div data-share-inherit-section className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-md border bg-sidebar/40 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium">{t("继承上级权限")}</p>
+                <p className="text-[11px] leading-4 text-subtle">
+                  {info.data.inheritParentAcl ? t("默认沿用上级文件夹或企业空间权限") : t("关闭后仅创建者、空间管理员及显式授权可访问")}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label={t("继承上级权限")}
+                aria-checked={info.data.inheritParentAcl}
+                data-share-inherit-toggle
+                disabled={!manage || busy || info.isFetching}
+                onClick={() => {
+                  if (!manage || info.data?.inheritParentAcl === undefined) return;
+                  const next = !info.data.inheritParentAcl;
+                  void update(async () => { await docsApi.setInheritance(meta.id, next, userId); }, "invite");
+                }}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${info.data.inheritParentAcl ? "bg-primary" : "bg-black/20 dark:bg-white/25"}`}
+              >
+                <span className={`inline-block size-4 transform rounded-full bg-white shadow transition-transform ${info.data.inheritParentAcl ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+          )}
           {err && <p role="alert" className="px-4 pt-2 text-[12px] text-destructive">{err}</p>}
           <div className="px-4 pb-6 pt-7">
             <p className="mb-4 font-medium">{t("链接分享")}</p>
             <div className="flex items-center gap-3">
               <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#1456f0] text-white"><BuildingIcon className="size-[15px]" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file"} disabled={!linkEditable} onChange={changeLink} /></span><span className="block break-words text-[12px] leading-[18px] text-subtle sm:truncate" title={linkDescription}>{linkDescription}</span></span>
+              <span className="min-w-0 flex-1"><span className="block truncate leading-5"><ShareLinkScopeSelect role={linkRole} allowPublic={meta.kind !== "base" && meta.kind !== "slides" && meta.kind !== "file" && meta.kind !== "sheet"} disabled={!linkEditable} onChange={changeLink} /></span><span className="block break-words text-[12px] leading-[18px] text-subtle sm:truncate" title={linkDescription}>{linkDescription}</span></span>
               <ShareLinkAccessSelect role={linkRole} disabled={!linkEditable} onChange={changeLink} />
             </div>
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}

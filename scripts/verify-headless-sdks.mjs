@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const names = ['collab', 'ooxml', 'whiteboard-sdk', 'doc-sdk', 'slides-sdk', 'sheet-sdk'];
+const rootLicense = readFileSync(join(root, 'LICENSE'), 'utf8');
 const temp = mkdtempSync(join(tmpdir(), 'jiange-sdk-check-'));
 const consumer = join(temp, 'consumer');
 try {
@@ -21,6 +22,9 @@ try {
     execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', destination]);
     if (!existsSync(join(destination, 'dist', 'index.js')) || !existsSync(join(destination, 'dist', 'index.d.ts')) || existsSync(join(destination, 'src'))) throw new Error(`${name}: invalid package contents`);
     if (readdirSync(join(destination, 'dist')).some(file => /[A-Z_]/.test(file))) throw new Error(`${name}: stale or non-kebab build output`);
+    if (!existsSync(join(destination, 'LICENSE')) || readFileSync(join(destination, 'LICENSE'), 'utf8') !== rootLicense) throw new Error(`${name}: missing or mismatched LICENSE in packed archive`);
+    if (JSON.parse(readFileSync(join(destination, 'package.json'), 'utf8')).license !== 'SEE LICENSE IN LICENSE') throw new Error(`${name}: unexpected license metadata in packed package.json`);
+    if (readFileSync(join(destination, 'README.md'), 'utf8').includes('../../LICENSE')) throw new Error(`${name}: README contains parent-escaping LICENSE path`);
   }
   writeFileSync(join(consumer, 'smoke.mjs'), `
 import assert from 'node:assert/strict';

@@ -114,17 +114,21 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	} else if workspaceID == d.WorkspaceID {
 		parentID = d.ParentID
 	}
-		if parentID != nil {
-			parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
-			if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
-				httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
-				return
-			}
-		}
-		if d.Kind == "slides" {
-			s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
+	if parentID != nil {
+		parent, err := s.Store.GetDoc(r.Context(), u.ID, *parentID)
+		if err != nil || parent.WorkspaceID != workspaceID || parent.Kind == "file" {
+			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "目标位置不存在或无权访问")
 			return
 		}
+	}
+	if d.Kind == "slides" {
+		s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
+		return
+	}
+	if d.Kind == "sheet" {
+		s.duplicateSheetWorkbook(w, r, d, u.ID, workspaceID, parentID, title)
+		return
+	}
 
 	src, _, err := StateAtHead(r.Context(), s.Store, d.ID)
 	if err != nil {
@@ -137,7 +141,11 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		base := strings.TrimSpace(src.Text(collab.OpID{Client: 0, Clock: 1}))
 		if base == "" {
-			base = "未命名文档"
+			if d.DocType == store.DocTypeBoard {
+				base = "未命名画板"
+			} else {
+				base = "未命名文档"
+			}
 		}
 		runes := []rune(base)
 		if len(runes) > 197 {
@@ -300,10 +308,57 @@ func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d s
 	}
 }
 
+func (s *Server) duplicateSheetWorkbook(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, title string) {
+	if !driveExpectedUser(w, r, userID) {
+		return
+	}
+	if title == "" {
+		base := strings.TrimSpace(d.Title)
+		if base == "" {
+			base = "未命名表格"
+		}
+		runes := []rune(base)
+		if len(runes) > 96 {
+			base = strings.TrimSpace(string(runes[:96]))
+		}
+		title = base + " 副本"
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	nd, err := s.Store.CopySheetWorkbook(r.Context(), store.SheetWorkbookCopy{
+		SourceID:    d.ID,
+		UserID:      userID,
+		WorkspaceID: workspaceID,
+		ParentID:    parentID,
+		Title:       title,
+		Guard:       &guard,
+	})
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrCopyProtected):
+		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "无权在目标空间创建文档")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "表格不存在或已无权访问")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "copy_conflict", "表格状态已改变，未创建副本，请重试")
+	case err != nil:
+		s.fail(w, r, err)
+	default:
+		nd = s.sanitizeWrittenDocMeta(r.Context(), userID, nd)
+		httpx.JSON(w, http.StatusCreated, nd)
+	}
+}
+
 // Shared immutable object keys avoid copying blobs outside the database
 // transaction. Verify every source object is readable before creating the
 // target; future blob GC must account for all references to an object key.
-func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
+func (s *Server) verifyCopyFiles(ctx context.Context, sourceID int64, ids []int64) error {
+	ctx, cancelAll := context.WithTimeout(ctx, copyFilesTimeout)
 	defer cancelAll()
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {

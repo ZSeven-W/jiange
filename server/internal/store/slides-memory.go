@@ -422,7 +422,7 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 	if c.Guard != nil && !c.Guard.currentTime().Before(expiry) {
 		return DocMeta{}, nil, ErrUnauthenticated
 	}
-	meta := DocMeta{ID: newID, Kind: "slides", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}
+	meta := DocMeta{ID: newID, Kind: "slides", WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}
 	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
 	copied := make([]SlidesPage, 0, len(pages))
 	for _, page := range pages {

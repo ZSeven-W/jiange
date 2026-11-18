@@ -9,9 +9,10 @@ import { ask, askText } from "@/components/ui/ask";
 import { Logo } from "./brand";
 import { Avatar } from "./brand";
 import { colorFor } from "@/lib/presence";
-import { BaseColorIcon, DocColorIcon, DriveNavIcon, SidebarFoldIcon, SlidesColorIcon } from "./feishu-icons";
+import { BaseColorIcon, DocColorIcon, DriveNavIcon, SheetColorIcon, SidebarFoldIcon, SlidesColorIcon, WhiteboardIcon } from "./feishu-icons";
 import { DocumentGlyph } from "./document-glyph";
 import { GlobalSearch } from "./global-search";
+import { WorkspaceInvitations } from "./workspace-invitations";
 import { captureSearchFocus, restoreSearchFocus, type SearchFocus, type SearchFocusGuard } from "./search-focus";
 import { LocaleToggle } from "./locale-toggle";
 import { t, useI18n } from "@/lib/i18n";
@@ -19,7 +20,10 @@ import { browserSidebarStorage } from "@/lib/sidebar-preference";
 import { decodeSidebarSection, readSidebarSection, sidebarSectionKey, writeSidebarSection, type SidebarSection } from "@/lib/sidebar-sections";
 
 export const hrefOf = nodeHref;
-export const docTitle = (d: Pick<DocMeta, "title">) => d.title.trim() || t("未命名文档");
+export function isBoardDoc(d: { kind?: string; docType?: string } | null | undefined): boolean {
+  return (d?.kind ?? "doc") === "doc" && d?.docType === "board";
+}
+export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (d.kind === "sheet" ? t("未命名表格") : isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
 
 export function renameErrorMessage(error: unknown): string {
   if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return t("无法重命名：文档不存在或当前没有编辑权限。");
@@ -30,7 +34,7 @@ export function renameErrorMessage(error: unknown): string {
   return t("无法确认重命名是否完成，请刷新后查看。");
 }
 
-export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, captureSearchGuard }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void; onSearchRegistrar?: (open: (() => void) | null) => void; captureSearchGuard?: () => SearchFocusGuard | null }) {
+export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, captureSearchGuard, onWorkspacesChanged }: { me: Me; route: Route; onLogout: () => void; onCollapse?: () => void; onSearchRegistrar?: (open: (() => void) | null) => void; captureSearchGuard?: () => SearchFocusGuard | null; onWorkspacesChanged?: () => void }) {
   const { t } = useI18n();
   const shortcutModifier = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
   const qc = useQueryClient();
@@ -152,6 +156,15 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       go(`#/doc/${d.id}`);
     },
   });
+  const createSheet = useMutation({
+    mutationFn: () => driveApi.createNode("sheet", t("未命名表格"), null, true),
+    onSuccess: (entry) => {
+      setSection("documents", true);
+      qc.invalidateQueries({ queryKey: ["docs"] });
+      qc.invalidateQueries({ queryKey: ["drive"] });
+      go(`#/sheet/${entry.id}`);
+    },
+  });
   const createBase = useMutation({
     mutationFn: () => baseApi.create(),
     onSuccess: (d) => {
@@ -202,6 +215,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
             depth={depth}
             label={docTitle(d)}
             kind={d.kind}
+            docType={d.docType}
             icon={d.icon}
             muted={!d.title.trim()}
             active={activeId === d.id}
@@ -284,18 +298,22 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         <NavItem icon={<DriveNavIcon className="size-[18px]" />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
+        <NavItem icon={<Building2 size={18} strokeWidth={1.7} />} label={t("组织架构")} active={route.page === "org"} onClick={() => go("#/org")} />
         <NavItem icon={<TrashIcon />} label={t("回收站")} active={route.page === "trash"} onClick={() => go("#/trash")} />
       </nav>
       <div className="mt-6 px-3">
         <button ref={pinnedTrigger} type="button" aria-expanded={pinnedOpen} aria-controls={`${sectionId}-pinned`} onClick={() => setSection("pinned", !pinnedOpen)} className="flex items-center gap-1 rounded px-2 pb-1 text-xs font-medium text-subtle hover:text-foreground"><span>{t("置顶文档")}</span><ChevronRight size={12} className={cn("transition-transform", pinnedOpen && "rotate-90")}/></button>
         <div id={`${sectionId}-pinned`} ref={pinnedBody} hidden={!pinnedOpen} data-pinned-docs>
-          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
+          {(pins.data ?? []).slice(0, 8).map((d) => <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} docType={d.docType} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />)}
           {pins.data?.length === 0 && <p className="px-2 py-1.5 text-xs text-subtle">{t("在文档的「⋯」菜单中选择置顶")}</p>}
         </div>
       </div>
       <div className="group mt-5 flex items-center justify-between px-5 text-xs font-medium text-subtle">
         <button ref={documentsTrigger} type="button" aria-expanded={documentsOpen} aria-controls={`${sectionId}-documents`} onClick={() => setSection("documents", !documentsOpen)} className="flex items-center gap-1 rounded hover:text-foreground"><span>{t("我的文档库")}</span><ChevronRight size={12} className={cn("transition-transform", documentsOpen && "rotate-90")}/></button>
         <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          <button aria-label={t("新建表格")} title={t("新建表格")} onClick={() => createSheet.mutate()} disabled={createSheet.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-sheet>
+            <SheetColorIcon className="size-3.5" />
+          </button>
           <button aria-label={t("新建多维表格")} title={t("新建多维表格")} onClick={() => createBase.mutate()} disabled={createBase.isPending} className="grid size-6 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-50" data-new-base>
             <Table2 size={14} strokeWidth={1.7} />
           </button>
@@ -320,12 +338,13 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           <>
             <div className="px-2 pb-1 pt-4 text-xs text-subtle">{t("与我共享")}</div>
             {shared.data!.map((d) => (
-              <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
+              <NavItem key={d.id} icon={<SidebarNodeIcon kind={d.kind} docType={d.docType} icon={d.icon} />} label={docTitle(d)} active={activeId === d.id} onClick={() => go(hrefOf(d))} />
             ))}
           </>
         )}
         </div>
       </div>
+      <WorkspaceInvitations userId={me.user.id} onJoined={onWorkspacesChanged} />
       <div ref={accountMenu} className="relative border-t px-3 py-2">
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
@@ -393,10 +412,12 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
   </aside>;
 }
 
-function SidebarNodeIcon({ kind, icon }: { kind: DocMeta["kind"]; icon?: string }) {
+function SidebarNodeIcon({ kind, docType, icon }: { kind: DocMeta["kind"]; docType?: string; icon?: string }) {
+  if (kind === "sheet") return <SheetColorIcon className="size-[18px] shrink-0" />;
   if (kind === "base") return <BaseColorIcon className="size-[18px] shrink-0" />;
   if (kind === "slides") return <SlidesColorIcon className="size-[18px] shrink-0" />;
   if (kind === "folder") return <FolderIcon size={18} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
+  if (isBoardDoc({ kind, docType })) return <DocumentGlyph icon={icon} fallback={<WhiteboardIcon className="size-[18px] shrink-0 text-[#34c759]" />} />;
   return <DocumentGlyph icon={icon} fallback={<DocColorIcon className="size-[18px] shrink-0" />} />;
 }
 
@@ -411,6 +432,7 @@ function TreeRow({
   onClick,
   onAdd,
   kind,
+  docType,
   icon,
   starred,
   onStar,
@@ -421,6 +443,7 @@ function TreeRow({
   onDelete,
 }: {
   kind?: DocMeta["kind"];
+  docType?: string;
   icon?: string;
   depth: number;
   label: string;
@@ -475,7 +498,7 @@ function TreeRow({
         title={label}
         className="flex h-9 min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-primary/50"
       >
-        <SidebarNodeIcon kind={kind} icon={icon} />
+        <SidebarNodeIcon kind={kind} docType={docType} icon={icon} />
         <span className="min-w-0 truncate">{label}</span>
       </button>
       <span className="ml-1 hidden items-center gap-0.5 group-hover:flex group-focus-within:flex [@media(hover:none)]:flex">
@@ -613,4 +636,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, Building2, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";

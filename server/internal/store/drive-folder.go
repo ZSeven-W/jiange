@@ -18,6 +18,7 @@ type DriveEntry struct {
 	WorkspaceID      int64     `json:"workspaceId"`
 	ParentID         *int64    `json:"parentId"`
 	Kind             string    `json:"kind"`
+	DocType          string    `json:"docType,omitempty"`
 	Title            string    `json:"title"`
 	Icon             string    `json:"icon,omitempty"`
 	CreatorID        int64     `json:"creatorId"`
@@ -132,7 +133,7 @@ func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, mi
 	return nil
 }
 func driveMemoryEntry(m *Memory, d *memDoc, user int64) DriveEntry {
-	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, CreatorName: d.meta.CreatorName, LastModifierName: d.lastModifier, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, CreatedAt: d.meta.CreatedAt, UpdatedAt: d.meta.UpdatedAt}
+	return DriveEntry{ID: d.meta.ID, WorkspaceID: d.meta.WorkspaceID, ParentID: cloneDriveParent(d.meta.ParentID), Kind: d.meta.Kind, DocType: d.meta.DocType, Title: d.meta.Title, Icon: d.meta.Icon, CreatorID: d.meta.CreatorID, CreatorName: d.meta.CreatorName, LastModifierName: d.lastModifier, Role: m.roleLocked(user, d), Revision: d.driveRevision, Personal: d.personal, CreatedAt: d.meta.CreatedAt, UpdatedAt: d.meta.UpdatedAt}
 }
 
 func cloneDriveParent(parent *int64) *int64 {
@@ -182,7 +183,7 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 		v := *parent
 		pp = &v
 	}
-	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}, driveRevision: 1, personal: personal}
+	d := &memDoc{meta: DocMeta{ID: int64(len(m.d.docs) + 1), WorkspaceID: ws, ParentID: pp, Kind: "folder", Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}, driveRevision: 1, personal: personal}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
 }
@@ -192,10 +193,17 @@ func (m *Memory) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int64
 // drive_revision 1 and, for bases, the same default content as the legacy
 // initialized creation.
 func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string, personal bool) (DriveEntry, error) {
+	return m.CreateDriveNodeWithType(ctx, g, ws, parent, kind, "", title, personal)
+}
+
+func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, docType, title string, personal bool) (DriveEntry, error) {
+	if !ValidDocType(docType) || (docType != "" && kind != "doc") {
+		return DriveEntry{}, ErrConflict
+	}
 	if kind == "folder" {
 		return m.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base" && kind != "slides") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet") || ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
 	}
 	m.mu.Lock()
@@ -229,7 +237,7 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 		pp = &v
 	}
 	id := int64(len(m.d.docs) + 1)
-	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1}
+	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, DocType: docType, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}
 	if kind == "doc" {
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
@@ -272,6 +280,9 @@ func (m *Memory) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, 
 	if kind == "slides" {
 		m.slidesSequence++
 		m.slides = append(m.slides, SlidesPage{ID: m.slidesSequence, SlidesID: id, Pos: 1, Shapes: json.RawMessage(`[]`), Revision: 1, UpdatedAt: now})
+	}
+	if kind == "sheet" {
+		m.initSheetWorkbookLocked(id)
 	}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
@@ -342,6 +353,9 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 		return ErrUnauthenticated
 	}
 	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = m.bumpSubtreePermissionRevisionLocked(id, true); err != nil {
 		return err
 	}
 	d.meta.ParentID = cloneDriveParent(parent)
@@ -453,8 +467,9 @@ func (m *Memory) RestoreDriveNode(ctx context.Context, g RestoreGuard, id, expec
 	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
 		return ErrConflict
 	}
-	// 个人空间节点只有创建者能还原（空间 owner 也不行）
-	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+	// 个人空间节点只有创建者能还原（空间 owner/admin 也不行）
+	wsRole := m.workspaceRoleLocked(d.meta.WorkspaceID, g.UserID)
+	if wsRole == "" || (d.meta.CreatorID != g.UserID && (d.personal || !isWorkspaceAdminRole(wsRole))) {
 		return ErrForbidden
 	}
 	if d.meta.ParentID != nil {
@@ -506,7 +521,8 @@ func (m *Memory) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 	if d == nil || !d.deleted || d.purged || d.driveRevision != expected {
 		return nil, ErrConflict
 	}
-	if !m.member(g.UserID, d.meta.WorkspaceID) || (d.meta.CreatorID != g.UserID && (d.personal || int(d.meta.WorkspaceID) > len(m.workspaces) || m.workspaces[d.meta.WorkspaceID-1].OwnerID != g.UserID)) {
+	wsRole := m.workspaceRoleLocked(d.meta.WorkspaceID, g.UserID)
+	if wsRole == "" || (d.meta.CreatorID != g.UserID && (d.personal || !isWorkspaceAdminRole(wsRole))) {
 		return nil, ErrForbidden
 	}
 	items, err := m.safeDriveSubtreeLocked(d)
@@ -546,6 +562,7 @@ func (m *Memory) PurgeDriveNode(ctx context.Context, g RestoreGuard, id, expecte
 	sort.Strings(freed)
 	for _, item := range items {
 		item.purged = true
+		delete(m.sheets.books, item.meta.ID)
 	}
 	return freed, nil
 }
@@ -703,10 +720,17 @@ func (p *Postgres) CreateDriveFolder(ctx context.Context, g RestoreGuard, ws int
 // insert (drive_revision 1). Bases get the same default content as the legacy
 // initialized creation, published in the same transaction.
 func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, title string, personal bool) (out DriveEntry, err error) {
+	return p.CreateDriveNodeWithType(ctx, g, ws, parent, kind, "", title, personal)
+}
+
+func (p *Postgres) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws int64, parent *int64, kind, docType, title string, personal bool) (out DriveEntry, err error) {
+	if !ValidDocType(docType) || (docType != "" && kind != "doc") {
+		return out, ErrConflict
+	}
 	if kind == "folder" {
 		return p.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base" && kind != "slides") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet") || ws <= 0 || !validDriveTitle(title) {
 		return out, ErrConflict
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
@@ -730,8 +754,8 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 			return e
 		}
 		personal = parent == nil && personal || parent != nil && parentPersonal
-		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,$3,'V',$4,$5,1,$6) RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, ws, parent, kind, title, g.UserID, personal).
-			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
+		if e = tx.QueryRow(ctx, `INSERT INTO nodes(workspace_id,parent_id,kind,doc_type,sort_key,title,creator_id,drive_revision,personal) VALUES($1,$2,$3,$4,'V',$5,$6,1,$7) RETURNING id,workspace_id,parent_id,kind,doc_type,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, ws, parent, kind, docType, title, g.UserID, personal).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		out.Role = RoleManage
@@ -770,6 +794,10 @@ func (p *Postgres) CreateDriveNode(ctx context.Context, g RestoreGuard, ws int64
 			if _, e = tx.Exec(ctx, `INSERT INTO slides_pages (slides_id,pos) VALUES ($1,1)`, out.ID); e != nil {
 				return e
 			}
+		} else if kind == "sheet" {
+			if e = p.initSheetWorkbookPG(ctx, tx, out.ID); e != nil {
+				return e
+			}
 		}
 		return drivePGEnd(ctx, g, exp)
 	})
@@ -792,14 +820,14 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var d DriveEntry
-			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.LastModifierName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
+			if e = rows.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Kind, &d.DocType, &d.Title, &d.Icon, &d.CreatorID, &d.CreatorName, &d.LastModifierName, &d.Role, &d.Revision, &d.Personal, &d.CreatedAt, &d.UpdatedAt); e != nil {
 				return e
 			}
 			out = append(out, d)
@@ -862,6 +890,9 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 			}
 		}
 		if e = drivePGEnd(ctx, g, exp); e != nil {
+			return e
+		}
+		if e = bumpPGSubtreePermissionsRevision(ctx, tx, id, true); e != nil {
 			return e
 		}
 		_, e = tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1`, id, parent)
@@ -1104,8 +1135,8 @@ func (p *Postgres) RenameDriveNode(ctx context.Context, g RestoreGuard, id int64
 		if e = drivePGEnd(ctx, g, exp); e != nil {
 			return e
 		}
-		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, id, title).
-			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
+		if e = tx.QueryRow(ctx, `UPDATE nodes SET title=$2,drive_revision=drive_revision+1,updated_at=now() WHERE id=$1 RETURNING id,workspace_id,parent_id,kind,doc_type,title,icon,creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=nodes.creator_id),''),drive_revision,personal,created_at,updated_at`, id, title).
+			Scan(&out.ID, &out.WorkspaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.Personal, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		if e = recordDocumentModifier(ctx, tx, id, g.UserID); e != nil {

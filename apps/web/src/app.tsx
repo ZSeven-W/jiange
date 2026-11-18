@@ -13,12 +13,14 @@ import { Sidebar } from "@/components/sidebar";
 import { Trash } from "@/pages/trash";
 import { JoinLink } from "@/pages/join-link";
 import { BasePage } from "@/pages/base-page";
+import { SheetPage } from "@/pages/sheet/sheet-page";
 import { PublicForm } from "@/pages/public-form";
 import { PublicDoc } from "@/pages/public-doc";
 import { DrivePage } from "@/pages/drive-page";
 import { SlidesDeck } from "@/pages/slides-page";
 import { DriveFilePage } from "@/pages/drive-file-page";
 import { DriveUploadManager } from "@/pages/drive-upload";
+import { OrgPage } from "@/pages/org/org-page";
 import { DriveUploadStatus } from "@/components/drive-upload-status";
 import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/ai-settings";
@@ -151,7 +153,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   };
   const sidebarClass = docLayout
     ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
-    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" ? "md:hidden" : "md:static md:block"}`;
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
@@ -160,7 +162,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
       <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
-        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} onSearchRegistrar={registerGlobalSearch} captureSearchGuard={captureGlobalSearchGuard} />
+        <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} onSearchRegistrar={registerGlobalSearch} captureSearchGuard={captureGlobalSearchGuard} onWorkspacesChanged={() => { void authClient.invalidateQueries({ queryKey: ["me"], exact: true }); }} />
         <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
@@ -177,6 +179,10 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <DriveFilePage key={route.id} id={route.id} userId={me.user.id} />
       ) : route.page === "slides" ? (
         <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
+      ) : route.page === "sheet" ? (
+        <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
+      ) : route.page === "org" ? (
+        <OrgPage me={me} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (

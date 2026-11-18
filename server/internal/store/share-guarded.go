@@ -293,7 +293,9 @@ func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bo
 		}
 		return RoleView, RoleView, false, nil
 	}
-	if meta.Kind != "doc" || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
+	// Spreadsheets have copy/download policies but no comments yet.
+	policyKind := meta.Kind == "doc" || meta.Kind == "sheet" && patch.CommentMinRole == nil
+	if !policyKind || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
 		return "", "", false, ErrConflict
 	}
 	copyRole, downloadRole := meta.CopyMinRole, meta.DownloadMinRole
@@ -347,7 +349,7 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	}
 	if patch.Move && patch.ParentID != nil {
 		parent := m.doc(*patch.ParentID)
-		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleView) {
+		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleEdit) {
 			return ErrNotFound
 		}
 		seen := map[int64]bool{}
@@ -375,6 +377,9 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 		return err
 	}
 	if patch.Move {
+		if err := m.bumpSubtreePermissionRevisionLocked(docID, false); err != nil {
+			return err
+		}
 		d.meta.ParentID = patch.ParentID
 		d.meta.UpdatedAt = time.Now()
 		m.setDocumentModifierLocked(d, guard.UserID)
@@ -414,7 +419,7 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 				return err
 			}
 			role, _, kind, err := lockCopySource(ctx, tx, *patch.ParentID, guard.UserID)
-			if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleView)) {
+			if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleEdit)) {
 				return ErrNotFound
 			}
 			if err != nil {
@@ -445,6 +450,9 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 		}
 		if patch.Move {
 			if _, err := tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,updated_at=now() WHERE id=$1`, docID, patch.ParentID); err != nil {
+				return err
+			}
+			if err := bumpPGSubtreePermissionsRevision(ctx, tx, docID, false); err != nil {
 				return err
 			}
 		}

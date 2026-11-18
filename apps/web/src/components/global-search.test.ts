@@ -4,7 +4,9 @@ import { SearchOpenGuard, searchKeyboardTarget } from "./global-search-actions";
 
 const docs = [
   { id: 1, title: "文档", kind: "doc" as const, creatorId: 7, workspaceId: 1, parentId: null, icon: "", creatorName: "示例", createdAt: "", updatedAt: "" },
-  { id: 2, title: "表格", kind: "base" as const, creatorId: 8, workspaceId: 1, parentId: null, icon: "", creatorName: "示例", createdAt: "", updatedAt: "" },
+  { id: 2, title: "多维表格", kind: "base" as const, creatorId: 8, workspaceId: 1, parentId: null, icon: "", creatorName: "示例", createdAt: "", updatedAt: "" },
+  { id: 3, title: "架构画板", kind: "doc" as const, docType: "board", creatorId: 7, workspaceId: 1, parentId: null, icon: "", creatorName: "示例", createdAt: "", updatedAt: "" },
+  { id: 4, title: "财务报表", kind: "sheet" as const, creatorId: 7, workspaceId: 1, parentId: null, icon: "", creatorName: "示例", createdAt: "", updatedAt: "" },
 ];
 const ready = { isFetching: false, isPending: false, isError: false, fetchStatus: "idle", data: docs };
 
@@ -24,9 +26,11 @@ describe("global search authorization presentation", () => {
 
   it("filters verified results by type and ownership without changing the source", () => {
     expect(filterGlobalSearch(docs, "doc", "mine", 7).map((d) => d.id)).toEqual([1]);
+    expect(filterGlobalSearch(docs, "board", "mine", 7).map((d) => d.id)).toEqual([3]);
+    expect(filterGlobalSearch(docs, "sheet", "mine", 7).map((d) => d.id)).toEqual([4]);
     expect(filterGlobalSearch(docs, "base", "mine", 7)).toEqual([]);
     expect(filterGlobalSearch(docs, "all", "all", 7)).toEqual(docs);
-    expect(docs).toHaveLength(2);
+    expect(docs).toHaveLength(4);
   });
 });
 

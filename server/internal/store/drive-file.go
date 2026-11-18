@@ -47,7 +47,7 @@ func (m *Memory) CreateDriveFile(ctx context.Context, g RestoreGuard, ws int64, 
 	}
 	now := time.Now()
 	id := int64(len(m.d.docs) + 1)
-	d := &memDoc{meta: DocMeta{ID: id, WorkspaceID: ws, ParentID: cloneDriveParent(parent), Kind: "file", Title: f.Name, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView}, driveRevision: 1, personal: personal}
+	d := &memDoc{meta: DocMeta{ID: id, WorkspaceID: ws, ParentID: cloneDriveParent(parent), Kind: "file", Title: f.Name, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView, InheritParentACL: true}, driveRevision: 1, personal: personal}
 	f.ID = int64(len(m.sh.files) + 1)
 	f.DocID = id
 	f.UploaderID = g.UserID

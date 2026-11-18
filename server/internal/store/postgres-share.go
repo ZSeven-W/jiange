@@ -8,9 +8,12 @@ import (
 )
 
 // roleSQL computes the role of user $1 on node n (aliases m = workspace
-// membership LEFT JOIN, sh.r = best inherited share rank). Personal-scope
+// membership LEFT JOIN, sh.r = best inherited share rank, sh.inherits_ws =
+// whether parent/workspace default inheritance remains unbroken). Personal-scope
 // nodes (我的空间) grant nothing through membership — not even to workspace
-// owners/admins; only the creator and explicit shares apply.
+// owners/admins; only the creator and explicit shares apply. When inheritance is
+// turned off on a non-personal node/subtree, ordinary workspace members lose
+// default edit access; only owners/admins, the creator, and explicit grants apply.
 const roleSQL = `CASE
 	WHEN n.personal THEN CASE
 		WHEN n.creator_id = $1 OR sh.r = 3 THEN 'manage'
@@ -18,26 +21,45 @@ const roleSQL = `CASE
 		WHEN sh.r = 1 THEN 'view'
 		ELSE '' END
 	WHEN m.role IN ('owner','admin') OR (m.user_id IS NOT NULL AND n.creator_id = $1) OR sh.r = 3 THEN 'manage'
-	WHEN m.user_id IS NOT NULL OR sh.r = 2 THEN 'edit'
+	WHEN (m.user_id IS NOT NULL AND COALESCE(sh.inherits_ws, true)) OR sh.r = 2 THEN 'edit'
 	WHEN sh.r = 1 THEN 'view' ELSE '' END`
 
 const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
 	LEFT JOIN LATERAL (
 		WITH RECURSIVE a AS (
-			SELECT n.id, n.parent_id, ARRAY[n.id] AS visited
+			SELECT n.id, n.parent_id, n.inherit_parent_acl, ARRAY[n.id] AS visited
 			UNION ALL
-			SELECT x.id, x.parent_id, a.visited || x.id FROM nodes x JOIN a ON x.id = a.parent_id
+			SELECT x.id, x.parent_id, x.inherit_parent_acl, a.visited || x.id FROM nodes x JOIN a ON a.inherit_parent_acl AND x.id = a.parent_id
 			WHERE NOT x.id = ANY(a.visited)
+		),
+		ud AS (
+			SELECT d0.id, d0.parent_id, ARRAY[d0.id] AS seen
+			FROM org_department_members dm
+			JOIN org_departments d0 ON d0.id = dm.department_id AND d0.workspace_id = n.workspace_id
+			WHERE dm.user_id = $1 AND m.user_id IS NOT NULL
+			UNION ALL
+			SELECT p.id, p.parent_id, ud.seen || p.id
+			FROM org_departments p
+			JOIN ud ON p.id = ud.parent_id
+			WHERE p.workspace_id = n.workspace_id AND NOT p.id = ANY(ud.seen)
 		)
-		SELECT max(grants.rank) AS r FROM (
+		SELECT (SELECT max(grants.rank) FROM (
 			SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
 			FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
+			UNION ALL
+			SELECT CASE ss.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
+			FROM node_subject_shares ss JOIN a ON ss.doc_id = a.id
+			WHERE m.user_id IS NOT NULL AND (
+				(ss.subject_type = 'department' AND EXISTS (SELECT 1 FROM ud WHERE ud.id = ss.subject_id))
+				OR (ss.subject_type = 'group' AND EXISTS (SELECT 1 FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.group_id = ss.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id))
+			)
 			UNION ALL
 			SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'workspace_view' THEN 1 WHEN 'workspace_edit' THEN 2 ELSE 0 END AS rank
 			FROM doc_link_joins j JOIN a ON j.doc_id = a.id JOIN nodes ln ON ln.id = j.doc_id
 			WHERE j.user_id = $1 AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
 			  AND (ln.link_role NOT IN ('workspace_view','workspace_edit') OR EXISTS (SELECT 1 FROM workspace_members lm WHERE lm.workspace_id=ln.workspace_id AND lm.user_id=$1))
-		) grants
+		) grants) AS r,
+		COALESCE((SELECT bool_and(a.inherit_parent_acl) FROM a), true) AS inherits_ws
 	) sh ON true`
 
 func (p *Postgres) ListShares(ctx context.Context, doc int64) ([]Share, error) {
@@ -177,15 +199,29 @@ func (p *Postgres) JoinLink(ctx context.Context, tok string, uid int64) (id int6
 }
 
 func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision FROM nodes n`+roleJoins+`
-		WHERE n.deleted_at IS NULL AND (m.user_id IS NULL OR (n.personal AND n.creator_id <> $1)) AND (`+roleSQL+`) <> '' AND (EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
-		 OR (n.link_role <> 'none' AND EXISTS (SELECT 1 FROM doc_link_joins j WHERE j.doc_id = n.id AND j.user_id = $1)))
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl FROM nodes n`+roleJoins+`
+		WHERE n.deleted_at IS NULL AND (m.user_id IS NULL OR (n.personal AND n.creator_id <> $1)) AND (`+roleSQL+`) <> '' AND (
+		  EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
+		  OR (n.link_role <> 'none' AND EXISTS (SELECT 1 FROM doc_link_joins j WHERE j.doc_id = n.id AND j.user_id = $1))
+		  OR (m.user_id IS NOT NULL AND EXISTS (
+		    SELECT 1 FROM node_subject_shares ss WHERE ss.doc_id = n.id AND (
+		      (ss.subject_type = 'group' AND EXISTS (SELECT 1 FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.group_id = ss.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id))
+		      OR (ss.subject_type = 'department' AND EXISTS (
+		        WITH RECURSIVE dm_up AS (
+		          SELECT d0.id, d0.parent_id, ARRAY[d0.id] AS seen FROM org_department_members dm JOIN org_departments d0 ON d0.id = dm.department_id AND d0.workspace_id = n.workspace_id WHERE dm.user_id = $1
+		          UNION ALL
+		          SELECT p.id, p.parent_id, dm_up.seen || p.id FROM org_departments p JOIN dm_up ON p.id = dm_up.parent_id WHERE p.workspace_id = n.workspace_id AND NOT p.id = ANY(dm_up.seen)
+		        ) SELECT 1 FROM dm_up WHERE dm_up.id = ss.subject_id
+		      ))
+		    )
+		  ))
+		)
 		ORDER BY n.id`, uid)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (d DocMeta, err error) {
-		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision)
+		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL)
 		return
 	})
 }

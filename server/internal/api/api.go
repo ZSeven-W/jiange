@@ -16,6 +16,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
+	"github.com/ZSeven-W/jiange/server/internal/sheetsync"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
@@ -31,10 +32,11 @@ type Server struct {
 	EnableConditionalCancel bool
 	Iterations              int // PBKDF2 iterations; tests lower this
 	Now                     func() time.Time
-	Hub                     *syncsrv.Hub // nil disables /api/sync
-	BtHub                   *btsync.Hub  // nil disables base realtime
-	Blobs                   blob.Store   // nil disables attachments
-	WebUI                   http.Handler // embedded frontend; nil serves nothing at /
+	Hub                     *syncsrv.Hub   // nil disables /api/sync
+	BtHub                   *btsync.Hub    // nil disables base realtime
+	SheetHub                *sheetsync.Hub // nil disables sheet realtime
+	Blobs                   blob.Store     // nil disables attachments
+	WebUI                   http.Handler   // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
 	// AISecret (32 bytes, from JIANGE_SECRET_KEY) encrypts saved AI API keys; nil disables saving.
@@ -78,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/docs/{id}/cover":                            s.putDocCover,
 		"GET /api/docs/{id}/cover/image":                      s.getDocCoverImage,
 		"PUT /api/docs/{id}/shares":                           s.putShare,
+		"PUT /api/docs/{id}/subject-shares":                   s.putSubjectShare,
+		"PUT /api/docs/{id}/inheritance":                      s.putInheritance,
 		"PUT /api/docs/{id}/link":                             s.putLink,
 		"PUT /api/docs/{id}/link-guarded":                     s.putLinkAtRevision,
 		"POST /api/share/{token}":                             s.joinLink,
@@ -222,6 +226,32 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/me/templates":          s.listUserTemplates,
 		"POST /api/me/templates":         s.addUserTemplate,
 		"DELETE /api/me/templates/{tid}": s.deleteUserTemplate,
+
+		// 独立电子表格（Sheet）
+		"GET /api/sheets/{id}":                        s.getSheetWorkbook,
+		"POST /api/sheets/{id}/account-title":         s.postAccountSheetTitle,
+		"POST /api/sheets/{id}/cells":                 s.writeSheetCells,
+		"POST /api/sheets/{id}/worksheets":            s.createWorksheet,
+		"PATCH /api/sheets/{id}/worksheets/{wid}":     s.updateWorksheetMeta,
+		"DELETE /api/sheets/{id}/worksheets/{wid}":    s.deleteWorksheet,
+		"POST /api/sheets/{id}/worksheets/{wid}/axes": s.mutateSheetAxis,
+		"POST /api/sheets/{id}/import-xlsx":           s.importSheetXlsx,
+
+		// 企业组织架构（成员角色 / 部门 / 用户组）
+		"GET /api/workspaces/{wsId}/org":                          s.getWorkspaceOrg,
+		"POST /api/workspaces/{wsId}/members":                     s.upsertWorkspaceMember,
+		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":    s.revokeWorkspaceInvitation,
+		"GET /api/invitations":                                    s.listMyInvitations,
+		"POST /api/invitations/{inviteId}/accept":                 s.respondInvitation(true),
+		"POST /api/invitations/{inviteId}/decline":                s.respondInvitation(false),
+		"POST /api/workspaces/{wsId}/departments":                 s.createDepartment,
+		"PATCH /api/workspaces/{wsId}/departments/{deptId}":       s.updateDepartment,
+		"DELETE /api/workspaces/{wsId}/departments/{deptId}":      s.deleteDepartment,
+		"PUT /api/workspaces/{wsId}/departments/{deptId}/members": s.setDepartmentMember,
+		"POST /api/workspaces/{wsId}/groups":                      s.createUserGroup,
+		"PATCH /api/workspaces/{wsId}/groups/{groupId}":           s.updateUserGroup,
+		"DELETE /api/workspaces/{wsId}/groups/{groupId}":          s.deleteUserGroup,
+		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":     s.setUserGroupMember,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}
@@ -257,6 +287,9 @@ func (s *Server) Handler() http.Handler {
 			}
 			s.BtHub.Serve(w, r, b.ID, check)
 		})))
+	}
+	if s.SheetHub != nil {
+		mux.Handle("GET /api/sheets/{id}/ws", s.requireUser(http.HandlerFunc(s.serveSheetWS)))
 	}
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,21 @@ async function replacePart(source: Uint8Array, path: string, replace: (xml: stri
 }
 
 describe("XLSX import", () => {
+  it("round-trips cell styles, number formats, merges and frozen panes", async () => {
+    const workbook = { sheets: [
+      { name:"预算", cells:[
+        {row:0,col:0,value:"项目",style:{bold:true,fill:"#EEF3FF",horizontal:"center" as const}},
+        {row:1,col:1,value:12000,style:{numFmt:'"¥"#,##0.00',border:{top:true,bottom:true,color:"#9AA0A6"}}},
+        {row:1,col:2,value:0.25,style:{numFmt:"0%",italic:true,underline:true,strike:true,color:"#D83931",fontName:"PingFang SC",fontSize:14}},
+        {row:2,col:0,formula:"=B2*2",style:{wrap:true,vertical:"top" as const}},
+        {row:3,col:3,style:{fill:"#FFF7E6"}},
+      ], merges:[{top:4,left:0,bottom:4,right:2}], frozen:{rows:1,cols:1} },
+      { name:"无样式", cells:[{row:0,col:0,value:1}], frozen:{rows:2,cols:0} },
+    ] };
+    const result = await readXlsx(writeXlsx(workbook));
+    expect(result.workbook).toEqual(workbook);
+    expect(result.warnings).toEqual([]);
+  });
   it("round-trips multiple sheets, formulas, cached results and error cells", async () => {
     const workbook = { sheets: [
       { name:"计划", cells:[{row:0,col:0,value:"文本\r\n下一行"},{row:1,col:0,value:8},{row:1,col:1,formula:"=A2*2",value:16},{row:2,col:0,value:true},{row:3,col:0,value:{error:"#DIV/0!" as const}}] },
@@ -22,14 +37,15 @@ describe("XLSX import", () => {
     expect(result.workbook).toEqual(workbook);
     expect(result.warnings).toEqual([]);
   });
-  it("reads a real compressed OpenPyXL file and reports formatting loss", async () => {
+  it("reads a real compressed OpenPyXL file including cell styles", async () => {
     const bytes = await readFile(new URL("./fixtures/openpyxl-basic.xlsx", import.meta.url));
     const result = await readXlsx(bytes);
     expect(result.workbook.sheets.map((sheet) => sheet.name)).toEqual(["计划","汇总"]);
     expect(result.workbook.sheets[0].cells).toContainEqual({row:1,col:3,formula:"=B2*2"});
     expect(result.workbook.sheets[0].cells).toContainEqual({row:1,col:4,value:{error:"#DIV/0!"}});
-    expect(result.warnings).toContain("styles_not_preserved");
-    expect(result.warnings).toContain("cell_formatting_not_preserved");
+    expect(result.workbook.sheets[0].cells).toContainEqual({row:0,col:0,value:"项目",style:{bold:true}});
+    expect(result.warnings).not.toContain("styles_not_preserved");
+    expect(result.warnings).not.toContain("cell_formatting_not_preserved");
   });
   it("reads shared rich strings and reports their formatting loss", async () => {
     const base = writeXlsx({sheets:[{name:"Sheet1",cells:[{row:0,col:0,value:"abc"}]}]});
@@ -40,11 +56,12 @@ describe("XLSX import", () => {
     expect(result.workbook.sheets[0].cells).toEqual([{row:0,col:0,value:"abc"}]);
     expect(result.warnings).toContain("rich_text_formatting_not_preserved");
   });
-  it("accepts equivalent namespace prefixes and warns about unsupported worksheet features", async () => {
+  it("accepts equivalent namespace prefixes, reads merges and warns about unsupported worksheet features", async () => {
     const base = writeXlsx({sheets:[{name:"Sheet1",cells:[{row:0,col:0,value:1}]}]});
-    const bytes = await replacePart(base,"xl/worksheets/sheet1.xml",(xml) => xml.replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"','xmlns:ss="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace(/<(\/?)(worksheet|sheetData|row|c|v)(?=[\s>])/g,'<$1ss:$2').replace('</ss:worksheet>','<ss:mergeCells><ss:mergeCell ref="A1:B1"/></ss:mergeCells></ss:worksheet>'));
+    const bytes = await replacePart(base,"xl/worksheets/sheet1.xml",(xml) => xml.replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"','xmlns:ss="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace(/<(\/?)(worksheet|sheetData|row|c|v)(?=[\s>])/g,'<$1ss:$2').replace('</ss:worksheet>','<ss:mergeCells><ss:mergeCell ref="A1:B1"/></ss:mergeCells><ss:dataValidations count="0"/></ss:worksheet>'));
     const result = await readXlsx(bytes);
     expect(result.workbook.sheets[0].cells).toEqual([{row:0,col:0,value:1}]);
+    expect(result.workbook.sheets[0].merges).toEqual([{top:0,left:0,bottom:0,right:1}]);
     expect(result.warnings).toContain("worksheet_features_not_preserved");
   });
   it("rejects shared formulas, external targets, ambiguous entries and oversized input", async () => {

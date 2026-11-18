@@ -61,3 +61,7 @@ const graph = readFlow(flowWrites({}, { theme: "feishu", nodes: [], edges: [] })
 五个公开的 headless SDK 均可在各自包目录独立运行 `pnpm test`；仓库根目录执行 `pnpm test:sdk:coverage` 可汇总源代码 V8 覆盖率，并对每个包执行语句及行覆盖率至少 85%、分支至少 75%、函数至少 80% 的最低门槛。文档、表格、幻灯片和白板的纯模型测试已从 Web 应用迁入对应 SDK，涉及浏览器、服务端和跨包集成的测试继续保留在应用层。
 
 2026-11-16 本轮协同 SDK 本地覆盖率（语句 / 分支）为 96.79% / 89.26%；其他包的当前结果以 `pnpm test:sdk:coverage` 输出为准。当前 `SyncClient` 对实验性 `ttable` 操作、快照和待发送草稿一律停止同步并保留草稿；它尚不是支持表格 CRDT 的可用传输。上述数字不等于功能完整性或所有并发情形已验证；服务端条件提交、浏览器交互、实体设备和 DOCX/XLSX 与第三方软件的全部互通仍需各自的集成验证。内部共享 `@jiange/ooxml` 保留独立测试，不计入上述五个 SDK。
+
+## 许可
+
+`packages/*` 下的全部 SDK 与内部共享库对个人和商业使用均免费；若企业对 SDK 进行二次开发（修改、扩展、裁剪或基于源码衍生），须在产品文档、关于页面或源码仓库说明等公开位置明确说明来源（基于 Jiange SDK，`https://github.com/ZSeven-W/jiange`）。应用层（`apps/`、`server/` 等）仍实行个人免费、商业收费许可。详见 [LICENSE](./LICENSE)。

@@ -1,0 +1,1816 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ApiError,
+  docsApi,
+  driveApi,
+  extrasApi,
+  sheetsApi,
+  type DocMeta,
+  type Me,
+  type SheetCell,
+  type SheetCellStyle,
+  type SheetCellWrite,
+  type SheetSnapshot,
+  type SheetWorksheet,
+} from "@/lib/api";
+import { go } from "@/lib/route";
+import { t, useI18n } from "@/lib/i18n";
+import { colorFor } from "@/lib/presence";
+import { Avatar } from "@/components/brand";
+import { ShareDialog } from "@/components/share-dialog";
+import { SheetColorIcon } from "@/components/feishu-icons";
+import { ask, askText } from "@/components/ui/ask";
+import { ResourceTypeNotice } from "@/pages/resource-type-notice";
+import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
+import { ChevronRight, Home, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
+import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
+import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
+import {
+  buildMergeLookup,
+  buildWorksheetGridMap,
+  calculateWorkbook,
+  computeSortedRowWrites,
+  extractFormulaReferences,
+  formatCellDisplay,
+  formatSelectionAddress,
+  getVisibleRowIndices,
+  normalizePointForMerge,
+  parseRangeInput,
+  translateWorkbookFormula,
+} from "./workbook-engine";
+import { exportWorkbookToXlsx, parseXlsxForWorkbook } from "./workbook-xlsx";
+import { FORMULA_QUICK_LIST, formatSheetRefPrefix, SHEET_STARTER_TEMPLATES, type SheetStarterTemplate } from "./workbook-templates";
+import { SheetTabsBar, SheetToolbar } from "./sheet-toolbar";
+
+const DEFAULT_COL_WIDTH = 105;
+const DEFAULT_ROW_HEIGHT = 27;
+const ROW_HEADER_WIDTH = 44;
+const COL_HEADER_HEIGHT = 24;
+
+type EditingState = {
+  sheetId: number;
+  point: SheetPoint;
+  value: string;
+  source: "cell" | "formula";
+};
+
+type UndoEntry = {
+  worksheetId: number;
+  forward: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[];
+  backward: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[];
+};
+
+type RemoteCollaborator = {
+  userId: number;
+  name: string;
+  worksheetId?: number;
+  row: number;
+  col: number;
+};
+
+function makeMutationId(): string {
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function sameRect(a: { top: number; left: number; bottom: number; right: number }, b: { top: number; left: number; bottom: number; right: number }): boolean {
+  return a.top === b.top && a.left === b.left && a.bottom === b.bottom && a.right === b.right;
+}
+
+export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me: Me; onGlobalSearch?: () => void }) {
+  const { locale } = useI18n();
+  const qc = useQueryClient();
+  const userId = me.user.id;
+  const metaQueryKey = useMemo(() => ["doc", sheetId, userId], [sheetId, userId]);
+  const workbookQueryKey = useMemo(() => ["sheet", sheetId, userId], [sheetId, userId]);
+
+  const meta = useQuery({
+    queryKey: metaQueryKey,
+    queryFn: () => docsApi.getForAccount(sheetId, userId),
+    retry: false,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
+  });
+
+  const isSheetKind = meta.data?.kind === "sheet";
+  const ancestors = useQuery({
+    queryKey: ["sheet-ancestors", sheetId, userId],
+    queryFn: () => extrasApi.ancestors(sheetId),
+    enabled: !!isSheetKind && !meta.isError,
+    retry: false,
+  });
+  const pins = useQuery({
+    queryKey: ["home-pins", userId],
+    queryFn: () => extrasApi.pinsForAccount(userId),
+    enabled: !!isSheetKind && !meta.isError,
+    retry: false,
+  });
+  const workbook = useQuery({
+    queryKey: workbookQueryKey,
+    queryFn: () => sheetsApi.get(sheetId, userId),
+    enabled: !!isSheetKind && !meta.isError,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (isSheetKind) {
+      void docsApi.recordVisit(sheetId).catch(() => {});
+    }
+  }, [sheetId, isSheetKind]);
+
+  useEffect(() => {
+    if (meta.data?.kind === "sheet") {
+      document.title = `${meta.data.title.trim() || t("未命名表格")} - Jiange`;
+    }
+  }, [meta.data?.kind, meta.data?.title, locale]);
+
+  const [activeSheetId, setActiveSheetId] = useState<number>(0);
+  const [selection, setSelection] = useState<SheetSelection>({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+  const [editing, setEditing] = useState<EditingState | null>(null);
+  const [nameBoxText, setNameBoxText] = useState("A1");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingCount, setSavingCount] = useState(0);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [fxMenuOpen, setFxMenuOpen] = useState(false);
+  const [filterCol, setFilterCol] = useState<number | null>(null);
+  const [filterInput, setFilterInput] = useState("");
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [formatBrush, setFormatBrush] = useState<SheetCellStyle | null>(null);
+  const [templateHidden, setTemplateHidden] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
+  const [collaborators, setCollaborators] = useState<RemoteCollaborator[]>([]);
+  const [pendingImport, setPendingImport] = useState<{ filename: string; sheets: ReturnType<typeof parseXlsxForWorkbook> extends Promise<infer R> ? R : never } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
+
+  const shareBtnRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const cellInputRef = useRef<HTMLInputElement>(null);
+  const formulaInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectingRef = useRef(false);
+  const fillingRef = useRef(false);
+  const internalClipboard = useRef<{ token: string; sheetId: number; bounds: { top: number; left: number; bottom: number; right: number }; cells: { dr: number; dc: number; raw: string; style?: SheetCellStyle }[] } | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const sheets = workbook.data?.sheets ?? [];
+  const activeSheet = useMemo(
+    () => sheets.find((s) => s.id === activeSheetId) ?? sheets[0] ?? null,
+    [sheets, activeSheetId],
+  );
+
+  useEffect(() => {
+    if (sheets.length > 0 && !sheets.some((s) => s.id === activeSheetId)) {
+      setActiveSheetId(sheets[0].id);
+      setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+    }
+  }, [sheets, activeSheetId]);
+
+  const role = meta.data?.role ?? workbook.data?.role ?? "view";
+  const canEdit = !!isSheetKind && !meta.isError && !workbook.isError && (role === "edit" || role === "manage");
+  // Copy protection follows the workbook's copy/download policy (分享 → 权限设置).
+  const canCopy = canCopyContent(meta.data);
+  const canDownload = canDownloadDocument(meta.data);
+
+  useEffect(() => {
+    setNameBoxText(formatSelectionAddress(selection));
+  }, [selection]);
+
+  // WebSocket live revision sync and cursor presence.
+  useEffect(() => {
+    if (!isSheetKind || !workbook.isSuccess || typeof WebSocket === "undefined") return;
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${proto}//${location.host}/api/sheets/${sheetId}/ws`);
+    wsRef.current = socket;
+    socket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg?.type === "revision" && Number.isSafeInteger(msg.workbookRevision)) {
+          const current = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
+          if (!current || msg.workbookRevision > current.workbookRevision) {
+            void qc.invalidateQueries({ queryKey: workbookQueryKey });
+          }
+        } else if (msg?.type === "presence" && Array.isArray(msg.collaborators)) {
+          setCollaborators(msg.collaborators.filter((c: RemoteCollaborator) => c.userId !== userId));
+        }
+      } catch {
+        /* ignore malformed ws payload */
+      }
+    };
+    return () => {
+      wsRef.current = null;
+      socket.close();
+    };
+  }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey]);
+
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !activeSheet) return;
+    ws.send(JSON.stringify({ type: "cursor", worksheetId: activeSheet.id, row: selection.focus.row, col: selection.focus.col }));
+  }, [activeSheet?.id, selection.focus.row, selection.focus.col]);
+
+  useEffect(() => {
+    const stop = () => {
+      selectingRef.current = false;
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!moreMenuRef.current?.contains(e.target as Node)) setMoreMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moreMenuOpen]);
+
+  const evaluatedWorkbook = useMemo(() => calculateWorkbook(sheets), [sheets]);
+  const activeEvalMap = useMemo(() => (activeSheet ? evaluatedWorkbook.get(activeSheet.id) ?? {} : {}), [activeSheet, evaluatedWorkbook]);
+
+  const gridMap = useMemo(
+    () => (activeSheet ? buildWorksheetGridMap(activeSheet) : { rowPosById: new Map<number, number>(), colPosById: new Map<number, number>(), cellByKey: new Map<string, SheetCell>() }),
+    [activeSheet],
+  );
+  const mergeLookup = useMemo(() => buildMergeLookup(activeSheet?.merges ?? []), [activeSheet?.merges]);
+  const visibleRows = useMemo(() => (activeSheet ? getVisibleRowIndices(activeSheet, activeEvalMap) : []), [activeSheet, activeEvalMap]);
+
+  const colWidths = useMemo(() => (activeSheet?.columns ?? []).map((c) => c.size || DEFAULT_COL_WIDTH), [activeSheet?.columns]);
+  const rowHeights = useMemo(() => (activeSheet?.rows ?? []).map((r) => r.size || DEFAULT_ROW_HEIGHT), [activeSheet?.rows]);
+  const colLeftOffsets = useMemo(() => {
+    const arr: number[] = [];
+    let acc = ROW_HEADER_WIDTH;
+    for (const w of colWidths) {
+      arr.push(acc);
+      acc += w;
+    }
+    return arr;
+  }, [colWidths]);
+  const rowTopOffsets = useMemo(() => {
+    const arr: number[] = [];
+    let acc = COL_HEADER_HEIGHT;
+    for (const h of rowHeights) {
+      arr.push(acc);
+      acc += h;
+    }
+    return arr;
+  }, [rowHeights]);
+
+  const focusedCell = activeSheet ? gridMap.cellByKey.get(pointKey(selection.focus)) : undefined;
+  const focusedStyle: SheetCellStyle = focusedCell?.style ?? {};
+  const displayedFormulaValue = editing ? editing.value : focusedCell?.raw ?? "";
+
+  const formulaHighlights = useMemo(() => {
+    if (!activeSheet) return [];
+    const formulaText = editing ? editing.value : (focusedCell?.raw ?? "");
+    if (!formulaText.startsWith("=")) return [];
+    const targetSheetId = editing ? editing.sheetId : activeSheet.id;
+    return extractFormulaReferences(formulaText, targetSheetId, sheets).filter((h) => h.sheetId === activeSheet.id);
+  }, [activeSheet, editing, focusedCell?.raw, sheets]);
+
+  const hasAnyContent = useMemo(
+    () => !!activeSheet && activeSheet.cells.some((c) => c.raw !== ""),
+    [activeSheet],
+  );
+
+  const selectionSummary = useMemo(() => {
+    if (!activeSheet) return null;
+    const b = selectionBounds(selection);
+    const cellCount = (b.bottom - b.top + 1) * (b.right - b.left + 1);
+    if (cellCount <= 1) return null;
+    let numericCount = 0;
+    let sum = 0;
+    for (let r = b.top; r <= b.bottom; r++) {
+      for (let c = b.left; c <= b.right; c++) {
+        const ev = activeEvalMap[`${r}:${c}`];
+        if (ev?.kind === "number") {
+          numericCount++;
+          sum += ev.value;
+        }
+      }
+    }
+    if (numericCount === 0) return null;
+    return { count: numericCount, sum: Number(sum.toPrecision(12)), avg: Number((sum / numericCount).toPrecision(12)) };
+  }, [activeSheet, selection, activeEvalMap]);
+
+  const applyLocalWriteResult = useCallback(
+    (wid: number, nextWbRev: number, updated: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; revision: number }[]) => {
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          workbookRevision: Math.max(old.workbookRevision, nextWbRev),
+          sheets: old.sheets.map((ws) => {
+            if (ws.id !== wid) return ws;
+            const byKey = new Map<string, SheetCell>();
+            for (const c of ws.cells) byKey.set(`${c.rowId}:${c.columnId}`, c);
+            for (const item of updated) {
+              const key = `${item.rowId}:${item.columnId}`;
+              const prev = byKey.get(key);
+              byKey.set(key, {
+                rowId: item.rowId,
+                columnId: item.columnId,
+                raw: item.raw ?? prev?.raw ?? "",
+                style: item.style ?? prev?.style ?? {},
+                revision: item.revision,
+              });
+            }
+            return { ...ws, revision: ws.revision + 1, cells: [...byKey.values()] };
+          }),
+        };
+      });
+    },
+    [qc, workbookQueryKey],
+  );
+
+  const commitCellEdits = useCallback(
+    async (
+      edits: { row: number; col: number; raw?: string; style?: SheetCellStyle }[],
+      options: { targetSheet?: SheetWorksheet; recordUndo?: boolean } = {},
+    ): Promise<boolean> => {
+      const targetWS = options.targetSheet ?? activeSheet;
+      if (!canEdit || !targetWS || edits.length === 0) return false;
+      const { cellByKey } = buildWorksheetGridMap(targetWS);
+      const writes: SheetCellWrite[] = [];
+      const forwardUndo: UndoEntry["forward"] = [];
+      const backwardUndo: UndoEntry["backward"] = [];
+      const localMap: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[] = [];
+
+      const seen = new Set<string>();
+      for (const edit of edits) {
+        if (edit.row < 0 || edit.row >= targetWS.rows.length || edit.col < 0 || edit.col >= targetWS.columns.length) continue;
+        const k = `${edit.row}:${edit.col}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const rowId = targetWS.rows[edit.row].id;
+        const columnId = targetWS.columns[edit.col].id;
+        const cur = cellByKey.get(k);
+        const nextRaw = edit.raw !== undefined ? edit.raw : undefined;
+        const nextStyle = edit.style !== undefined ? edit.style : undefined;
+        if ((nextRaw === undefined || nextRaw === (cur?.raw ?? "")) && (nextStyle === undefined || JSON.stringify(nextStyle) === JSON.stringify(cur?.style ?? {}))) {
+          continue;
+        }
+        writes.push({
+          rowId,
+          columnId,
+          expectedRevision: cur?.revision ?? 0,
+          ...(nextRaw !== undefined ? { raw: nextRaw } : {}),
+          ...(nextStyle !== undefined ? { style: nextStyle } : {}),
+        });
+        forwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: nextRaw } : {}), ...(nextStyle !== undefined ? { style: nextStyle } : {}) });
+        backwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: cur?.raw ?? "" } : {}), ...(nextStyle !== undefined ? { style: cur?.style ?? {} } : {}) });
+        localMap.push({ rowId, columnId, raw: nextRaw, style: nextStyle });
+      }
+      if (writes.length === 0) return true;
+
+      setSavingCount((n) => n + 1);
+      setErrorMessage("");
+      try {
+        const res = await sheetsApi.writeCells(sheetId, userId, {
+          mutationId: makeMutationId(),
+          worksheetId: targetWS.id,
+          cells: writes,
+        });
+        if (!mountedRef.current) return true;
+        const revByCell = new Map(res.cells.map((c) => [`${c.rowId}:${c.columnId}`, c.revision]));
+        applyLocalWriteResult(
+          targetWS.id,
+          res.workbookRevision,
+          localMap.map((m) => ({ ...m, revision: revByCell.get(`${m.rowId}:${m.columnId}`) ?? 1 })),
+        );
+        if (options.recordUndo !== false) {
+          setUndoStack((prev) => [...prev.slice(-49), { worksheetId: targetWS.id, forward: forwardUndo, backward: backwardUndo }]);
+          setRedoStack([]);
+        }
+        setStatusMessage("");
+        return true;
+      } catch (err) {
+        if (!mountedRef.current) return false;
+        if (err instanceof ApiError && err.status === 409) {
+          setErrorMessage(t("表格内容已被其他协作者修改，已刷新最新数据，请重试。"));
+          void qc.invalidateQueries({ queryKey: workbookQueryKey });
+        } else {
+          setErrorMessage(err instanceof Error ? err.message : t("保存失败，请检查网络后重试。"));
+        }
+        return false;
+      } finally {
+        if (mountedRef.current) setSavingCount((n) => Math.max(0, n - 1));
+      }
+    },
+    [activeSheet, canEdit, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey],
+  );
+
+  const runUndoRedo = async (direction: "undo" | "redo") => {
+    const stack = direction === "undo" ? undoStack : redoStack;
+    const entry = stack.at(-1);
+    if (!entry || !canEdit) return;
+    const targetWS = sheets.find((s) => s.id === entry.worksheetId);
+    if (!targetWS) return;
+    const { rowPosById, colPosById } = buildWorksheetGridMap(targetWS);
+    const items = direction === "undo" ? entry.backward : entry.forward;
+    const edits: { row: number; col: number; raw?: string; style?: SheetCellStyle }[] = [];
+    for (const item of items) {
+      const r = rowPosById.get(item.rowId);
+      const c = colPosById.get(item.columnId);
+      if (r === undefined || c === undefined) continue;
+      edits.push({ row: r, col: c, raw: item.raw, style: item.style });
+    }
+    const ok = await commitCellEdits(edits, { targetSheet: targetWS, recordUndo: false });
+    if (!ok) return;
+    if (direction === "undo") {
+      setUndoStack((prev) => prev.slice(0, -1));
+      setRedoStack((prev) => [...prev.slice(-49), entry]);
+    } else {
+      setRedoStack((prev) => prev.slice(0, -1));
+      setUndoStack((prev) => [...prev.slice(-49), entry]);
+    }
+  };
+
+  useEffect(() => {
+    if (editing?.source === "cell") {
+      cellInputRef.current?.focus();
+    }
+  }, [editing?.source, editing?.point.row, editing?.point.col]);
+
+  const beginEdit = (point: SheetPoint, initialValue?: string, source: "cell" | "formula" = "cell") => {
+    if (!canEdit || !activeSheet) return;
+    const snapped = normalizePointForMerge(point, mergeLookup);
+    const curRaw = gridMap.cellByKey.get(pointKey(snapped))?.raw ?? "";
+    setSelection({ anchor: snapped, focus: snapped });
+    setEditing({
+      sheetId: activeSheet.id,
+      point: snapped,
+      value: initialValue !== undefined ? initialValue : curRaw,
+      source,
+    });
+  };
+
+  const commitActiveEdit = async () => {
+    if (!editing) return true;
+    const targetWS = sheets.find((s) => s.id === editing.sheetId);
+    const val = editing.value;
+    const pt = editing.point;
+    setEditing(null);
+    if (!targetWS) return true;
+    return commitCellEdits([{ row: pt.row, col: pt.col, raw: val }], { targetSheet: targetWS });
+  };
+
+  const moveSelection = (dr: number, dc: number, extend: boolean) => {
+    if (!activeSheet) return;
+    const row = Math.max(0, Math.min(activeSheet.rows.length - 1, selection.focus.row + dr));
+    const col = Math.max(0, Math.min(activeSheet.columns.length - 1, selection.focus.col + dc));
+    const next = normalizePointForMerge({ row, col }, mergeLookup);
+    setSelection(extend ? { ...selection, focus: next } : { anchor: next, focus: next });
+  };
+
+  const handleStylePatch = async (patch: Partial<SheetCellStyle>) => {
+    if (!canEdit || !activeSheet) return;
+    const b = selectionBounds(selection);
+    const edits: { row: number; col: number; style: SheetCellStyle }[] = [];
+    for (let r = b.top; r <= b.bottom; r++) {
+      for (let c = b.left; c <= b.right; c++) {
+        const curStyle = gridMap.cellByKey.get(`${r}:${c}`)?.style ?? {};
+        const nextStyle: SheetCellStyle = { ...curStyle, ...patch };
+        if (nextStyle.bg === "") delete nextStyle.bg;
+        if (nextStyle.fontFamily === "") delete nextStyle.fontFamily;
+        if (nextStyle.align === "") delete nextStyle.align;
+        if (nextStyle.valign === "") delete nextStyle.valign;
+        edits.push({ row: r, col: c, style: nextStyle });
+      }
+    }
+    await commitCellEdits(edits);
+  };
+
+  const handleToggleBorder = async () => {
+    if (!canEdit || !activeSheet) return;
+    const hasBorders = !!focusedStyle.borders;
+    await handleStylePatch({
+      borders: hasBorders ? undefined : { top: true, right: true, bottom: true, left: true, color: "#c9cdd4" },
+    });
+  };
+
+  const handleClearFormat = async () => {
+    if (!canEdit || !activeSheet) return;
+    const b = selectionBounds(selection);
+    const edits: { row: number; col: number; style: SheetCellStyle }[] = [];
+    for (let r = b.top; r <= b.bottom; r++) {
+      for (let c = b.left; c <= b.right; c++) {
+        edits.push({ row: r, col: c, style: {} });
+      }
+    }
+    await commitCellEdits(edits);
+  };
+
+  const handleWorksheetPatch = async (wid: number, patch: Parameters<typeof sheetsApi.updateWorksheet>[3]) => {
+    if (!canEdit) return;
+    setSavingCount((n) => n + 1);
+    setErrorMessage("");
+    try {
+      const res = await sheetsApi.updateWorksheet(sheetId, wid, userId, patch);
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        const nextSheets = old.sheets.map((s) => (s.id === wid ? res.worksheet : s)).sort((a, b) => a.pos - b.pos || a.id - b.id);
+        return { ...old, workbookRevision: Math.max(old.workbookRevision, res.workbookRevision), sheets: nextSheets };
+      });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("更新工作表失败"));
+      void qc.invalidateQueries({ queryKey: workbookQueryKey });
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
+  const matchingMerge = useMemo(() => {
+    if (!activeSheet) return null;
+    const b = selectionBounds(selection);
+    return (
+      activeSheet.merges.find(
+        (m) => sameRect(m, b) || (b.top >= m.top && b.bottom <= m.bottom && b.left >= m.left && b.right <= m.right),
+      ) ?? null
+    );
+  }, [activeSheet, selection]);
+  const isSelectionMerged = !!matchingMerge;
+
+  const handleToggleMerge = async () => {
+    if (!canEdit || !activeSheet) return;
+    if (matchingMerge) {
+      const next = activeSheet.merges.filter((m) => !sameRect(m, matchingMerge));
+      await handleWorksheetPatch(activeSheet.id, { merges: next });
+      return;
+    }
+    const b = selectionBounds(selection);
+    if (b.top === b.bottom && b.left === b.right) {
+      setStatusMessage(t("请先框选两个及以上单元格再合并"));
+      return;
+    }
+    const filtered = activeSheet.merges.filter(
+      (m) => m.bottom < b.top || m.top > b.bottom || m.right < b.left || m.left > b.right,
+    );
+    await handleWorksheetPatch(activeSheet.id, { merges: [...filtered, b] });
+    setSelection({ anchor: { row: b.top, col: b.left }, focus: { row: b.top, col: b.left } });
+  };
+
+  const handleAxisOp = async (op: Parameters<typeof sheetsApi.mutateAxis>[3]) => {
+    if (!canEdit || !activeSheet) return;
+    setSavingCount((n) => n + 1);
+    setErrorMessage("");
+    try {
+      const res = await sheetsApi.mutateAxis(sheetId, activeSheet.id, userId, op);
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          workbookRevision: Math.max(old.workbookRevision, res.workbookRevision),
+          sheets: old.sheets.map((s) => (s.id === activeSheet.id ? res.worksheet : s)),
+        };
+      });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("行列调整失败"));
+      void qc.invalidateQueries({ queryKey: workbookQueryKey });
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
+  const handleSort = async (ascending: boolean) => {
+    if (!canEdit || !activeSheet) return;
+    if (activeSheet.merges.length > 0) {
+      setStatusMessage(t("当前工作表包含合并单元格，请取消合并后再排序"));
+      return;
+    }
+    const writes = computeSortedRowWrites(activeSheet, activeEvalMap, selection.focus.col, ascending, activeSheet.filter?.headerRow ?? 0);
+    if (writes.length === 0) {
+      setStatusMessage(t("当前列数据无需调整顺序"));
+      return;
+    }
+    const { rowPosById, colPosById } = buildWorksheetGridMap(activeSheet);
+    const edits: { row: number; col: number; raw?: string; style?: SheetCellStyle }[] = [];
+    for (const w of writes) {
+      const r = rowPosById.get(w.rowId);
+      const c = colPosById.get(w.columnId);
+      if (r !== undefined && c !== undefined) edits.push({ row: r, col: c, raw: w.raw, style: w.style });
+    }
+    await commitCellEdits(edits);
+  };
+
+  const handleCreateSheet = async () => {
+    if (!canEdit) return;
+    setSavingCount((n) => n + 1);
+    try {
+      const res = await sheetsApi.createWorksheet(sheetId, userId, "");
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        return { ...old, workbookRevision: res.workbookRevision, sheets: [...old.sheets, res.worksheet] };
+      });
+      setActiveSheetId(res.worksheet.id);
+      setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("新建工作表失败"));
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
+  const handleRenameSheet = async (wid: number) => {
+    const ws = sheets.find((s) => s.id === wid);
+    if (!ws || !canEdit) return;
+    const next = await askText(t("重命名工作表"), t("工作表名称"), ws.title);
+    if (!next || !next.trim() || next.trim() === ws.title) return;
+    await handleWorksheetPatch(wid, { title: next.trim() });
+  };
+
+  const handleDeleteSheet = async (wid: number) => {
+    const ws = sheets.find((s) => s.id === wid);
+    if (!ws || !canEdit || sheets.length <= 1) return;
+    if (!(await ask(t("删除工作表「{name}」？", { name: ws.title }), t("工作表中的数据将被清除，无法恢复。"), true))) return;
+    setSavingCount((n) => n + 1);
+    try {
+      const res = await sheetsApi.deleteWorksheet(sheetId, wid, userId);
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        const remaining = old.sheets.filter((s) => s.id !== wid).map((s, pos) => ({ ...s, pos }));
+        return { ...old, workbookRevision: res.workbookRevision, sheets: remaining };
+      });
+      if (activeSheetId === wid) {
+        const remaining = sheets.filter((s) => s.id !== wid);
+        if (remaining[0]) setActiveSheetId(remaining[0].id);
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("删除工作表失败"));
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
+  const handleRenameWorkbookTitle = async () => {
+    const trimmed = titleDraft.trim();
+    setEditingTitle(false);
+    if (!trimmed || !meta.data || !workbook.data || trimmed === meta.data.title) return;
+    try {
+      await sheetsApi.renameTitle(sheetId, userId, trimmed, meta.data.title, meta.data.driveRevision ?? workbook.data.driveRevision);
+      void qc.invalidateQueries({ queryKey: metaQueryKey });
+      void qc.invalidateQueries({ queryKey: workbookQueryKey });
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      void qc.invalidateQueries({ queryKey: ["drive"] });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("重命名失败，请刷新后重试。"));
+    }
+  };
+
+  const handleExportXlsx = () => {
+    if (!sheets.length) return;
+    if (!canDownload) {
+      setErrorMessage(t("该表格已禁止下载和创建副本"));
+      return;
+    }
+    try {
+      const bytes = exportWorkbookToXlsx(sheets);
+      const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(meta.data?.title.trim() || t("未命名表格"))}.xlsx`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatusMessage(t("已导出多工作表 XLSX 文件"));
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("导出 XLSX 失败"));
+    }
+  };
+
+  const handleSelectXlsxImport = async (file: File) => {
+    setImporting(true);
+    setErrorMessage("");
+    try {
+      const preview = await parseXlsxForWorkbook(file);
+      if (mountedRef.current) setPendingImport({ filename: file.name, sheets: preview });
+    } catch (err) {
+      if (mountedRef.current) setErrorMessage(err instanceof Error ? err.message : t("无法解析该 XLSX 文件"));
+    } finally {
+      if (mountedRef.current) setImporting(false);
+    }
+  };
+
+  const handleConfirmXlsxImport = async () => {
+    if (!pendingImport || !workbook.data) return;
+    setSavingCount((n) => n + 1);
+    setErrorMessage("");
+    try {
+      const next = await sheetsApi.importXlsx(sheetId, userId, workbook.data.workbookRevision, makeMutationId(), pendingImport.sheets.sheets);
+      qc.setQueryData(workbookQueryKey, next);
+      setActiveSheetId(next.sheets[0]?.id ?? 0);
+      setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+      setUndoStack([]);
+      setRedoStack([]);
+      setPendingImport(null);
+      setStatusMessage(t("已导入并保存到云端"));
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("导入失败，请刷新后重试。"));
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
+  };
+
+  const handleApplyTemplate = async (tpl: SheetStarterTemplate) => {
+    if (!activeSheet || !canEdit) return;
+    await commitCellEdits(tpl.cells.map((c) => ({ row: c.row, col: c.col, raw: c.raw, style: c.style })));
+    setTemplateHidden(true);
+  };
+
+  const handleDuplicate = async () => {
+    if (!canDownload) {
+      setErrorMessage(t("该表格已禁止下载和创建副本"));
+      return;
+    }
+    try {
+      const copy = await sheetsApi.duplicate(sheetId, userId);
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      go(`#/sheet/${copy.id}`);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("创建副本失败"));
+    }
+  };
+
+  const handleTrash = async () => {
+    if (!meta.data || meta.data.role !== "manage") return;
+    if (!(await ask(t("删除「{title}」？", { title: meta.data.title || t("未命名表格") }), t("可在回收站还原。")))) return;
+    try {
+      await driveApi.trashForAccount(sheetId, userId, meta.data.driveRevision ?? 0);
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      void qc.invalidateQueries({ queryKey: ["trash"] });
+      go("#/");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("删除失败，请刷新后重试。"));
+    }
+  };
+
+  const pinned = !!pins.data?.some((p) => p.id === sheetId);
+  const togglePin = async () => {
+    try {
+      await extrasApi.pinForAccount(sheetId, userId, !pinned);
+      void qc.invalidateQueries({ queryKey: ["home-pins", userId] });
+      void qc.invalidateQueries({ queryKey: ["pins"] });
+    } catch {
+      setErrorMessage(t("置顶操作未确认"));
+    }
+  };
+
+  const commitFillHandle = async (endPoint: SheetPoint) => {
+    if (!activeSheet || !canEdit) return;
+    const b = selectionBounds(selection);
+    const edits: { row: number; col: number; raw: string; style?: SheetCellStyle }[] = [];
+    const srcHeight = b.bottom - b.top + 1;
+    const srcWidth = b.right - b.left + 1;
+
+    if (endPoint.row > b.bottom) {
+      for (let r = b.bottom + 1; r <= endPoint.row; r++) {
+        const srcRow = b.top + ((r - b.top) % srcHeight);
+        for (let c = b.left; c <= b.right; c++) {
+          const srcCell = gridMap.cellByKey.get(`${srcRow}:${c}`);
+          const srcRaw = srcCell?.raw ?? "";
+          const nextRaw = srcRaw.startsWith("=")
+            ? translateWorkbookFormula(srcRaw, r - srcRow, 0, activeSheet.rows.length, activeSheet.columns.length)
+            : srcRaw;
+          edits.push({ row: r, col: c, raw: nextRaw, style: srcCell?.style });
+        }
+      }
+      setSelection({ anchor: { row: b.top, col: b.left }, focus: { row: endPoint.row, col: b.right } });
+    } else if (endPoint.col > b.right) {
+      for (let c = b.right + 1; c <= endPoint.col; c++) {
+        const srcCol = b.left + ((c - b.left) % srcWidth);
+        for (let r = b.top; r <= b.bottom; r++) {
+          const srcCell = gridMap.cellByKey.get(`${r}:${srcCol}`);
+          const srcRaw = srcCell?.raw ?? "";
+          const nextRaw = srcRaw.startsWith("=")
+            ? translateWorkbookFormula(srcRaw, 0, c - srcCol, activeSheet.rows.length, activeSheet.columns.length)
+            : srcRaw;
+          edits.push({ row: r, col: c, raw: nextRaw, style: srcCell?.style });
+        }
+      }
+      setSelection({ anchor: { row: b.top, col: b.left }, focus: { row: b.bottom, col: endPoint.col } });
+    }
+    if (edits.length > 0) await commitCellEdits(edits);
+  };
+
+  const handleCopy = (e: React.ClipboardEvent) => {
+    if (!canCopy) {
+      e.preventDefault();
+      setStatusMessage(t("该表格已禁止复制内容"));
+      return;
+    }
+    if (editing || !activeSheet) return;
+    e.preventDefault();
+    const b = selectionBounds(selection);
+    const matrix: string[][] = [];
+    const copiedCells: { dr: number; dc: number; raw: string; style?: SheetCellStyle }[] = [];
+    for (let r = b.top; r <= b.bottom; r++) {
+      const rowArr: string[] = [];
+      for (let c = b.left; c <= b.right; c++) {
+        const cell = gridMap.cellByKey.get(`${r}:${c}`);
+        rowArr.push(cell?.raw ?? "");
+        copiedCells.push({ dr: r - b.top, dc: c - b.left, raw: cell?.raw ?? "", style: cell?.style });
+      }
+      matrix.push(rowArr);
+    }
+    e.clipboardData.setData("text/plain", formatTSV(matrix));
+    const token = makeMutationId();
+    internalClipboard.current = { token, sheetId: activeSheet.id, bounds: b, cells: copiedCells };
+    try {
+      e.clipboardData.setData("application/x-jiange-sheet", token);
+    } catch {
+      /* ignore custom mime fallback */
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    if (editing || !activeSheet || !canEdit) return;
+    e.preventDefault();
+    let customToken = "";
+    try {
+      customToken = e.clipboardData.getData("application/x-jiange-sheet");
+    } catch {
+      /* ignore */
+    }
+    const anchor = selection.focus;
+    if (customToken && internalClipboard.current?.token === customToken) {
+      const snap = internalClipboard.current;
+      const edits = snap.cells.map((item) => {
+        const targetRow = anchor.row + item.dr;
+        const targetCol = anchor.col + item.dc;
+        const dr = targetRow - (snap.bounds.top + item.dr);
+        const dc = targetCol - (snap.bounds.left + item.dc);
+        const nextRaw = item.raw.startsWith("=")
+          ? translateWorkbookFormula(item.raw, dr, dc, activeSheet.rows.length, activeSheet.columns.length)
+          : item.raw;
+        return { row: targetRow, col: targetCol, raw: nextRaw, style: item.style };
+      });
+      await commitCellEdits(edits);
+      return;
+    }
+    const text = e.clipboardData.getData("text/plain");
+    if (!text) return;
+    const matrix = parseTSV(text);
+    const edits: { row: number; col: number; raw: string }[] = [];
+    for (let dr = 0; dr < matrix.length; dr++) {
+      for (let dc = 0; dc < matrix[dr].length; dc++) {
+        edits.push({ row: anchor.row + dr, col: anchor.col + dc, raw: matrix[dr][dc] });
+      }
+    }
+    await commitCellEdits(edits);
+  };
+
+  const handleGridKeyDown = async (e: React.KeyboardEvent) => {
+    if (editing || !activeSheet || e.nativeEvent.isComposing) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      await runUndoRedo(e.shiftKey ? "redo" : "undo");
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      setFindOpen(true);
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      await handleStylePatch({ bold: !focusedStyle.bold });
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      setSelection({ anchor: { row: 0, col: 0 }, focus: { row: activeSheet.rows.length - 1, col: activeSheet.columns.length - 1 } });
+      return;
+    }
+    const dirs: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0],
+      ArrowDown: [1, 0],
+      ArrowLeft: [0, -1],
+      ArrowRight: [0, 1],
+      Tab: [0, e.shiftKey ? -1 : 1],
+    };
+    if (dirs[e.key]) {
+      e.preventDefault();
+      moveSelection(dirs[e.key][0], dirs[e.key][1], e.key !== "Tab" && e.shiftKey);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      moveSelection(e.shiftKey ? -1 : 1, 0, false);
+      return;
+    }
+    if (e.key === "F2") {
+      e.preventDefault();
+      beginEdit(selection.focus);
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && canEdit) {
+      e.preventDefault();
+      const b = selectionBounds(selection);
+      const edits: { row: number; col: number; raw: string }[] = [];
+      for (let r = b.top; r <= b.bottom; r++) {
+        for (let c = b.left; c <= b.right; c++) edits.push({ row: r, col: c, raw: "" });
+      }
+      await commitCellEdits(edits);
+      return;
+    }
+    if (canEdit && !mod && !e.altKey && e.key.length === 1) {
+      e.preventDefault();
+      beginEdit(selection.focus, e.key, "cell");
+    }
+  };
+
+  if (meta.isPending) {
+    return <div className="grid flex-1 place-items-center text-[13px] text-[#8f959e]">{t("正在加载电子表格…")}</div>;
+  }
+  if (meta.isError || !meta.data) {
+    return (
+      <div className="grid flex-1 place-items-center px-6 text-center">
+        <div>
+          <p className="text-[14px] text-[#1f2329]">{t("无法打开该表格，可能已删除或暂无访问权限。")}</p>
+          <a href="#/" className="mt-4 inline-block rounded-md border px-4 py-1.5 text-[13px] hover:bg-[#f2f3f5]">{t("返回主页")}</a>
+        </div>
+      </div>
+    );
+  }
+  if (meta.data.kind !== "sheet") {
+    return <ResourceTypeNotice id={sheetId} kind={meta.data.kind} verified={!meta.isFetching} />;
+  }
+  if (workbook.isPending || !activeSheet) {
+    return <div className="grid flex-1 place-items-center text-[13px] text-[#8f959e]">{t("正在加载工作表数据…")}</div>;
+  }
+  if (workbook.isError || !workbook.data) {
+    return (
+      <div className="grid flex-1 place-items-center px-6 text-center">
+        <div>
+          <p className="text-[14px] text-destructive">{t("加载工作簿失败，请刷新后重试。")}</p>
+          <button type="button" onClick={() => void workbook.refetch()} className="mt-3 rounded-md border px-4 py-1.5 text-[13px]">{t("重试")}</button>
+        </div>
+      </div>
+    );
+  }
+
+  const folderCrumbs = (ancestors.data ?? []).filter((item) => item.id !== sheetId);
+  const rootLabel = meta.data.workspaceName || me.workspaces.find((w) => w.id === meta.data.workspaceId)?.name || t("我的文档库");
+  const titleText = meta.data.title.trim() || t("未命名表格");
+
+  const startResizeCol = (colIndex: number, startX: number) => {
+    const startWidth = colWidths[colIndex];
+    let latest = startWidth;
+    const onMove = (ev: PointerEvent) => {
+      latest = Math.max(40, Math.min(800, Math.round(startWidth + (ev.clientX - startX))));
+      const cur = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
+      if (!cur) return;
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, {
+        ...cur,
+        sheets: cur.sheets.map((s) =>
+          s.id === activeSheet.id ? { ...s, columns: s.columns.map((c, idx) => (idx === colIndex ? { ...c, size: latest } : c)) } : s,
+        ),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (latest !== startWidth) {
+        void handleAxisOp({ op: "resize_col", index: colIndex, size: latest });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startResizeRow = (rowIndex: number, startY: number) => {
+    const startHeight = rowHeights[rowIndex];
+    let latest = startHeight;
+    const onMove = (ev: PointerEvent) => {
+      latest = Math.max(20, Math.min(400, Math.round(startHeight + (ev.clientY - startY))));
+      const cur = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
+      if (!cur) return;
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, {
+        ...cur,
+        sheets: cur.sheets.map((s) =>
+          s.id === activeSheet.id ? { ...s, rows: s.rows.map((r, idx) => (idx === rowIndex ? { ...r, size: latest } : r)) } : s,
+        ),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (latest !== startHeight) {
+        void handleAxisOp({ op: "resize_row", index: rowIndex, size: latest });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const insertFormulaRefAtClick = (targetPoint: SheetPoint): boolean => {
+    if (!editing || !editing.value.startsWith("=")) return false;
+    const tail = editing.value.slice(-1);
+    if (!editing.value || !"=,(+-*/^&<>:".includes(tail) && editing.value !== "=") return false;
+    const targetSheetTitle = activeSheet.title;
+    const prefix = editing.sheetId === activeSheet.id ? "" : formatSheetRefPrefix(targetSheetTitle);
+    const refText = `${prefix}${sheetAddress(targetPoint)}`;
+    setEditing({ ...editing, value: editing.value + refText });
+    requestAnimationFrame(() => formulaInputRef.current?.focus());
+    return true;
+  };
+
+  const handleFindReplaceAll = async () => {
+    if (!findQuery || !canEdit || !activeSheet) return;
+    const edits: { row: number; col: number; raw: string }[] = [];
+    for (let r = 0; r < activeSheet.rows.length; r++) {
+      for (let c = 0; c < activeSheet.columns.length; c++) {
+        const cur = gridMap.cellByKey.get(`${r}:${c}`);
+        if (!cur || !cur.raw || !cur.raw.includes(findQuery)) continue;
+        edits.push({ row: r, col: c, raw: cur.raw.split(findQuery).join(replaceText) });
+      }
+    }
+    if (!edits.length) {
+      setStatusMessage(t("未找到匹配的单元格内容"));
+      return;
+    }
+    const ok = await commitCellEdits(edits);
+    if (ok) setStatusMessage(t("已完成全部替换"));
+  };
+
+  return (
+    <div className={`flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white text-[#1f2329] ${fullscreen ? "fixed inset-0 z-50" : "h-dvh"}`} data-sheet-page={sheetId}>
+      {/* Header matching Feishu spreadsheet chrome */}
+      <header className="flex h-14 min-w-0 shrink-0 items-center gap-2 border-b border-[#e5e6eb] pl-14 pr-3 sm:pr-5 md:pl-4">
+        <button type="button" aria-label={t("返回主页")} title={t("返回主页")} onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:grid">
+          <Home size={16} />
+        </button>
+        <SheetColorIcon className="size-6 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1 text-[13px] text-[#646a73]">
+            <span className="hidden truncate sm:inline">{rootLabel}</span>
+            {folderCrumbs.map((c) => (
+              <span key={c.id} className="hidden items-center gap-1 sm:inline-flex">
+                <ChevronRight size={13} className="shrink-0 text-[#bbbfc4]" />
+                <button type="button" onClick={() => go(`#/drive/${c.id}`)} className="max-w-28 truncate hover:text-[#3370ff]">{c.title}</button>
+              </span>
+            ))}
+            <ChevronRight size={13} className="hidden shrink-0 text-[#bbbfc4] sm:inline" />
+            {editingTitle && canEdit ? (
+              <input
+                autoFocus
+                aria-label={t("工作簿名称")}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={() => void handleRenameWorkbookTitle()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleRenameWorkbookTitle();
+                  if (e.key === "Escape") setEditingTitle(false);
+                }}
+                className="h-6 min-w-28 max-w-64 rounded border border-[#3370ff] px-1.5 text-[14px] font-medium text-[#1f2329] outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                data-sheet-title
+                onClick={() => {
+                  if (!canEdit) return;
+                  setTitleDraft(titleText);
+                  setEditingTitle(true);
+                }}
+                className="truncate rounded px-1 text-left text-[14px] font-medium text-[#1f2329] hover:bg-[#f2f3f5]"
+              >
+                {titleText}
+              </button>
+            )}
+            <button type="button" aria-label={pinned ? t("取消置顶") : t("置顶")} onClick={() => void togglePin()} className={`grid size-6 shrink-0 place-items-center rounded hover:bg-[#f2f3f5] ${pinned ? "text-[#3370ff]" : "text-[#8f959e]"}`}>
+              <Pin size={13} />
+            </button>
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#8f959e]">
+            <span data-sheet-save-status>{savingCount > 0 ? t("正在保存…") : canEdit ? t("已经保存到云端") : t("只读权限")}</span>
+            {formatBrush && <span className="rounded bg-[#edf3ff] px-1.5 text-[#3370ff]">{t("格式刷激活：点击单元格应用样式")}</span>}
+          </div>
+        </div>
+
+        {collaborators.length > 0 && (
+          <div className="hidden items-center -space-x-1.5 sm:flex" aria-label={t("在线协作者")}>
+            {collaborators.slice(0, 4).map((c) => <Avatar key={c.userId} name={c.name} color={colorFor(c.userId - 1)} size={24} ring title={c.name} />)}
+          </div>
+        )}
+
+        <button
+          ref={shareBtnRef}
+          type="button"
+          onClick={() => setShareOpen(true)}
+          data-sheet-share
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[#1456f0] px-3 text-[13px] font-medium text-white hover:bg-[#0e46cc]"
+        >
+          <Share2 size={14} />
+          <span>{t("分享")}</span>
+        </button>
+
+        {onGlobalSearch && (
+          <button type="button" aria-label={t("全局搜索")} onClick={onGlobalSearch} className="hidden size-8 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:grid">
+            <Search size={16} />
+          </button>
+        )}
+
+        <div ref={moreMenuRef} className="relative">
+          <button type="button" aria-label={t("更多操作")} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((v) => !v)} className="grid size-8 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]">
+            <MoreHorizontal size={17} />
+          </button>
+          {moreMenuOpen && (
+            <div role="menu" className="absolute right-0 top-10 z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg">
+              {canEdit && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); fileInputRef.current?.click(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导入 XLSX")}</button>}
+              {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); handleExportXlsx(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导出 XLSX")}</button>}
+              {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleDuplicate(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("创建副本")}</button>}
+              {meta.data.role === "manage" && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleTrash(); }} className="flex h-9 w-full items-center px-3 text-left text-[#d83931] hover:bg-[#fff2f0]">{t("移至回收站")}</button>}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        aria-label={t("选择 XLSX 文件")}
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.currentTarget.files?.[0];
+          e.currentTarget.value = "";
+          if (f) void handleSelectXlsxImport(f);
+        }}
+      />
+
+      {/* Worksheet Tabs ABOVE Toolbar per Feishu layout */}
+      <SheetTabsBar
+        sheets={sheets}
+        activeSheetId={activeSheet.id}
+        canEdit={canEdit}
+        fullscreen={fullscreen}
+        onSelectSheet={(id) => {
+          setActiveSheetId(id);
+          setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+        }}
+        onCreateSheet={() => void handleCreateSheet()}
+        onRenameSheet={(id) => void handleRenameSheet(id)}
+        onMoveSheet={(id, pos) => void handleWorksheetPatch(id, { pos })}
+        onDeleteSheet={(id) => void handleDeleteSheet(id)}
+        onToggleFullscreen={() => setFullscreen((v) => !v)}
+      />
+
+      {/* Formatting & Data Toolbar */}
+      <SheetToolbar
+        canEdit={canEdit}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        formatBrushActive={!!formatBrush}
+        activeStyle={focusedStyle}
+        isMerged={isSelectionMerged}
+        filterEnabled={!!activeSheet.filter?.enabled}
+        frozenRows={activeSheet.frozenRows}
+        frozenCols={activeSheet.frozenCols}
+        importing={importing}
+        onTriggerImport={() => fileInputRef.current?.click()}
+        onExport={canDownload ? handleExportXlsx : undefined}
+        onDuplicate={canDownload ? () => void handleDuplicate() : undefined}
+        onUndo={() => void runUndoRedo("undo")}
+        onRedo={() => void runUndoRedo("redo")}
+        onToggleFormatBrush={() => setFormatBrush((cur) => (cur ? null : { ...focusedStyle }))}
+        onClearFormat={() => void handleClearFormat()}
+        onStylePatch={(p) => void handleStylePatch(p)}
+        onToggleBorder={() => void handleToggleBorder()}
+        onToggleMerge={() => void handleToggleMerge()}
+        onInsertRowAbove={() => void handleAxisOp({ op: "insert_row", index: selection.focus.row, count: 1 })}
+        onInsertRowBelow={() => void handleAxisOp({ op: "insert_row", index: selection.focus.row + 1, count: 1 })}
+        onInsertColLeft={() => void handleAxisOp({ op: "insert_col", index: selection.focus.col, count: 1 })}
+        onInsertColRight={() => void handleAxisOp({ op: "insert_col", index: selection.focus.col + 1, count: 1 })}
+        onDeleteRow={() => void handleAxisOp({ op: "delete_row", index: selection.focus.row, count: 1 })}
+        onDeleteCol={() => void handleAxisOp({ op: "delete_col", index: selection.focus.col, count: 1 })}
+        onFreezeRows={(rows, cols = activeSheet.frozenCols) => void handleWorksheetPatch(activeSheet.id, { frozenRows: rows, frozenCols: cols })}
+        onToggleFilter={() =>
+          void handleWorksheetPatch(activeSheet.id, {
+            filter: activeSheet.filter?.enabled ? { enabled: false, headerRow: 0 } : { enabled: true, headerRow: 0, rules: {} },
+          })
+        }
+        onSortCol={(asc) => void handleSort(asc)}
+        onOpenFind={() => setFindOpen(true)}
+      />
+
+      {/* Name Box + fx + Formula Bar */}
+      <div className="relative flex h-7 min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px]">
+        <input
+          aria-label={t("单元格名称框")}
+          data-sheet-address
+          value={nameBoxText}
+          onChange={(e) => setNameBoxText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const parsed = parseRangeInput(nameBoxText);
+              if (parsed) {
+                const clamp = (p: SheetPoint) =>
+                  normalizePointForMerge(
+                    { row: Math.max(0, Math.min(activeSheet.rows.length - 1, p.row)), col: Math.max(0, Math.min(activeSheet.columns.length - 1, p.col)) },
+                    mergeLookup,
+                  );
+                setSelection({ anchor: clamp(parsed.anchor), focus: clamp(parsed.focus) });
+                gridRef.current?.focus();
+              } else {
+                setNameBoxText(formatSelectionAddress(selection));
+              }
+            }
+          }}
+          className="h-full w-20 shrink-0 border-r border-[#e5e6eb] px-2.5 text-[#4b5058] outline-none focus:bg-[#f5f7ff]"
+        />
+        <div className="relative flex shrink-0 items-center">
+          <button
+            type="button"
+            title={t("插入函数")}
+            aria-label={t("插入函数")}
+            disabled={!canEdit}
+            onClick={() => setFxMenuOpen((v) => !v)}
+            className="grid h-7 w-8 place-items-center italic text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-50"
+          >
+            fx
+          </button>
+          {fxMenuOpen && (
+            <div role="menu" className="absolute left-0 top-7 z-50 max-h-64 w-64 overflow-y-auto rounded-md border border-[#dee0e3] bg-white py-1 shadow-lg">
+              {FORMULA_QUICK_LIST.map((fn) => (
+                <button
+                  key={fn.name}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setFxMenuOpen(false);
+                    beginEdit(selection.focus, fn.snippet, "formula");
+                    requestAnimationFrame(() => formulaInputRef.current?.focus());
+                  }}
+                  className="flex w-full flex-col px-3 py-1.5 text-left hover:bg-[#f2f3f5]"
+                >
+                  <span className="font-mono text-[12px] font-medium text-[#3370ff]">{fn.snippet}</span>
+                  <span className="text-[11px] text-[#8f959e]">{fn.summary}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <input
+          ref={formulaInputRef}
+          aria-label={t("公式编辑栏")}
+          data-sheet-formula
+          readOnly={!canEdit}
+          onCopy={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+          onCut={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+          value={displayedFormulaValue}
+          onFocus={() => {
+            if (canEdit && !editing) {
+              beginEdit(selection.focus, focusedCell?.raw ?? "", "formula");
+            }
+          }}
+          onChange={(e) => {
+            if (!editing) {
+              beginEdit(selection.focus, e.target.value, "formula");
+            } else {
+              setEditing({ ...editing, value: e.target.value });
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || !editing) return;
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(null);
+              gridRef.current?.focus();
+            } else if (e.key === "Enter" || e.key === "Tab") {
+              e.preventDefault();
+              void commitActiveEdit().then((ok) => {
+                if (ok) {
+                  moveSelection(e.key === "Enter" ? (e.shiftKey ? -1 : 1) : 0, e.key === "Tab" ? (e.shiftKey ? -1 : 1) : 0, false);
+                  gridRef.current?.focus();
+                }
+              });
+            }
+          }}
+          onBlur={() => {
+            if (editing?.source === "formula") {
+              void commitActiveEdit();
+            }
+          }}
+          className="h-full min-w-0 flex-1 bg-transparent pr-3 text-[#1f2329] outline-none"
+        />
+      </div>
+
+      {/* Main Grid Viewport */}
+      <div
+        ref={gridRef}
+        role="grid"
+        aria-label={titleText}
+        aria-rowcount={activeSheet.rows.length}
+        aria-colcount={activeSheet.columns.length}
+        tabIndex={0}
+        data-sheet-grid
+        onKeyDown={(e) => void handleGridKeyDown(e)}
+        onCopy={handleCopy}
+        onPaste={(e) => void handlePaste(e)}
+        onPointerUp={() => {
+          selectingRef.current = false;
+          if (fillingRef.current) {
+            fillingRef.current = false;
+            if (fillTarget) {
+              void commitFillHandle(fillTarget);
+              setFillTarget(null);
+            }
+          }
+        }}
+        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto outline-none"
+      >
+        <div className="relative w-max min-w-full origin-top-left" style={zoom === 100 ? undefined : { zoom: `${zoom}%` }}>
+          {/* Column Headers Row */}
+          <div role="row" className="sticky top-0 z-30 flex bg-[#f5f6f7]" style={{ height: COL_HEADER_HEIGHT }}>
+            <div
+              className="sticky left-0 z-40 shrink-0 border-b border-r border-[#dfe2e6] bg-[#f5f6f7]"
+              style={{ width: ROW_HEADER_WIDTH, height: COL_HEADER_HEIGHT }}
+              onClick={() => setSelection({ anchor: { row: 0, col: 0 }, focus: { row: activeSheet.rows.length - 1, col: activeSheet.columns.length - 1 } })}
+            />
+            {activeSheet.columns.map((col, cIdx) => {
+              const w = colWidths[cIdx];
+              const isFrozenCol = cIdx < activeSheet.frozenCols;
+              const activeCol = selection.focus.col === cIdx;
+              const colFilterRule = activeSheet.filter?.rules?.[String(cIdx)];
+              return (
+                <div
+                  key={col.id}
+                  role="columnheader"
+                  style={{
+                    width: w,
+                    height: COL_HEADER_HEIGHT,
+                    ...(isFrozenCol ? { position: "sticky", left: colLeftOffsets[cIdx], zIndex: 35 } : {}),
+                  }}
+                  className={`relative flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
+                    activeCol ? "bg-[#e9efff] font-medium text-[#2b5ddb]" : "bg-[#f5f6f7] text-[#646a73]"
+                  } ${cIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
+                >
+                  <span>{columnName(cIdx)}</span>
+                  {activeSheet.filter?.enabled && (
+                    <button
+                      type="button"
+                      aria-label={t("筛选列 {col}", { col: columnName(cIdx) })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFilterCol((cur) => (cur === cIdx ? null : cIdx));
+                        setFilterInput(colFilterRule?.query ?? "");
+                      }}
+                      className={`absolute right-2 grid size-4 place-items-center rounded text-[10px] hover:bg-[#dfe5f5] ${colFilterRule?.query ? "text-[#3370ff]" : "text-[#8f959e]"}`}
+                    >
+                      ▾
+                    </button>
+                  )}
+                  <span
+                    role="separator"
+                    aria-orientation="vertical"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      startResizeCol(cIdx, e.clientX);
+                    }}
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[#3370ff]/50"
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Filter Popover */}
+          {filterCol !== null && activeSheet.filter?.enabled && (
+            <div className="fixed left-1/2 top-44 z-50 w-64 -translate-x-1/2 rounded-md border border-[#dee0e3] bg-white p-3 shadow-xl">
+              <div className="flex items-center justify-between text-[12px] font-medium">
+                <span>{t("按列筛选")} ({columnName(filterCol)})</span>
+                <button type="button" onClick={() => setFilterCol(null)}><X size={14} /></button>
+              </div>
+              <input
+                autoFocus
+                placeholder={t("包含关键字…")}
+                value={filterInput}
+                onChange={(e) => setFilterInput(e.target.value)}
+                className="mt-2 h-8 w-full rounded border px-2 text-[12px] outline-none focus:border-[#3370ff]"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextRules = { ...(activeSheet.filter.rules ?? {}) };
+                    delete nextRules[String(filterCol)];
+                    void handleWorksheetPatch(activeSheet.id, { filter: { ...activeSheet.filter, rules: nextRules } });
+                    setFilterCol(null);
+                  }}
+                  className="rounded border px-2 py-1 text-[12px]"
+                >
+                  {t("清除")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextRules = { ...(activeSheet.filter.rules ?? {}) };
+                    if (filterInput.trim()) nextRules[String(filterCol)] = { query: filterInput.trim() };
+                    else delete nextRules[String(filterCol)];
+                    void handleWorksheetPatch(activeSheet.id, { filter: { ...activeSheet.filter, rules: nextRules } });
+                    setFilterCol(null);
+                  }}
+                  className="rounded bg-[#3370ff] px-2.5 py-1 text-[12px] text-white"
+                >
+                  {t("应用")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Visible Rows */}
+          {visibleRows.map((rowIdx) => {
+            const rowAxis = activeSheet.rows[rowIdx];
+            const rh = rowHeights[rowIdx];
+            const isFrozenRow = rowIdx < activeSheet.frozenRows;
+            const b = selectionBounds(selection);
+            return (
+              <div
+                key={rowAxis.id}
+                role="row"
+                style={{
+                  height: rh,
+                  ...(isFrozenRow ? { position: "sticky", top: rowTopOffsets[rowIdx], zIndex: 25 } : {}),
+                }}
+                className={`flex bg-white ${rowIdx === activeSheet.frozenRows - 1 ? "relative shadow-[0_2px_0_#9eb7f5]" : ""}`}
+              >
+                {/* Row Header */}
+                <div
+                  role="rowheader"
+                  style={{ width: ROW_HEADER_WIDTH, height: rh }}
+                  className={`sticky left-0 z-20 flex shrink-0 items-center justify-center border-b border-r border-[#e5e6eb] text-[11px] ${
+                    selection.focus.row === rowIdx ? "bg-[#e9efff] font-medium text-[#2b5ddb]" : "bg-[#f5f6f7] text-[#8f959e]"
+                  }`}
+                >
+                  <span>{rowIdx + 1}</span>
+                  <span
+                    role="separator"
+                    aria-orientation="horizontal"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      startResizeRow(rowIdx, e.clientY);
+                    }}
+                    className="absolute bottom-0 left-0 h-1 w-full cursor-row-resize hover:bg-[#3370ff]/50"
+                  />
+                </div>
+
+                {/* Cells */}
+                {activeSheet.columns.map((colAxis, colIdx) => {
+                  const cw = colWidths[colIdx];
+                  const isFrozenCol = colIdx < activeSheet.frozenCols;
+                  const point: SheetPoint = { row: rowIdx, col: colIdx };
+                  const key = pointKey(point);
+                  const mergeInfo = mergeLookup.get(key);
+
+                  if (mergeInfo?.kind === "covered") {
+                    return (
+                      <div
+                        key={colAxis.id}
+                        aria-hidden="true"
+                        style={{
+                          width: cw,
+                          height: rh,
+                          ...(isFrozenCol ? { position: "sticky", left: colLeftOffsets[colIdx], zIndex: 12 } : {}),
+                        }}
+                        onPointerDown={() => {
+                          const master = { row: mergeInfo.masterRow, col: mergeInfo.masterCol };
+                          if (insertFormulaRefAtClick(master)) return;
+                          setSelection({ anchor: master, focus: master });
+                          gridRef.current?.focus();
+                        }}
+                        className="shrink-0"
+                      />
+                    );
+                  }
+
+                  const mergedW = mergeInfo?.kind === "master"
+                    ? colWidths.slice(colIdx, colIdx + mergeInfo.colSpan).reduce((acc, x) => acc + x, 0)
+                    : cw;
+                  const mergedH = mergeInfo?.kind === "master"
+                    ? rowHeights.slice(rowIdx, rowIdx + mergeInfo.rowSpan).reduce((acc, x) => acc + x, 0)
+                    : rh;
+
+                  const cell = gridMap.cellByKey.get(key);
+                  const style = cell?.style ?? {};
+                  const ev = activeEvalMap[key];
+                  const isSel = selected(selection, point);
+                  const isFocus = selection.focus.row === rowIdx && selection.focus.col === colIdx;
+                  const isEditingCell = editing?.sheetId === activeSheet.id && editing.source === "cell" && editing.point.row === rowIdx && editing.point.col === colIdx;
+                  const refHighlight = formulaHighlights.find((h) => rowIdx >= h.top && rowIdx <= h.bottom && colIdx >= h.left && colIdx <= h.right);
+                  const remoteCollab = collaborators.find((c) => c.worksheetId === activeSheet.id && c.row === rowIdx && c.col === colIdx);
+
+                  const refEdges: string[] = [];
+                  if (refHighlight) {
+                    if (rowIdx === refHighlight.top) refEdges.push(`inset 0 2px ${refHighlight.color}`);
+                    if (rowIdx === refHighlight.bottom) refEdges.push(`inset 0 -2px ${refHighlight.color}`);
+                    if (colIdx === refHighlight.left) refEdges.push(`inset 2px 0 ${refHighlight.color}`);
+                    if (colIdx === refHighlight.right) refEdges.push(`inset -2px 0 ${refHighlight.color}`);
+                  }
+                  const selShadow = selectionOutline(selection, point);
+                  const combinedShadow = [selShadow, ...refEdges].filter(Boolean).join(", ") || undefined;
+
+                  const displayValue = formatCellDisplay(cell?.raw ?? "", ev, style);
+                  const alignClass = style.align === "center"
+                    ? "text-center"
+                    : style.align === "right" || (!style.align && ev?.kind === "number")
+                      ? "text-right"
+                      : "text-left";
+                  const showFillHandle = canEdit && !editing && rowIdx === b.bottom && colIdx === b.right;
+
+                  const cellBg = refHighlight
+                    ? `${refHighlight.color}18`
+                    : isSel && !isFocus
+                      ? "#edf3ff"
+                      : style.bg || "#ffffff";
+
+                  return (
+                    <div
+                      key={colAxis.id}
+                      role="gridcell"
+                      aria-label={sheetAddress(point)}
+                      aria-selected={isSel}
+                      data-sheet-cell={key}
+                      style={{
+                        width: cw,
+                        height: rh,
+                        ...(isFrozenCol ? { position: "sticky", left: colLeftOffsets[colIdx], zIndex: 15 } : {}),
+                      }}
+                      className={`relative shrink-0 ${colIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
+                    >
+                      <div
+                        style={{
+                          width: mergedW,
+                          height: mergedH,
+                          backgroundColor: cellBg,
+                          color: style.color || "#1f2329",
+                          fontFamily: style.fontFamily || undefined,
+                          fontSize: style.fontSize ? `${style.fontSize}px` : "12px",
+                          fontWeight: style.bold ? 600 : undefined,
+                          fontStyle: style.italic ? "italic" : undefined,
+                          textDecoration: [style.underline ? "underline" : "", style.strike ? "line-through" : ""].filter(Boolean).join(" ") || undefined,
+                          boxShadow: combinedShadow,
+                          borderTop: style.borders?.top ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderRight: style.borders?.right ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderBottom: style.borders?.bottom ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderLeft: style.borders?.left ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          outline: remoteCollab ? `2px solid ${colorFor(remoteCollab.userId - 1)}` : undefined,
+                          zIndex: mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight ? 1 : undefined,
+                        }}
+                        onPointerDown={(e) => {
+                          if (e.button !== 0 || isEditingCell) return;
+                          if (insertFormulaRefAtClick(point)) {
+                            e.preventDefault();
+                            return;
+                          }
+                          if (e.pointerType !== "touch") e.preventDefault();
+                          if (editing) {
+                            void commitActiveEdit();
+                          }
+                          if (formatBrush && canEdit) {
+                            const brush = formatBrush;
+                            setFormatBrush(null);
+                            void commitCellEdits([{ row: rowIdx, col: colIdx, style: brush }]);
+                            setSelection({ anchor: point, focus: point });
+                            gridRef.current?.focus();
+                            return;
+                          }
+                          setStatusMessage("");
+                          selectingRef.current = true;
+                          setSelection(e.shiftKey ? { ...selection, focus: point } : { anchor: point, focus: point });
+                          gridRef.current?.focus({ preventScroll: true });
+                        }}
+                        onPointerEnter={(e) => {
+                          if (fillingRef.current) {
+                            setFillTarget(point);
+                          } else if (selectingRef.current && e.buttons) {
+                            setSelection((cur) => ({ ...cur, focus: point }));
+                          }
+                        }}
+                        onDoubleClick={() => {
+                          if (canEdit) beginEdit(point, undefined, "cell");
+                        }}
+                        className={`absolute left-0 top-0 flex items-center border-b border-r border-[#e8e9eb] px-1.5 ${
+                          isFocus ? "outline outline-2 -outline-offset-2 outline-[#3370ff]" : ""
+                        }`}
+                      >
+                        {isEditingCell ? (
+                          <input
+                            ref={cellInputRef}
+                            aria-label={t("编辑 {addr}", { addr: sheetAddress(point) })}
+                            value={editing.value}
+                            onCopy={(evCopy) => { if (!canCopy) { evCopy.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+                            onCut={(evCut) => { if (!canCopy) { evCut.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+                            onChange={(evChange) => setEditing({ ...editing, value: evChange.target.value })}
+                            onKeyDown={(evKey) => {
+                              evKey.stopPropagation();
+                              if (evKey.nativeEvent.isComposing) return;
+                              if (evKey.key === "Escape") {
+                                evKey.preventDefault();
+                                setEditing(null);
+                                gridRef.current?.focus();
+                              } else if (evKey.key === "Enter" || evKey.key === "Tab") {
+                                evKey.preventDefault();
+                                void commitActiveEdit().then((ok) => {
+                                  if (ok) {
+                                    moveSelection(evKey.key === "Enter" ? (evKey.shiftKey ? -1 : 1) : 0, evKey.key === "Tab" ? (evKey.shiftKey ? -1 : 1) : 0, false);
+                                    gridRef.current?.focus();
+                                  }
+                                });
+                              }
+                            }}
+                            onBlur={() => {
+                              if (editing?.source === "cell") void commitActiveEdit();
+                            }}
+                            className="absolute inset-0 h-full w-full select-text border-2 border-[#3370ff] bg-white px-1 text-[12px] text-[#1f2329] outline-none"
+                          />
+                        ) : (
+                          <span
+                            className={`block w-full ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
+                          >
+                            {displayValue}
+                          </span>
+                        )}
+                        {remoteCollab && (
+                          <span
+                            className="pointer-events-none absolute -top-4 left-0 z-30 whitespace-nowrap rounded px-1 text-[10px] text-white"
+                            style={{ backgroundColor: colorFor(remoteCollab.userId - 1) }}
+                          >
+                            {remoteCollab.name}
+                          </span>
+                        )}
+                        {showFillHandle && (
+                          <span
+                            data-sheet-fill-handle
+                            title={t("向下或向右拖拽填充")}
+                            onPointerDown={(evHandle) => {
+                              evHandle.stopPropagation();
+                              evHandle.preventDefault();
+                              fillingRef.current = true;
+                              setFillTarget(point);
+                            }}
+                            className="absolute -bottom-[3px] -right-[3px] z-20 size-2 cursor-crosshair border border-white bg-[#3370ff]"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Empty-sheet Quick Templates Strip (aligned with Feishu empty sheet footer strip) */}
+      {canEdit && !hasAnyContent && !templateHidden && (
+        <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-t border-[#e5e6eb] bg-[#f9fafb] px-4 py-2.5" data-sheet-templates>
+          <span className="shrink-0 text-[12px] font-medium text-[#4b5058]">{t("快速套用模板")}</span>
+          {SHEET_STARTER_TEMPLATES.map((tpl) => (
+            <button
+              key={tpl.id}
+              type="button"
+              onClick={() => void handleApplyTemplate(tpl)}
+              className="flex shrink-0 items-center gap-2 rounded-md border border-[#dee0e3] bg-white px-3 py-1.5 text-left text-[12px] hover:border-[#3370ff] hover:text-[#3370ff]"
+            >
+              <span className="font-medium">{t(tpl.name)}</span>
+              <span className="rounded bg-[#eef3ff] px-1.5 py-0.5 text-[10px] text-[#3370ff]">{t(tpl.tag)}</span>
+            </button>
+          ))}
+          <button type="button" onClick={() => setTemplateHidden(true)} className="ml-auto shrink-0 text-[12px] text-[#8f959e] hover:text-[#4b5058]">
+            {t("隐藏")}
+          </button>
+        </div>
+      )}
+
+      {/* Bottom Status & Aggregation Bar */}
+      <footer className="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-[#e5e6eb] bg-[#f7f8fa] px-3 text-[11px] text-[#646a73]">
+        <span role={errorMessage ? "alert" : undefined} className={`min-w-0 truncate ${errorMessage ? "text-[#d83931]" : statusMessage ? "text-[#3370ff]" : ""}`}>
+          {errorMessage || statusMessage || `${activeSheet.title} · ${activeSheet.rows.length}×${activeSheet.columns.length}`}
+        </span>
+        <div className="flex shrink-0 items-center gap-3">
+          {selectionSummary && (
+            <span data-sheet-aggregates>
+              {t("计数")}: {selectionSummary.count} &nbsp;|&nbsp; {t("求和")}: {selectionSummary.sum} &nbsp;|&nbsp; {t("平均")}: {selectionSummary.avg}
+            </span>
+          )}
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => setZoom((z) => Math.max(75, z - 25))} className="px-1 hover:text-[#1f2329]">-</button>
+            <span>{zoom}%</span>
+            <button type="button" onClick={() => setZoom((z) => Math.min(150, z + 25))} className="px-1 hover:text-[#1f2329]">+</button>
+          </div>
+        </div>
+      </footer>
+
+      {/* Find & Replace Dialog */}
+      {findOpen && (
+        <div className="fixed right-6 top-36 z-50 w-72 rounded-lg border border-[#dee0e3] bg-white p-3.5 shadow-xl" role="dialog" aria-label={t("查找和替换")}>
+          <div className="flex items-center justify-between text-[13px] font-medium">
+            <span>{t("查找和替换")}</span>
+            <button type="button" onClick={() => setFindOpen(false)}><X size={15} /></button>
+          </div>
+          <div className="mt-2.5 grid gap-2">
+            <input
+              autoFocus
+              placeholder={t("查找内容")}
+              value={findQuery}
+              onChange={(e) => setFindQuery(e.target.value)}
+              className="h-8 rounded border px-2 text-[12px] outline-none focus:border-[#3370ff]"
+            />
+            {canEdit && (
+              <input
+                placeholder={t("替换为")}
+                value={replaceText}
+                onChange={(e) => setReplaceText(e.target.value)}
+                className="h-8 rounded border px-2 text-[12px] outline-none focus:border-[#3370ff]"
+              />
+            )}
+          </div>
+          <div className="mt-3 flex justify-end gap-2 text-[12px]">
+            <button
+              type="button"
+              onClick={() => {
+                if (!findQuery) return;
+                for (let r = 0; r < activeSheet.rows.length; r++) {
+                  for (let c = 0; c < activeSheet.columns.length; c++) {
+                    if ((gridMap.cellByKey.get(`${r}:${c}`)?.raw ?? "").includes(findQuery)) {
+                      setSelection({ anchor: { row: r, col: c }, focus: { row: r, col: c } });
+                      return;
+                    }
+                  }
+                }
+                setStatusMessage(t("未找到匹配的单元格内容"));
+              }}
+              className="rounded border px-2.5 py-1 hover:bg-[#f2f3f5]"
+            >
+              {t("查找下一个")}
+            </button>
+            {canEdit && (
+              <button type="button" onClick={() => void handleFindReplaceAll()} className="rounded bg-[#3370ff] px-2.5 py-1 text-white">
+                {t("全部替换")}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Multi-sheet XLSX Import Preview Dialog */}
+      {pendingImport && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="sheet-import-confirm-title" className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+            <h2 id="sheet-import-confirm-title" className="text-[16px] font-semibold">{t("确认导入 XLSX 到当前工作簿")}</h2>
+            <p className="mt-2 break-all text-[13px] text-[#646a73]">{pendingImport.filename}</p>
+            <p className="mt-2 text-[13px] text-[#1f2329]">
+              {t("共解析 {sheets} 个工作表、{cells} 个非空单元格，导入将替换当前工作簿全部工作表并自动保存。", {
+                sheets: pendingImport.sheets.sheets.length,
+                cells: pendingImport.sheets.cellCount,
+              })}
+            </p>
+            {pendingImport.sheets.warnings.length > 0 && (
+              <div className="mt-3 rounded bg-[#fff7e6] p-2.5 text-[12px] text-[#8a5a00]">
+                {pendingImport.sheets.warnings.map((w) => <p key={w}>{w}</p>)}
+              </div>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setPendingImport(null)} className="rounded border px-3 py-1.5 text-[13px]">{t("取消")}</button>
+              <button type="button" onClick={() => void handleConfirmXlsxImport()} className="rounded bg-[#3370ff] px-3 py-1.5 text-[13px] text-white">{t("确认导入")}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {shareOpen && meta.data && (
+        <ShareDialog meta={meta.data as DocMeta} userId={userId} anchorRef={shareBtnRef} onClose={() => setShareOpen(false)} />
+      )}
+    </div>
+  );
+}

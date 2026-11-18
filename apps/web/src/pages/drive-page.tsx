@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { driveApi, extrasApi, type DriveEntry } from "@/lib/api";
-import { BaseIcon, hrefOf } from "@/components/sidebar";
+import { BaseIcon, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { DocumentGlyph } from "@/components/document-glyph";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,8 @@ import { formatDriveTime, ownRootFolders, sortDriveDocuments, sortDriveFolders, 
 import { batchMessage, pruneSelection, runDriveBatch, toggleId } from "./drive-batch";
 import { moveDriveColumn, readDriveColumns, writeDriveColumns, type DriveColumn, type DriveColumnPreferences } from "./drive-columns";
 import { DriveDocGlyph, NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/drive-action-icons";
-import { ArrowDownUp, Check, ChevronDown, ChevronRight, Ellipsis, Eye, EyeOff, FileInput, FileText, FileUp, Folder, FolderUp, GripVertical, LayoutGrid, Link2, List, ListFilter, ListTree, Presentation, Search, Shapes } from "lucide-react";
+import { SheetColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
+import { ArrowDownUp, Check, ChevronDown, ChevronRight, Ellipsis, Eye, EyeOff, FileInput, FileText, FileUp, Folder, FolderUp, GripVertical, LayoutGrid, Link2, List, ListFilter, ListTree, Presentation, Search } from "lucide-react";
 
 function driveColumnStorage(): Storage | undefined {
   try { return typeof window === "undefined" ? undefined : window.localStorage; } catch { return undefined; }
@@ -91,10 +92,10 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   const failure = () => { setError("操作结果未能确认，请刷新后检查。"); invalidate(); };
   const rename = useMutation({ mutationFn: ({ id, title, expected }: { id: number; title: string; expected: number }) => driveApi.rename(id, title, expected), onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); }, onError: failure });
   const createFolder = useMutation({ mutationFn: (title: string) => driveApi.create(title, folderId, scope), onSuccess: invalidate, onError: failure });
-  const createNode = useMutation({ mutationFn: ({ kind, title }: { kind: "doc" | "base" | "slides"; title: string }) => driveApi.createNode(kind, title, folderId, scope), onSuccess: (entry) => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); location.hash = hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" | "file" }); }, onError: failure });
+  const createNode = useMutation({ mutationFn: ({ kind, title }: { kind: "doc" | "base" | "slides" | "sheet"; title: string }) => driveApi.createNode(kind, title, folderId, scope), onSuccess: (entry) => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); location.hash = hrefOf({ id: entry.id, kind: entry.kind }); }, onError: failure });
   const trash = useMutation({ mutationFn: (entry: DriveEntry) => driveApi.trash(entry.id, entry.revision), onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["trash"] }); }, onError: failure });
   const entries = useMemo(() => [...(list.data ?? [])].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")), [list.data]);
-  const visible = useMemo(() => { const q = filter.trim().toLocaleLowerCase(); return q ? entries.filter((entry) => (entry.title || "未命名").toLocaleLowerCase().includes(q)) : entries; }, [entries, filter]);
+  const visible = useMemo(() => { const q = filter.trim().toLocaleLowerCase(); return q ? entries.filter((entry) => driveEntryLabel(entry).toLocaleLowerCase().includes(q)) : entries; }, [entries, filter]);
   const folders = useMemo(() => {
     const includeShared = folderId === null && personalRoot && showAllFolders;
     return sortDriveFolders(ownRootFolders(visible, sharedRoots.isError ? [] : sharedRoots.data ?? [], userId, includeShared, filter.trim().toLocaleLowerCase()), folderSort, folderDirection);
@@ -122,14 +123,14 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
     try { finishBatch("收藏", await runDriveBatch(chosen, (entry) => starredIds.has(entry.id) ? Promise.resolve() : extrasApi.star(entry.id))); void favorites.refetch(); }
     finally { setBatchPending(false); }
   };
-  const newItem = async (kind: "doc" | "base" | "slides" | "board" | "mindmap" | "folder") => {
+  const newItem = async (kind: "doc" | "base" | "slides" | "sheet" | "board" | "mindmap" | "folder") => {
     setCreating(false); setError("");
-    const label = kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹";
+    const label = kind === "doc" ? "文档" : kind === "sheet" ? "表格" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹";
     const title = await askText(`新建${label}`, `${label}名称`);
     if (!title?.trim()) return;
     if (kind === "board" || kind === "mindmap") {
       // 与飞书一致：画板是一篇只含画板的文档，打开后直接进入画板。
-      try { const entry = kind === "mindmap" ? await driveApi.createWordImportNode(title.trim(), folderId, scope, userId) : await driveApi.createNode("doc", title.trim(), folderId, scope); if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || entry.kind !== "doc" || (entry.creatorId !== undefined && entry.creatorId !== userId)) throw new Error("invalid document response"); stageBoard(userId, entry.id, kind); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === userId) location.hash = hrefOf({ id: entry.id, kind: "doc" }); else setError("创建结果未确认，请检查文档库。"); }
+      try { const entry = kind === "mindmap" ? await driveApi.createWordImportNode(title.trim(), folderId, scope, userId) : await driveApi.createWordImportNode(title.trim(), folderId, scope, userId, "board"); if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || entry.kind !== "doc" || (kind === "board" && entry.docType !== "board") || (entry.creatorId !== undefined && entry.creatorId !== userId)) throw new Error("invalid document response"); stageBoard(userId, entry.id, kind); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === userId) location.hash = hrefOf({ id: entry.id, kind: "doc" }); else setError("创建结果未确认，请检查文档库。"); }
       catch { failure(); }
       return;
     }
@@ -178,10 +179,10 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
     finally { templateLock.current = false; setTemplatePending(false); }
   };
   const actions = (entry: DriveEntry) => ({
-    onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" | "file" }); },
+    onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind }); },
     onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
     onMove: () => setMoving({ entries: [entry], batch: false }),
-    onCopyLink: async () => { const route = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind as "doc" | "base" | "slides" | "file" }); try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${route}`); setNotice("链接已复制，访问者仍需具备权限。"); } catch { setError("复制失败，请检查浏览器剪贴板权限。"); } },
+    onCopyLink: async () => { const route = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind }); try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${route}`); setNotice("链接已复制，访问者仍需具备权限。"); } catch { setError("复制失败，请检查浏览器剪贴板权限。"); } },
     onTrash: () => { void ask(`删除「${entry.title}」？`, entry.kind === "folder" ? "整个文件夹会移到回收站，可恢复。" : "会移到回收站，可恢复。").then((ok) => { if (ok) trash.mutate(entry); }); },
     onStar: (next: boolean) => { void (next ? extrasApi.star(entry.id) : extrasApi.unstar(entry.id)).then(() => favorites.refetch()).catch(failure); },
   });
@@ -191,7 +192,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       <div className="grid grid-cols-2 gap-2 pt-2 md:grid-cols-4 md:gap-3 xl:grid-cols-[repeat(4,305px)]">
         <div className="relative min-w-0">
           <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5]", creating && "bg-[#f2f3f5]")}><NewDocGlyph/><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-[#1f2329]">新建</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">新建文档开始协作</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", creating && "rotate-180")}/></button>
-          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label="新建" className="absolute left-0 top-[68px] z-40 w-full min-w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "slides", "base", "board", "mindmap", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "board" ? <span className="grid size-5 place-items-center rounded bg-[#7F3BF5] text-white"><Shapes size={13}/></span> : kind === "mindmap" ? <ListTree size={20} className="text-[#1caff0]"/> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹"}</span></button>)}</div></>}
+          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label="新建" className="absolute left-0 top-[68px] z-40 w-full min-w-48 rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "sheet", "slides", "base", "board", "mindmap", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "sheet" ? <SheetColorIcon className="size-5 shrink-0"/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "board" ? <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]"/> : kind === "mindmap" ? <ListTree size={20} className="text-[#1caff0]"/> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "sheet" ? "表格" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹"}</span></button>)}</div></>}
         </div>
         <div className="relative min-w-0">
           <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading" || uploadState.phase === "scanning"} onKeyDown={(event) => { if (event.key === "Escape" && uploadMenu) { event.stopPropagation(); setUploadMenu(false); } }} onClick={() => { if (pickerPending.current && fallbackPickerSupported) { setUseFallbackPicker(true); uploads.selectionError("目录选择器未返回，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。"); } pickerPending.current = false; pickerGate.current.invalidate(); setUploadMenu((open) => !open); }} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-4 text-left hover:bg-[#f2f3f5] disabled:opacity-50", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" || uploadState.phase === "scanning" ? "上传中" : "上传"}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">上传本地文件</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", uploadMenu && "rotate-180")}/></button>
@@ -233,7 +234,11 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   </main>;
 }
 
-function DriveIcon({ entry }: { entry: DriveEntry }) { return entry.kind === "folder" ? <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/> : entry.kind === "base" ? <BaseIcon/> : entry.kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : entry.kind === "file" ? <span className="grid size-5 place-items-center rounded bg-[#e8efff] text-[#3370ff]"><FileText size={15}/></span> : <DocumentGlyph icon={entry.icon} fallback={<DriveDocGlyph/>}/>; }
+function driveEntryLabel(entry: Pick<DriveEntry, "title" | "kind" | "docType">): string {
+  return entry.title || (entry.kind === "sheet" ? "未命名表格" : isBoardDoc(entry) ? "未命名画板" : "未命名");
+}
+
+function DriveIcon({ entry }: { entry: DriveEntry }) { return entry.kind === "folder" ? <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/> : entry.kind === "sheet" ? <SheetColorIcon className="size-5 shrink-0"/> : entry.kind === "base" ? <BaseIcon/> : entry.kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : entry.kind === "file" ? <span className="grid size-5 place-items-center rounded bg-[#e8efff] text-[#3370ff]"><FileText size={15}/></span> : isBoardDoc(entry) ? <DocumentGlyph icon={entry.icon} fallback={<WhiteboardIcon className="size-5 shrink-0 text-[#34c759]"/>}/> : <DocumentGlyph icon={entry.icon} fallback={<DriveDocGlyph/>}/>; }
 
 type EntryActions = { entry: DriveEntry; starred: boolean; onStar: (next: boolean) => void; onOpen: () => void; onMove: () => void; onCopyLink: () => void; onRename: () => void; onTrash: () => void };
 
@@ -242,7 +247,7 @@ function FolderCard(props: EntryActions) {
 }
 
 function FileCard(props: EntryActions) {
-  return <div className="relative flex min-h-24 flex-col rounded-lg border p-3 hover:bg-[#f7f8fa]"><div className="flex items-start"><button type="button" onClick={props.onOpen} className="flex min-w-0 flex-1 flex-col items-start gap-2 text-left"><DriveIcon entry={props.entry}/><span className="w-full truncate text-[13px]">{props.entry.title || "未命名"}</span></button><EntryMenu {...props}/></div></div>;
+  return <div className="relative flex min-h-24 flex-col rounded-lg border p-3 hover:bg-[#f7f8fa]"><div className="flex items-start"><button type="button" onClick={props.onOpen} className="flex min-w-0 flex-1 flex-col items-start gap-2 text-left"><DriveIcon entry={props.entry}/><span className="w-full truncate text-[13px]">{driveEntryLabel(props.entry)}</span></button><EntryMenu {...props}/></div></div>;
 }
 
 const driveColumnNames: Record<DriveColumn, string> = { owner: "所有者", modifier: "修改者", updated: "修改时间", created: "创建时间" };
@@ -275,8 +280,8 @@ function SelectBox({ checked, label, onToggle, hoverOnly = false }: { checked: b
 function DriveRow(props: EntryActions & { columns: DriveColumnPreferences; selected: boolean; selecting: boolean; onSelect: () => void }) {
   const { entry, onOpen, columns, selected, selecting, onSelect } = props;
   return <div className={cn("group relative flex min-h-14 items-center gap-3 border-b border-[#eef0f2] px-2 py-1", selected ? "bg-[#f0f4ff]" : "hover:bg-[#f7f8fa]")} data-drive-row={entry.id} aria-selected={selected}>
-    <span className={cn("shrink-0", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:hidden")}><SelectBox checked={selected} label={`选择「${entry.title || "未命名"}」`} onToggle={onSelect}/></span>
-    <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><DriveIcon entry={entry}/><span className="min-w-0"><span className="block truncate text-[13px] text-[#1f2329]">{entry.title || "未命名"}</span>{columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("block truncate text-[11px] leading-3 text-[#8f959e]", column === "owner" || column === "modifier" ? "xl:hidden" : column === "updated" ? "sm:hidden" : "md:hidden")}>{column === "owner" ? `所有者 ${entry.creatorName || "—"}` : column === "modifier" ? `修改者 ${entry.lastModifierName || "—"}` : `${column === "updated" ? "修改于" : "创建于"} ${formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}`}</span>)}</span></button>
+    <span className={cn("shrink-0", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:hidden")}><SelectBox checked={selected} label={`选择「${driveEntryLabel(entry)}」`} onToggle={onSelect}/></span>
+    <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><DriveIcon entry={entry}/><span className="min-w-0"><span className="block truncate text-[13px] text-[#1f2329]">{driveEntryLabel(entry)}</span>{columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("block truncate text-[11px] leading-3 text-[#8f959e]", column === "owner" || column === "modifier" ? "xl:hidden" : column === "updated" ? "sm:hidden" : "md:hidden")}>{column === "owner" ? `所有者 ${entry.creatorName || "—"}` : column === "modifier" ? `修改者 ${entry.lastModifierName || "—"}` : `${column === "updated" ? "修改于" : "创建于"} ${formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}`}</span>)}</span></button>
     {columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("hidden w-32 text-[12px] text-[#8f959e]", column === "owner" || column === "modifier" ? "xl:block" : column === "updated" ? "sm:block" : "md:block")}>{column === "owner" || column === "modifier" ? <span className="flex items-center gap-2 pr-2" title={column === "owner" ? "当前版本的所有者为创建者" : "未记录或无法确认时显示空值"}>{(column === "owner" ? entry.creatorName : entry.lastModifierName) && <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full bg-[#e8efff] text-[10px] text-[#3370ff]">{[...(column === "owner" ? entry.creatorName! : entry.lastModifierName!)][0]}</span>}<span className="truncate">{(column === "owner" ? entry.creatorName : entry.lastModifierName) || "—"}</span></span> : formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}</span>)}
     <EntryMenu {...props}/>
   </div>;

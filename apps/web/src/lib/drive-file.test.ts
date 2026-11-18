@@ -14,7 +14,9 @@ describe("standalone drive files", () => {
   it("never routes unknown or missing node kinds into the document editor", () => {
     expect(nodeHref({ id: 4, kind: "doc" })).toBe("#/doc/4");
     expect(nodeHref({ id: 4, kind: "base" })).toBe("#/base/4");
-    expect(nodeHref({ id: 4, kind: "sheet" })).toBe("#/unsupported/4");
+    expect(nodeHref({ id: 4, kind: "sheet" })).toBe("#/sheet/4");
+    expect(parseHash("#/sheet/4")).toEqual({ page: "sheet", id: 4 });
+    expect(nodeHref({ id: 4, kind: "unknown-kind" })).toBe("#/unsupported/4");
     expect(nodeHref({ id: 4 })).toBe("#/unsupported/4");
     expect(nodeHref({ id: Number.MAX_SAFE_INTEGER + 1, kind: "doc" })).toBe("#/");
     expect(parseHash("#/unsupported/4")).toEqual({ page: "unsupported", id: 4 });

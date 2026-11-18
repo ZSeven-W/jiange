@@ -123,7 +123,8 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base" | "folder" | "slides" | "file";
+  kind?: "doc" | "base" | "folder" | "slides" | "file" | "sheet";
+  docType?: string;
   workspaceName?: string;
   copyProtected?: boolean;
   copyMinRole?: Role;
@@ -131,6 +132,7 @@ export interface DocMeta {
   /** Missing on older servers, which only permit editors to comment. */
   commentMinRole?: "view" | "edit";
   permissionsRevision?: number;
+  inheritParentAcl?: boolean;
   /** Versioned-drive optimistic concurrency (move/trash/restore); 0 on nodes never touched by the drive API. */
   driveRevision?: number;
   /** Groups the subtree of one guarded trash operation; 0 for legacy deletions. */
@@ -393,11 +395,114 @@ export interface Share {
   email: string;
   role: Role;
 }
-export interface ShareInfo {
-  members: Share[];
-  link: { role: "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit"; token?: string; revision?: number };
+export interface SubjectShare {
+  subjectType: "department" | "group";
+  subjectId: number;
+  name: string;
+  memberCount: number;
   role: Role;
 }
+export interface ShareInfo {
+  members: Share[];
+  subjects?: SubjectShare[];
+  link: { role: "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit"; token?: string; revision?: number };
+  role: Role;
+  inheritParentAcl?: boolean;
+  workspaceId?: number;
+}
+export type WorkspaceRole = "owner" | "admin" | "member";
+export interface WorkspaceMemberInfo {
+  userId: number;
+  email: string;
+  name: string;
+  role: WorkspaceRole;
+  createdAt: string;
+}
+export interface OrgDepartmentMember {
+  userId: number;
+  name: string;
+  email: string;
+  isLeader: boolean;
+}
+export interface OrgDepartment {
+  id: number;
+  workspaceId: number;
+  parentId: number | null;
+  name: string;
+  sortOrder: number;
+  members: OrgDepartmentMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface OrgGroupMember {
+  userId: number;
+  name: string;
+  email: string;
+}
+export interface OrgGroup {
+  id: number;
+  workspaceId: number;
+  name: string;
+  description: string;
+  members: OrgGroupMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WorkspaceOrgSnapshot {
+  workspaceId: number;
+  workspaceName: string;
+  callerRole: WorkspaceRole;
+  members: WorkspaceMemberInfo[];
+  departments: OrgDepartment[];
+  groups: OrgGroup[];
+  /** Pending invitations; empty unless the caller is an owner/admin. */
+  invitations?: WorkspaceInvitation[];
+}
+export interface WorkspaceInvitation {
+  id: number;
+  workspaceId: number;
+  workspaceName?: string;
+  email: string;
+  role: "member" | "admin";
+  inviterName?: string;
+  createdAt: string;
+}
+/** A non-member email always yields "invited", whether or not it is registered. */
+export interface WorkspaceMemberChange {
+  status: "updated" | "invited" | "removed";
+  member?: WorkspaceMemberInfo;
+  invitation?: WorkspaceInvitation;
+}
+export const invitationsApi = {
+  mine: (userId: number) =>
+    request<{ invitations: WorkspaceInvitation[] }>("GET", "/api/invitations", undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.invitations ?? []),
+  respond: (invitationId: number, userId: number, accept: boolean) =>
+    request<void>("POST", `/api/invitations/${invitationId}/${accept ? "accept" : "decline"}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
+export const orgApi = {
+  get: (wsId: number, userId: number) =>
+    request<WorkspaceOrgSnapshot>("GET", `/api/workspaces/${wsId}/org`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  upsertMember: (wsId: number, userId: number, email: string, role: "member" | "admin" | "remove") =>
+    request<WorkspaceMemberChange>("POST", `/api/workspaces/${wsId}/members`, { email, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  revokeInvitation: (wsId: number, invitationId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/invitations/${invitationId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createDepartment: (wsId: number, userId: number, name: string, parentId: number | null = null, sortOrder = 0) =>
+    request<OrgDepartment>("POST", `/api/workspaces/${wsId}/departments`, { name, parentId, sortOrder }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateDepartment: (wsId: number, deptId: number, userId: number, patch: { name?: string; parentId?: number | null; sortOrder?: number }) =>
+    request<OrgDepartment>("PATCH", `/api/workspaces/${wsId}/departments/${deptId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteDepartment: (wsId: number, deptId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/departments/${deptId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setDepartmentMember: (wsId: number, deptId: number, userId: number, memberUserId: number, present: boolean, isLeader = false) =>
+    request<void>("PUT", `/api/workspaces/${wsId}/departments/${deptId}/members`, { userId: memberUserId, present, isLeader }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createGroup: (wsId: number, userId: number, name: string, description = "") =>
+    request<OrgGroup>("POST", `/api/workspaces/${wsId}/groups`, { name, description }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateGroup: (wsId: number, groupId: number, userId: number, patch: { name?: string; description?: string }) =>
+    request<OrgGroup>("PATCH", `/api/workspaces/${wsId}/groups/${groupId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteGroup: (wsId: number, groupId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/groups/${groupId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setGroupMember: (wsId: number, groupId: number, userId: number, memberUserId: number, present: boolean) =>
+    request<void>("PUT", `/api/workspaces/${wsId}/groups/${groupId}/members`, { userId: memberUserId, present }, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
 export interface FileMeta {
   id: number;
   name: string;
@@ -429,6 +534,7 @@ export interface DriveEntry {
   lastModifierName?: string;
   parentId: number | null;
   kind: string;
+  docType?: string;
   title: string;
   icon?: string;
   role: Role;
@@ -448,10 +554,10 @@ export const driveApi = {
   file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
   create: (title: string, parentId: number | null = null, personal = false, signal?: AbortSignal, expectedUserId?: number) =>
     request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
-  createNode: (kind: "doc" | "base" | "folder" | "slides", title: string, parentId: number | null = null, personal = false) =>
-    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared" }),
-  createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number) =>
-    request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared" }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createNode: (kind: "doc" | "base" | "folder" | "slides" | "sheet", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
+    request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }),
+  createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number, docType?: "board") =>
+    request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }, undefined, { "X-Jiange-User-Id": String(userId) }),
   children: (parentId: number | null = null, personal = false, workspaceId?: number) => {
     const params = new URLSearchParams();
     if (parentId !== null) params.set("parent", String(parentId));
@@ -511,6 +617,188 @@ export const slidesApi = {
     return result as FileMeta & { docId: number };
   },
 };
+
+export interface SheetBorders {
+  top?: boolean;
+  right?: boolean;
+  bottom?: boolean;
+  left?: boolean;
+  color?: string;
+}
+
+export type SheetNumFmt = "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date";
+
+export interface SheetCellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
+  bg?: string;
+  align?: "left" | "center" | "right" | "";
+  valign?: "top" | "middle" | "bottom" | "";
+  wrap?: boolean;
+  borders?: SheetBorders;
+  numFmt?: SheetNumFmt;
+}
+
+export interface SheetMerge {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+export interface SheetColumnFilter {
+  query?: string;
+  values?: string[];
+}
+
+export interface SheetSortRule {
+  col: number;
+  ascending: boolean;
+}
+
+export interface SheetFilterConfig {
+  enabled?: boolean;
+  headerRow?: number;
+  rules?: Record<string, SheetColumnFilter>;
+  sort?: SheetSortRule;
+}
+
+export interface SheetAxis {
+  id: number;
+  pos: number;
+  size?: number;
+}
+
+export interface SheetCell {
+  rowId: number;
+  columnId: number;
+  raw: string;
+  style?: SheetCellStyle;
+  revision: number;
+}
+
+export interface SheetWorksheet {
+  id: number;
+  nodeId: number;
+  title: string;
+  pos: number;
+  frozenRows: number;
+  frozenCols: number;
+  merges: SheetMerge[];
+  filter: SheetFilterConfig;
+  revision: number;
+  rows: SheetAxis[];
+  columns: SheetAxis[];
+  cells: SheetCell[];
+}
+
+export interface SheetSnapshot {
+  nodeId: number;
+  workspaceId: number;
+  parentId: number | null;
+  title: string;
+  role: Role;
+  creatorId: number;
+  creatorName: string;
+  driveRevision: number;
+  workbookRevision: number;
+  sheets: SheetWorksheet[];
+  updatedAt: string;
+}
+
+export interface SheetCellWrite {
+  rowId: number;
+  columnId: number;
+  expectedRevision: number;
+  raw?: string;
+  style?: SheetCellStyle;
+}
+
+export interface SheetCellBatch {
+  mutationId: string;
+  worksheetId: number;
+  cells: SheetCellWrite[];
+}
+
+export interface SheetCellRevision {
+  rowId: number;
+  columnId: number;
+  revision: number;
+}
+
+export interface SheetBatchResult {
+  mutationId: string;
+  worksheetId: number;
+  workbookRevision: number;
+  cells: SheetCellRevision[];
+  replayed: boolean;
+}
+
+export interface WorksheetPatch {
+  title?: string;
+  pos?: number;
+  frozenRows?: number;
+  frozenCols?: number;
+  merges?: SheetMerge[];
+  filter?: SheetFilterConfig;
+  expectedRevision?: number;
+}
+
+export interface SheetAxisOp {
+  op: "insert_row" | "delete_row" | "resize_row" | "insert_col" | "delete_col" | "resize_col";
+  index: number;
+  count?: number;
+  size?: number;
+  expectedRevision?: number;
+}
+
+export interface ImportedSheetCell {
+  row: number;
+  col: number;
+  raw: string;
+  style?: SheetCellStyle;
+}
+
+export interface ImportedWorksheet {
+  title: string;
+  rows: number;
+  cols: number;
+  frozenRows?: number;
+  frozenCols?: number;
+  merges?: SheetMerge[];
+  cells: ImportedSheetCell[];
+}
+
+const sheetHeaders = (userId: number) => ({
+  "X-Jiange-User-Id": String(userId),
+  "X-Jiange-Sheet-Version": "1",
+});
+
+export const sheetsApi = {
+  get: (nodeId: number, userId: number) =>
+    request<SheetSnapshot>("GET", `/api/sheets/${nodeId}`, undefined, undefined, sheetHeaders(userId)),
+  renameTitle: (nodeId: number, userId: number, title: string, expectedTitle: string, expected: number) =>
+    request<DriveEntry>("POST", `/api/sheets/${nodeId}/account-title`, { title, expectedTitle, expected }, undefined, sheetHeaders(userId)),
+  writeCells: (nodeId: number, userId: number, batch: SheetCellBatch, signal?: AbortSignal) =>
+    request<SheetBatchResult>("POST", `/api/sheets/${nodeId}/cells`, batch, signal, sheetHeaders(userId)),
+  createWorksheet: (nodeId: number, userId: number, title = "") =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("POST", `/api/sheets/${nodeId}/worksheets`, { title }, undefined, sheetHeaders(userId)),
+  updateWorksheet: (nodeId: number, worksheetId: number, userId: number, patch: WorksheetPatch) =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("PATCH", `/api/sheets/${nodeId}/worksheets/${worksheetId}`, patch, undefined, sheetHeaders(userId)),
+  deleteWorksheet: (nodeId: number, worksheetId: number, userId: number) =>
+    request<{ workbookRevision: number }>("DELETE", `/api/sheets/${nodeId}/worksheets/${worksheetId}`, undefined, undefined, sheetHeaders(userId)),
+  mutateAxis: (nodeId: number, worksheetId: number, userId: number, op: SheetAxisOp) =>
+    request<{ worksheet: SheetWorksheet; workbookRevision: number }>("POST", `/api/sheets/${nodeId}/worksheets/${worksheetId}/axes`, op, undefined, sheetHeaders(userId)),
+  importXlsx: (nodeId: number, userId: number, expectedWorkbookRevision: number, mutationId: string, sheets: ImportedWorksheet[]) =>
+    request<SheetSnapshot>("POST", `/api/sheets/${nodeId}/import-xlsx`, { expectedWorkbookRevision, mutationId, sheets }, undefined, sheetHeaders(userId)),
+  duplicate: (nodeId: number, userId: number, signal?: AbortSignal) =>
+    request<DocMeta>("POST", `/api/docs/${nodeId}/account-duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
+};
 export const extrasApi = {
   search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {
     if (!Array.isArray(r?.docs)) throw new ApiError(502, "search_incomplete", "搜索未完成，请稍后重试。");
@@ -550,10 +838,14 @@ export const docsApi = {
   get: (id: number) => request<DocMeta>("GET", `/api/docs/${id}`),
   getIcon: (id: number) => request<{ icon: string; revision: number }>("GET", `/api/docs/${id}/icon`),
   setIcon: (id: number, icon: string, expectedRevision: number) => request<{ icon: string; revision: number } | undefined>("PUT", `/api/docs/${id}/icon`, { icon, expectedRevision }),
-  create: (title = "", parentId: number | null = null, workspaceId?: number) => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }) }),
+  create: (title = "", parentId: number | null = null, workspaceId?: number, docType?: "board") => request<DocMeta>("POST", "/api/docs", { title, parentId, ...(workspaceId === undefined ? {} : { workspaceId }), ...(docType ? { docType } : {}) }),
   shares: (id: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares`),
   sharesForAccount: (id: number, userId: number) => request<ShareInfo>("GET", `/api/docs/${id}/shares-account`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   share: (id: number, email: string, role: Role | "", createOnly = false) => request<ShareInfo | undefined>("PUT", `/api/docs/${id}/shares`, { email, role, ...(createOnly ? { createOnly: true } : {}) }),
+  setSubjectShare: (id: number, subjectType: "department" | "group", subjectId: number, role: Role | "", userId: number) =>
+    request<ShareInfo | undefined>("PUT", `/api/docs/${id}/subject-shares`, { subjectType, subjectId, role }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setInheritance: (id: number, inheritParentAcl: boolean, userId: number) =>
+    request<ShareInfo | undefined>("PUT", `/api/docs/${id}/inheritance`, { inheritParentAcl }, undefined, { "X-Jiange-User-Id": String(userId) }),
   setLink: (id: number, role: "none" | "anon" | "view" | "edit") => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link`, { role }),
   setLinkAtRevision: (id: number, role: ShareInfo["link"]["role"], expectedRevision: number, userId: number, signal?: AbortSignal) => request<ShareInfo["link"] | undefined>("PUT", `/api/docs/${id}/link-guarded`, { role, expectedRevision }, signal, { "X-Jiange-User-Id": String(userId) }).then((link) => {
     if (link !== undefined && (link.role !== role || !Number.isSafeInteger(link.revision) || link.revision! < expectedRevision)) throw new TypeError("链接修改结果无法确认");

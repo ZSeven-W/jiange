@@ -78,9 +78,14 @@ pnpm gen:vectors                         # 修改内核后重新生成 spec/vect
 
 P0 脚手架 ✅ · P1 协同内核 ✅ · P2 Go 同步服务 ✅ · P3 块编辑器 · P4 文档树与权限 · P5 多维表格 MVP · P6 版本、导入导出、发布
 
-## License
+## 许可 / License
 
-个人与非商业使用免费；商业使用（含企业生产经营、托管/SaaS、集成进商业产品等）需购买商业授权，详见 [LICENSE](./LICENSE)。
+本项目采用分组件许可，完整条款见 [LICENSE](./LICENSE)：
+
+- **应用部分（`apps/`、`server/` 等）**：个人与非商业使用免费；商业使用（含企业内部生产经营、托管/SaaS、集成进商业产品或收费服务等）需事先购买商业授权。
+- **SDK 部分（`packages/*`）**：个人与商业使用全部免费；若企业对 SDK 进行二次开发（修改、扩展、裁剪或基于源码衍生），须在产品文档、关于页面或源码仓库说明等公开位置明确说明来源（基于 Jiange SDK）。
+
+Application (`apps/`, `server/`, etc.): free for personal & non-commercial use; commercial use requires a paid license. SDKs (`packages/*`): free for all uses (including commercial), provided that enterprises performing secondary development publicly attribute Jiange SDK as the source. See [LICENSE](./LICENSE).
 
 ## 设计 / Design
 UI 先在 OpenPencil 中设计（`design/jiange.op`），预览见 `design/previews/`，

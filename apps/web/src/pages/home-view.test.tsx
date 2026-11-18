@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DocMeta, Me } from "@/lib/api";
 import { DriveUploadManager } from "./drive-upload";
 import { Home } from "./home";
-import { homeViewKey, readHomeView, writeHomeView } from "./home-view";
+import { homeViewKey, matchesHomeTypeFilter, readHomeView, writeHomeView } from "./home-view";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("home view preferences", () => {
@@ -31,5 +31,23 @@ describe("home view preferences", () => {
     expect(html).toContain("项目计划");
     expect(html).toContain("最近修改于");
     expect(html).toContain('aria-label="卡片视图" aria-pressed="true"');
+  });
+  it("separates board documents and sheets in the home type filter", () => {
+    const plain = { kind: "doc" };
+    const board = { kind: "doc", docType: "board" };
+    const base = { kind: "base" };
+    const sheet = { kind: "sheet" };
+    expect(matchesHomeTypeFilter(plain, "all")).toBe(true);
+    expect(matchesHomeTypeFilter(board, "all")).toBe(true);
+    expect(matchesHomeTypeFilter(sheet, "all")).toBe(true);
+    expect(matchesHomeTypeFilter(plain, "doc")).toBe(true);
+    expect(matchesHomeTypeFilter(board, "doc")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "doc")).toBe(false);
+    expect(matchesHomeTypeFilter(plain, "board")).toBe(false);
+    expect(matchesHomeTypeFilter(board, "board")).toBe(true);
+    expect(matchesHomeTypeFilter(base, "board")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "sheet")).toBe(true);
+    expect(matchesHomeTypeFilter(base, "sheet")).toBe(false);
+    expect(matchesHomeTypeFilter(sheet, "base")).toBe(false);
   });
 });

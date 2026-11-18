@@ -22,10 +22,13 @@ export function toPreview(workbook: XlsxWorkbook): PreviewXlsx {
   if (workbook.sheets.length !== 1) throw new Error("开发预览只能打开单工作表文件；文件未导入。");
   const sheet = workbook.sheets[0], cells: Record<string, string> = {}, originals: Record<string, OriginalCell> = {};
   const losses = new Set<string>();
+  if (sheet.merges?.length || sheet.frozen) losses.add("合并单元格、行列布局或其他工作表功能可能不会保留。");
   for (const cell of sheet.cells) {
     if (cell.row >= PREVIEW_ROWS || cell.col >= PREVIEW_COLS) throw new Error("工作表超出预览的 100 行、26 列范围；文件未导入。");
     const value = cell.value;
     if (!cell.formula && typeof value === "string" && value.startsWith("=")) throw new Error("文件含以 = 开头的普通文本，预览无法安全区分公式；文件未导入。");
+    if (cell.style) losses.add("单元格样式、数字格式不会保留。");
+    if (cell.value === undefined && !cell.formula) continue;
     const raw = cell.formula ?? (typeof value === "boolean" ? (value ? "TRUE" : "FALSE") : typeof value === "object" ? value.error : String(value ?? ""));
     if (!raw) { losses.add("空文本单元格不会保留。"); continue; }
     const key = pointKey(cell);

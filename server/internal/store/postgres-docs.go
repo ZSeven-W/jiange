@@ -14,32 +14,34 @@ import (
 // NotifyChannel carries "docID:head" payloads after each append.
 const NotifyChannel = "jiange_ops"
 
-const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind`
+const docCols = `id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind, doc_type`
 
 // creatorName is appended to every doc SELECT/RETURNING list.
 const creatorName = `, (SELECT name FROM users WHERE users.id = creator_id)`
 
 func scanDoc(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
+	d.InheritParentACL = true
 	return
 }
 
 func scanDocWithPermissions(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
+	d.InheritParentACL = true
 	return
 }
 
 // scanDocDrive additionally reads the versioned-drive columns (queries that
-// append `drive_revision, COALESCE(trash_batch_id,0)` after the permission
+// append `drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl` after the permission
 // columns); trash/delete UIs use the revision for optimistic concurrency.
 func scanDocDrive(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -52,15 +54,33 @@ func (p *Postgres) CanCreateIn(ctx context.Context, uid, ws int64) (ok bool, err
 }
 
 func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int64, title string, initial []RawOp) (d DocMeta, err error) {
+	return p.CreateDocWithType(ctx, ws, creator, parent, title, "", initial)
+}
+
+func (p *Postgres) CreateDocWithType(ctx context.Context, ws, creator int64, parent *int64, title, docType string, initial []RawOp) (d DocMeta, err error) {
+	if !ValidDocType(docType) {
+		return DocMeta{}, ErrConflict
+	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var e error
-		d, e = scanDoc(tx.QueryRow(ctx,
-			`INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
-			 VALUES ($1, $2, 'doc', 'V', $3, $4) RETURNING `+docCols+creatorName, ws, parent, title, creator))
+		if docType == "" {
+			row := tx.QueryRow(ctx,
+				`INSERT INTO nodes (workspace_id, parent_id, kind, sort_key, title, creator_id)
+				 VALUES ($1, $2, 'doc', 'V', $3, $4) RETURNING id, workspace_id, parent_id, title, icon, creator_id, created_at, updated_at, kind`+creatorName, ws, parent, title, creator)
+			e = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName)
+			if errors.Is(e, pgx.ErrNoRows) {
+				e = ErrNotFound
+			}
+		} else {
+			d, e = scanDoc(tx.QueryRow(ctx,
+				`INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id)
+				 VALUES ($1, $2, 'doc', $3, 'V', $4, $5) RETURNING `+docCols+creatorName, ws, parent, docType, title, creator))
+		}
 		if e != nil {
 			return e
 		}
 		d.CopyMinRole, d.DownloadMinRole, d.CommentMinRole = RoleView, RoleView, RoleView
+		d.InheritParentACL = true
 		if _, e = tx.Exec(ctx, `INSERT INTO doc_heads (doc_id, seq) VALUES ($1, $2)`, d.ID, len(initial)); e != nil {
 			return e
 		}
@@ -86,9 +106,8 @@ func (p *Postgres) CreateDoc(ctx context.Context, ws, creator int64, parent *int
 }
 
 func (p *Postgres) ListDocs(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0) FROM nodes n
-		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1) ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
+		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +133,9 @@ func prefixed(p, cols string) string {
 
 func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	var d DocMeta
-	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0) FROM nodes n`+roleJoins+`
+	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
 		WHERE n.id = $2 AND n.deleted_at IS NULL`, uid, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
 		return DocMeta{}, ErrNotFound
 	}
@@ -126,8 +145,8 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 // GetDocSystem fetches node meta without user scoping.
 func (p *Postgres) GetDocSystem(ctx context.Context, id int64) (DocMeta, error) {
 	var d DocMeta
-	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0) FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID)
+	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DocMeta{}, ErrNotFound
 	}
@@ -146,7 +165,7 @@ func (p *Postgres) SetCopyProtected(ctx context.Context, id int64, on bool) erro
 func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (doc DocMeta, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var e error
-		doc, e = scanDocDrive(tx.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0)`, id, title))
+		doc, e = scanDocDrive(tx.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl`, id, title))
 		if e != nil {
 			return e
 		}
@@ -574,9 +593,8 @@ func (p *Postgres) setSubtreeDeleted(ctx context.Context, id int64, deleted bool
 }
 
 func (p *Postgres) ListTrash(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0) FROM nodes n
-		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
-		WHERE n.deleted_at IS NOT NULL AND (NOT n.personal OR n.creator_id = $1) ORDER BY n.deleted_at DESC LIMIT 200`, uid)
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
+		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NOT NULL AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' ORDER BY n.deleted_at DESC LIMIT 200`, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -604,6 +622,9 @@ func (p *Postgres) Move(ctx context.Context, id int64, parent *int64) error {
 	}
 	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent); err != nil {
+			return err
+		}
+		if err := bumpPGSubtreePermissionsRevision(ctx, tx, id, true); err != nil {
 			return err
 		}
 		return recordDocumentModifier(ctx, tx, id, documentActor(ctx))

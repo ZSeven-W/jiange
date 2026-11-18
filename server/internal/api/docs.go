@@ -16,6 +16,8 @@ type docInput struct {
 	WorkspaceID int64   `json:"workspaceId"`
 	ParentID    *int64  `json:"parentId"`
 	Title       *string `json:"title"`
+	// DocType: only on create; "board" makes a 画板 document.
+	DocType string `json:"docType"`
 	// Move: when true, ParentID (null = root) re-parents the doc.
 	Move bool `json:"move"`
 	// CopyProtected: watermark + copy/download restrictions (manage only).
@@ -75,6 +77,15 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_parent", "parent not found")
 			return
 		}
+		// 关闭继承后成员不再默认可编辑：只读协作者不能在受限节点下新建子文档
+		if store.RoleRank(p.Role) < store.RoleRank(store.RoleEdit) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "没有在该位置新建文档的权限")
+			return
+		}
+	}
+	if !store.ValidDocType(in.DocType) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_doc_type", "docType 只能是 board 或留空")
+		return
 	}
 	title := ""
 	if in.Title != nil {
@@ -83,7 +94,7 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d, err := s.Store.CreateDoc(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title, syncsrv.InitialOps(title))
+	d, err := s.Store.CreateDocWithType(r.Context(), in.WorkspaceID, u.ID, in.ParentID, title, in.DocType, syncsrv.InitialOps(title))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -154,8 +165,8 @@ func (s *Server) patchDoc(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "comment role must be view or edit")
 		return
 	}
-	if splitPermissions && d.Kind != "doc" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "separate policies are only available for documents")
+	if splitPermissions && d.Kind != "doc" && !(d.Kind == "sheet" && in.CommentMinRole == nil) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_permissions", "separate policies are only available for documents and spreadsheets")
 		return
 	}
 	// Check the permissions of the whole request before applying any changes.

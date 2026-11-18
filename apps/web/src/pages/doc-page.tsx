@@ -26,7 +26,7 @@ import { peekStarter, takeStarter } from "./pending-starter";
 import { clearPendingWord, loadPendingWord, type PendingWord } from "./pending-word";
 import { BOARD_SEED, MINDMAP_SEED, hasBoard, peekBoardKind, takeBoard } from "./board-starter";
 import { requestFlowOpen } from "@/editor/flowchart/open-requests";
-import { BaseIcon, docTitle, DocIcon, hrefOf } from "@/components/sidebar";
+import { BaseIcon, docTitle, DocIcon, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { go } from "@/lib/route";
 import { docWidthClass, readDocWidth, writeDocWidth, type DocWidth } from "@/lib/doc-width";
 import { DocWidthOptions } from "./doc-width-options";
@@ -41,6 +41,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { DocumentIconEditor } from "@/components/document-icon-editor";
 import { DocumentCover } from "@/components/document-cover";
 import { DocumentGlyph, displayDocumentIcon } from "@/components/document-glyph";
+import { WhiteboardIcon } from "@/components/feishu-icons";
 import type { SearchGuardCapture } from "@/components/search-focus";
 import { publishDocumentIcon } from "@/components/document-icon-cache";
 import { ask, askText } from "@/components/ui/ask";
@@ -1269,7 +1270,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               allowCopy={contentCopyAllowed}
               allowPrint={downloadAllowed}
               onClose={() => { setOutlineOpen(false); focusOutlineEntry(); }}
-              title={docTitle({ title })}
+              title={docTitle({ title, docType: meta.data?.docType })}
               onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); } }}
               onJump={(bid) => {
                 const area = scrollArea.current;
@@ -1424,7 +1425,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         return true;
       }} />}
       {metadataVerified && meta.data && titleCheckTarget?.doc === id && titleCheckTarget.user === me.user.id && <TitleConsistency key={`${me.user.id}:${id}`} id={id} userId={me.user.id} canEdit={canEditContent} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setTitleCheckTarget(null)} onAccessDenied={() => { void meta.refetch(); }} onUpdated={(updatedTitle) => { titleSync.clearIfCurrent(updatedTitle); if (!titleSync.hasPending) setTitleSyncNotice(null); setTitleSyncRevision((n) => n + 1); void meta.refetch(); void qc.invalidateQueries({ queryKey: ["docs"] }); }} />}
-      {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
+      {metadataVerified && versionTarget?.doc === id && versionTarget.user === me.user.id && <NamedVersionDialog key={`save-version:${me.user.id}:${id}`} docId={id} userId={me.user.id} title={docTitle({ title, docType: meta.data?.docType })} onSave={saveNamedVersion} onClose={() => setVersionTarget(null)} />}
       {metadataVerified && history && (history !== "history" || canEditRole) && (
         <VersionPanel
           key={`version-history:${me.user.id}:${id}:${history}:${linkedVersion === null ? "invalid" : linkedVersion ?? "none"}`}
@@ -1576,7 +1577,7 @@ function TopBar({
           {workspace}
         </a>
         <span className="hidden shrink-0 text-primary sm:block">
-          {meta?.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={meta?.icon} fallback={<DocIcon />} />}
+          {meta?.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={meta?.icon} fallback={isBoardDoc(meta) ? <WhiteboardIcon className="size-4 text-[#34c759]" /> : <DocIcon />} />}
         </span>
         {ancestors.map((a, i) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
@@ -1587,7 +1588,7 @@ function TopBar({
           </span>
         ))}
         <span className={cn("text-subtle", !ancestors.length && "hidden sm:inline")}>/</span>
-        <span className="truncate font-medium text-foreground">{meta ? docTitle({ title }) : "…"}</span>
+        <span className="truncate font-medium text-foreground">{meta ? docTitle({ title, docType: meta.docType }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
       <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict || directorySync === "blocked" ? "#D83931" : directorySync === "pending" ? "#FF8800" : s.color }} />{metaText}</span>

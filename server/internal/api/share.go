@@ -57,6 +57,23 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	subjects := []store.SubjectShare{}
+	// 部门/用户组属于空间内部目录：即便外部协作者拥有管理权限也不展示
+	includeOrg, err := s.Store.CanCreateIn(r.Context(), guard.UserID, d.WorkspaceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if includeOrg {
+		loaded, sErr := s.Store.ListSubjectShares(r.Context(), d.ID)
+		if sErr != nil {
+			s.fail(w, r, sErr)
+			return
+		}
+		if loaded != nil {
+			subjects = loaded
+		}
+	}
 	user, err := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
 	if errors.Is(err, store.ErrNotFound) || err == nil && user.ID != guard.UserID {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
@@ -78,7 +95,14 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 	if d.Role != store.RoleManage || link.Role == "none" {
 		link.Token = ""
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"members": shares, "link": link, "role": d.Role})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"members":          shares,
+		"subjects":         subjects,
+		"link":             link,
+		"role":             d.Role,
+		"inheritParentAcl": d.InheritParentACL,
+		"workspaceId":      d.WorkspaceID,
+	})
 }
 
 func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +173,17 @@ func (s *Server) shareResultAfterMutation(w http.ResponseWriter, r *http.Request
 		empty()
 		return
 	}
+	subjects, err := s.Store.ListSubjectShares(r.Context(), docID)
+	if err != nil {
+		empty()
+		return
+	}
+	if member, mErr := s.Store.CanCreateIn(r.Context(), guard.UserID, d.WorkspaceID); mErr != nil || !member {
+		subjects = nil
+	}
+	if subjects == nil {
+		subjects = []store.SubjectShare{}
+	}
 	d, err = s.Store.GetDoc(r.Context(), guard.UserID, docID)
 	if err != nil || store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
 		empty()
@@ -162,7 +197,14 @@ func (s *Server) shareResultAfterMutation(w http.ResponseWriter, r *http.Request
 	if d.Role != store.RoleManage || link.Role == "none" {
 		link.Token = ""
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"members": shares, "link": link, "role": d.Role})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"members":          shares,
+		"subjects":         subjects,
+		"link":             link,
+		"role":             d.Role,
+		"inheritParentAcl": d.InheritParentACL,
+		"workspaceId":      d.WorkspaceID,
+	})
 }
 
 func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
@@ -178,8 +220,8 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_role", "link role must be none, anon, view or edit")
 		return
 	}
-	if d.Kind == "file" && in.Role == "anon" {
-		httpx.Error(w, http.StatusBadRequest, "invalid_role", "云盘文件暂不支持匿名分享")
+	if (d.Kind == "file" || d.Kind == "sheet") && in.Role == "anon" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_role", "暂不支持匿名分享")
 		return
 	}
 
@@ -220,6 +262,8 @@ func (s *Server) shareMutationError(w http.ResponseWriter, r *http.Request, err 
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrWouldLoseAccess):
+		httpx.Error(w, http.StatusConflict, "would_lose_access", "你的管理权限来自上级授权，关闭继承后将无法访问。请先为自己添加直接授权")
 	case errors.Is(err, store.ErrForbidden), errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前没有管理权限")
 	case errors.Is(err, store.ErrConflict):
@@ -395,7 +439,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if d.Kind == "file" || d.Kind == "folder" || d.Kind == "slides" {
+	if d.Kind == "file" || d.Kind == "folder" || d.Kind == "slides" || d.Kind == "sheet" {
 		httpx.Error(w, http.StatusConflict, "invalid_kind", "此类型不支持添加文档附件")
 		return
 	}

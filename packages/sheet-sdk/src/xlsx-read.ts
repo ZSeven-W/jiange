@@ -1,6 +1,7 @@
 import { listZip, readZipEntry, type ZipEntry } from "@jiange/ooxml/zip";
 import { xattr, xchild, xchildren, xlsxXml, xtext, type XlsxXmlNode } from "./xlsx-xml.js";
 import { XlsxError, XLSX_MAX_CELLS, XLSX_MAX_FILE_BYTES, XLSX_MAX_SHEETS, type XlsxCell, type XlsxCellError, type XlsxScalar, type XlsxSheet, type XlsxWorkbook } from "./xlsx.js";
+import { parseMergeRef, readXlsxStyles, type XlsxMerge, type XlsxStyle } from "./xlsx-style.js";
 
 export const XLSX_MAX_INPUT_BYTES = XLSX_MAX_FILE_BYTES;
 const MAX_PART = XLSX_MAX_FILE_BYTES, MAX_TOTAL = 64 * 1024 * 1024, MAX_ENTRIES = 4096;
@@ -118,8 +119,15 @@ export async function readXlsx(bytes: Uint8Array): Promise<XlsxImportResult> {
     const warnings = new Set<string>();
     if (rootRels.some((rel) => !relKind(rel.type, "officeDocument"))) warnings.add("package_metadata_not_preserved");
     if (hasOtherChildren(workbook, ["sheets", "calcPr", "fileVersion"])) warnings.add("workbook_metadata_not_preserved");
-    if (rels.some((rel) => relKind(rel.type, "styles"))) warnings.add("styles_not_preserved");
     if (rels.some((rel) => !["worksheet", "sharedStrings", "styles", "theme"].some((kind) => relKind(rel.type, kind)))) warnings.add("workbook_relationships_not_preserved");
+    const styleRels = rels.filter((rel) => relKind(rel.type, "styles"));
+    if (styleRels.length > 1 || styleRels[0]?.external) throw new XlsxError("invalid styles relationship");
+    let cellStyles: (XlsxStyle | undefined)[] = [];
+    if (styleRels.length) {
+      const root = await xml(safePath(workbookPath, styleRels[0].target));
+      if (root.ns !== workbook.ns) throw new XlsxError("invalid styles part");
+      cellStyles = readXlsxStyles(root, warnings);
+    }
     const sharedRels = rels.filter((rel) => relKind(rel.type, "sharedStrings"));
     if (sharedRels.length > 1 || sharedRels[0]?.external) throw new XlsxError("invalid shared strings relationship");
     let shared: string[] = [];
@@ -154,7 +162,23 @@ export async function readXlsx(bytes: Uint8Array): Promise<XlsxImportResult> {
       const path = safePath(workbookPath, rel.target); if (usedParts.has(path)) throw new XlsxError("duplicate worksheet part"); usedParts.add(path);
       const sheet = await xml(path);
       if (sheet.name !== "worksheet" || sheet.ns !== workbook.ns) throw new XlsxError("invalid worksheet part");
-      if (hasOtherChildren(sheet, ["sheetData", "dimension"])) warnings.add("worksheet_features_not_preserved");
+      if (hasOtherChildren(sheet, ["sheetData", "dimension", "sheetViews", "sheetFormatPr", "mergeCells", "pageMargins"])) warnings.add("worksheet_features_not_preserved");
+      let frozen: { rows: number; cols: number } | undefined;
+      const view = xchildren(xchildren(sheet, "sheetViews")[0] ?? sheet, "sheetView")[0];
+      const pane = view ? xchildren(view, "pane")[0] : undefined;
+      if (pane) {
+        const state = xattr(pane, "state") ?? "split", split = (name: string) => { const v = xattr(pane, name) ?? "0"; return /^\d{1,7}$/.test(v) ? Number(v) : NaN; };
+        const rows = split("ySplit"), cols = split("xSplit");
+        if ((state === "frozen" || state === "frozenSplit") && Number.isInteger(rows) && Number.isInteger(cols) && rows < 1_048_576 && cols < 16_384) { if (rows || cols) frozen = { rows, cols }; }
+        else warnings.add("worksheet_features_not_preserved");
+      }
+      const merges: XlsxMerge[] = [];
+      const mergeList = xchildren(sheet, "mergeCells")[0];
+      if (mergeList) {
+        const items = xchildren(mergeList, "mergeCell");
+        if (items.length > 10_000) throw new XlsxError("too many merged ranges");
+        for (const item of items) merges.push(parseMergeRef(xattr(item, "ref") ?? "", address));
+      }
       const data = xchildren(sheet, "sheetData"); if (data.length !== 1) throw new XlsxError("invalid worksheet data");
       if (hasOtherChildren(data[0], ["row"])) warnings.add("worksheet_features_not_preserved");
       const cells: XlsxCell[] = [], seen = new Set<string>();
@@ -168,7 +192,13 @@ export async function readXlsx(bytes: Uint8Array): Promise<XlsxImportResult> {
           const point = address(xattr(cell, "r") ?? ""), key = `${point.row}:${point.col}`;
           if (rowNumber !== undefined && Number(rowNumber) !== point.row + 1) throw new XlsxError("cell and row references disagree");
           if (seen.has(key)) throw new XlsxError("duplicate cell reference"); seen.add(key);
-          const style = xattr(cell, "s"); if (style && !/^\d+$/.test(style)) throw new XlsxError("invalid cell style index"); if (style && style !== "0") warnings.add("cell_formatting_not_preserved");
+          const styleAttr = xattr(cell, "s"); if (styleAttr && !/^\d+$/.test(styleAttr)) throw new XlsxError("invalid cell style index");
+          let style: XlsxStyle | undefined;
+          if (styleAttr && styleAttr !== "0") {
+            const idx = Number(styleAttr);
+            if (idx >= cellStyles.length) { if (cellStyles.length) throw new XlsxError("invalid cell style index"); warnings.add("cell_formatting_not_preserved"); }
+            else style = cellStyles[idx];
+          }
           if (Object.keys(cell.attrs).some((key) => !["|r", "|s", "|t"].includes(key))) warnings.add("cell_metadata_not_preserved");
           if (hasOtherChildren(cell, ["f", "v", "is"])) warnings.add("cell_metadata_not_preserved");
           const formulas = xchildren(cell, "f"), values = xchildren(cell, "v"), inline = xchildren(cell, "is");
@@ -198,11 +228,13 @@ export async function readXlsx(bytes: Uint8Array): Promise<XlsxImportResult> {
           } else throw new XlsxError(`unsupported cell type: ${type}`);
           if (formula !== undefined && type === "str" && value === "") { warnings.add("empty_formula_cache_not_preserved"); value = undefined; }
           if (formula === undefined && type !== "n" && value === undefined) throw new XlsxError("missing typed cell value");
-          if (formula !== undefined) cells.push({ ...point, formula, ...(value === undefined ? {} : { value }) });
-          else if (value !== undefined) cells.push({ ...point, value });
+          const styled = style ? { style } : {};
+          if (formula !== undefined) cells.push({ ...point, formula, ...(value === undefined ? {} : { value }), ...styled });
+          else if (value !== undefined) cells.push({ ...point, value, ...styled });
+          else if (style) cells.push({ ...point, style });
         }
       }
-      sheets.push({ name, cells });
+      sheets.push({ name, cells, ...(merges.length ? { merges } : {}), ...(frozen ? { frozen } : {}) });
     }
     if ([...entries.keys()].some((path) => !cache.has(path))) warnings.add("package_parts_not_preserved");
     return { workbook: { sheets }, warnings: [...warnings].sort() };

@@ -46,7 +46,12 @@ describe("document access errors", () => {
     expect(base).toContain("下载本地备份");
     expect(base).not.toContain("可编辑正文");
     expect(state.syncEnabled).toBe(false);
-    const unknown = renderWith(null, true, me, { ...metadata, kind: "sheet" as DocMeta["kind"] });
+    const sheet = renderWith(null, true, me, { ...metadata, kind: "sheet" });
+    expect(sheet).toContain("无法在此打开该文件");
+    expect(sheet).toContain('href="#/sheet/7"');
+    expect(sheet).not.toContain("可编辑正文");
+    expect(state.syncEnabled).toBe(false);
+    const unknown = renderWith(null, true, me, { ...metadata, kind: "unknown-kind" as DocMeta["kind"] });
     expect(unknown).toContain("当前版本暂不支持此文件类型");
     expect(unknown).not.toContain('href="#/doc/7"');
     expect(state.syncEnabled).toBe(false);

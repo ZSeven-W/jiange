@@ -15,6 +15,9 @@ var (
 	ErrForbidden       = errors.New("store: forbidden")
 	ErrUnauthenticated = errors.New("store: session expired")
 	ErrCopyProtected   = errors.New("store: copying prohibited")
+	// ErrWouldLoseAccess rejects a permission change that would remove the
+	// caller's own manage access (e.g. turning off inherited grants).
+	ErrWouldLoseAccess = errors.New("store: change would remove caller's manage access")
 )
 
 type User struct {
@@ -33,6 +36,7 @@ type Workspace struct {
 
 type Store interface {
 	SlidesStore
+	SheetStore
 	DriveFolderStore
 	VersionStore
 	CommentStore
@@ -41,6 +45,8 @@ type Store interface {
 	BaseSnapshotStore
 	AIStore
 	TemplateStore
+	DocTypeStore
+	OrgStore
 	// CreateUser creates the user and a personal workspace atomically.
 	CreateUser(ctx context.Context, email, name, passwordHash string) (User, Workspace, error)
 	UserByEmail(ctx context.Context, email string) (User, error)

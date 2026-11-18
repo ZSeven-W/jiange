@@ -7,10 +7,12 @@ import (
 
 // DocMeta is a document node in a workspace's directory tree.
 type DocMeta struct {
-	ID          int64     `json:"id"`
-	WorkspaceID int64     `json:"workspaceId"`
-	ParentID    *int64    `json:"parentId"`
-	Kind        string    `json:"kind"` // doc | base | folder | slides | file
+	ID          int64  `json:"id"`
+	WorkspaceID int64  `json:"workspaceId"`
+	ParentID    *int64 `json:"parentId"`
+	Kind        string `json:"kind"` // doc | base | folder | slides | file | sheet
+	// DocType is a document subtype ("board" = 画板); empty for plain documents.
+	DocType     string    `json:"docType,omitempty"`
 	Title       string    `json:"title"`
 	Icon        string    `json:"icon"`
 	CreatorID   int64     `json:"creatorId"`
@@ -27,6 +29,7 @@ type DocMeta struct {
 	DownloadMinRole     string `json:"downloadMinRole,omitempty"`
 	CommentMinRole      string `json:"commentMinRole,omitempty"`
 	PermissionsRevision int64  `json:"permissionsRevision"`
+	InheritParentACL    bool   `json:"inheritParentAcl"`
 	// Role is the caller's access (view/edit/manage), set by GetDoc.
 	Role string `json:"role,omitempty"`
 	// DriveRevision is the optimistic-concurrency version of directory

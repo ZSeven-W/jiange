@@ -153,4 +153,22 @@ describe("share permission settings", () => {
     expect(await docsApi.setLink(doc.id, "view")).toBeUndefined();
     expect(await docsApi.setContentPermissions(doc.id, { copyMinRole: "edit" }, 0)).toBeUndefined();
   });
+
+  it("renders department/group grant controls and inheritance switch in ShareDialog", () => {
+    vi.stubGlobal("location", { origin: "https://example.test", pathname: "/" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["shares", doc.id, 1], {
+      role: "manage",
+      members: [],
+      subjects: [{ subjectType: "department", subjectId: 12, name: "研发中心", memberCount: 3, role: "edit" }],
+      link: { role: "none", revision: 0 },
+      inheritParentAcl: false,
+      workspaceId: 1,
+    });
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} userId={1} onClose={() => {}} /></QueryClientProvider>);
+    expect(html).toContain("按部门或用户组");
+    expect(html).toContain("继承上级权限");
+    expect(html).toContain("关闭后仅创建者、空间管理员及显式授权可访问");
+    expect(html).toContain("+1");
+  });
 });
