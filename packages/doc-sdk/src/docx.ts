@@ -50,6 +50,8 @@ export function safeDocxLink(url: string | undefined): string | undefined {
 // ---------------------------------------------------------------- export
 
 export interface DocxExportBlock {
+  id?: string;
+  parent?: string;
   type: string;
   props: Record<string, string>;
   spans: MdSpan[];
@@ -272,11 +274,39 @@ function tableXml(rows: string[][], props: Record<string, string>): string {
   return `<w:tbl><w:tblPr><w:tblStyle w:val="JiangeTable"/>${layout}<w:tblLook w:val="${look}" w:firstRow="${header ? 1 : 0}" w:lastRow="0" w:firstColumn="${headerColumn ? 1 : 0}" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
 }
 
+function columnsTableXml(colBlock: DocxExportBlock, allBlocks: DocxExportBlock[], consumed: Set<string>, w: DocxWriter): string {
+  if (!colBlock.id) return "";
+  const directCols = allBlocks.filter((b) => b.id && b.parent === colBlock.id);
+  if (directCols.length === 0) return "";
+  const collectSubtree = (root: DocxExportBlock): DocxExportBlock[] => {
+    const res: DocxExportBlock[] = [root];
+    if (root.id) consumed.add(root.id);
+    for (const candidate of allBlocks) {
+      if (candidate.id && candidate.parent === root.id && !consumed.has(candidate.id)) {
+        res.push(...collectSubtree(candidate));
+      }
+    }
+    return res;
+  };
+  const totalWidth = 9026;
+  const colWidth = Math.max(600, Math.floor(totalWidth / directCols.length));
+  const grid = directCols.map(() => `<w:gridCol w:w="${colWidth}"/>`).join("");
+  const cells = directCols.map((col) => {
+    const subtree = collectSubtree(col);
+    const inner = bodyXml(subtree, w) || "<w:p/>";
+    return `<w:tc><w:tcPr><w:tcW w:w="${colWidth}" w:type="dxa"/><w:tcMar><w:left w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar></w:tcPr>${inner}</w:tc>`;
+  }).join("");
+  const noBorders = `<w:tblBorders><w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/></w:tblBorders>`;
+  return `<w:tbl><w:tblPr><w:tblW w:w="${totalWidth}" w:type="dxa"/><w:tblLayout w:type="fixed"/>${noBorders}</w:tblPr><w:tblGrid>${grid}</w:tblGrid><w:tr>${cells}</w:tr></w:tbl>`;
+}
+
 function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
   const out: string[] = [];
+  const consumed = new Set<string>();
   let orderedNum = 0;
   let inList = false;
   for (const block of blocks) {
+    if (block.id && consumed.has(block.id)) continue;
     const spans = block.spans.filter((span) => span.text);
     const text = spans.map((span) => span.text).join("");
     const isList = block.type === "bullet" || block.type === "ordered" || block.type === "todo";
@@ -353,8 +383,11 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         out.push(paragraph("", w.runs([{ text: label, marks: url ? { link: url } : {} }])));
         break;
       }
-      case "columns":
+      case "columns": {
+        const tbl = columnsTableXml(block, blocks, consumed, w);
+        if (tbl) out.push(tbl);
         break;
+      }
       default:
         out.push(paragraph(alignXml(block.props), w.runs(spans)));
     }

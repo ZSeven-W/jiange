@@ -183,6 +183,40 @@ func conditionalTableWidths(op collab.Op) bool {
 	return true
 }
 
+func conditionalColumnCreateBatch(ops []collab.Op) bool {
+	if len(ops) < 1 || len(ops) > 2 {
+		return false
+	}
+	create := ops[0]
+	if create.T != collab.TBlockCreate || create.Type != "paragraph" || create.Parent == collab.Root || !conditionalColumnPosition.MatchString(create.Pos) || strings.HasSuffix(create.Pos, "0") {
+		return false
+	}
+	if len(ops) == 2 {
+		set := ops[1]
+		if set.T != collab.TBlockSet || set.Block != create.ID || set.Key != "_column_created" || set.Value == nil || *set.Value != "1" {
+			return false
+		}
+	}
+	return true
+}
+
+func conditionalColumnUngroupBatch(ops []collab.Op) (moves []collab.Op, archive []collab.Op, ok bool) {
+	if len(ops) < 5 {
+		return nil, nil, false
+	}
+	split := len(ops) - 4
+	moves, archive = ops[:split], ops[split:]
+	if len(moves) > 1000 || !conditionalColumnArchiveBatch(archive) {
+		return nil, nil, false
+	}
+	for _, m := range moves {
+		if m.T != collab.TBlockMove || m.Parent != collab.Root || !conditionalColumnPosition.MatchString(m.Pos) || strings.HasSuffix(m.Pos, "0") {
+			return nil, nil, false
+		}
+	}
+	return moves, archive, true
+}
+
 // commitConditionalOps accepts text changes, table-cell properties, bounded table/column widths, and same-parent column moves.
 // Title text changes also update the matching directory name in the same commit.
 // A durable receipt makes an exact retry safe even after the head advances.
@@ -232,6 +266,11 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	archiveBatch := conditionalColumnArchiveBatch(ops)
+	createColumnBatch := !archiveBatch && conditionalColumnCreateBatch(ops)
+	ungroupMoves, ungroupArchive, ungroupBatch := conditionalColumnUngroupBatch(ops)
+	if archiveBatch || createColumnBatch {
+		ungroupBatch = false
+	}
 	client := ops[0].ID.Client
 	if client == 0 || client > conditionalSafeInteger {
 		httpx.Error(w, http.StatusBadRequest, "invalid_ops", "提交操作无效")
@@ -254,7 +293,7 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		}
 		switch op.T {
 		case collab.TBlockCreate, collab.TBlockDelete:
-			if !archiveBatch {
+			if !archiveBatch && !createColumnBatch && !ungroupBatch {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此操作类型")
 				return
 			}
@@ -270,12 +309,12 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			}
 		case collab.TMark:
 		case collab.TBlockMove:
-			if !archiveBatch && (len(ops) != 1 || !conditionalColumnPosition.MatchString(op.Pos) || strings.HasSuffix(op.Pos, "0")) {
+			if !archiveBatch && !ungroupBatch && (len(ops) != 1 || !conditionalColumnPosition.MatchString(op.Pos) || strings.HasSuffix(op.Pos, "0")) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏位置无效")
 				return
 			}
 		case collab.TBlockSet:
-			if !archiveBatch && !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
+			if !archiveBatch && !createColumnBatch && !ungroupBatch && !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
 				return
 			}
@@ -345,6 +384,53 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, op := range ops {
+			if err = state.TryApply(op); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+				return
+			}
+		}
+	} else if createColumnBatch {
+		create := ops[0]
+		if state.ColumnCount(create.Parent) >= collab.MaxColumns {
+			httpx.Error(w, http.StatusBadRequest, "column_limit", "每组分栏最多支持 10 栏")
+			return
+		}
+		if !state.CanCreateColumn(create.Parent, create.Pos) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏状态不支持新增列")
+			return
+		}
+		for _, op := range ops {
+			if err = state.TryApply(op); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+				return
+			}
+		}
+	} else if ungroupBatch {
+		groupMove := ungroupArchive[len(ungroupArchive)-1]
+		if !state.CanUngroupColumns(groupMove.Block, ungroupMoves) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏状态不支持取消分栏")
+			return
+		}
+		for _, m := range ungroupMoves {
+			if err = state.TryApply(m); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+				return
+			}
+		}
+		if !state.CanArchiveColumnWithMetadata(groupMove.Block, ungroupArchive[0].ID, ungroupArchive[2].ID, groupMove.ID, *ungroupArchive[2].Value) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "分栏状态不支持取消分栏")
+			return
+		}
+		for _, op := range ungroupArchive {
 			if err = state.TryApply(op); err != nil {
 				if lookup() {
 					return

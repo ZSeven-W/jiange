@@ -38,6 +38,8 @@ import { filterItems, type MenuItem } from "./pinyin";
 import { SlashMenu, nextSlashIndex, slashGridSize } from "./slash-menu";
 import { TABLE_PICKER_LIMIT, validTablePickerSize, type TableSize } from "./table-size-picker";
 import { COLUMN_PICKER_MIN, nextColumnPickerCount, validColumnPickerCount } from "./column-count-picker";
+import { buildColumnUngroupOps, submitConditionalColumnOps } from "./column-ops-commit";
+import { ColumnNestedBlocks, type ColumnNestedBlockItem } from "./column-nested-blocks";
 import { SlashLinkPopover } from "./slash-link-popover";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink, resolveInlineLink, type InlineLinkAnchor } from "./slash-link";
 import { toggleTextLink } from "./link-kind";
@@ -3023,7 +3025,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const key = idKey(ch);
                   const composingHere = composing.current?.snapshot && eqId(composing.current.sel.a.b, ch);
                   const commentProjection = projectCommentAnchors(doc, ch, comments, activeThread);
-                  return { id: key, type: ci.type, props: ci.props, spans: composingHere ? composing.current!.snapshot! : doc.richChars(ch), findRanges: composingHere ? composing.current!.findRanges : findRanges.get(key), anchors: commentProjection.flags, commentThreads: commentProjection.threadIds };
+                  let orderedCount = 0;
+                  const nestedBlocks: ColumnNestedBlockItem[] = doc.children(ch).map((nb) => {
+                    const ni = doc.blockInfo(nb);
+                    if (ni.type === "ordered") orderedCount++;
+                    else orderedCount = 0;
+                    return { id: idKey(nb), type: ni.type, props: ni.props, text: doc.text(nb), number: ni.type === "ordered" ? orderedCount : undefined };
+                  });
+                  return { id: key, type: ci.type, props: ci.props, spans: composingHere ? composing.current!.snapshot! : doc.richChars(ch), findRanges: composingHere ? composing.current!.findRanges : findRanges.get(key), anchors: commentProjection.flags, commentThreads: commentProjection.threadIds, nestedBlocks };
                 })}
                 columnRemount={remount}
                 syncVersion={sync.version}
@@ -3038,7 +3047,20 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (!snapshot) { setColumnNotice("分栏顺序已变化或位置无效，无法移动。"); return; }
                   const tx = new Tx(doc), result = applyColumnMove(tx, snapshot, previous);
                   if (result === "changed" || result === "invalid") { setColumnNotice("分栏顺序已变化，未移动内容，请重试。"); return; }
-                  if (result === "applied") { columnMoveHistory.record(doc, um, snapshot); sync.client.push(tx.ops); force((x) => x + 1); publish(); }
+                  if (result === "applied") {
+                    columnMoveHistory.record(doc, um, snapshot);
+                    if (userId && sync.client.status === "synced" && sync.client.epoch !== null && sync.client.unacked === 0 && sync.client.docId > 0) {
+                      void submitConditionalColumnOps({ docId: sync.client.docId, userId, historyEpoch: sync.client.epoch, expectedSeq: sync.client.lastSeq, ops: tx.ops }).then((outcome) => {
+                        if (outcome === "committed") return;
+                        if (outcome === "conflict") setColumnNotice("分栏顺序已变化，请同步后重试。");
+                        else sync.client.push(tx.ops);
+                      });
+                    } else {
+                      sync.client.push(tx.ops);
+                    }
+                    force((x) => x + 1);
+                    publish();
+                  }
                 }}
                 onAddColumn={readOnly ? undefined : (after) => {
                   if (readOnlyRef.current || sync.client.doc !== doc) return;
@@ -3048,6 +3070,81 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (result !== "created") { setColumnNotice(result === "limit" ? "每组分栏最多支持 10 栏。" : "分栏已变化，请重新操作。"); return; }
                   const created = tx.ops.find((op) => op.t === "bcreate" && eqId(op.parent, b));
                   if (!created || !columnArchiveHistory.recordCreation(doc, um, b, created.id)) { um.record(safeColumnUndo(tx), sel.current, sel.current, "column"); setColumnNotice("分栏已添加，但当前结构无法安全撤销。"); }
+                  if (userId && sync.client.status === "synced" && sync.client.epoch !== null && sync.client.unacked === 0 && sync.client.docId > 0) {
+                    void submitConditionalColumnOps({ docId: sync.client.docId, userId, historyEpoch: sync.client.epoch, expectedSeq: sync.client.lastSeq, ops: tx.ops }).then((outcome) => {
+                      if (outcome === "committed") return;
+                      if (outcome === "column_limit") setColumnNotice("每组分栏最多支持 10 栏。");
+                      else if (outcome === "conflict") setColumnNotice("分栏已变化，请同步后重试。");
+                      else sync.client.push(tx.ops);
+                    });
+                  } else {
+                    sync.client.push(tx.ops);
+                  }
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onUngroupColumns={readOnly ? undefined : () => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  const ops = buildColumnUngroupOps(doc, b);
+                  if (!ops) { setColumnNotice("分栏已变化，无法取消分栏。"); return; }
+                  if (userId && sync.client.status === "synced" && sync.client.epoch !== null && sync.client.unacked === 0 && sync.client.docId > 0) {
+                    void submitConditionalColumnOps({ docId: sync.client.docId, userId, historyEpoch: sync.client.epoch, expectedSeq: sync.client.lastSeq, ops }).then((outcome) => {
+                      if (outcome === "committed") { force((x) => x + 1); publish(); return; }
+                      if (outcome === "conflict") setColumnNotice("分栏已变化，请同步后重试。");
+                      else { for (const op of ops) doc.apply(op); sync.client.push(ops); force((x) => x + 1); publish(); }
+                    });
+                  } else {
+                    for (const op of ops) doc.apply(op);
+                    sync.client.push(ops);
+                    force((x) => x + 1);
+                    publish();
+                  }
+                }}
+                onAddColumnChildBlock={readOnly ? undefined : (colKey, childType) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  const parts = colKey.split(":");
+                  const colId = { client: Number(parts[0]), clock: Number(parts[1]) };
+                  if (!doc.hasBlock(colId)) return;
+                  const tx = new Tx(doc);
+                  const existing = doc.children(colId);
+                  tx.create(childType, existing.at(-1) ?? null, colId);
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onEditColumnChildText={readOnly ? undefined : (childKey, nextText) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  const parts = childKey.split(":");
+                  const childId = { client: Number(parts[0]), clock: Number(parts[1]) };
+                  if (!doc.hasBlock(childId)) return;
+                  const curText = doc.text(childId);
+                  if (curText === nextText) return;
+                  const tx = new Tx(doc);
+                  if (curText.length > 0) tx.delete(childId, 0, curText.length);
+                  if (nextText.length > 0) tx.insert(childId, 0, nextText);
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onToggleColumnChildTodo={readOnly ? undefined : (childKey) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  const parts = childKey.split(":");
+                  const childId = { client: Number(parts[0]), clock: Number(parts[1]) };
+                  if (!doc.hasBlock(childId)) return;
+                  const checked = doc.blockInfo(childId).props.checked === "true";
+                  const tx = new Tx(doc);
+                  tx.setProp(childId, "checked", checked ? "false" : "true");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onDeleteColumnChildBlock={readOnly ? undefined : (childKey) => {
+                  if (readOnlyRef.current || sync.client.doc !== doc) return;
+                  const parts = childKey.split(":");
+                  const childId = { client: Number(parts[0]), clock: Number(parts[1]) };
+                  if (!doc.hasBlock(childId)) return;
+                  const tx = new Tx(doc);
+                  tx.deleteBlock(childId);
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
                   publish();
@@ -3073,7 +3170,10 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onDeleteColumn={readOnly ? undefined : (col) => {
                   if (readOnlyRef.current) return;
-                  if (doc.children(b).length <= 1) { setColumnNotice("分栏中至少保留一栏。"); return; }
+                  if (doc.children(b).length <= 1) {
+                    void startColumnArchive({ kind: "initial", parent: { client: 0, clock: 0 }, block: b });
+                    return;
+                  }
                   const cid = { client: Number(col.split(":")[0]), clock: Number(col.split(":")[1]) };
                   void startColumnArchive({ kind: "initial", parent: b, block: cid });
                 }}
@@ -3521,13 +3621,18 @@ interface BlockProps {
   onFlowComment?: (quote: string) => void;
   flowUpload?: FlowUpload;
   flowAssets?: FlowAssets;
-  /** columns 容器：渲染其子块（每栏一个） */
-  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[] }[];
+  /** columns 容器：渲染其子块（每栏一个，每栏内支持多块内容） */
+  childBlocks?: { id: string; type: string; props: Record<string, string>; spans: { ch: string; marks: Record<string, string> }[]; anchors?: (number | null)[]; commentThreads?: number[]; findRanges?: { start: number; end: number; active: boolean }[]; nestedBlocks?: ColumnNestedBlockItem[] }[];
   columnRemount?: Record<string, number>;
   syncVersion: number;
   syncStatus: SyncDoc["status"];
   onAddColumn?: (after: string | null) => void;
   onMoveColumn?: (column: string, after: string | null) => void;
+  onUngroupColumns?: () => void;
+  onAddColumnChildBlock?: (columnId: string, type: string) => void;
+  onEditColumnChildText?: (blockId: string, text: string) => void;
+  onToggleColumnChildTodo?: (blockId: string) => void;
+  onDeleteColumnChildBlock?: (blockId: string) => void;
   onBeginColumnResize?: (left: string, right: string) => { leftWeight: number; rightWeight: number; commit: (fraction: number) => void; cancel: () => void } | null;
   onBeginTableResize?: (index: number, indices?: readonly number[]) => TableResizeSession | null;
   onBeginTableReorder?: () => TableReorderSession | null;
@@ -3585,7 +3690,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -3823,6 +3928,17 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                   {renderColumnText(ch)}
                   {ch.spans.length === 0 && <br />}
                 </div>
+                {(ch.nestedBlocks && ch.nestedBlocks.length > 0 || onAddColumnChildBlock) && (
+                  <ColumnNestedBlocks
+                    columnId={ch.id}
+                    blocks={ch.nestedBlocks ?? []}
+                    canEdit={!!onSetProp}
+                    onAddBlock={onAddColumnChildBlock}
+                    onCommitText={onEditColumnChildText}
+                    onToggleTodo={onToggleColumnChildTodo}
+                    onDeleteBlock={onDeleteColumnChildBlock}
+                  />
+                )}
                 {threads.length > 0 && <button contentEditable={false} className="mt-1 flex items-center gap-0.5 rounded-full border border-[#f5b1e5] bg-surface px-1.5 py-0.5 text-[11px] font-medium text-[#c950a8] shadow-sm" title={`${threads.length} 条评论`} onMouseDown={(e) => e.preventDefault()} onClick={() => onAnchorClick?.(threads.includes(activeThread ?? -1) ? activeThread! : threads[0])} data-comment-bubble><MessageCircle size={11} strokeWidth={1.7} /> {threads.length}</button>}
               </div>{index < columns.length - 1 && <div className="group/gutter relative w-8 shrink-0" contentEditable={false}
                 onDragOver={(event) => { if (!draggingColumn.current) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setColumnDrop((current) => current?.id === ch.id && current.side === "after" ? current : { id: ch.id, side: "after" }); }}
@@ -3866,9 +3982,16 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
                 </div>}</Fragment>;
             })}
           </div></div>
-          {onAddColumn && <button type="button" disabled={(childBlocks?.length ?? 0) >= MAX_COLUMNS} title={(childBlocks?.length ?? 0) >= MAX_COLUMNS ? "每组分栏最多支持 10 栏" : "添加分栏"} className="mt-1 text-[12px] text-subtle enabled:hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:opacity-0 sm:group-hover/cols:opacity-100 sm:focus-visible:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => onAddColumn(childBlocks?.at(-1)?.id ?? null)} data-add-column>
-            + 添加一栏
-          </button>}
+          {(onAddColumn || onUngroupColumns) && (
+            <div className="mt-1 flex items-center gap-3 text-[12px] text-subtle sm:opacity-0 sm:group-hover/cols:opacity-100 sm:focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+              {onAddColumn && <button type="button" disabled={(childBlocks?.length ?? 0) >= MAX_COLUMNS} title={(childBlocks?.length ?? 0) >= MAX_COLUMNS ? "每组分栏最多支持 10 栏" : "添加分栏"} className="enabled:hover:text-primary disabled:cursor-not-allowed disabled:opacity-50" onClick={() => onAddColumn(childBlocks?.at(-1)?.id ?? null)} data-add-column>
+                + 添加一栏
+              </button>}
+              {onUngroupColumns && <button type="button" title="解散分栏并将各栏内容恢复为普通块" className="hover:text-primary" onClick={() => onUngroupColumns()} data-column-ungroup>
+                取消分栏
+              </button>}
+            </div>
+          )}
           {columnMenu && onMoveColumn && typeof document !== "undefined" && createPortal((() => {
             const index = (childBlocks ?? []).findIndex((child) => child.id === columnMenu.id), count = childBlocks?.length ?? 0;
             const action = (direction: -1 | 1) => { const id = columnMenu.id; setColumnMenu(null); moveColumnBy(id, direction); focusColumnHandle(id); };
@@ -3877,7 +4000,8 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
             }}>
               <button type="button" role="menuitem" disabled={index <= 0} onClick={() => action(-1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowLeft size={15} />向左移动</button>
               <button type="button" role="menuitem" disabled={index < 0 || index >= count - 1} onClick={() => action(1)} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover disabled:opacity-40"><ArrowRight size={15} />向右移动</button>
-              {onDeleteColumn && <button type="button" role="menuitem" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />删除分栏</button>}
+              {onUngroupColumns && <button type="button" role="menuitem" onClick={() => { setColumnMenu(null); onUngroupColumns(); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover">取消分栏</button>}
+              {onDeleteColumn && <button type="button" role="menuitem" onClick={() => { const id = columnMenu.id; setColumnMenu(null); onDeleteColumn(id); focusColumnHandle(id); }} className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-muted-foreground hover:bg-hover"><Trash2 size={15} />{count <= 1 ? "删除分栏组" : "删除分栏"}</button>}
             </div>;
           })(), document.body)}
         </div>

@@ -10,6 +10,98 @@ import (
 const columnArchiveType = "jiange-column-archive-v1"
 const columnArchiveKey = "_column_archive_v1"
 
+// MaxColumns is the authoritative maximum number of live columns allowed in
+// a single root-level columns container (matching Feishu & client MAX_COLUMNS).
+const MaxColumns = 10
+
+// ColumnCount returns the number of live direct child columns in a root-level
+// columns container, or -1 if parent is not a live root-level columns block.
+func (d *Doc) ColumnCount(parent OpID) int {
+	if parent == Root {
+		return -1
+	}
+	p := d.blocks[parent]
+	if p == nil || p.deleted || p.parent != Root || p.props["type"].value != "columns" {
+		return -1
+	}
+	count := 0
+	for childID, child := range d.blocks {
+		if childID == Root || child.deleted || child.parent != parent {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// CanCreateColumn verifies that a new column can be added under parent without
+// exceeding MaxColumns or colliding with an existing column position.
+func (d *Doc) CanCreateColumn(parent OpID, pos string) bool {
+	if !validColumnArchivePosition(pos) {
+		return false
+	}
+	count := d.ColumnCount(parent)
+	if count < 0 || count >= MaxColumns {
+		return false
+	}
+	for childID, child := range d.blocks {
+		if childID == Root || child.deleted || child.parent != parent {
+			continue
+		}
+		if child.pos == pos {
+			return false
+		}
+	}
+	return true
+}
+
+// CanUngroupColumns verifies that moves promote every live direct child of a
+// root-level columns container (and any nested child blocks inside those
+// columns) to Root with distinct valid positions.
+func (d *Doc) CanUngroupColumns(groupID OpID, moves []Op) bool {
+	if !d.CanArchiveColumnGroup(groupID) || len(moves) == 0 {
+		return false
+	}
+	liveNodes := map[OpID]*block{}
+	var collect func(parent OpID)
+	collect = func(parent OpID) {
+		for id, b := range d.blocks {
+			if id != Root && !b.deleted && b.parent == parent {
+				if _, seen := liveNodes[id]; !seen {
+					liveNodes[id] = b
+					collect(id)
+				}
+			}
+		}
+	}
+	collect(groupID)
+	if len(liveNodes) == 0 || len(moves) != len(liveNodes) {
+		return false
+	}
+	rootPositions := map[string]bool{}
+	for id, b := range d.blocks {
+		if id != Root && !b.deleted && b.parent == Root {
+			rootPositions[b.pos] = true
+		}
+	}
+	seenNodes := map[OpID]bool{}
+	for _, m := range moves {
+		if m.T != TBlockMove || m.Parent != Root || !validColumnArchivePosition(m.Pos) {
+			return false
+		}
+		node, ok := liveNodes[m.Block]
+		if !ok || seenNodes[m.Block] || m.ID.Cmp(node.locTS) <= 0 {
+			return false
+		}
+		if rootPositions[m.Pos] {
+			return false
+		}
+		seenNodes[m.Block] = true
+		rootPositions[m.Pos] = true
+	}
+	return len(seenNodes) == len(liveNodes)
+}
+
 func validColumnArchivePosition(pos string) bool {
 	if len(pos) == 0 || len(pos) > 512 || strings.HasSuffix(pos, "0") {
 		return false
@@ -160,5 +252,5 @@ func (d *Doc) CanTransitionArchivedColumn(op Op) bool {
 	if parent == Root {
 		return len(positions) < 10000
 	}
-	return len(positions) >= 1 && len(positions) < 1000
+	return len(positions) >= 1 && len(positions) < MaxColumns
 }
