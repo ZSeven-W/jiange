@@ -401,6 +401,43 @@ export const commentsApi = {
   remove: (id: number, cid: number) => request<void>("DELETE", `/api/docs/${id}/comments/${cid}`),
   members: (id: number) => request<{ members: User[] }>("GET", `/api/docs/${id}/members`).then((r) => r.members),
 };
+
+export interface DocSuggestion {
+  id: number;
+  docId: number;
+  blockId: string;
+  authorId: number;
+  authorName: string;
+  kind: "replace" | "insert" | "delete";
+  originalText: string;
+  proposedText: string;
+  note: string;
+  status: "open" | "accepted" | "rejected" | "withdrawn";
+  resolvedBy?: number;
+  resolvedByName?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const suggestionsApi = {
+  list: (id: number, status: "open" | "resolved" | "all" = "all") =>
+    request<{ suggestions: DocSuggestion[] }>("GET", `/api/docs/${id}/suggestions?status=${status}`).then((r) => r.suggestions),
+  create: (id: number, body: { blockId: string; kind?: "replace" | "insert" | "delete"; originalText: string; proposedText: string; note?: string }) =>
+    request<DocSuggestion>("POST", `/api/docs/${id}/suggestions`, body),
+  updateNote: (id: number, sid: number, note: string) =>
+    request<DocSuggestion>("PATCH", `/api/docs/${id}/suggestions/${sid}`, { note }),
+  accept: (id: number, sid: number) =>
+    request<DocSuggestion>("POST", `/api/docs/${id}/suggestions/${sid}/accept`),
+  reject: (id: number, sid: number) =>
+    request<DocSuggestion>("POST", `/api/docs/${id}/suggestions/${sid}/reject`),
+  withdraw: (id: number, sid: number) =>
+    request<DocSuggestion>("POST", `/api/docs/${id}/suggestions/${sid}/withdraw`),
+  acceptAll: (id: number) =>
+    request<{ suggestions: DocSuggestion[] }>("POST", `/api/docs/${id}/suggestions/accept-all`).then((r) => r.suggestions),
+  rejectAll: (id: number) =>
+    request<{ suggestions: DocSuggestion[] }>("POST", `/api/docs/${id}/suggestions/reject-all`).then((r) => r.suggestions),
+};
 export const notificationsApi = {
   list: () => request<{ notifications: AppNotification[]; unread: number }>("GET", "/api/notifications"),
   markRead: (ids: number[] = []) => request<void>("POST", "/api/notifications/read", { ids }),

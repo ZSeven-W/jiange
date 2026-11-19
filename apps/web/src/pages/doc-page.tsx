@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { idKey, Tx, type Op, type OpId, type SyncStatus } from "@jiange/collab";
+import { idKey, parseKey, Tx, type Op, type OpId, type SyncStatus } from "@jiange/collab";
 import { bodyBlocks } from "@/editor/model";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./doc-header-meta";
 import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";
@@ -59,7 +59,8 @@ import { CommentAttemptDocumentDenied, requireCommentAttempts } from "./comment-
 import { CommentAttemptRecovery } from "./comment-attempt-recovery";
 import { OutlinePanel, OutlineTrigger, activeOutlineId, loadOutlinePinned, outlineOf, saveOutlinePinned, type OutlineItem } from "./outline-panel";
 import { AttachmentPreview } from "./attachment-preview";
-import { commentsApi, extrasApi } from "@/lib/api";
+import { commentsApi, extrasApi, suggestionsApi, type DocSuggestion } from "@/lib/api";
+import { SuggestionPanel, type SuggestionBlockOption } from "./suggestion-panel";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendBlocksOps, appendMarkdownOps } from "@/lib/md-import";
 import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxImportResult } from "@/lib/docx";
@@ -78,7 +79,7 @@ import { DocumentMentionsDialog } from "./document-mentions-dialog";
 import { PendingDraftPreview } from "./pending-draft-preview";
 import { collectDocumentMentions } from "./document-mentions";
 import { useI18n } from "@/lib/i18n";
-import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileEdit, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -288,7 +289,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   }, [activeThread, presenting]);
   const [templatesHidden, setTemplatesHidden] = useState(false);
   const [templateError, setTemplateError] = useState("");
-  const [readingMode, setReadingMode] = useState(false);
+  const [docMode, setDocMode] = useState<"edit" | "suggest" | "read">("edit");
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionBusy, setSuggestionBusy] = useState(false);
   const [retryingSync, setRetryingSync] = useState(false);
   const [retrySyncError, setRetrySyncError] = useState("");
   const [findOpen, setFindOpen] = useState(false);
@@ -656,7 +659,106 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   // draft and selection survive, but do not submit using stale permissions.
   const canSubmitComment = permissionsVerified && canComment;
   useEffect(() => { if (!canComment) freezeCommentDrafts(); }, [canComment, freezeCommentDrafts]);
-  const canEditContent = canEditRole && !readingMode && !sync.blocked && !sync.client.projectionOnly;
+  const canEditContent = canEditRole && docMode === "edit" && !sync.blocked && !sync.client.projectionOnly;
+  const canSuggest = metadataVerified && (canEditRole || meta.data?.commentMinRole !== "edit");
+  const suggestionsQuery = useQuery({
+    queryKey: ["suggestions", id],
+    queryFn: () => suggestionsApi.list(id, "all"),
+    enabled: metadataVerified,
+  });
+  const suggestionsList = suggestionsQuery.data ?? [];
+  const openSuggestionsCount = useMemo(() => suggestionsList.filter((s) => s.status === "open").length, [suggestionsList]);
+  const suggestionBlocks: SuggestionBlockOption[] = useMemo(() => {
+    const doc = sync.client.doc;
+    if (!doc) return [];
+    const textTypes = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout"]);
+    return doc.view().blocks
+      .filter((b) => b.type !== "title" && textTypes.has(b.type))
+      .map((b) => ({ id: b.id, type: b.type, text: b.spans.map((sp) => sp.text).join("") }));
+  }, [sync.client.doc, sync.version]);
+  const applyAcceptedSuggestionsToDoc = useCallback((accepted: DocSuggestion[]) => {
+    const doc = sync.client.doc;
+    if (!doc || !canEditRole || !accepted.length) return;
+    const tx = new Tx(doc);
+    for (const s of accepted) {
+      let blockId: OpId;
+      try { blockId = parseKey(s.blockId); } catch { continue; }
+      if (!doc.hasBlock(blockId)) continue;
+      const curText = doc.text(blockId);
+      if (curText.length > 0) tx.delete(blockId, 0, [...curText].length);
+      if (s.proposedText) tx.insert(blockId, 0, s.proposedText);
+    }
+    if (tx.ops.length) {
+      sync.client.push(tx.ops);
+      recordExternalUndo.current?.(tx);
+    }
+  }, [canEditRole, sync.client]);
+  const handleModeChange = useCallback((next: "edit" | "suggest" | "read") => {
+    setDocMode(next);
+    if (next === "suggest") setSuggestionsOpen(true);
+  }, []);
+  const handleCreateSuggestion = useCallback(async (input: { blockId: string; originalText: string; proposedText: string; note: string }) => {
+    setSuggestionBusy(true);
+    try {
+      await suggestionsApi.create(id, { ...input, kind: "replace" });
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: "已提交修订建议，等待审阅。" });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [id, qc]);
+  const handleAcceptSuggestion = useCallback(async (s: DocSuggestion) => {
+    setSuggestionBusy(true);
+    try {
+      const updated = await suggestionsApi.accept(id, s.id);
+      applyAcceptedSuggestionsToDoc([updated]);
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: "已接受修订建议并写入正文。" });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [applyAcceptedSuggestionsToDoc, id, qc]);
+  const handleRejectSuggestion = useCallback(async (s: DocSuggestion) => {
+    setSuggestionBusy(true);
+    try {
+      await suggestionsApi.reject(id, s.id);
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: "已拒绝该修订建议。" });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [id, qc]);
+  const handleWithdrawSuggestion = useCallback(async (s: DocSuggestion) => {
+    setSuggestionBusy(true);
+    try {
+      await suggestionsApi.withdraw(id, s.id);
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: "已撤回修订建议。" });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [id, qc]);
+  const handleAcceptAllSuggestions = useCallback(async () => {
+    setSuggestionBusy(true);
+    try {
+      const updated = await suggestionsApi.acceptAll(id);
+      applyAcceptedSuggestionsToDoc(updated);
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: `已批量接受 ${updated.length} 条修订建议并写入正文。` });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [applyAcceptedSuggestionsToDoc, id, qc]);
+  const handleRejectAllSuggestions = useCallback(async () => {
+    setSuggestionBusy(true);
+    try {
+      const updated = await suggestionsApi.rejectAll(id);
+      await qc.invalidateQueries({ queryKey: ["suggestions", id] });
+      setPageNotice({ ok: true, text: `已批量拒绝 ${updated.length} 条修订建议。` });
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [id, qc]);
   canEditRef.current = canEditContent;
   const [referenceVisibilityBusy, setReferenceVisibilityBusy] = useState(false);
   const [referenceVisibilityUncertain, setReferenceVisibilityUncertain] = useState(false);
@@ -1188,8 +1290,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onAI={aiAvailable ? () => setAiOpen((v) => !v) : undefined}
           aiOpen={aiOpen}
           onSaveTemplate={aiAvailable ? () => void saveTemplate(docMarkdown()) : undefined}
-          readingMode={readingMode}
-          onToggleReading={() => setReadingMode((value) => !value)}
+          docMode={docMode}
+          onDocModeChange={handleModeChange}
+          suggestionsOpen={suggestionsOpen}
+          openSuggestionsCount={openSuggestionsCount}
+          onToggleSuggestions={() => setSuggestionsOpen((v) => !v)}
           onCreate={() => newDoc.mutate()}
           creating={newDoc.isPending}
           onHistory={canEditRole ? () => { setPresenting(false); setHistory("history"); } : undefined}
@@ -1218,6 +1323,18 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           peers={sync.peers}
           me={presence}
         />
+        {docMode === "suggest" && (
+          <div role="status" data-suggest-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/80 px-5 py-2 text-[13px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+            <span className="flex items-center gap-2">
+              <FileEdit size={15} className="text-emerald-600" />
+              <span>当前处于<strong>修订建议模式</strong>：在右侧面板选择段落发起修订，审阅接受后将自动写入正文。</span>
+            </span>
+            <span className="flex items-center gap-3">
+              {!suggestionsOpen && <button type="button" onClick={() => setSuggestionsOpen(true)} className="font-medium text-emerald-700 underline dark:text-emerald-300">打开修订面板 ({openSuggestionsCount})</button>}
+              {canEditRole && <button type="button" onClick={() => handleModeChange("edit")} className="text-emerald-700 hover:underline dark:text-emerald-300">退出修订模式</button>}
+            </span>
+          </div>
+        )}
         {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
         {metadataVerified && referenceVisibility.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">无法读取文档引用显示设置。<button type="button" className="ml-2 underline" onClick={() => void referenceVisibility.refetch()}>重试</button></p>}
         {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
@@ -1400,6 +1517,25 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       {presenting && metadataVerified && meta.data && sync.client.doc && <DocumentPresentation key={`presentation:${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} icon={meta.data.icon} view={sync.client.doc.view()} synced={sync.status === "synced" && sync.caughtUp && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} commentsOpen={commentsAvailable && commentsOpen} onComments={commentsAvailable ? toggleComments : undefined} onRevalidate={() => { void meta.refetch(); }} onClose={closePresentation} commentDoc={sync.client.doc} comments={commentsAvailable ? comments.data ?? [] : []} activeThread={activeThread} contentRef={presentationBody} onActivateComment={commentsAvailable ? (thread) => { pendingCommentScroll.current = null; setActiveThread(thread); setCommentsTarget({ doc: id, user: me.user.id, session: commentSession }); } : undefined}>{commentsPanel}</DocumentPresentation>}
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
       {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
+      {suggestionsOpen && metadataVerified && (
+        <SuggestionPanel
+          suggestions={suggestionsList}
+          blocks={suggestionBlocks}
+          currentUserId={me.user.id}
+          canEdit={canEditRole}
+          canManage={meta.data?.role === "manage"}
+          canSuggest={canSuggest}
+          suggestMode={docMode === "suggest"}
+          busy={suggestionBusy}
+          onCreate={handleCreateSuggestion}
+          onAccept={handleAcceptSuggestion}
+          onReject={handleRejectSuggestion}
+          onWithdraw={handleWithdrawSuggestion}
+          onAcceptAll={handleAcceptAllSuggestions}
+          onRejectAll={handleRejectAllSuggestions}
+          onClose={() => setSuggestionsOpen(false)}
+        />
+      )}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} userId={me.user.id} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {commentHistoryOpen && commentsAvailable && comments.data && <HistoryCommentsPanel key={`${id}:${me.user.id}:${commentSession}`} id={id} userId={me.user.id} session={commentSession} comments={comments.data} members={members.data ?? []} canSubmit={canSubmitComment} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setCommentHistoryTarget(null)} onAccessDenied={revalidateCommentAccess} onPolicyDenied={() => { void meta.refetch(); }} />}
       {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
@@ -1492,8 +1628,11 @@ function TopBar({
   onAI,
   aiOpen,
   onSaveTemplate,
-  readingMode,
-  onToggleReading,
+  docMode,
+  onDocModeChange,
+  suggestionsOpen,
+  openSuggestionsCount,
+  onToggleSuggestions,
   onCreate,
   creating,
   onHistory,
@@ -1526,8 +1665,11 @@ function TopBar({
   onAI?: () => void;
   aiOpen?: boolean;
   onSaveTemplate?: () => void;
-  readingMode: boolean;
-  onToggleReading: () => void;
+  docMode: "edit" | "suggest" | "read";
+  onDocModeChange: (mode: "edit" | "suggest" | "read") => void;
+  suggestionsOpen: boolean;
+  openSuggestionsCount: number;
+  onToggleSuggestions: () => void;
   onCreate: () => void;
   creating: boolean;
   onOutline: () => void;
@@ -1598,13 +1740,14 @@ function TopBar({
         <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-9 gap-1.5 bg-[#1456f0] px-2.5 text-[14px] font-normal hover:bg-[#0f4dd6] sm:h-8 sm:w-20" onClick={onShare}>
           <BuildingIcon className="size-4" />分享
         </Button>
-        {!readOnly && <ModeMenu reading={readingMode} onToggle={onToggleReading} />}
+        {!readOnly && <ModeMenu mode={docMode} onChange={onDocModeChange} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
         <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
         {onAI && <button onClick={onAI} title="AI 助手" aria-label="AI 助手" aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
+        <button onClick={onToggleSuggestions} title="修订建议" aria-label="修订建议" aria-pressed={suggestionsOpen} data-doc-suggestions-btn className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", suggestionsOpen ? "text-emerald-600" : "text-muted-foreground")}><FileEdit size={16} /><span className="hidden text-[13px] xl:inline">修订</span>{openSuggestionsCount > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{openSuggestionsCount}</span>}</button>
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
         <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
@@ -1625,7 +1768,7 @@ function DocAuthorLine({ name, seed, updatedAt }: { name: string; seed: number; 
   </div>;
 }
 
-function ModeMenu({ reading, onToggle }: { reading: boolean; onToggle: () => void }) {
+function ModeMenu({ mode, onChange }: { mode: "edit" | "suggest" | "read"; onChange: (mode: "edit" | "suggest" | "read") => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1635,10 +1778,16 @@ function ModeMenu({ reading, onToggle }: { reading: boolean; onToggle: () => voi
     document.addEventListener("mousedown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("mousedown", outside); document.removeEventListener("keydown", escape); };
   }, [open]);
+  const label = mode === "read" ? "阅读" : mode === "suggest" ? "建议" : "编辑";
+  const aria = mode === "read" ? "阅读模式" : mode === "suggest" ? "修订建议模式" : "编辑模式";
   return <div ref={ref} className="relative">
-    <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" aria-label={reading ? "阅读模式" : "编辑模式"} className="flex h-9 items-center gap-1 rounded-md border px-2 text-[13px] text-foreground hover:bg-hover sm:h-8 sm:px-2.5"><EditIcon className="size-[14px]" /><span className="hidden min-[380px]:inline">{reading ? "阅读" : "编辑"}</span><DownBoldIcon className={cn("size-3 transition-transform", open && "rotate-180")} /></button>
-    {open && <div role="menu" className="absolute right-0 top-9 z-30 w-[180px] rounded-md border bg-surface p-1 shadow-lg">
-      {([{ value: false, label: "编辑", description: "可编辑文档", icon: <EditIcon className="size-[15px]" /> }, { value: true, label: "阅读", description: "仅查看或评论文档", icon: <Eye size={15} /> }] as const).map((item) => <button key={item.label} type="button" role="menuitemradio" aria-checked={reading === item.value} onClick={() => { if (reading !== item.value) onToggle(); setOpen(false); }} className="flex w-full items-start gap-2 rounded px-2 py-2 text-left hover:bg-hover"><span className={cn("mt-0.5", reading === item.value ? "text-primary" : "text-muted-foreground")}>{item.icon}</span><span className="min-w-0 flex-1"><span className={cn("block text-[13px]", reading === item.value && "text-primary")}>{item.label}</span><span className="block text-[12px] text-subtle">{item.description}</span></span>{reading === item.value && <Check size={14} className="mt-0.5 text-primary" />}</button>)}
+    <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" aria-label={aria} data-doc-mode-trigger className={cn("flex h-9 items-center gap-1 rounded-md border px-2 text-[13px] hover:bg-hover sm:h-8 sm:px-2.5", mode === "suggest" ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "text-foreground")}>{mode === "suggest" ? <FileEdit size={14} /> : <EditIcon className="size-[14px]" />}<span className="hidden min-[380px]:inline">{label}</span><DownBoldIcon className={cn("size-3 transition-transform", open && "rotate-180")} /></button>
+    {open && <div role="menu" className="absolute right-0 top-9 z-30 w-[216px] rounded-md border bg-surface p-1 shadow-lg">
+      {([
+        { value: "edit", label: "编辑", description: "直接编辑文档内容", icon: <EditIcon className="size-[15px]" /> },
+        { value: "suggest", label: "建议", description: "修订模式，修改将以建议呈现供审阅", icon: <FileEdit size={15} /> },
+        { value: "read", label: "阅读", description: "仅查看或评论文档", icon: <Eye size={15} /> },
+      ] as const).map((item) => <button key={item.value} type="button" role="menuitemradio" aria-checked={mode === item.value} data-doc-mode={item.value} onClick={() => { if (mode !== item.value) onChange(item.value); setOpen(false); }} className="flex w-full items-start gap-2 rounded px-2 py-2 text-left hover:bg-hover"><span className={cn("mt-0.5", mode === item.value ? "text-primary" : "text-muted-foreground")}>{item.icon}</span><span className="min-w-0 flex-1"><span className={cn("block text-[13px]", mode === item.value && "text-primary")}>{item.label}</span><span className="block text-[12px] text-subtle">{item.description}</span></span>{mode === item.value && <Check size={14} className="mt-0.5 text-primary" />}</button>)}
     </div>}
   </div>;
 }

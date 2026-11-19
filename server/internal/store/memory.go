@@ -30,6 +30,8 @@ type Memory struct {
 	sheets           memSheets
 	comments         []Comment
 	commentSequence  int64
+	suggestions      []DocSuggestion
+	suggestionSeq    int64
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate
