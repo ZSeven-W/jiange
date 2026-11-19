@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { flowBounds, flowIntentWrites, flowWrites, moveFlowSelection, normalizeStroke, readFlow, type FlowGraph } from "../src/model.js";
 import { appliedFlowHistory } from "../src/history.js";
-import { inkHitByEraser, scaleInk } from "../src/ink-geometry.js";
+import { inkHitByEraser, scaleInk, scaleSelectionProportionally, selectionBounds } from "../src/ink-geometry.js";
 
 describe("canvas ink", () => {
   const blank: FlowGraph = { nodes: [], edges: [], theme: "feishu" };
@@ -103,5 +103,45 @@ describe("highlighter compatibility", () => {
     expect(flowIntentWrites(props, graph, replacement).conflicts).toContain("fc.s.smarker");
     expect(flowIntentWrites({ ...props, "fc.s.smarker": "" }, blank, replacement).conflicts).toContain("fc.s.smarker");
     expect(readFlow(props).strokes).toEqual([marker]);
+  });
+});
+
+describe("multi-selection proportional scaling", () => {
+  it("computes combined bounds and uniformly scales mixed nodes and ink strokes", () => {
+    const nodes = [
+      { id: "n1", shape: "rect" as const, text: "A", x: 100, y: 100, w: 120, h: 60, size: 14 },
+      { id: "n2", shape: "ellipse" as const, text: "B", x: 260, y: 180, w: 80, h: 40 },
+    ];
+    const strokes = [
+      { id: "s1", points: [{ x: 100, y: 200 }, { x: 200, y: 300 }], color: "#1F2329", width: 4 },
+      { id: "s2", points: [{ x: 220, y: 200 }, { x: 320, y: 250 }], color: "#3370FF", width: 2 },
+    ];
+    const box = selectionBounds(nodes, strokes);
+    expect(box).toEqual({ x: 100, y: 100, w: 240, h: 200 });
+
+    const scaled = scaleSelectionProportionally(nodes, strokes, { x: box!.x, y: box!.y }, 1.5);
+    expect(scaled.scale).toBe(1.5);
+    expect(scaled.nodes[0]).toMatchObject({ x: 100, y: 100, w: 180, h: 90, size: 21 });
+    expect(scaled.nodes[1]).toMatchObject({ x: 340, y: 220, w: 120, h: 60 });
+    expect(scaled.strokes[0]).toMatchObject({
+      width: 6,
+      points: [{ x: 100, y: 250 }, { x: 250, y: 400 }],
+    });
+    expect(scaled.strokes[1]).toMatchObject({
+      width: 3,
+      points: [{ x: 280, y: 250 }, { x: 430, y: 325 }],
+    });
+  });
+
+  it("clamps proportional scaling against node minimums and canvas boundary", () => {
+    const small = [{ id: "n1", shape: "rect" as const, text: "S", x: 0, y: 0, w: 40, h: 32 }];
+    const shrunk = scaleSelectionProportionally(small, [], { x: 0, y: 0 }, 0.1);
+    expect(shrunk.scale).toBe(0.5);
+    expect(shrunk.nodes[0]).toMatchObject({ w: 20, h: 16 });
+
+    const nearEdge = [{ id: "s1", points: [{ x: 19900, y: 0 }, { x: 19950, y: 50 }], color: "#000000", width: 2 }];
+    const clamped = scaleSelectionProportionally([], nearEdge, { x: 19900, y: 0 }, 5);
+    expect(clamped.scale).toBe(2);
+    expect(clamped.strokes[0].points).toEqual([{ x: 19900, y: 0 }, { x: 20000, y: 100 }]);
   });
 });

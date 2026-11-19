@@ -51,6 +51,8 @@ import { CodeBlockHeader } from "./code-block-header";
 import { CodeLineNumbers } from "./code-line-numbers";
 import { AIBlockPanel } from "./ai-panel";
 import { FlowchartBlock, type FlowPeer, type FlowPresence, type FlowUpload, type FlowAssets } from "./flowchart/flowchart-block";
+import type { BoardCommentActions } from "./flowchart/board-comments";
+import { encodeFlowCommentAnchor, type FlowCommentAnchor } from "@jiange/whiteboard-sdk/comment-anchor";
 import { flowOpenRequests } from "./flowchart/open-requests";
 import { flowIntentWrites, readFlow, type FlowChangeOutcome, type FlowGraph } from "./flowchart/model";
 import type { AIAction, AIMessage } from "@/lib/ai";
@@ -174,6 +176,10 @@ interface Props {
   activeThread?: number | null;
   /** called with the current selection's anchor when 评论 is clicked */
   onComment?: (anchor: { block: string; startChar: string; endChar: string; quote: string }) => void;
+  /** inline whiteboard object & coordinate comment actions */
+  onBoardCommentCreate?: (input: { block: string; startChar: string; endChar: string; quote: string; body: string }) => Promise<Comment | undefined>;
+  onBoardCommentReply?: (parentId: number, body: string) => Promise<Comment | undefined>;
+  onBoardCommentResolve?: (commentId: number) => Promise<void>;
   /** user clicked an anchored range */
   onActivateThread?: (id: number | null) => void;
   /** 禁用正文复制/剪切 */
@@ -199,7 +205,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onBoardCommentCreate, onBoardCommentReply, onBoardCommentResolve, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const pastedLinkSerial = useRef(0);
   const wrap = useRef<HTMLDivElement>(null);
@@ -3380,6 +3386,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 flowPeers={doc.blockInfo(b).type === "flowchart" ? sync.peers.filter((p) => p.state.flow?.block === k).map((p) => ({ id: p.clientId, name: p.state.name, color: p.state.color, x: p.state.flow?.x, y: p.state.flow?.y, sel: Array.isArray(p.state.flow?.sel) ? p.state.flow!.sel : undefined })) : undefined}
                 onFlowPresence={(f) => sync.client.setAwareness({ ...me, cursor: null, flow: f ? { block: k, ...f } : null } satisfies Presence)}
                 onFlowComment={onComment ? (text) => onComment({ block: k, startChar: "", endChar: "", quote: `[流程图] ${text}`.slice(0, 200) }) : undefined}
+                flowComments={doc.blockInfo(b).type === "flowchart" ? comments.filter((c) => c.block === k || (c.parentId != null && comments.some((r) => r.id === c.parentId && r.block === k))) : undefined}
+                flowCommentActions={doc.blockInfo(b).type === "flowchart" && onBoardCommentCreate && onBoardCommentReply && onBoardCommentResolve ? {
+                  create: ({ anchor, quote, body }: { anchor: FlowCommentAnchor; quote: string; body: string }) => {
+                    const enc = encodeFlowCommentAnchor(anchor);
+                    return onBoardCommentCreate({ block: k, startChar: enc.startChar, endChar: enc.endChar, quote: `[画板] ${quote}`.slice(0, 200), body });
+                  },
+                  reply: onBoardCommentReply,
+                  resolve: onBoardCommentResolve,
+                } : undefined}
                 onFlowChange={readOnly ? undefined : (graph, base) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return { graph: base, conflicts: ["document"], applied: false, appliedKeys: [] };
                   if (flowAutoOpen === k) setFlowAutoOpen(null);
@@ -3646,6 +3661,8 @@ interface BlockProps {
   flowPeers?: FlowPeer[];
   onFlowPresence?: (p: FlowPresence | null) => void;
   onFlowComment?: (quote: string) => void;
+  flowComments?: Comment[];
+  flowCommentActions?: BoardCommentActions;
   flowUpload?: FlowUpload;
   flowAssets?: FlowAssets;
   /** columns 容器：渲染其子块（每栏一个，每栏内支持多块内容） */
@@ -3718,7 +3735,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -3912,7 +3929,7 @@ function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPre
       </span>
       {type === "flowchart" && (
         <div className="my-2">
-          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} upload={flowUpload} assets={flowAssets} canCopy={canCopy} />
+          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} comments={flowComments} activeThread={activeThread} commentActions={flowCommentActions} upload={flowUpload} assets={flowAssets} canCopy={canCopy} />
         </div>
       )}
       {type === "diagram" ? (

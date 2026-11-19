@@ -1,11 +1,13 @@
 import { eqId, idKey, ROOT, type Doc, type OpId } from "@jiange/collab";
+import { isFlowCommentAnchor } from "@jiange/whiteboard-sdk/comment-anchor";
 import type { Comment } from "@/lib/api";
 import { TEXTLESS, type Sel } from "./model";
 
 /** Non-text blocks that take a whole-block comment (Feishu: 评论图片/附件/表格). */
 export const COMMENTABLE_BLOCKS = new Set([...TEXTLESS].filter((type) => type !== "divider" && type !== "columns"));
 
-const isBlockComment = (c: Pick<Comment, "startChar" | "endChar">) => !c.startChar && !c.endChar;
+const isBlockComment = (c: Pick<Comment, "startChar" | "endChar">) =>
+  (!c.startChar && !c.endChar) || isFlowCommentAnchor(c.startChar);
 
 const BLOCK_LABEL: Record<string, string> = { image: "图片", file: "附件", table: "表格", video: "视频", bookmark: "网页卡片", math: "公式", diagram: "图表", flowchart: "流程图" };
 

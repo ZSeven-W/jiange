@@ -12,7 +12,13 @@
     "types": [],
     "declaration": true,
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@jiange/ooxml/*": [
+        "../ooxml/dist/*.d.ts"
+      ]
+    }
   },
   "include": [
     "src/**/*.ts"

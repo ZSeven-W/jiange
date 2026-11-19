@@ -1452,6 +1452,20 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                   setDraft(anchor);
                   setCommentsTarget({ doc: id, user: me.user.id, session: commentSession });
                 } : undefined}
+                onBoardCommentCreate={canSubmitComment && commentsAvailable ? async (input) => {
+                  const created = await commentsApi.create(id, input);
+                  await qc.invalidateQueries({ queryKey: commentListKey(id, me.user.id, commentSession) });
+                  return created;
+                } : undefined}
+                onBoardCommentReply={canSubmitComment && commentsAvailable ? async (parentId, body) => {
+                  const created = await commentsApi.create(id, { parentId, body });
+                  await qc.invalidateQueries({ queryKey: commentListKey(id, me.user.id, commentSession) });
+                  return created;
+                } : undefined}
+                onBoardCommentResolve={canSubmitComment && commentsAvailable ? async (commentId) => {
+                  await commentsApi.updateForAccount(id, commentId, me.user.id, { resolved: true });
+                  await qc.invalidateQueries({ queryKey: commentListKey(id, me.user.id, commentSession) });
+                } : undefined}
                 onPreviewImage={(src, alt, mime) => setPreview({ src, alt, mime })}
                 ai={runAI}
                 onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: "已复制该段落的链接，可在分享面板中设置访问权限。" }); } : undefined}

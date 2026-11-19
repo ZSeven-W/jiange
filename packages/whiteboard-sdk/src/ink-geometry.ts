@@ -1,10 +1,109 @@
-import type { FlowStroke } from "./model.js";
+import type { FlowNode, FlowStroke } from "./model.js";
 
 type Point = { x: number; y: number };
+export interface SelectionBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export function inkPointBounds(stroke: FlowStroke) {
   const xs = stroke.points.map((p) => p.x), ys = stroke.points.map((p) => p.y);
   const x = Math.min(...xs), y = Math.min(...ys);
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+/** Combined axis-aligned bounding box of selected nodes and strokes. */
+export function selectionBounds(nodes: readonly FlowNode[], strokes: readonly FlowStroke[]): SelectionBox | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w);
+    maxY = Math.max(maxY, n.y + n.h);
+  }
+  for (const s of strokes) {
+    for (const p of s.points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Uniformly scale a multi-selection of nodes and ink strokes around `anchor`,
+ * keeping aspect ratios intact and enforcing all canvas & shape limits.
+ */
+export function scaleSelectionProportionally(
+  nodes: readonly FlowNode[],
+  strokes: readonly FlowStroke[],
+  anchor: Point,
+  requested: number,
+): { scale: number; nodes: FlowNode[]; strokes: FlowStroke[] } {
+  const box = selectionBounds(nodes, strokes);
+  if (!box || !Number.isFinite(requested) || requested <= 0 || (!box.w && !box.h)) {
+    return { scale: 1, nodes: [...nodes], strokes: [...strokes] };
+  }
+  let minScale = Math.min(1, Math.max(0.1, 1 / Math.max(box.w, box.h, 1)));
+  let maxScale = 10;
+
+  const constrainDelta = (delta: number, origin: number) => {
+    if (delta > 0) {
+      maxScale = Math.min(maxScale, (20000 - origin) / delta);
+    } else if (delta < 0) {
+      maxScale = Math.min(maxScale, (-20000 - origin) / delta);
+    }
+  };
+
+  for (const n of nodes) {
+    minScale = Math.max(minScale, 20 / Math.max(n.w, 1), 16 / Math.max(n.h, 1));
+    maxScale = Math.min(maxScale, 2000 / Math.max(n.w, 1), 2000 / Math.max(n.h, 1));
+    constrainDelta(n.x - anchor.x, anchor.x);
+    constrainDelta(n.y - anchor.y, anchor.y);
+    constrainDelta(n.x + n.w - anchor.x, anchor.x);
+    constrainDelta(n.y + n.h - anchor.y, anchor.y);
+  }
+  for (const s of strokes) {
+    for (const p of s.points) {
+      constrainDelta(p.x - anchor.x, anchor.x);
+      constrainDelta(p.y - anchor.y, anchor.y);
+    }
+  }
+
+  const effectiveMin = Math.min(1, minScale);
+  const effectiveMax = Math.max(effectiveMin, maxScale);
+  const scale = Math.max(effectiveMin, Math.min(effectiveMax, requested));
+
+  const scaledNodes: FlowNode[] = nodes.map((n) => {
+    const x = Math.max(-20000, Math.min(20000, Math.round(anchor.x + (n.x - anchor.x) * scale)));
+    const y = Math.max(-20000, Math.min(20000, Math.round(anchor.y + (n.y - anchor.y) * scale)));
+    const w = Math.max(20, Math.min(2000, Math.round(n.w * scale)));
+    const h = Math.max(16, Math.min(2000, Math.round(n.h * scale)));
+    return {
+      ...n,
+      x,
+      y,
+      w,
+      h,
+      ...(n.size !== undefined ? { size: Math.max(10, Math.min(48, Math.round(n.size * scale))) } : {}),
+    };
+  });
+
+  const scaledStrokes: FlowStroke[] = strokes.map((s) => ({
+    ...s,
+    width: Math.max(1, Math.min(24, Math.round(s.width * scale))),
+    points: s.points.map((p) => ({
+      x: Math.max(-20000, Math.min(20000, Math.round(anchor.x + (p.x - anchor.x) * scale))),
+      y: Math.max(-20000, Math.min(20000, Math.round(anchor.y + (p.y - anchor.y) * scale))),
+    })),
+  }));
+
+  return { scale, nodes: scaledNodes, strokes: scaledStrokes };
 }
 
 /** Scale around the top-left point bounds, keeping geometry within canvas limits. */

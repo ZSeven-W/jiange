@@ -13,7 +13,9 @@
     "./history": "./src/history.ts",
     "./viewport": "./src/viewport.ts",
     "./inkGeometry": "./src/ink-geometry.ts",
-    "./ink-geometry": "./src/ink-geometry.ts"
+    "./ink-geometry": "./src/ink-geometry.ts",
+    "./xmind": "./src/xmind.ts",
+    "./comment-anchor": "./src/comment-anchor.ts"
   },
   "files": [
     "dist",
@@ -50,13 +52,24 @@
       "./ink-geometry": {
         "types": "./dist/ink-geometry.d.ts",
         "import": "./dist/ink-geometry.js"
+      },
+      "./xmind": {
+        "types": "./dist/xmind.d.ts",
+        "import": "./dist/xmind.js"
+      },
+      "./comment-anchor": {
+        "types": "./dist/comment-anchor.d.ts",
+        "import": "./dist/comment-anchor.js"
       }
     }
   },
   "scripts": {
     "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@jiange/ooxml": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.6.3",

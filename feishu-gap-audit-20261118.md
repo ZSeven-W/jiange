@@ -77,7 +77,7 @@
 | 能力项 | 状态 | 具体差距与代码依据 | 优先级 |
 | --- | --- | --- | --- |
 | 幻灯片（Slides） | **已落地多人协同、页面结构撤销与 `.pptx` 闭环（P1 Slice 8，2026-11-19）** | 已落地 WebSocket 多人实时在线协作者头像、缩略图当前页位置角标、变更即时广播与定时权限复验（`server/internal/slidessync/`、`GET /api/slides/{id}/ws`），基于 `@jiange/ooxml` 的无头 16:9 标准 OOXML `.pptx` 双向导入导出与打印/PDF 视图（`@jiange/slides-sdk/pptx`、`POST /api/slides/{id}/import-pptx`，支持幻灯片顺序、纯色背景与深色自适应反色、隐藏页、布局、18 类图形/连接线/文本框、旋转与演讲者备注，导出/打印遵守下载权限策略），以及覆盖删页原子恢复（`POST /api/slides/{id}/pages/restore`）、新建/复制、排序与隐藏切换的页面结构级撤销/重做闭环（详见 [slides-collab-pptx-report-20261119.md](slides-collab-pptx-report-20261119.md)）；真正母版继承与图片占位符、图表/音视频/动画、图片渐变背景与裁剪、导入嵌入图片/SmartArt 及真实 PowerPoint 大样本核验留作后续深化。 | **部分（P1 核心闭环）** |
-| 画板、流程图与思维导图 | **部分** | `画板` 已具备独立子类型与列表筛选，但画板/流程图仍共用文档内 `flowchart` 块，缺少画板内对象/坐标锚点评论、多选笔迹等比缩放、在途协作竞态保护；思维导图缺少局部富文本描述、节点附件、结构条件提交与 `.xmind` 导入导出。 | **P1** |
+| 画板、流程图与思维导图 | **已落地画板锚点评论、多选等比缩放与 `.xmind` 闭环（P1 Slice 9，2026-11-19）** | 已落地基于 `@jiange/whiteboard-sdk` 的画板对象与坐标锚点评论（`fc:n:<id>` 图形锚点、`fc:m:<id>` 导图主题锚点、`fc:p:<x>,<y>` 自由画布图钉，复用受权限保护的文档评论持久层，支持画板内评论图钉工具、移动/缩放动态跟随、行内回复与解决，及删对象后坐标兜底）、混合多选图形与自由笔迹的统一外框等比缩放（`selectionBounds` + `scaleSelectionProportionally`，单步撤销完整还原），以及基于 `@jiange/ooxml` 的无头标准 `.xmind` 双向导入导出（`@jiange/whiteboard-sdk/xmind`，支持现代 XMind ZEN `content.json` 与旧版 XMind 8 `content.xml` 导入及多画布/描述/折叠/样式/格式导出，详见 [whiteboard-mindmap-report-20261119.md](whiteboard-mindmap-report-20261119.md)）；独立画板存储模型、在途协作竞态保护、导图局部字符级富文本描述、节点附件与结构条件提交留作后续深化。 | **部分（P1 核心闭环）** |
 | 智能纪要（Minutes） | **已缺** | 无独立纪要资源模型、音视频上传/播控、说话人时间戳逐字稿编辑器，以及可配置真实 ASR/摘要服务的持久化异步任务与失败恢复链路。 | **P2** |
 | 思维笔记（Mind Notes） | **已缺** | 主页/云盘与文档模型均无飞书「思维笔记」（大纲笔记与导图一键双向切换）产品形态。 | **P2** |
 
