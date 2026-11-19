@@ -14,6 +14,8 @@ import { Trash } from "@/pages/trash";
 import { JoinLink } from "@/pages/join-link";
 import { BasePage } from "@/pages/base-page";
 import { SheetPage } from "@/pages/sheet/sheet-page";
+import { SurveyPage } from "@/pages/survey/survey-page";
+import { PublicSurveyPage } from "@/pages/survey/public-survey-page";
 import { PublicForm } from "@/pages/public-form";
 import { PublicDoc } from "@/pages/public-doc";
 import { DrivePage } from "@/pages/drive-page";
@@ -66,6 +68,7 @@ export default function App() {
 
   // Public links must resolve before authentication is required.
   if (route.page === "public") return <PublicDoc key={route.token} token={route.token} />;
+  if (route.page === "public-survey") return <PublicSurveyPage key={route.token} token={route.token} />;
   if (route.page === "form") {
     return <PublicForm key={route.token} token={route.token} />;
   }
@@ -155,7 +158,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   };
   const sidebarClass = docLayout
     ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
-    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" || route.page === "wiki-space" ? "md:hidden" : "md:static md:block"}`;
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" || route.page === "survey" || route.page === "wiki-space" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
@@ -183,6 +186,8 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
       ) : route.page === "sheet" ? (
         <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
+      ) : route.page === "survey" ? (
+        <SurveyPage key={`${me.user.id}:${route.id}`} surveyId={route.id} />
       ) : route.page === "org" ? (
         <OrgPage me={me} />
       ) : route.page === "wiki" ? (
