@@ -137,6 +137,8 @@ export interface DocMeta {
   driveRevision?: number;
   /** Groups the subtree of one guarded trash operation; 0 for legacy deletions. */
   trashBatchId?: number;
+  wikiSpaceId?: number | null;
+  wikiSpaceName?: string;
 }
 export interface ReferenceVisibility { visible: boolean; revision: number }
 function checkedReferenceVisibility(value: unknown): ReferenceVisibility {
@@ -502,6 +504,75 @@ export const orgApi = {
     request<void>("DELETE", `/api/workspaces/${wsId}/groups/${groupId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   setGroupMember: (wsId: number, groupId: number, userId: number, memberUserId: number, present: boolean) =>
     request<void>("PUT", `/api/workspaces/${wsId}/groups/${groupId}/members`, { userId: memberUserId, present }, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
+
+export type WikiVisibility = "workspace" | "private";
+export type WikiGrantSubjectType = "user" | "department" | "group";
+export type WikiNodeKind = "doc" | "sheet" | "base" | "slides" | "folder";
+
+export interface WikiSpace {
+  id: number;
+  workspaceId: number;
+  name: string;
+  description: string;
+  icon: string;
+  visibility: WikiVisibility;
+  creatorId: number;
+  creatorName: string;
+  callerRole: Role;
+  nodeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WikiSpaceGrant {
+  subjectType: WikiGrantSubjectType;
+  subjectId: number;
+  name: string;
+  email?: string;
+  memberCount?: number;
+  role: Role;
+}
+export interface WikiNodeEntry {
+  id: number;
+  workspaceId: number;
+  wikiSpaceId: number;
+  parentId: number | null;
+  kind: WikiNodeKind;
+  docType?: string;
+  title: string;
+  icon?: string;
+  creatorId: number;
+  creatorName: string;
+  role: Role;
+  revision: number;
+  inheritParentAcl: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface WikiSpaceDetail {
+  space: WikiSpace;
+  grants: WikiSpaceGrant[];
+  nodes: WikiNodeEntry[];
+}
+export const wikiApi = {
+  listSpaces: (wsId: number, userId: number) =>
+    request<{ spaces: WikiSpace[] }>("GET", `/api/workspaces/${wsId}/wiki-spaces`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.spaces ?? []),
+  createSpace: (wsId: number, userId: number, input: { name: string; description?: string; icon?: string; visibility?: WikiVisibility }) =>
+    request<WikiSpace>("POST", `/api/workspaces/${wsId}/wiki-spaces`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  getSpace: (spaceId: number, userId: number) =>
+    request<WikiSpaceDetail>("GET", `/api/wiki/spaces/${spaceId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateSpace: (spaceId: number, userId: number, patch: { name?: string; description?: string; icon?: string; visibility?: WikiVisibility }) =>
+    request<WikiSpace>("PATCH", `/api/wiki/spaces/${spaceId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteSpace: (spaceId: number, userId: number) =>
+    request<void>("DELETE", `/api/wiki/spaces/${spaceId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  setGrant: (spaceId: number, userId: number, subjectType: WikiGrantSubjectType, subjectId: number, role: Role | "") =>
+    request<{ grants: WikiSpaceGrant[] }>("PUT", `/api/wiki/spaces/${spaceId}/grants`, { subjectType, subjectId, role }, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.grants ?? []),
+  createNode: (spaceId: number, userId: number, input: { parentId?: number | null; kind: WikiNodeKind | "board"; docType?: string; title?: string }) =>
+    request<WikiNodeEntry>("POST", `/api/wiki/spaces/${spaceId}/nodes`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  importFromDrive: (spaceId: number, userId: number, input: { nodeId: number; targetParentId?: number | null; expectedRevision: number }) =>
+    request<WikiNodeEntry>("POST", `/api/wiki/spaces/${spaceId}/import-drive`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  moveNode: (nodeId: number, userId: number, input: { targetSpaceId: number; targetParentId?: number | null; expectedRevision: number }) =>
+    request<WikiNodeEntry>("POST", `/api/wiki/nodes/${nodeId}/move`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 export interface FileMeta {
   id: number;

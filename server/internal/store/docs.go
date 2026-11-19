@@ -39,6 +39,9 @@ type DocMeta struct {
 	// TrashBatchID groups the subtree of one guarded trash operation; 0 when
 	// the node was deleted by the legacy unversioned endpoint.
 	TrashBatchID int64 `json:"trashBatchId,omitempty"`
+	// WikiSpaceID is set when this node belongs to an independent Wiki space.
+	WikiSpaceID   *int64 `json:"wikiSpaceId,omitempty"`
+	WikiSpaceName string `json:"wikiSpaceName,omitempty"`
 }
 
 func documentActionAllowed(meta DocMeta, role, threshold string) bool {

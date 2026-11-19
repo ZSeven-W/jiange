@@ -347,26 +347,34 @@ func (m *Memory) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuard,
 	if err != nil {
 		return err
 	}
-	if patch.Move && patch.ParentID != nil {
-		parent := m.doc(*patch.ParentID)
-		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleEdit) {
-			return ErrNotFound
+	if patch.Move {
+		if d.meta.WikiSpaceID != nil {
+			return ErrConflict
 		}
-		seen := map[int64]bool{}
-		for node := parent; node != nil; {
-			if node.meta.ID == docID || seen[node.meta.ID] {
+		if patch.ParentID != nil {
+			parent := m.doc(*patch.ParentID)
+			if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != d.meta.WorkspaceID || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleEdit) {
+				return ErrNotFound
+			}
+			if parent.meta.WikiSpaceID != nil {
 				return ErrConflict
 			}
-			if node.deleted || node.meta.WorkspaceID != d.meta.WorkspaceID {
-				return ErrNotFound
-			}
-			seen[node.meta.ID] = true
-			if node.meta.ParentID == nil {
-				break
-			}
-			node = m.doc(*node.meta.ParentID)
-			if node == nil {
-				return ErrNotFound
+			seen := map[int64]bool{}
+			for node := parent; node != nil; {
+				if node.meta.ID == docID || seen[node.meta.ID] {
+					return ErrConflict
+				}
+				if node.deleted || node.meta.WorkspaceID != d.meta.WorkspaceID {
+					return ErrNotFound
+				}
+				seen[node.meta.ID] = true
+				if node.meta.ParentID == nil {
+					break
+				}
+				node = m.doc(*node.meta.ParentID)
+				if node == nil {
+					return ErrNotFound
+				}
 			}
 		}
 	}
@@ -413,39 +421,55 @@ func (p *Postgres) PatchManagedDocGuarded(ctx context.Context, guard RestoreGuar
 		if err != nil {
 			return err
 		}
-		if patch.Move && patch.ParentID != nil {
+		if patch.Move {
 			var workspace int64
-			if err := tx.QueryRow(ctx, `SELECT workspace_id FROM nodes WHERE id=$1`, docID).Scan(&workspace); err != nil {
+			var docWiki *int64
+			if err := tx.QueryRow(ctx, `SELECT workspace_id, wiki_space_id FROM nodes WHERE id=$1`, docID).Scan(&workspace, &docWiki); err != nil {
 				return err
 			}
-			role, _, kind, err := lockCopySource(ctx, tx, *patch.ParentID, guard.UserID)
-			if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleEdit)) {
-				return ErrNotFound
+			if docWiki != nil {
+				return ErrConflict
 			}
-			if err != nil {
-				return err
-			}
-			seen := map[int64]bool{}
-			current := *patch.ParentID
-			for current != 0 {
-				if current == docID || seen[current] {
+			if patch.ParentID != nil {
+				var parentWiki *int64
+				if err := tx.QueryRow(ctx, `SELECT wiki_space_id FROM nodes WHERE id=$1 FOR SHARE`, *patch.ParentID).Scan(&parentWiki); err != nil {
+					if errors.Is(err, pgx.ErrNoRows) {
+						return ErrNotFound
+					}
+					return err
+				}
+				if parentWiki != nil {
 					return ErrConflict
 				}
-				seen[current] = true
-				var parent *int64
-				var ws int64
-				var deleted bool
-				err := tx.QueryRow(ctx, `SELECT parent_id,workspace_id,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR SHARE`, current).Scan(&parent, &ws, &deleted)
-				if errors.Is(err, pgx.ErrNoRows) || err == nil && (ws != workspace || deleted) {
+				role, _, kind, err := lockCopySource(ctx, tx, *patch.ParentID, guard.UserID)
+				if errors.Is(err, ErrNotFound) || err == nil && (kind == "file" || RoleRank(role) < RoleRank(RoleEdit)) {
 					return ErrNotFound
 				}
 				if err != nil {
 					return err
 				}
-				if parent == nil {
-					break
+				seen := map[int64]bool{}
+				current := *patch.ParentID
+				for current != 0 {
+					if current == docID || seen[current] {
+						return ErrConflict
+					}
+					seen[current] = true
+					var parent *int64
+					var ws int64
+					var deleted bool
+					err := tx.QueryRow(ctx, `SELECT parent_id,workspace_id,deleted_at IS NOT NULL FROM nodes WHERE id=$1 FOR SHARE`, current).Scan(&parent, &ws, &deleted)
+					if errors.Is(err, pgx.ErrNoRows) || err == nil && (ws != workspace || deleted) {
+						return ErrNotFound
+					}
+					if err != nil {
+						return err
+					}
+					if parent == nil {
+						break
+					}
+					current = *parent
 				}
-				current = *parent
 			}
 		}
 		if patch.Move {

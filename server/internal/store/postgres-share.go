@@ -20,6 +20,11 @@ const roleSQL = `CASE
 		WHEN sh.r = 2 THEN 'edit'
 		WHEN sh.r = 1 THEN 'view'
 		ELSE '' END
+	WHEN n.wiki_space_id IS NOT NULL THEN CASE
+		WHEN m.role IN ('owner','admin') OR (m.user_id IS NOT NULL AND n.creator_id = $1) OR sh.wiki_rank = 3 OR sh.r = 3 THEN 'manage'
+		WHEN (COALESCE(sh.inherits_ws, true) AND sh.wiki_rank = 2) OR sh.r = 2 THEN 'edit'
+		WHEN (COALESCE(sh.inherits_ws, true) AND sh.wiki_rank = 1) OR sh.r = 1 THEN 'view'
+		ELSE '' END
 	WHEN m.role IN ('owner','admin') OR (m.user_id IS NOT NULL AND n.creator_id = $1) OR sh.r = 3 THEN 'manage'
 	WHEN (m.user_id IS NOT NULL AND COALESCE(sh.inherits_ws, true)) OR sh.r = 2 THEN 'edit'
 	WHEN sh.r = 1 THEN 'view' ELSE '' END`
@@ -59,7 +64,25 @@ const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspac
 			WHERE j.user_id = $1 AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
 			  AND (ln.link_role NOT IN ('workspace_view','workspace_edit') OR EXISTS (SELECT 1 FROM workspace_members lm WHERE lm.workspace_id=ln.workspace_id AND lm.user_id=$1))
 		) grants) AS r,
-		COALESCE((SELECT bool_and(a.inherit_parent_acl) FROM a), true) AS inherits_ws
+		COALESCE((SELECT bool_and(a.inherit_parent_acl) FROM a), true) AS inherits_ws,
+		CASE WHEN n.wiki_space_id IS NULL OR m.user_id IS NULL THEN 0 ELSE COALESCE((
+			SELECT GREATEST(
+				CASE WHEN m.role IN ('owner','admin') OR wsp.creator_id = $1 THEN 3
+				     WHEN wsp.visibility = 'workspace' THEN 1
+				     ELSE 0 END,
+				COALESCE((
+					SELECT max(CASE wg.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 ELSE 0 END)
+					FROM wiki_space_grants wg
+					WHERE wg.space_id = wsp.id AND (
+						(wg.subject_type = 'user' AND wg.subject_id = $1)
+						OR (wg.subject_type = 'department' AND EXISTS (SELECT 1 FROM ud WHERE ud.id = wg.subject_id))
+						OR (wg.subject_type = 'group' AND EXISTS (SELECT 1 FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.group_id = wg.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id))
+					)
+				), 0)
+			)
+			FROM wiki_spaces wsp
+			WHERE wsp.id = n.wiki_space_id AND wsp.workspace_id = n.workspace_id
+		), 0) END AS wiki_rank
 	) sh ON true`
 
 func (p *Postgres) ListShares(ctx context.Context, doc int64) ([]Share, error) {
@@ -199,7 +222,7 @@ func (p *Postgres) JoinLink(ctx context.Context, tok string, uid int64) (id int6
 }
 
 func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl FROM nodes n`+roleJoins+`
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '') FROM nodes n`+roleJoins+`
 		WHERE n.deleted_at IS NULL AND (m.user_id IS NULL OR (n.personal AND n.creator_id <> $1)) AND (`+roleSQL+`) <> '' AND (
 		  EXISTS (SELECT 1 FROM doc_shares s WHERE s.doc_id = n.id AND s.user_id = $1)
 		  OR (n.link_role <> 'none' AND EXISTS (SELECT 1 FROM doc_link_joins j WHERE j.doc_id = n.id AND j.user_id = $1))
@@ -221,7 +244,7 @@ func (p *Postgres) SharedWithMe(ctx context.Context, uid int64) ([]DocMeta, erro
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (d DocMeta, err error) {
-		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL)
+		err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.InheritParentACL, &d.WikiSpaceID, &d.WikiSpaceName)
 		return
 	})
 }

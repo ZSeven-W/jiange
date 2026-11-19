@@ -184,19 +184,20 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
     },
   });
   const ws = me.workspaces[0];
+  const nonWikiDocs = useMemo(() => (docs.data ?? []).filter((d) => !d.wikiSpaceId), [docs.data]);
   const kids = useMemo(() => {
     const m = new Map<number | null, DocMeta[]>();
-    const ids = new Set((docs.data ?? []).map((d) => d.id));
-    for (const d of [...(docs.data ?? [])].sort((a, b) => a.id - b.id)) {
+    const ids = new Set(nonWikiDocs.map((d) => d.id));
+    for (const d of [...nonWikiDocs].sort((a, b) => a.id - b.id)) {
       const p = d.parentId && ids.has(d.parentId) ? d.parentId : null;
       m.set(p, [...(m.get(p) ?? []), d]);
     }
     return m;
-  }, [docs.data]);
+  }, [nonWikiDocs]);
   // expand ancestors of the open doc
   const activeId = route.page === "doc" || route.page === "base" || route.page === "file" ? route.id : null;
   const ancestors = useMemo(() => {
-    const byId = new Map((docs.data ?? []).map((d) => [d.id, d]));
+    const byId = new Map(nonWikiDocs.map((d) => [d.id, d]));
     const out = new Set<number>();
     let cur = activeId ? byId.get(activeId) : undefined;
     while (cur?.parentId && !out.has(cur.parentId)) {
@@ -204,7 +205,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       cur = byId.get(cur.parentId);
     }
     return out;
-  }, [docs.data, activeId]);
+  }, [nonWikiDocs, activeId]);
   const renderTree = (parent: number | null, depth: number): React.ReactNode =>
     (kids.get(parent) ?? []).map((d) => {
       const has = (kids.get(d.id) ?? []).length > 0;
@@ -274,7 +275,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
     });
   const pins = useQuery({ queryKey: ["pins"], queryFn: extrasApi.pins, refetchInterval: 30000, refetchIntervalInBackground: false });
   const favorites = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites, refetchInterval: 30000, refetchIntervalInBackground: false });
-  const shown = [...(docs.data ?? [])].sort((a, b) => a.id - b.id);
+  const shown = [...nonWikiDocs].sort((a, b) => a.id - b.id);
 
   if (route.page === "drive") return <DriveSidebar route={route} userId={me.user.id} searchOpen={searchOpen} onSearch={openSearch} onCloseSearch={closeSearch} />;
 
@@ -296,6 +297,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       <nav className="mt-4 space-y-1 px-2 [&>button]:gap-2">
         <NavItem icon={<HomeIcon width={18} height={18} />} label={t("主页")} active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<DriveNavIcon className="size-[18px]" />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
+        <NavItem icon={<BookOpen size={18} strokeWidth={1.7} />} label={t("知识库")} active={route.page === "wiki" || route.page === "wiki-space"} onClick={() => go("#/wiki")} />
         <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<Building2 size={18} strokeWidth={1.7} />} label={t("组织架构")} active={route.page === "org"} onClick={() => go("#/org")} />
@@ -636,4 +638,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, Building2, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";

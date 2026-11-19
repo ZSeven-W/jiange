@@ -34,7 +34,7 @@ func (m *Memory) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGuard
 		return ErrForbidden
 	}
 	if patch.Move {
-		if m.driveFolderAncestorLocked(doc) {
+		if doc.meta.WikiSpaceID != nil || m.driveFolderAncestorLocked(doc) {
 			return ErrConflict
 		}
 		if patch.ParentID != nil {
@@ -42,7 +42,7 @@ func (m *Memory) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGuard
 			if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WorkspaceID != doc.meta.WorkspaceID || parent.personal != doc.personal || !m.driveValidChainLocked(parent, doc.meta.WorkspaceID, false) || RoleRank(m.roleLocked(guard.UserID, parent)) < RoleRank(RoleView) {
 				return ErrForbidden
 			}
-			if m.driveFolderAncestorLocked(parent) {
+			if parent.meta.WikiSpaceID != nil || m.driveFolderAncestorLocked(parent) {
 				return ErrConflict
 			}
 			for node := parent; node != nil; {
@@ -101,13 +101,17 @@ func (p *Postgres) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGua
 		var currentWS int64
 		var personal, deleted bool
 		var kind string
-		if e = tx.QueryRow(ctx, `SELECT workspace_id,personal,deleted_at IS NOT NULL,kind FROM nodes WHERE id=$1 FOR UPDATE`, docID).Scan(&currentWS, &personal, &deleted, &kind); errors.Is(e, pgx.ErrNoRows) {
+		var nodeWiki *int64
+		if e = tx.QueryRow(ctx, `SELECT workspace_id,personal,deleted_at IS NOT NULL,kind,wiki_space_id FROM nodes WHERE id=$1 FOR UPDATE`, docID).Scan(&currentWS, &personal, &deleted, &kind, &nodeWiki); errors.Is(e, pgx.ErrNoRows) {
 			return ErrForbidden
 		} else if e != nil {
 			return e
 		}
 		if currentWS != ws || deleted || kind == "file" || kind == "folder" {
 			return ErrForbidden
+		}
+		if patch.Move && nodeWiki != nil {
+			return ErrConflict
 		}
 		if e = drivePGValidChain(ctx, tx, docID, ws); e != nil {
 			return e
@@ -130,10 +134,14 @@ func (p *Postgres) PatchDocMetadataGuarded(ctx context.Context, guard RestoreGua
 			var parentWS int64
 			var parentPersonal, parentDeleted bool
 			var parentKind string
-			if e = tx.QueryRow(ctx, `SELECT workspace_id,personal,deleted_at IS NOT NULL,kind FROM nodes WHERE id=$1 FOR SHARE`, *patch.ParentID).Scan(&parentWS, &parentPersonal, &parentDeleted, &parentKind); errors.Is(e, pgx.ErrNoRows) {
+			var parentWiki *int64
+			if e = tx.QueryRow(ctx, `SELECT workspace_id,personal,deleted_at IS NOT NULL,kind,wiki_space_id FROM nodes WHERE id=$1 FOR SHARE`, *patch.ParentID).Scan(&parentWS, &parentPersonal, &parentDeleted, &parentKind, &parentWiki); errors.Is(e, pgx.ErrNoRows) {
 				return ErrForbidden
 			} else if e != nil {
 				return e
+			}
+			if parentWiki != nil {
+				return ErrConflict
 			}
 			if parentWS != ws || parentDeleted || parentPersonal != personal || parentKind == "file" {
 				return ErrForbidden

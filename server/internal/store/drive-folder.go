@@ -127,7 +127,7 @@ func (m *Memory) driveDestinationLocked(user, workspace int64, parent *int64, mi
 		return nil
 	}
 	d := m.doc(*parent)
-	if d == nil || d.meta.Kind != "folder" || !m.driveValidChainLocked(d, workspace, false) || RoleRank(m.roleLocked(user, d)) < RoleRank(minimum) {
+	if d == nil || d.meta.Kind != "folder" || d.meta.WikiSpaceID != nil || !m.driveValidChainLocked(d, workspace, false) || RoleRank(m.roleLocked(user, d)) < RoleRank(minimum) {
 		return ErrForbidden
 	}
 	return nil
@@ -302,7 +302,7 @@ func (m *Memory) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int64
 	}
 	out := make([]DriveEntry, 0)
 	for _, d := range m.d.docs {
-		if d.meta.WorkspaceID == ws && !d.deleted && d.personal == personal && sameDriveParent(d.meta.ParentID, parent) && RoleRank(m.roleLocked(g.UserID, d)) >= RoleRank(RoleView) {
+		if d.meta.WorkspaceID == ws && !d.deleted && d.meta.WikiSpaceID == nil && d.personal == personal && sameDriveParent(d.meta.ParentID, parent) && RoleRank(m.roleLocked(g.UserID, d)) >= RoleRank(RoleView) {
 			out = append(out, driveMemoryEntry(m, d, g.UserID))
 		}
 	}
@@ -325,7 +325,7 @@ func (m *Memory) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, pa
 		return err
 	}
 	d := m.doc(id)
-	if d == nil || d.deleted || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || RoleRank(m.roleLocked(g.UserID, d)) < RoleRank(RoleManage) {
+	if d == nil || d.deleted || d.meta.WikiSpaceID != nil || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || RoleRank(m.roleLocked(g.UserID, d)) < RoleRank(RoleManage) {
 		return ErrForbidden
 	}
 	if d.driveRevision != expected || d.driveRevision >= maxDriveRevision {
@@ -646,8 +646,9 @@ func drivePGDestination(ctx context.Context, tx pgx.Tx, g RestoreGuard, ws int64
 	var kind string
 	var pws int64
 	var personal bool
-	err := tx.QueryRow(ctx, `SELECT kind,workspace_id,personal FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *parent).Scan(&kind, &pws, &personal)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && (kind != "folder" || pws != ws) {
+	var wikiSpace *int64
+	err := tx.QueryRow(ctx, `SELECT kind,workspace_id,personal,wiki_space_id FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *parent).Scan(&kind, &pws, &personal, &wikiSpace)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (kind != "folder" || pws != ws || wikiSpace != nil) {
 		return false, ErrForbidden
 	}
 	if err != nil {
@@ -820,7 +821,7 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.wiki_space_id IS NULL AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
 		if e != nil {
 			return e
 		}
@@ -854,9 +855,13 @@ func (p *Postgres) MoveDriveNode(ctx context.Context, g RestoreGuard, id int64, 
 		}
 		var currentWS, rev int64
 		var deleted, nodePersonal bool
-		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,deleted_at IS NOT NULL,personal FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&currentWS, &rev, &deleted, &nodePersonal)
+		var nodeWiki *int64
+		e = tx.QueryRow(ctx, `SELECT workspace_id,drive_revision,deleted_at IS NOT NULL,personal,wiki_space_id FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&currentWS, &rev, &deleted, &nodePersonal, &nodeWiki)
 		if e != nil {
 			return e
+		}
+		if nodeWiki != nil {
+			return ErrForbidden
 		}
 		if currentWS != ws || deleted || rev != expected {
 			return ErrConflict

@@ -21,6 +21,8 @@ import { SlidesDeck } from "@/pages/slides-page";
 import { DriveFilePage } from "@/pages/drive-file-page";
 import { DriveUploadManager } from "@/pages/drive-upload";
 import { OrgPage } from "@/pages/org/org-page";
+import { WikiSpacesPage } from "@/pages/wiki/wiki-spaces-page";
+import { WikiSpacePage } from "@/pages/wiki/wiki-space-page";
 import { DriveUploadStatus } from "@/components/drive-upload-status";
 import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/ai-settings";
@@ -153,7 +155,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   };
   const sidebarClass = docLayout
     ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
-    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" ? "md:hidden" : "md:static md:block"}`;
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" || route.page === "wiki-space" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
     <div className="flex h-full">
@@ -183,6 +185,10 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
         <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
       ) : route.page === "org" ? (
         <OrgPage me={me} />
+      ) : route.page === "wiki" ? (
+        <WikiSpacesPage me={me} />
+      ) : route.page === "wiki-space" ? (
+        <WikiSpacePage key={`${me.user.id}:${route.spaceId}`} spaceId={route.spaceId} nodeId={route.nodeId} me={me} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
       ) : route.page === "trash" ? (
         <Trash />
       ) : route.page === "favorites" ? (

@@ -252,6 +252,17 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/workspaces/{wsId}/groups/{groupId}":           s.updateUserGroup,
 		"DELETE /api/workspaces/{wsId}/groups/{groupId}":          s.deleteUserGroup,
 		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":     s.setUserGroupMember,
+
+		// 独立知识库空间（Wiki）
+		"GET /api/workspaces/{wsId}/wiki-spaces":       s.listWikiSpaces,
+		"POST /api/workspaces/{wsId}/wiki-spaces":      s.postWikiSpace,
+		"GET /api/wiki/spaces/{spaceId}":               s.getWikiSpace,
+		"PATCH /api/wiki/spaces/{spaceId}":             s.patchWikiSpace,
+		"DELETE /api/wiki/spaces/{spaceId}":            s.deleteWikiSpace,
+		"PUT /api/wiki/spaces/{spaceId}/grants":        s.putWikiSpaceGrant,
+		"POST /api/wiki/spaces/{spaceId}/nodes":        s.postWikiNode,
+		"POST /api/wiki/spaces/{spaceId}/import-drive": s.postWikiImportDrive,
+		"POST /api/wiki/nodes/{id}/move":               s.postWikiNodeMove,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

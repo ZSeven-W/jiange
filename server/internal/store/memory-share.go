@@ -64,6 +64,16 @@ func (m *Memory) roleLocked(uid int64, d *memDoc) string {
 		}
 		cur = m.doc(*cur.meta.ParentID)
 	}
+	if d.meta.WikiSpaceID != nil {
+		wikiRank := m.wikiSpaceRankLocked(ws, *d.meta.WikiSpaceID, uid, wsRole, depts, groups)
+		if wikiRank == 3 {
+			return RoleManage
+		}
+		if inheritsWS && wikiRank > RoleRank(best) {
+			best = roleFromRank(wikiRank)
+		}
+		return best
+	}
 	if !d.personal && isMember && inheritsWS && RoleRank(RoleEdit) > RoleRank(best) {
 		best = RoleEdit
 	}
@@ -260,8 +270,7 @@ func (m *Memory) SharedWithMe(_ context.Context, uid int64) ([]DocMeta, error) {
 	for doc := range docs {
 		d := m.doc(doc)
 		if d != nil && !d.deleted && (!m.member(uid, d.meta.WorkspaceID) || d.personal && d.meta.CreatorID != uid) && RoleRank(m.roleLocked(uid, d)) >= RoleRank(RoleView) {
-			meta := d.meta
-			meta.InheritParentACL = !d.noInheritParentACL
+			meta := m.docMetaLocked(d)
 			meta.Role = m.roleLocked(uid, d)
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)

@@ -8,6 +8,8 @@
 
 2026-11-18：落地独立普通电子表格 `kind="sheet"` 正式持久化工作簿（`0065_sheets.sql`、`sheetsync` 实时推送与 `#/sheet/{id}`），实现多工作表、跨表公式求值与 `#ff8800` 引用高亮、单元格格式/合并/冻结/筛选排序、多工作表 `.xlsx` 导入导出及主页/云盘/侧栏/全局搜索/副本/回收站全链路接入；已通过 Go（Memory + 隔离 PostgreSQL）、Vitest（228 文件 / 1292 项）、TypeScript、SDK 打包及无头 Chrome 桌面与 `390×844` 模拟移动端验证，见 [普通电子表格验证报告](sheet-workbook-report-20261118.md)。数据验证、条件格式、图表透视表、单格锚点评论、保护区域、`.xlsx` 完整样式保真与真机实测仍待后续完善。
 
+2026-11-18–19：落地企业组织架构、邀请同意与权限继承（`0067_org_permissions.sql`、`0068_workspace_invitations.sql`、`#/org`）以及独立知识库空间 Wiki（`0069_wiki_spaces.sql`、`#/wiki`、`#/wiki/{spaceId}`），支持多级部门与用户组授权、页面级「继承上级权限」开关与自锁保护、全员可见/私有知识库空间、混合资源多级目录树、跨库子树迁移及云盘迁入；已通过 Go（Memory + 隔离 PostgreSQL + `-race`）、全量 Vitest、TypeScript、SDK 打包及无头 Chrome 桌面与 `390×844` 模拟移动端验证，见 [组织架构与权限继承报告](org-permissions-report-20261118.md) 与 [知识库空间验证报告](wiki-spaces-report-20261119.md)。目录树拖拽排序、跨库快捷方式与真机触控仍待后续完善。
+
 ## 2026-11-16：文档差距调查
 
 对照官方文档与当前代码的优先级、已实现部分和未验证项见 [文档差距调查](document-feishu-gap-audit-20261116.md)。本次未重新取得飞书登录态的逐屏对照，不能据此计算整体完成率。

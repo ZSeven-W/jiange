@@ -24,6 +24,7 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 	seen := map[int64]bool{}
 	current := docID
 	var workspaceID, creatorID int64
+	var wikiSpaceID *int64
 	var protected, personal bool
 	var kind string
 	inheritsWS := true
@@ -45,14 +46,15 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 			return "", false, "", err
 		}
 		var inheritParent bool
-		if err := tx.QueryRow(ctx, `SELECT inherit_parent_acl FROM nodes WHERE id=$1 FOR SHARE`, current).Scan(&inheritParent); err != nil {
+		var nodeWikiSpace *int64
+		if err := tx.QueryRow(ctx, `SELECT inherit_parent_acl, wiki_space_id FROM nodes WHERE id=$1 FOR SHARE`, current).Scan(&inheritParent, &nodeWikiSpace); err != nil {
 			return "", false, "", err
 		}
 		if len(chain) == 0 {
 			if a.deleted {
 				return "", false, "", ErrNotFound
 			}
-			workspaceID, creatorID, protected, kind, personal = ws, creator, nodeProtected, nodeKind, nodePersonal
+			workspaceID, creatorID, protected, kind, personal, wikiSpaceID = ws, creator, nodeProtected, nodeKind, nodePersonal, nodeWikiSpace
 		}
 		a.workspace = ws
 		chain = append(chain, a)
@@ -74,14 +76,20 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 	isMember := err == nil
 	if isMember {
 		// 我的空间：成员身份不授予任何角色（与 roleSQL 一致），创建者保持 manage
-		if !personal {
+		if personal {
+			if creatorID == userID {
+				best = RoleManage
+			}
+		} else if wikiSpaceID != nil {
+			if memberRole == "owner" || memberRole == "admin" || creatorID == userID {
+				best = RoleManage
+			}
+		} else {
 			if memberRole == "owner" || memberRole == "admin" || creatorID == userID {
 				best = RoleManage
 			} else if inheritsWS {
 				best = RoleEdit
 			}
-		} else if creatorID == userID {
-			best = RoleManage
 		}
 	}
 	deptSet := map[int64]bool{}
@@ -141,6 +149,50 @@ func lockCopySource(ctx context.Context, tx pgx.Tx, docID, userID int64) (string
 			return "", false, "", e
 		}
 		gmRows.Close()
+		if wikiSpaceID != nil && !personal {
+			var spaceWS, spaceCreator int64
+			var visibility string
+			e = tx.QueryRow(ctx, `SELECT workspace_id, visibility, creator_id FROM wiki_spaces WHERE id=$1 FOR SHARE`, *wikiSpaceID).Scan(&spaceWS, &visibility, &spaceCreator)
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+				return "", false, "", e
+			}
+			if e == nil && spaceWS == workspaceID {
+				wikiRank := 0
+				if memberRole == "owner" || memberRole == "admin" || spaceCreator == userID {
+					wikiRank = 3
+				} else if visibility == WikiVisibilityWorkspace {
+					wikiRank = 1
+				}
+				wgRows, we := tx.Query(ctx, `SELECT subject_type, subject_id, role FROM wiki_space_grants WHERE space_id=$1 FOR SHARE`, *wikiSpaceID)
+				if we != nil {
+					return "", false, "", we
+				}
+				for wgRows.Next() {
+					var sType, sRole string
+					var sID int64
+					if we = wgRows.Scan(&sType, &sID, &sRole); we != nil {
+						wgRows.Close()
+						return "", false, "", we
+					}
+					matched := (sType == SubjectTypeUser && sID == userID) ||
+						(sType == SubjectTypeDepartment && deptSet[sID]) ||
+						(sType == SubjectTypeGroup && groupSet[sID])
+					if matched && RoleRank(sRole) > wikiRank {
+						wikiRank = RoleRank(sRole)
+					}
+				}
+				if we = wgRows.Err(); we != nil {
+					wgRows.Close()
+					return "", false, "", we
+				}
+				wgRows.Close()
+				if wikiRank == 3 {
+					best = RoleManage
+				} else if inheritsWS && wikiRank > RoleRank(best) {
+					best = roleFromRank(wikiRank)
+				}
+			}
+		}
 	}
 	for _, a := range chain {
 		var grant string
@@ -257,13 +309,14 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		if c.ParentID != nil {
 			var workspace int64
 			var parentKind string
-			if err := tx.QueryRow(ctx, `SELECT workspace_id,kind FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind); err != nil {
+			var parentWikiSpace *int64
+			if err := tx.QueryRow(ctx, `SELECT workspace_id,kind,wiki_space_id FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind, &parentWikiSpace); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrNotFound
 				}
 				return err
 			}
-			if workspace != c.WorkspaceID || parentKind == "file" {
+			if workspace != c.WorkspaceID || parentKind == "file" || parentWikiSpace != nil {
 				return ErrNotFound
 			}
 		}

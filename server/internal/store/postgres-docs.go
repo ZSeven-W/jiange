@@ -38,10 +38,11 @@ func scanDocWithPermissions(row pgx.Row) (d DocMeta, err error) {
 }
 
 // scanDocDrive additionally reads the versioned-drive columns (queries that
-// append `drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl` after the permission
-// columns); trash/delete UIs use the revision for optimistic concurrency.
+// append `drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl,
+// wiki_space_id, wiki_space_name` after the permission columns); trash/delete
+// UIs use the revision for optimistic concurrency.
 func scanDocDrive(row pgx.Row) (d DocMeta, err error) {
-	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
+	err = row.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL, &d.WikiSpaceID, &d.WikiSpaceName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -106,7 +107,7 @@ func (p *Postgres) CreateDocWithType(ctx context.Context, ws, creator int64, par
 }
 
 func (p *Postgres) ListDocs(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '') FROM nodes n`+roleJoins+`
 		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
 	if err != nil {
 		return nil, err
@@ -133,9 +134,9 @@ func prefixed(p, cols string) string {
 
 func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 	var d DocMeta
-	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
+	err := p.Pool.QueryRow(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), `+roleSQL+`, (SELECT name FROM workspaces w WHERE w.id = n.workspace_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '') FROM nodes n`+roleJoins+`
 		WHERE n.id = $2 AND n.deleted_at IS NULL`, uid, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.Role, &d.WorkspaceName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL, &d.WikiSpaceID, &d.WikiSpaceName)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && d.Role == "") {
 		return DocMeta{}, ErrNotFound
 	}
@@ -145,8 +146,8 @@ func (p *Postgres) GetDoc(ctx context.Context, uid, id int64) (DocMeta, error) {
 // GetDocSystem fetches node meta without user scoping.
 func (p *Postgres) GetDocSystem(ctx context.Context, id int64) (DocMeta, error) {
 	var d DocMeta
-	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
-		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL)
+	err := p.Pool.QueryRow(ctx, `SELECT `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl, wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = nodes.wiki_space_id), '') FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Title, &d.Icon, &d.CreatorID, &d.CreatedAt, &d.UpdatedAt, &d.Kind, &d.DocType, &d.CreatorName, &d.CopyProtected, &d.CopyMinRole, &d.DownloadMinRole, &d.CommentMinRole, &d.PermissionsRevision, &d.DriveRevision, &d.TrashBatchID, &d.InheritParentACL, &d.WikiSpaceID, &d.WikiSpaceName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DocMeta{}, ErrNotFound
 	}
@@ -165,7 +166,7 @@ func (p *Postgres) SetCopyProtected(ctx context.Context, id int64, on bool) erro
 func (p *Postgres) UpdateTitle(ctx context.Context, id int64, title string) (doc DocMeta, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		var e error
-		doc, e = scanDocDrive(tx.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl`, id, title))
+		doc, e = scanDocDrive(tx.QueryRow(ctx, `UPDATE nodes SET title=$2, updated_at=now() WHERE id=$1 RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision, drive_revision, COALESCE(trash_batch_id,0), inherit_parent_acl, wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = nodes.wiki_space_id), '')`, id, title))
 		if e != nil {
 			return e
 		}
@@ -593,7 +594,7 @@ func (p *Postgres) setSubtreeDeleted(ctx context.Context, id int64, deleted bool
 }
 
 func (p *Postgres) ListTrash(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl FROM nodes n`+roleJoins+`
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '') FROM nodes n`+roleJoins+`
 		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NOT NULL AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' ORDER BY n.deleted_at DESC LIMIT 200`, uid)
 	if err != nil {
 		return nil, err
@@ -621,6 +622,22 @@ func (p *Postgres) Move(ctx context.Context, id int64, parent *int64) error {
 		}
 	}
 	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var nodeWiki *int64
+		if err := tx.QueryRow(ctx, `SELECT wiki_space_id FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&nodeWiki); err != nil {
+			return notFound(err)
+		}
+		if nodeWiki != nil {
+			return ErrConflict
+		}
+		if parent != nil {
+			var parentWiki *int64
+			if err := tx.QueryRow(ctx, `SELECT wiki_space_id FROM nodes WHERE id=$1 FOR SHARE`, *parent).Scan(&parentWiki); err != nil {
+				return notFound(err)
+			}
+			if parentWiki != nil {
+				return ErrConflict
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parent); err != nil {
 			return err
 		}

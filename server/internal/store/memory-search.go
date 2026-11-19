@@ -43,8 +43,7 @@ func (m *Memory) ListFavorites(_ context.Context, uid int64) ([]DocMeta, error) 
 			if RoleRank(role) < RoleRank(RoleView) {
 				continue
 			}
-			meta := d.meta
-			meta.InheritParentACL = !d.noInheritParentACL
+			meta := m.docMetaLocked(d)
 			meta.Role = role
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
@@ -106,8 +105,7 @@ func (m *Memory) Ancestors(_ context.Context, uid, doc int64) ([]DocMeta, error)
 		if RoleRank(role) < RoleRank(RoleView) {
 			continue
 		}
-		meta := chain[i].meta
-		meta.InheritParentACL = !chain[i].noInheritParentACL
+		meta := m.docMetaLocked(chain[i])
 		meta.Role = role
 		meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 		out = append(out, meta)
@@ -129,8 +127,7 @@ func (m *Memory) ListPins(_ context.Context, uid int64) ([]DocMeta, error) {
 			if RoleRank(role) < RoleRank(RoleView) {
 				continue
 			}
-			meta := d.meta
-			meta.InheritParentACL = !d.noInheritParentACL
+			meta := m.docMetaLocked(d)
 			meta.Role = role
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)

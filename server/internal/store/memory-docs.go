@@ -113,6 +113,21 @@ func (m *Memory) CreateDocWithType(_ context.Context, ws, creator int64, parent 
 	return d.meta, nil
 }
 
+func (m *Memory) docMetaLocked(d *memDoc) DocMeta {
+	meta := d.meta
+	meta.InheritParentACL = !d.noInheritParentACL
+	meta.ParentID = cloneDriveParent(d.meta.ParentID)
+	meta.WikiSpaceID = cloneDriveParent(d.meta.WikiSpaceID)
+	if meta.WikiSpaceID != nil {
+		if sp, ok := m.wiki.spaces[*meta.WikiSpaceID]; ok {
+			meta.WikiSpaceName = sp.Name
+		}
+	} else {
+		meta.WikiSpaceName = ""
+	}
+	return meta
+}
+
 func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,8 +135,7 @@ func (m *Memory) ListDocs(_ context.Context, uid int64) ([]DocMeta, error) {
 	for _, d := range m.d.docs {
 		// 个人空间节点只出现在创建者的列表里；关闭继承的受限节点对无权成员不可见
 		if m.member(uid, d.meta.WorkspaceID) && !d.deleted && d.meta.Kind != "file" && (!d.personal || d.meta.CreatorID == uid) && m.roleLocked(uid, d) != "" {
-			meta := d.meta
-			meta.InheritParentACL = !d.noInheritParentACL
+			meta := m.docMetaLocked(d)
 			meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 			out = append(out, meta)
 		}
@@ -141,8 +155,7 @@ func (m *Memory) GetDoc(_ context.Context, uid, id int64) (DocMeta, error) {
 	if role == "" {
 		return DocMeta{}, ErrNotFound
 	}
-	meta := d.meta
-	meta.InheritParentACL = !d.noInheritParentACL
+	meta := m.docMetaLocked(d)
 	meta.Role = role
 	return meta, nil
 }
@@ -155,9 +168,7 @@ func (m *Memory) GetDocSystem(_ context.Context, id int64) (DocMeta, error) {
 	if d == nil || d.deleted {
 		return DocMeta{}, ErrNotFound
 	}
-	meta := d.meta
-	meta.InheritParentACL = !d.noInheritParentACL
-	return meta, nil
+	return m.docMetaLocked(d), nil
 }
 
 func (m *Memory) SetCopyProtected(_ context.Context, id int64, on bool) error {
@@ -191,7 +202,7 @@ func (m *Memory) UpdateTitle(ctx context.Context, id int64, title string) (DocMe
 	}
 	d.meta.Title, d.meta.UpdatedAt = title, time.Now()
 	m.setDocumentModifierLocked(d, documentActor(ctx))
-	return d.meta, nil
+	return m.docMetaLocked(d), nil
 }
 
 func (m *Memory) AllocClient(_ context.Context, uid, doc int64) (int64, error) {
@@ -569,9 +580,7 @@ func (m *Memory) ListTrash(_ context.Context, uid int64) ([]DocMeta, error) {
 	for _, d := range m.d.docs {
 		// 关闭继承的受限节点被删除后，标题也只对仍有权限的人可见
 		if d.deleted && !d.purged && m.member(uid, d.meta.WorkspaceID) && (!d.personal || d.meta.CreatorID == uid) && m.roleLocked(uid, d) != "" {
-			meta := d.meta
-			meta.InheritParentACL = !d.noInheritParentACL
-			out = append(out, meta)
+			out = append(out, m.docMetaLocked(d))
 		}
 	}
 	return out, nil
@@ -584,11 +593,11 @@ func (m *Memory) Move(ctx context.Context, id int64, parent *int64) error {
 	if d == nil {
 		return ErrNotFound
 	}
-	if d.meta.Kind == "file" {
+	if d.meta.Kind == "file" || d.meta.WikiSpaceID != nil {
 		return ErrConflict
 	}
 	if parent != nil {
-		if p := m.doc(*parent); p != nil && p.meta.Kind == "file" {
+		if p := m.doc(*parent); p != nil && (p.meta.Kind == "file" || p.meta.WikiSpaceID != nil) {
 			return ErrConflict
 		}
 		for _, x := range m.subtree(id) {

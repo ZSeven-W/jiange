@@ -51,8 +51,7 @@ func (m *Memory) RecentDocs(ctx context.Context, uid int64, limit int) ([]Recent
 		if role == "" {
 			continue
 		}
-		meta := d.meta
-		meta.InheritParentACL = !d.noInheritParentACL
+		meta := m.docMetaLocked(d)
 		meta.Role = role
 		meta.WorkspaceName = m.wsName(meta.WorkspaceID)
 		out = append(out, RecentDoc{DocMeta: meta, ViewedAt: at})

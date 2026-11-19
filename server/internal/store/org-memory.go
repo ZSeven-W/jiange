@@ -304,6 +304,11 @@ func (m *Memory) UpsertWorkspaceMemberGuarded(ctx context.Context, guard Restore
 					delete(m.org.groupMembers[groupID], target.ID)
 				}
 			}
+			for spaceID, sp := range m.wiki.spaces {
+				if sp.WorkspaceID == wsID {
+					delete(m.wiki.grants[spaceID], wikiGrantKey{SubjectTypeUser, target.ID})
+				}
+			}
 		}
 		return WorkspaceMemberChange{Status: MemberChangeRemoved}, nil
 	}
@@ -545,6 +550,9 @@ func (m *Memory) DeleteDepartmentGuarded(ctx context.Context, guard RestoreGuard
 		for _, shares := range m.org.subjectShares {
 			delete(shares, subjectShareKey{SubjectTypeDepartment, id})
 		}
+		for _, grants := range m.wiki.grants {
+			delete(grants, wikiGrantKey{SubjectTypeDepartment, id})
+		}
 	}
 	return nil
 }
@@ -674,6 +682,9 @@ func (m *Memory) DeleteUserGroupGuarded(ctx context.Context, guard RestoreGuard,
 	delete(m.org.groupMembers, groupID)
 	for _, shares := range m.org.subjectShares {
 		delete(shares, subjectShareKey{SubjectTypeGroup, groupID})
+	}
+	for _, grants := range m.wiki.grants {
+		delete(grants, wikiGrantKey{SubjectTypeGroup, groupID})
 	}
 	return nil
 }

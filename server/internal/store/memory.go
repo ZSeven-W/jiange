@@ -20,6 +20,7 @@ type Memory struct {
 	members          map[int64][]int64   // user -> workspace ids
 	workspaceRoles   map[[2]int64]string // (workspace, user) -> owner | admin | member
 	org              memOrg
+	wiki             memWiki
 	sessions         map[string]session
 	d                memDocs
 	sh               memShare

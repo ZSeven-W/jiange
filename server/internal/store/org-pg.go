@@ -235,6 +235,9 @@ func (p *Postgres) UpsertWorkspaceMemberGuarded(ctx context.Context, guard Resto
 				if _, e = tx.Exec(ctx, `DELETE FROM org_group_members WHERE group_id IN (SELECT id FROM org_groups WHERE workspace_id=$1) AND user_id=$2`, wsID, target.UserID); e != nil {
 					return e
 				}
+				if _, e = tx.Exec(ctx, `DELETE FROM wiki_space_grants WHERE space_id IN (SELECT id FROM wiki_spaces WHERE workspace_id=$1) AND subject_type='user' AND subject_id=$2`, wsID, target.UserID); e != nil {
+					return e
+				}
 			}
 			out = WorkspaceMemberChange{Status: MemberChangeRemoved}
 			return drivePGEnd(ctx, guard, expires)
@@ -489,6 +492,13 @@ func (p *Postgres) DeleteDepartmentGuarded(ctx context.Context, guard RestoreGua
 		) DELETE FROM node_subject_shares WHERE subject_type='department' AND subject_id IN (SELECT id FROM sub)`, deptID, wsID); e != nil {
 			return e
 		}
+		if _, e = tx.Exec(ctx, `WITH RECURSIVE sub AS (
+			SELECT id FROM org_departments WHERE id=$1 AND workspace_id=$2
+			UNION ALL
+			SELECT d.id FROM org_departments d JOIN sub ON d.parent_id = sub.id WHERE d.workspace_id=$2
+		) DELETE FROM wiki_space_grants WHERE subject_type='department' AND subject_id IN (SELECT id FROM sub)`, deptID, wsID); e != nil {
+			return e
+		}
 		if _, e = tx.Exec(ctx, `DELETE FROM org_departments WHERE id=$1 AND workspace_id=$2`, deptID, wsID); e != nil {
 			return e
 		}
@@ -633,6 +643,9 @@ func (p *Postgres) DeleteUserGroupGuarded(ctx context.Context, guard RestoreGuar
 			return e
 		}
 		if _, e = tx.Exec(ctx, `DELETE FROM node_subject_shares WHERE subject_type='group' AND subject_id=$1`, groupID); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `DELETE FROM wiki_space_grants WHERE subject_type='group' AND subject_id=$1`, groupID); e != nil {
 			return e
 		}
 		if _, e = tx.Exec(ctx, `DELETE FROM org_groups WHERE id=$1 AND workspace_id=$2`, groupID, wsID); e != nil {
