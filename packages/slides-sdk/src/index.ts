@@ -7,3 +7,4 @@ export * from "./order.js";
 export * from "./layout.js";
 export * from "./visibility.js";
 export * from "./zoom.js";
+export * from "./pptx.js";

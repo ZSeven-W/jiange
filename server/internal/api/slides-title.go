@@ -57,6 +57,7 @@ func (s *Server) postAccountSlidesTitle(w http.ResponseWriter, r *http.Request) 
 	if driveWriteErr(w, err, "rename") {
 		return
 	}
+	s.notifySlides(id, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, entry)
 }

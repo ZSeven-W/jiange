@@ -17,6 +17,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/sheetsync"
+	"github.com/ZSeven-W/jiange/server/internal/slidessync"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 )
@@ -33,9 +34,10 @@ type Server struct {
 	Iterations              int // PBKDF2 iterations; tests lower this
 	Now                     func() time.Time
 	Hub                     *syncsrv.Hub   // nil disables /api/sync
-	BtHub                   *btsync.Hub    // nil disables base realtime
-	SheetHub                *sheetsync.Hub // nil disables sheet realtime
-	Blobs                   blob.Store     // nil disables attachments
+	BtHub                   *btsync.Hub     // nil disables base realtime
+	SheetHub                *sheetsync.Hub  // nil disables sheet realtime
+	SlidesHub               *slidessync.Hub // nil disables slides realtime
+	Blobs                   blob.Store      // nil disables attachments
 	WebUI                   http.Handler   // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
@@ -212,8 +214,10 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/drive/purge/{id}":                          s.postDrivePurge,
 		"POST /api/drive/rename/{id}":                         s.postDriveRename,
 		"POST /api/slides/{id}/account-title":                 s.postAccountSlidesTitle,
+		"POST /api/slides/{id}/import-pptx":                   s.importSlidesPptx,
 		"POST /api/slides/{id}/pages":                         s.postSlidesPage,
 		"POST /api/slides/{id}/pages/insert":                  s.insertSlidesPage,
+		"POST /api/slides/{id}/pages/restore":                 s.restoreSlidesPage,
 		"POST /api/slides/{id}/pages/paste":                   s.pasteSlidesPage,
 		"POST /api/slides/{id}/pages/paste-from":              s.pasteSlidesPageFrom,
 		"POST /api/slides/{id}/pages/reorder":                 s.reorderSlides,
@@ -338,6 +342,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.SheetHub != nil {
 		mux.Handle("GET /api/sheets/{id}/ws", s.requireUser(http.HandlerFunc(s.serveSheetWS)))
+	}
+	if s.SlidesHub != nil {
+		mux.Handle("GET /api/slides/{id}/ws", s.requireUser(http.HandlerFunc(s.serveSlidesWS)))
 	}
 	if s.Hub != nil {
 		mux.Handle("GET /api/sync", s.requireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

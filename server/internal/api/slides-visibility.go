@@ -49,6 +49,7 @@ func (s *Server) setSlidesPageVisibility(w http.ResponseWriter, r *http.Request)
 	if driveWriteErr(w, err, "set slide visibility") {
 		return
 	}
+	s.notifySlides(deck, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, page)
 }

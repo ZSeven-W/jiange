@@ -15,7 +15,8 @@
     "./order": "./src/order.ts",
     "./layout": "./src/layout.ts",
     "./visibility": "./src/visibility.ts",
-    "./zoom": "./src/zoom.ts"
+    "./zoom": "./src/zoom.ts",
+    "./pptx": "./src/pptx.ts"
   },
   "files": [
     "dist",
@@ -60,13 +61,20 @@
       "./zoom": {
         "types": "./dist/zoom.d.ts",
         "import": "./dist/zoom.js"
+      },
+      "./pptx": {
+        "types": "./dist/pptx.d.ts",
+        "import": "./dist/pptx.js"
       }
     }
   },
   "scripts": {
     "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@jiange/ooxml": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.6.3",

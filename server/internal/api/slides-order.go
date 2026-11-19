@@ -50,6 +50,7 @@ func (s *Server) reorderSlides(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "reorder slides") {
 		return
 	}
+	s.notifySlides(deck, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"positions": result})
 }

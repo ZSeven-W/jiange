@@ -20,6 +20,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/config"
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
 	"github.com/ZSeven-W/jiange/server/internal/sheetsync"
+	"github.com/ZSeven-W/jiange/server/internal/slidessync"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
 	"github.com/ZSeven-W/jiange/server/webui"
@@ -84,6 +85,7 @@ func run(log *slog.Logger) error {
 	}()
 	btHub := &btsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
 	sheetHub := &sheetsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	slidesHub := &slidessync.Hub{Log: log, OriginPatterns: cfg.AllowedOrigins}
 	if cfg.AutoVersionEvery > 0 {
 		go autoVersions(ctx, log, pg, cfg.AutoVersionEvery)
 	}
@@ -122,7 +124,7 @@ func run(log *slog.Logger) error {
 		Addr: cfg.Addr,
 		Handler: (&api.Server{Store: pg, Log: log, SessionTTL: cfg.SessionTTL, SecureCookies: cfg.SecureCookies,
 			EnableConditionalCancel: cfg.EnableConditionalCancel,
-			Hub:                     hub, BtHub: btHub, SheetHub: sheetHub, Blobs: blobs, WebUI: webui.Handler(), PreviewAllow: api.PreviewAllowFromEnv(os.Getenv("JIANGE_LINK_PREVIEW_ALLOW_CIDRS")), AISecret: api.AISecretFromEnv(os.Getenv("JIANGE_SECRET_KEY"))}).Handler(),
+			Hub:                     hub, BtHub: btHub, SheetHub: sheetHub, SlidesHub: slidesHub, Blobs: blobs, WebUI: webui.Handler(), PreviewAllow: api.PreviewAllowFromEnv(os.Getenv("JIANGE_LINK_PREVIEW_ALLOW_CIDRS")), AISecret: api.AISecretFromEnv(os.Getenv("JIANGE_SECRET_KEY"))}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	if webui.Built() {

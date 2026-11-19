@@ -54,6 +54,7 @@ func (s *Server) duplicateSlidesPage(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "duplicate slide page") {
 		return
 	}
+	s.notifySlides(deck, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusCreated, page)
 }

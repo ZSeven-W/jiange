@@ -175,6 +175,33 @@
   }
 }
 
+/* 幻灯片导出 PDF：隐藏编辑界面，逐页打印 16:9 幻灯片画布 */
+[data-slides-print-deck] {
+  display: none;
+}
+@media print {
+  body:has([data-slides-editor]:not([data-document-print-restricted="true"])) [data-slides-editor] > :not([data-slides-print-deck]) {
+    display: none !important;
+  }
+  body:has([data-slides-editor]:not([data-document-print-restricted="true"])) [data-slides-print-deck] {
+    display: block !important;
+    background: #fff !important;
+  }
+  [data-slides-print-page] {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    break-after: page;
+    page-break-after: always;
+    break-inside: avoid;
+    overflow: hidden;
+    position: relative;
+  }
+  [data-slides-print-page]:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}
+
 /* 通过块链接打开时短暂高亮目标块 */
 [data-block-linked="true"] {
   border-radius: 4px;

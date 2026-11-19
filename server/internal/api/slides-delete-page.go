@@ -47,6 +47,7 @@ func (s *Server) deleteSlidesPageVersion(w http.ResponseWriter, r *http.Request)
 	if driveWriteErr(w, s.Store.DeleteSlidesPageVersion(r.Context(), guard, deck, page, *in.ExpectedRevision), "delete slide page") {
 		return
 	}
+	s.notifySlides(deck, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]int64{"deletedId": page, "slidesId": deck, "revision": *in.ExpectedRevision})
 }

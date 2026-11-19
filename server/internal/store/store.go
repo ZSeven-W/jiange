@@ -36,6 +36,7 @@ type Workspace struct {
 
 type Store interface {
 	SlidesStore
+	SlidesDeckImportStore
 	SheetStore
 	SheetCommentStore
 	DriveFolderStore

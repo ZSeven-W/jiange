@@ -2,14 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, slidesApi, type DocMeta, type SlidesPage as Page, type SlideShape } from "@/lib/api";
+import { exportSlidesToPptx, parsePptxToSlides, type PptxImportResult } from "@jiange/slides-sdk/pptx";
 import { ShareDialog } from "@/components/share-dialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { createVisitRecorder } from "@/lib/recent-visit";
 import { sameSlideContent, SlidesDraftQueue } from "./slides-draft";
-import { copyErrorMessage } from "./document-copy";
+import { canDownloadDocument, copyErrorMessage } from "./document-copy";
+import {
+  commitStructureTravel,
+  emptyStructureHistory,
+  pushStructureAction,
+  snapshotSlidePage,
+  structureActionLabel,
+  type SlideStructureAction,
+  type SlideStructureHistory,
+} from "./slides-structure-history";
 import { SlideShapes } from "./slides-shapes";
-import { PresenterView, SlideSurface } from "./slides-presenter";
+import { isDarkSlideBackground, PresenterView, SlideSurface } from "./slides-presenter";
 import { SlideShapeControls } from "./slides-shape-controls";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
@@ -30,10 +40,16 @@ import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout
 import { planSlideLayout, slidePresetContent } from "./slides-layout-preset";
 import { slidePageMenuPosition } from "./slides-page-menu";
 import { encodeSlideClipboard, mayCopySlide, parseSlideClipboard, verifyCrossSlidePaste } from "./slides-clipboard";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Clipboard, Copy, EyeOff, FilePlus2, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Redo2, Trash2, Type, Shapes, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Clipboard, Copy, Download, EyeOff, FileDown, FilePlus2, FileUp, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Printer, Redo2, Trash2, Type, Shapes, Undo2, X } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
 type BackgroundHistory = { undo: BackgroundAction[]; redo: BackgroundAction[] };
+type SlideCollaborator = { userId: number; name: string; pageId?: number };
+
+const SLIDE_PEER_COLORS = ["#f54a45", "#00b42a", "#ff8800", "#722ed1", "#14c9c9", "#3370ff"];
+function slidePeerColor(uid: number): string {
+  return SLIDE_PEER_COLORS[Math.abs(uid) % SLIDE_PEER_COLORS.length];
+}
 
 function SlidesDraftRecovery({ queue }: { queue: SlidesDraftQueue }) {
   const drafts = queue.unsavedDrafts();
@@ -72,6 +88,18 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const backgroundHistoryRef = useRef(backgroundHistory);
   const backgroundBatchSequence = useRef(0);
   backgroundHistoryRef.current = backgroundHistory;
+  const [structureHistory, setStructureHistory] = useState<SlideStructureHistory>(emptyStructureHistory);
+  const structureHistoryRef = useRef(structureHistory);
+  structureHistoryRef.current = structureHistory;
+  const historyClock = useRef(0);
+  const pageEditClock = useRef(new Map<number, number>());
+  const [collaborators, setCollaborators] = useState<SlideCollaborator[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const [fileMenu, setFileMenu] = useState(false);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
+  const pptxInputRef = useRef<HTMLInputElement>(null);
+  const [importPreview, setImportPreview] = useState<{ fileName: string; parsed: PptxImportResult } | null>(null);
+  const [importingPptx, setImportingPptx] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [copyingDeck, setCopyingDeck] = useState(false);
   const [createdCopyId, setCreatedCopyId] = useState<number | null>(null);
@@ -120,6 +148,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const activePageRef = useRef<number | null>(null);
   const canEditRef = useRef(false);
   const backgroundHistoryAction = useRef<(redo: boolean) => boolean>(() => false);
+  const structureHistoryAction = useRef<(redo: boolean) => boolean>(() => false);
   const meta = useQuery({ queryKey: ["slides-meta", deckId, userId], queryFn: () => docsApi.get(deckId), refetchInterval: 15000, refetchIntervalInBackground: false });
   useEffect(() => { if (meta.data?.kind === "slides") document.title = `${meta.data.title.trim() || "未命名幻灯片"} - Jiange`; }, [meta.data?.kind, meta.data?.title]);
   const visitRecorder = useMemo(() => createVisitRecorder(
@@ -143,9 +172,59 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     (page, content) => slidesApi.update(deckId, page.id, userId, content.title, content.body, content.background, content.layout ?? "", page.revision, content.notes, content.shapes),
     (saved) => qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
     () => setDraftVersion((version) => version + 1),
-    () => setBackgroundHistory((history) => history.redo.length ? { ...history, redo: [] } : history),
+    () => {
+      const pid = activePageRef.current;
+      if (pid !== null) pageEditClock.current.set(pid, ++historyClock.current);
+      setBackgroundHistory((history) => history.redo.length ? { ...history, redo: [] } : history);
+      setStructureHistory((history) => history.redo.length ? { ...history, redo: [] } : history);
+    },
     () => mayWrite.current,
   ), [deckId, userId, qc]);
+  // Live multi-user WebSocket presence and revision invalidations.
+  useEffect(() => {
+    if (meta.data?.kind !== "slides" || !pages.isSuccess || typeof WebSocket === "undefined") return;
+    let closed = false;
+    let reconnectTimer: number | null = null;
+    const connect = () => {
+      if (closed) return;
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${proto}//${location.host}/api/slides/${deckId}/ws`);
+      wsRef.current = socket;
+      socket.onopen = () => {
+        if (activePageRef.current !== null) {
+          socket.send(JSON.stringify({ type: "cursor", pageId: activePageRef.current }));
+        }
+      };
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg?.type === "presence" && Array.isArray(msg.collaborators)) {
+            setCollaborators((msg.collaborators as SlideCollaborator[]).filter((c) => c.userId !== userId));
+          } else if (msg?.type === "revision") {
+            void qc.invalidateQueries({ queryKey: ["slides", deckId, userId] });
+            void qc.invalidateQueries({ queryKey: ["slides-meta", deckId, userId] });
+          }
+        } catch {
+          /* ignore malformed ws payload */
+        }
+      };
+      socket.onclose = (ev) => {
+        if (wsRef.current === socket) wsRef.current = null;
+        if (!closed && ev.code !== 1008) {
+          reconnectTimer = window.setTimeout(connect, 2000);
+        }
+      };
+    };
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      const sock = wsRef.current;
+      wsRef.current = null;
+      sock?.close();
+      setCollaborators([]);
+    };
+  }, [meta.data?.kind, pages.isSuccess, deckId, userId, qc]);
   useEffect(() => { if (mayWrite.current) queue.resumePending(); }, [queue, meta.isFetching, meta.isError, meta.data?.kind, meta.data?.role]);
   useEffect(() => () => queue.dispose(), [queue]);
   useEffect(() => () => { if (dragScrollFrame.current !== null) cancelAnimationFrame(dragScrollFrame.current); }, []);
@@ -189,6 +268,13 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [playMenu]);
+  useEffect(() => {
+    if (!fileMenu) return;
+    const outside = (event: PointerEvent) => { if (!fileMenuRef.current?.contains(event.target as Node)) setFileMenu(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setFileMenu(false); fileMenuRef.current?.querySelector<HTMLButtonElement>("[aria-haspopup]")?.focus(); } };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [fileMenu]);
   useEffect(() => { if (playing) playbackRef.current?.focus(); }, [playing]);
   useEffect(() => {
     if (playing && (meta.isError || pages.isError || (meta.data && meta.data.kind !== "slides"))) {
@@ -236,7 +322,22 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 || page.id === anchor?.id || page.slidesId !== deckId || page.revision !== 1 || page.hidden !== false || !Array.isArray(page.shapes) || !sameSlideContent(slidePresetContent(layout), page)) throw new Error("invalid new page response");
       return { page, anchorId: anchor?.id ?? null };
     },
-    onSuccess: ({ page, anchorId }) => { if (activePageRef.current === anchorId) { setCurrent(page.id); setSelectedShape(null); } void invalidate(); },
+    onSuccess: ({ page, anchorId }) => {
+      const before = qc.getQueryData<Page[]>(["slides", deckId, userId]) ?? [];
+      const anchorIdx = anchorId === null ? -1 : before.findIndex((item) => item.id === anchorId);
+      const insertedIndex = anchorIdx < 0 ? before.length : anchorIdx + 1;
+      setStructureHistory((history) =>
+        pushStructureAction(history, {
+          kind: "insert",
+          seq: ++historyClock.current,
+          pageId: page.id,
+          index: insertedIndex,
+          snapshot: snapshotSlidePage(page),
+        }),
+      );
+      if (activePageRef.current === anchorId) { setCurrent(page.id); setSelectedShape(null); }
+      void invalidate();
+    },
     onError: (error, variables) => {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
       if (!known) setInsertPageUnknown(true);
@@ -256,6 +357,15 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       const before = qc.getQueryData<Page[]>(key) ?? [];
       const index = before.findIndex((item) => item.id === page.id);
       const next = index < 0 ? undefined : before[index + 1] ?? before[index - 1];
+      setStructureHistory((history) =>
+        pushStructureAction(history, {
+          kind: "delete",
+          seq: ++historyClock.current,
+          pageId: page.id,
+          index: Math.max(0, index),
+          snapshot: snapshotSlidePage(page),
+        }),
+      );
       qc.setQueryData<Page[]>(key, (old) => old?.filter((item) => item.id !== page.id));
       if (activePageRef.current === page.id) { activePageRef.current = next?.id ?? null; setCurrent(next?.id ?? null); setSelectedShape(null); }
       void invalidate();
@@ -276,6 +386,11 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const playbackDraft = playbackPage ? queue.get(playbackPage) : null;
   activePageRef.current = active?.id ?? null;
   canEditRef.current = canEdit;
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "cursor", pageId: active?.id ?? 0 }));
+  }, [active?.id]);
   const draft = active ? queue.get(active) : null;
   const canInsert = canEdit && pages.isSuccess && !create.isPending && !remove.isPending && pageActions === 0 && !insertPageUnknown && (!active || draft?.state === "saved");
   canPasteRef.current = canEdit && pages.isSuccess && !pages.isError && !copyPageUnknown && !visibilityUnknown && !insertPageUnknown && !queue.hasUnsaved() && !create.isPending && !remove.isPending && pageActions === 0;
@@ -350,7 +465,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (playing || sharing || !canEdit || !active || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+      if (playing || sharing || importPreview || !canEdit || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
       const redo = (key === "z" && event.shiftKey) || (key === "y" && !event.shiftKey);
       if (key !== "z" && !redo) return;
@@ -359,12 +474,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (target.matches("input, textarea, [contenteditable=true]") && !target.hasAttribute("data-slide-history")) return;
       event.preventDefault();
       if (backgroundHistoryAction.current(redo)) return;
+      if (structureHistoryAction.current(redo)) return;
+      if (!active) return;
       if (redo) queue.redo(active); else queue.undo(active);
       if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, canEdit, playing, sharing, selectedShape, queue]);
+  }, [active, canEdit, playing, sharing, importPreview, selectedShape, queue]);
 
   useEffect(() => {
     if (!playing) return;
@@ -460,6 +577,211 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     return true;
   };
   backgroundHistoryAction.current = tryBackgroundHistory;
+  const canDownload = !meta.isError && !meta.isFetching && canDownloadDocument(meta.data);
+  const structureTop = (redo: boolean): SlideStructureAction | undefined => structureHistory[redo ? "redo" : "undo"].at(-1);
+  const structurePreferred = (redo: boolean): boolean => {
+    const top = structureTop(redo);
+    if (!top) return false;
+    if (!active) return true;
+    const hasContent = redo ? queue.canRedo(active) : queue.canUndo(active);
+    if (!hasContent) return true;
+    return top.seq > (pageEditClock.current.get(active.id) ?? 0);
+  };
+  const tryStructureHistory = (redo: boolean): boolean => {
+    const top = structureHistoryRef.current[redo ? "redo" : "undo"].at(-1);
+    if (!top || !structurePreferred(redo)) return false;
+    if (!canEdit || !pages.isSuccess || pages.isFetching || queue.hasUnsaved() || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) {
+      setOperationError("请等待页面保存和刷新完成后再撤销或重做。");
+      return true;
+    }
+    const key = ["slides", deckId, userId];
+    setOperationError("");
+    beginPageAction();
+    void (async () => {
+      try {
+        if ((top.kind === "delete" && !redo) || (top.kind === "insert" && redo)) {
+          const res = await slidesApi.restorePage(deckId, userId, top.snapshot, top.index);
+          qc.setQueryData<Page[]>(key, res.pages);
+          activePageRef.current = res.page.id;
+          setCurrent(res.page.id);
+          setSelectedShape(null);
+          setStructureHistory((history) => commitStructureTravel(history, redo, top, { ...top, pageId: res.page.id }));
+          void invalidate();
+          return;
+        }
+        if ((top.kind === "delete" && redo) || (top.kind === "insert" && !redo)) {
+          const latestList = qc.getQueryData<Page[]>(key) ?? list;
+          const targetIdx = latestList.findIndex((item) => item.id === top.pageId);
+          const target = targetIdx >= 0 ? latestList[targetIdx] : undefined;
+          if (!target) {
+            setOperationError("目标页面已不存在，无法继续撤销或重做。");
+            void invalidate();
+            return;
+          }
+          const src = queue.get(target);
+          if (src.state !== "saved") {
+            setOperationError("目标页面正在保存，请稍后重试。");
+            return;
+          }
+          const latestSnap = snapshotSlidePage(src.page);
+          const receipt = await slidesApi.removeVersion(deckId, src.page.id, userId, src.page.revision);
+          if (!validSlideDeleteReceipt(receipt, src.page)) throw new Error("invalid delete receipt");
+          const next = latestList[targetIdx + 1] ?? latestList[targetIdx - 1];
+          qc.setQueryData<Page[]>(key, (old) => old?.filter((item) => item.id !== src.page.id));
+          if (activePageRef.current === src.page.id) {
+            activePageRef.current = next?.id ?? null;
+            setCurrent(next?.id ?? null);
+            setSelectedShape(null);
+          }
+          setStructureHistory((history) =>
+            commitStructureTravel(history, redo, top, { ...top, index: targetIdx, snapshot: latestSnap }),
+          );
+          void invalidate();
+          return;
+        }
+        if (top.kind === "reorder") {
+          const latestList = qc.getQueryData<Page[]>(key) ?? list;
+          const snap = slidePositions(latestList);
+          const targetIndex = redo ? top.toIndex : top.fromIndex;
+          const currentIndex = snap.findIndex((item) => item.id === top.pageId);
+          if (currentIndex < 0 || targetIndex < 0 || targetIndex >= snap.length || currentIndex === targetIndex) {
+            setOperationError("页面顺序已变化，无法撤销或重做排序。");
+            void invalidate();
+            return;
+          }
+          const response = await slidesApi.reorder(deckId, userId, snap, top.pageId, targetIndex);
+          const result = verifySlideOrder(snap, top.pageId, targetIndex, response?.positions);
+          if (!result) throw new Error("invalid order receipt");
+          const positions = new Map(result.map((item) => [item.id, item.pos]));
+          qc.setQueryData<Page[]>(key, (old) =>
+            old && samePositions(snap, slidePositions(old))
+              ? [...old].map((item) => ({ ...item, pos: positions.get(item.id)! })).sort((a, b) => a.pos - b.pos)
+              : old,
+          );
+          setStructureHistory((history) => commitStructureTravel(history, redo, top, top));
+          void invalidate();
+          return;
+        }
+        if (top.kind === "visibility") {
+          const latestList = qc.getQueryData<Page[]>(key) ?? list;
+          const target = latestList.find((item) => item.id === top.pageId);
+          if (!target) {
+            setOperationError("目标页面已不存在，无法撤销或重做隐藏状态。");
+            void invalidate();
+            return;
+          }
+          const src = queue.get(target);
+          if (src.state !== "saved") {
+            setOperationError("目标页面正在保存，请稍后重试。");
+            return;
+          }
+          const desired = redo ? top.afterHidden : top.beforeHidden;
+          const saved = await slidesApi.setPageHidden(deckId, src.page.id, userId, src.page.revision, desired);
+          if (!saved || saved.id !== src.page.id || saved.hidden !== desired) throw new Error("invalid visibility response");
+          if (!queue.acceptVisibility(src.page, saved)) {
+            setVisibilityUnknown(true);
+            setOperationError("页面状态已变化，请刷新后核对。");
+            void invalidate();
+            return;
+          }
+          qc.setQueryData<Page[]>(key, (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item));
+          setStructureHistory((history) => commitStructureTravel(history, redo, top, top));
+          void invalidate();
+        }
+      } catch (error) {
+        const msg = error instanceof ApiError ? error.message : "页面撤销/重做未完成，请刷新后核对。";
+        setOperationError(msg);
+        void invalidate();
+      } finally {
+        endPageAction();
+      }
+    })();
+    return true;
+  };
+  structureHistoryAction.current = tryStructureHistory;
+
+  const exportPptx = () => {
+    if (!canDownload || !list.length) return;
+    setFileMenu(false);
+    setOperationError("");
+    try {
+      const deckTitle = (meta.data.title || "未命名幻灯片").trim() || "未命名幻灯片";
+      const exportPages = list.map((page) => {
+        const item = queue.get(page);
+        return {
+          title: item.content.title,
+          body: item.content.body,
+          background: item.content.background,
+          layout: item.content.layout ?? "",
+          notes: item.content.notes,
+          shapes: item.content.shapes,
+          hidden: page.hidden,
+        };
+      });
+      const bytes = exportSlidesToPptx(exportPages, { title: deckTitle });
+      const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${deckTitle.replace(/[\\/:*?"<>|]+/g, "_")}.pptx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setClipboardNotice("已导出 PPTX 演示文稿。");
+    } catch (error) {
+      setOperationError(error instanceof Error ? `导出 PPTX 失败：${error.message}` : "导出 PPTX 失败，请重试。");
+    }
+  };
+
+  const handlePptxFile = async (file: File) => {
+    if (!canEdit) return;
+    setFileMenu(false);
+    setOperationError("");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const parsed = await parsePptxToSlides(bytes);
+      setImportPreview({ fileName: file.name, parsed });
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "无法解析该 PPTX 文件，请检查格式。");
+    }
+  };
+
+  const confirmImportPptx = async () => {
+    if (!importPreview || !canEdit || importingPptx || queue.hasUnsaved() || pageActionCount.current > 0) return;
+    setImportingPptx(true);
+    setOperationError("");
+    beginPageAction();
+    try {
+      const res = await slidesApi.importPptx(deckId, userId, importPreview.parsed.pages);
+      const importedPages = res.pages ?? [];
+      qc.setQueryData<Page[]>(["slides", deckId, userId], importedPages);
+      const firstId = importedPages[0]?.id ?? null;
+      activePageRef.current = firstId;
+      setCurrent(firstId);
+      setSelectedShape(null);
+      setBackgroundHistory({ undo: [], redo: [] });
+      setStructureHistory(emptyStructureHistory());
+      pageEditClock.current.clear();
+      setImportPreview(null);
+      setClipboardNotice(`已导入 ${importedPages.length} 页幻灯片。`);
+      void invalidate();
+    } catch (error) {
+      setOperationError(error instanceof ApiError ? error.message : "导入 PPTX 失败，请稍后重试。");
+      void invalidate();
+    } finally {
+      setImportingPptx(false);
+      endPageAction();
+    }
+  };
+
+  const printSlides = () => {
+    if (!canDownload || !list.length) return;
+    setFileMenu(false);
+    window.print();
+  };
   const startPresentation = async (fromBeginning = false, presenter = false) => {
     if (playbackCheck.current || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
     let popup: Window | null = null;
@@ -505,6 +827,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (!result) throw new Error("invalid order receipt");
       const positions = new Map(result.map((item) => [item.id, item.pos]));
       qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old && samePositions(snapshot, slidePositions(old)) ? [...old].map((item) => ({ ...item, pos: positions.get(item.id)! })).sort((a, b) => a.pos - b.pos) : old);
+      setStructureHistory((history) =>
+        pushStructureAction(history, { kind: "reorder", seq: ++historyClock.current, pageId: page.id, fromIndex: from, toIndex: to }),
+      );
       void invalidate();
     }).catch((error) => {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
@@ -570,6 +895,15 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (!saved || saved.id !== base.id || saved.slidesId !== deckId || saved.revision !== base.revision + 1 || saved.hidden !== hidden || !Array.isArray(saved.shapes) || !sameSlideContent(source.content, saved)) throw new Error("invalid visibility response");
       if (!queue.acceptVisibility(base, saved)) { setVisibilityUnknown(true); setOperationError("页面状态已变化，请保留草稿并重新打开后核对。"); void invalidate(); return; }
       qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item));
+      setStructureHistory((history) =>
+        pushStructureAction(history, {
+          kind: "visibility",
+          seq: ++historyClock.current,
+          pageId: saved.id,
+          beforeHidden: base.hidden,
+          afterHidden: hidden,
+        }),
+      );
       void invalidate();
     }).catch((error) => {
       const known = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
@@ -592,6 +926,17 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     beginPageAction();
     void slidesApi.duplicatePage(deckId, page.id, userId, source.page.revision).then((copy) => {
       if (!copy || !Number.isSafeInteger(copy.id) || copy.id <= 0 || copy.id === page.id || copy.slidesId !== deckId || copy.revision !== 1 || copy.hidden !== source.page.hidden || !Array.isArray(copy.shapes) || !sameSlideContent(source.content, copy)) throw new Error("invalid copy response");
+      const before = qc.getQueryData<Page[]>(["slides", deckId, userId]) ?? [];
+      const srcIndex = before.findIndex((item) => item.id === page.id);
+      setStructureHistory((history) =>
+        pushStructureAction(history, {
+          kind: "insert",
+          seq: ++historyClock.current,
+          pageId: copy.id,
+          index: srcIndex < 0 ? before.length : srcIndex + 1,
+          snapshot: snapshotSlidePage(copy),
+        }),
+      );
       if (activePageRef.current === page.id) setCurrent(copy.id);
       void invalidate();
     }).catch((error) => {
@@ -664,7 +1009,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     const source = queue.get(page);
     if (!canEdit || source.state !== "saved" || deletingPage.current || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
     const version = source.page.revision, content = source.content;
-    if (!await ask("删除此页？", "删除后不可恢复。")) return;
+    if (!await ask("删除此页？", "删除后可通过撤销恢复。")) return;
     const latest = qc.getQueryData<Page[]>(["slides", deckId, userId])?.find((item) => item.id === page.id);
     if (!canEditRef.current || activePageRef.current !== page.id || !latest || latest.revision !== version || deletingPage.current || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) { setOperationError("页面或编辑状态已变化，请核对后重新操作。"); return; }
     const current = queue.get(latest);
@@ -696,18 +1041,66 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null);
     setPageMenu({ id: page.id, ...slidePageMenuPosition(x, y, window.innerWidth, window.innerHeight) });
   };
+  const undoBg = historyAvailable(false) || historyBlocksPartial(false);
+  const redoBg = historyAvailable(true) || historyBlocksPartial(true);
+  const undoStruct = !undoBg && structurePreferred(false);
+  const redoStruct = !redoBg && structurePreferred(true);
+  const canUndoAny = canEdit && (undoBg || structureHistory.undo.length > 0 || (!!active && queue.canUndo(active)));
+  const canRedoAny = canEdit && (redoBg || structureHistory.redo.length > 0 || (!!active && queue.canRedo(active)));
+  const undoLabel = undoBg ? "撤销整份背景" : undoStruct ? structureActionLabel(structureTop(false), false) : "撤销本页内容";
+  const redoLabel = redoBg ? "重做整份背景" : redoStruct ? structureActionLabel(structureTop(true), true) : "重做本页内容";
+  const printablePages = playable.length ? playable : list;
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor>
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-white pl-14 pr-3 md:px-5">
+    <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor data-document-print-restricted={!canDownload ? "true" : undefined}>
+      <header className="flex h-14 shrink-0 items-center gap-1.5 border-b bg-white pl-14 pr-2 sm:gap-2 sm:pr-3 md:px-5">
         <button type="button" onClick={() => { location.hash = "#/drive/mine"; }} aria-label="返回云盘" className="grid size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]"><ChevronLeft size={17}/></button>
-        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white"><Presentation size={15}/></span>
-        <div className="min-w-0"><SlideDeckTitle meta={meta.data} userId={userId} verified={!meta.isFetching && !meta.isError} draft={titleDraft} setDraft={setTitleDraft} busy={titleSaving} onSaved={(base, entry) => { qc.setQueryData<DocMeta>(["slides-meta", deckId, userId], (current) => current && current.id === entry.id && current.driveRevision === base.revision && current.title === base.title ? { ...current, title: entry.title, driveRevision: entry.revision, updatedAt: entry.updatedAt } : current); void qc.invalidateQueries({ queryKey: ["slides-meta", deckId, userId] }); void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["recent"] }); }}/><div className="text-[11px] text-[#8f959e]">{titleDraft?.phase === "saving" || draft?.state === "saving" ? "正在保存…" : titleDraft?.phase === "unknown" ? "名称保存未确认" : titleDraft && titleDraft.value !== titleDraft.base.title ? "名称未保存" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
-        <div className={cn("ml-auto flex shrink-0 items-center gap-2", titleDraft && "hidden sm:flex")}>
+        <span className="hidden size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white sm:grid"><Presentation size={15}/></span>
+        <div className="min-w-0 flex-1 sm:flex-none"><SlideDeckTitle meta={meta.data} userId={userId} verified={!meta.isFetching && !meta.isError} draft={titleDraft} setDraft={setTitleDraft} busy={titleSaving} onSaved={(base, entry) => { qc.setQueryData<DocMeta>(["slides-meta", deckId, userId], (current) => current && current.id === entry.id && current.driveRevision === base.revision && current.title === base.title ? { ...current, title: entry.title, driveRevision: entry.revision, updatedAt: entry.updatedAt } : current); void qc.invalidateQueries({ queryKey: ["slides-meta", deckId, userId] }); void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["recent"] }); }}/><div className="truncate text-[11px] text-[#8f959e]">{titleDraft?.phase === "saving" || draft?.state === "saving" ? "正在保存…" : titleDraft?.phase === "unknown" ? "名称保存未确认" : titleDraft && titleDraft.value !== titleDraft.base.title ? "名称未保存" : draft?.state === "saved" ? "已保存" : draft ? "有未保存内容" : "演示文稿"}</div></div>
+        <div className={cn("ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2", titleDraft && "hidden sm:flex")}>
+          {collaborators.length > 0 && (
+            <div data-slides-collaborators className="hidden items-center gap-1 sm:flex" aria-label="在线协作者">
+              {collaborators.slice(0, 5).map((peer) => {
+                const peerSlideIdx = peer.pageId ? list.findIndex((p) => p.id === peer.pageId) : -1;
+                const peerTitle = peerSlideIdx >= 0 ? `${peer.name}（正在查看第 ${peerSlideIdx + 1} 页，点击定位）` : `${peer.name} 在线`;
+                return (
+                  <button
+                    key={peer.userId}
+                    type="button"
+                    title={peerTitle}
+                    data-slides-collaborator={peer.userId}
+                    onClick={() => {
+                      if (peer.pageId && list.some((p) => p.id === peer.pageId)) {
+                        activePageRef.current = peer.pageId;
+                        setCurrent(peer.pageId);
+                        setSelectedShape(null);
+                      }
+                    }}
+                    className="grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold text-white ring-2 ring-white transition-transform hover:scale-105"
+                    style={{ backgroundColor: slidePeerColor(peer.userId) }}
+                  >
+                    {(peer.name.trim()[0] || "?").toUpperCase()}
+                  </button>
+                );
+              })}
+              {collaborators.length > 5 && <span className="rounded-full bg-[#f2f3f5] px-1.5 py-0.5 text-[11px] text-[#646a73]">+{collaborators.length - 5}</span>}
+            </div>
+          )}
+          <div ref={fileMenuRef} className="relative">
+            <button type="button" aria-label="导入与导出" title="导入 / 导出" aria-haspopup="menu" aria-expanded={fileMenu} data-slides-file-menu onClick={() => setFileMenu((open) => !open)} className="flex h-8 items-center gap-1 rounded-md border border-[#d0d3d6] px-2 text-[12px] text-[#4e5969] hover:bg-[#f2f3f5]"><Download size={14}/><span className="hidden sm:inline">导入/导出</span></button>
+            {fileMenu && (
+              <div role="menu" aria-label="导入与导出" className="absolute right-0 top-10 z-[70] w-44 rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-lg">
+                <button role="menuitem" type="button" data-slides-import-pptx disabled={!canEdit || importingPptx || queue.hasUnsaved() || pageActions > 0} onClick={() => { setFileMenu(false); pptxInputRef.current?.click(); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><FileUp size={14}/>导入 PPTX</button>
+                <button role="menuitem" type="button" data-slides-export-pptx disabled={!canDownload || !list.length} title={!canDownload ? "当前文档权限禁止导出" : "导出为标准 PowerPoint (.pptx)"} onClick={exportPptx} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><FileDown size={14}/>导出 PPTX</button>
+                <button role="menuitem" type="button" data-slides-print-pdf disabled={!canDownload || !list.length} title={!canDownload ? "当前文档权限禁止导出或打印" : "打印或另存为 PDF"} onClick={printSlides} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5] disabled:opacity-40"><Printer size={14}/>打印 / 导出 PDF</button>
+              </div>
+            )}
+            <input ref={pptxInputRef} type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" aria-label="选择要导入的 PPTX 文件" data-slides-pptx-input className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void handlePptxFile(file); }}/>
+          </div>
           <button type="button" aria-label="创建整份幻灯片副本" title={backgroundBatchUnknown || deletePageUnknown ? "请先重新打开并核对页面" : queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={backgroundBatchUnknown || deletePageUnknown || copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">
-            <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-3 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>
-            <button type="button" aria-label="演示选项" aria-haspopup="menu" aria-expanded={playMenu} disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} onClick={() => setPlayMenu((open) => !open)} className="grid w-7 place-items-center rounded-r-md border-l border-[#3370ff] bg-white hover:bg-[#f5f6f7] disabled:opacity-40"><ChevronDown size={14}/></button>
+            <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-2 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40 sm:px-3"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>
+            <button type="button" aria-label="演示选项" aria-haspopup="menu" aria-expanded={playMenu} disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} onClick={() => setPlayMenu((open) => !open)} className="grid w-6 place-items-center rounded-r-md border-l border-[#3370ff] bg-white hover:bg-[#f5f6f7] disabled:opacity-40 sm:w-7"><ChevronDown size={14}/></button>
             {playMenu && <div role="menu" aria-label="演示选项" className="absolute right-0 top-10 z-[70] w-40 rounded-lg border border-[#dee0e3] bg-white p-1 text-[13px] text-[#1f2329] shadow-lg"><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Play size={14}/>从当前开始</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(false, true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>演示者视图</button><button role="menuitem" type="button" onClick={() => { setPlayMenu(false); void startPresentation(true); }} className="flex h-9 w-full items-center gap-2 rounded px-2 text-left hover:bg-[#f2f3f5]"><Presentation size={14}/>从头开始</button></div>}
           </div>
         </div>
@@ -720,9 +1113,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           <div ref={slideListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-4">
             {list.map((page, index) => {
               const item = queue.get(page);
+              const pagePeers = collaborators.filter((c) => c.pageId === page.id);
               return <div key={page.id} className={cn("group relative mb-6 flex gap-1 sm:mb-0 [@media(pointer:coarse)]:mb-6", dropMarker?.id === page.id && (dropMarker.after ? "after:absolute after:-bottom-1 after:left-5 after:right-0 after:h-0.5 after:bg-[#3370ff]" : "before:absolute before:-top-1 before:left-5 before:right-0 before:h-0.5 before:bg-[#3370ff]"))} data-slides-page={page.id} onContextMenu={(event) => { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, event.clientX || rect.left, event.clientY || rect.bottom); }}>
                 <span className={cn("w-4 pt-1 text-right text-[11px] text-[#8f959e]", page.hidden && "line-through")}>{index + 1}</span>
-                <button type="button" draggable={false} onPointerDown={(event) => beginPageDrag(event, page, false)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content}/>{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
+                <button type="button" draggable={false} onPointerDown={(event) => beginPageDrag(event, page, false)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content}/>{pagePeers.length > 0 && <span className="pointer-events-none absolute bottom-1 left-1 flex items-center gap-0.5">{pagePeers.slice(0, 3).map((peer) => <span key={peer.userId} data-slide-peer-badge={peer.userId} title={`${peer.name} 正在查看此页`} className="inline-flex h-4 items-center justify-center rounded-full px-1 text-[9px] font-medium text-white shadow-sm sm:px-1.5" style={{ backgroundColor: slidePeerColor(peer.userId) }}><span className="sm:hidden">{peer.name.slice(0, 1)}</span><span className="hidden sm:inline">{peer.name.slice(0, 4)}</span></span>)}</span>}{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
                 <button type="button" aria-label={`拖动第 ${index + 1} 页排序`} title="拖动排序" disabled={!canEdit || orderUnknown || queue.hasUnsaved()} onPointerDown={(event) => beginPageDrag(event, page, true)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} className="absolute -bottom-6 left-5 right-0 grid h-6 touch-none select-none place-items-center rounded text-[#8f959e] active:bg-[#e8efff] active:text-[#3370ff] disabled:opacity-40 sm:hidden [@media(pointer:coarse)]:grid"><GripHorizontal size={16}/></button>
                 <button type="button" aria-label={`第 ${index + 1} 页更多操作`} aria-haspopup="menu" aria-expanded={pageMenu?.id === page.id} data-slide-options={page.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, rect.right, rect.bottom); }} className={cn("absolute right-1 top-1 grid size-7 place-items-center rounded bg-white/90 text-[#646a73] shadow-sm hover:bg-[#f2f3f5] focus:pointer-events-auto focus:opacity-100 sm:pointer-events-auto sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100", active?.id === page.id ? "opacity-100" : "pointer-events-none opacity-0")}><MoreHorizontal size={16}/></button>
               </div>;
@@ -733,8 +1127,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <div className="flex shrink-0 items-center gap-0.5 border-r border-[#e5e6eb] pr-2">
-              <button type="button" aria-label={historyAvailable(false) || historyBlocksPartial(false) ? "撤销整份背景" : "撤销本页内容"} title={historyAvailable(false) || historyBlocksPartial(false) ? "撤销整份背景 (⌘/Ctrl+Z)" : "撤销本页内容 (⌘/Ctrl+Z)"} disabled={!canEdit || !active || !(historyAvailable(false) || historyBlocksPartial(false) || queue.canUndo(active))} onClick={() => { if (active && !tryBackgroundHistory(false)) { queue.undo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={16}/></button>
-              <button type="button" aria-label={historyAvailable(true) || historyBlocksPartial(true) ? "重做整份背景" : "重做本页内容"} title={historyAvailable(true) || historyBlocksPartial(true) ? "重做整份背景 (⌘/Ctrl+Shift+Z)" : "重做本页内容 (⌘/Ctrl+Shift+Z)"} disabled={!canEdit || !active || !(historyAvailable(true) || historyBlocksPartial(true) || queue.canRedo(active))} onClick={() => { if (active && !tryBackgroundHistory(true)) { queue.redo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={16}/></button>
+              <button type="button" data-slides-undo aria-label={undoLabel} title={`${undoLabel} (⌘/Ctrl+Z)`} disabled={!canUndoAny} onClick={() => { if (!tryBackgroundHistory(false) && !tryStructureHistory(false) && active) { queue.undo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={16}/></button>
+              <button type="button" data-slides-redo aria-label={redoLabel} title={`${redoLabel} (⌘/Ctrl+Shift+Z)`} disabled={!canRedoAny} onClick={() => { if (!tryBackgroundHistory(true) && !tryStructureHistory(true) && active) { queue.redo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={16}/></button>
             </div>
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("text")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
@@ -760,9 +1154,9 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             <div className="flex min-h-full min-w-full p-4">
               {active && draft ? <div className="group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ width: SLIDE_WIDTH * zoom / 100, height: SLIDE_HEIGHT * zoom / 100, backgroundColor: draft.content.background || "#fff" }} data-slides-canvas onPointerDown={(event) => { if (event.target instanceof Element && !event.target.closest("[data-slide-object]")) { queue.endGroup(active.id); setSelectedShape(null); } }}>
                 <div className="absolute left-0 top-0" style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, padding: hasLargeSlideTitle(draft.content.layout) ? 0 : "48px 57.6px", transform: `scale(${zoom / 100})`, transformOrigin: "top left", containerType: "inline-size" }}>
-                  {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} onFocus={() => setTitleFocusPage(active.id)} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={() => { setTitleFocusPage(null); queue.endGroup(active.id); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight text-[#1f2329] outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px] placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
+                  {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} onFocus={() => setTitleFocusPage(active.id)} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={() => { setTitleFocusPage(null); queue.endGroup(active.id); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-white" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px]", isDarkSlideBackground(draft.content.background) ? "placeholder:text-white/80" : "placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
                   {draft.content.layout === "blank" && !draft.content.title && titleFocusPage !== active.id && !!draft.content.body && <div aria-hidden="true" className="h-[55px]"/>}
-                  {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} onFocus={() => setBodyFocusPage(active.id)} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={() => { setBodyFocusPage(null); queue.endGroup(active.id); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed text-[#1f2329] outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
+                  {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} onFocus={() => setBodyFocusPage(active.id)} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={() => { setBodyFocusPage(null); queue.endGroup(active.id); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-[#e5e7eb]" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
                   <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} scale={zoom / 100} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
                 </div>
                 <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => { if (backgroundTarget.current === active.id && activePageRef.current === active.id && canEditRef.current && !pageActionCount.current) queue.edit(active, { background: event.target.value }); }} className="sr-only" aria-label="幻灯片背景颜色" />
@@ -803,6 +1197,50 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         </div>;
       })()}
       {sharing && <ShareDialog meta={meta.data} userId={userId} onClose={() => setSharing(false)} anchorRef={shareRef}/>}
+      {importPreview && (
+        <div role="dialog" aria-modal="true" aria-label="确认导入 PPTX" data-slides-import-modal className="fixed inset-0 z-[90] grid place-items-center bg-black/35 p-4">
+          <div className="w-full max-w-md rounded-xl border border-[#dee0e3] bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[15px] font-semibold text-[#1f2329]">确认导入 PPTX</h2>
+                <p className="mt-1 text-[12px] text-[#646a73]">{importPreview.fileName}</p>
+              </div>
+              <button type="button" aria-label="关闭导入确认框" disabled={importingPptx} onClick={() => setImportPreview(null)} className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40"><X size={15}/></button>
+            </div>
+            <div className="mt-4 rounded-lg bg-[#f5f6f7] p-3 text-[13px] text-[#1f2329]">
+              <p>共解析 <strong>{importPreview.parsed.pages.length}</strong> 页幻灯片、<strong>{importPreview.parsed.shapeCount}</strong> 个图形/文本框元素。</p>
+              <ul className="mt-2 space-y-1 text-[12px] text-[#646a73]">
+                {importPreview.parsed.pages.slice(0, 5).map((pg, idx) => (
+                  <li key={idx} className="truncate">第 {idx + 1} 页：{pg.title || "（无标题）"}{pg.hidden ? " [已隐藏]" : ""}</li>
+                ))}
+                {importPreview.parsed.pages.length > 5 && <li>…其余 {importPreview.parsed.pages.length - 5} 页</li>}
+              </ul>
+            </div>
+            {importPreview.parsed.warnings.length > 0 && (
+              <div className="mt-3 rounded-lg bg-[#fff7e8] p-2.5 text-[12px] text-[#b25900]">
+                {importPreview.parsed.warnings.map((w, i) => <p key={i}>{w}</p>)}
+              </div>
+            )}
+            <p className="mt-3 text-[12px] text-[#d83931]">注意：确认后将替换当前演示文稿的全部页面，请确保无需保留原内容或先创建副本。</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" disabled={importingPptx} onClick={() => setImportPreview(null)} className="h-8 rounded-md border border-[#d0d3d6] px-3 text-[13px] text-[#1f2329] hover:bg-[#f2f3f5] disabled:opacity-40">取消</button>
+              <button type="button" data-slides-import-confirm disabled={importingPptx} onClick={() => void confirmImportPptx()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] font-medium text-white hover:bg-[#245bdb] disabled:opacity-40">{importingPptx ? "导入中…" : "确认导入"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {canDownload && printablePages.length > 0 && (
+        <div data-slides-print-deck aria-hidden="true">
+          {printablePages.map((page) => {
+            const item = queue.get(page);
+            return (
+              <div key={page.id} data-slides-print-page style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}>
+                <SlideSurface content={item.content}/>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </main>
   );
 }

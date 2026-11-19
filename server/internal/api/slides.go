@@ -39,6 +39,7 @@ func (s *Server) postSlidesPage(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "create page") {
 		return
 	}
+	s.notifySlides(id, g.UserID)
 	httpx.JSON(w, http.StatusCreated, page)
 }
 
@@ -175,6 +176,7 @@ func (s *Server) patchSlidesContent(w http.ResponseWriter, r *http.Request, v3 b
 	if driveWriteErr(w, err, "update page") {
 		return
 	}
+	s.notifySlides(page.SlidesID, g.UserID)
 	httpx.JSON(w, http.StatusOK, page)
 }
 

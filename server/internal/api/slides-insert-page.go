@@ -61,6 +61,7 @@ func (s *Server) insertSlidesPage(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "insert slide page") {
 		return
 	}
+	s.notifySlides(deck, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusCreated, page)
 }

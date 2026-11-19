@@ -109,6 +109,7 @@ func (s *Server) pasteSlidesPageFrom(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "paste slide page") {
 		return
 	}
+	s.notifySlides(target, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusCreated, map[string]any{"page": copied, "mapping": mapping})
 }

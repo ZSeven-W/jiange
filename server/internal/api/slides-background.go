@@ -50,6 +50,7 @@ func (s *Server) applySlidesBackground(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "apply slide background") {
 		return
 	}
+	s.notifySlides(id, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"pages": receipts})
 }
@@ -105,6 +106,7 @@ func (s *Server) applySlidesBackgroundChanges(w http.ResponseWriter, r *http.Req
 	if driveWriteErr(w, err, "restore slide backgrounds") {
 		return
 	}
+	s.notifySlides(id, u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"pages": receipts})
 }

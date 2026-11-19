@@ -14,6 +14,7 @@ export default defineConfig({
       "/api/sync": { target: "ws://localhost:8080", ws: true },
       "/api/bases": { target: "ws://localhost:8080", ws: true },
       "/api/sheets": { target: "http://localhost:8080", ws: true },
+      "/api/slides": { target: "http://localhost:8080", ws: true },
       "/api": "http://localhost:8080",
       "/healthz": "http://localhost:8080",
     },
