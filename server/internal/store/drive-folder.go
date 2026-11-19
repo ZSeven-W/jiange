@@ -203,7 +203,7 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 	if kind == "folder" {
 		return m.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet" && kind != "survey") || ws <= 0 || !validDriveTitle(title) {
 		return DriveEntry{}, ErrConflict
 	}
 	m.mu.Lock()
@@ -285,6 +285,9 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 	}
 	if kind == "sheet" {
 		m.initSheetWorkbookLocked(id)
+	}
+	if kind == "survey" {
+		m.initSurveyLocked(id)
 	}
 	m.d.docs = append(m.d.docs, d)
 	return driveMemoryEntry(m, d, g.UserID), nil
@@ -733,7 +736,7 @@ func (p *Postgres) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, 
 	if kind == "folder" {
 		return p.CreateDriveFolder(ctx, g, ws, parent, title, personal)
 	}
-	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet") || ws <= 0 || !validDriveTitle(title) {
+	if (kind != "doc" && kind != "base" && kind != "slides" && kind != "sheet" && kind != "survey") || ws <= 0 || !validDriveTitle(title) {
 		return out, ErrConflict
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
@@ -799,6 +802,10 @@ func (p *Postgres) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, 
 			}
 		} else if kind == "sheet" {
 			if e = p.initSheetWorkbookPG(ctx, tx, out.ID); e != nil {
+				return e
+			}
+		} else if kind == "survey" {
+			if e = p.initSurveyPG(ctx, tx, out.ID); e != nil {
 				return e
 			}
 		}

@@ -22,7 +22,7 @@ import { stageStarter } from "./pending-starter";
 import { BOARD_TITLE, MINDMAP_TITLE, stageBoard, type BoardStarterKind } from "./board-starter";
 import { hasUnsupportedImportBlocks } from "./starter-template-ops";
 import { ask, askText } from "@/components/ui/ask";
-import { ChevronDown, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Plus, Star } from "lucide-react";
+import { ChevronDown, ClipboardList, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Plus, Star } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { formatDriveTime } from "./drive-sort";
 import { browserHomeViewStorage, homeViewKey, matchesHomeTypeFilter, readHomeView, writeHomeView, type HomeView } from "./home-view";
@@ -169,7 +169,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
       refreshHome();
     } finally { actionLock.current = false; if (stillHere()) setActionBusy(false); }
   };
-  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)} onDuplicate={() => void duplicateHomeDocument(doc)} onTrash={() => void trashHomeDocument(doc)} copyEnabled={(doc.kind === "doc" || doc.kind === "slides" || doc.kind === "sheet") && !uncertainCopies.has(doc.id)} trashEnabled={doc.role === "manage" && ["doc", "base", "slides", "sheet", "file"].includes(doc.kind ?? "") && !uncertainTrash.has(doc.id)}/>;
+  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)} onDuplicate={() => void duplicateHomeDocument(doc)} onTrash={() => void trashHomeDocument(doc)} copyEnabled={(doc.kind === "doc" || doc.kind === "slides" || doc.kind === "sheet") && !uncertainCopies.has(doc.id)} trashEnabled={doc.role === "manage" && ["doc", "base", "slides", "sheet", "survey", "file"].includes(doc.kind ?? "") && !uncertainTrash.has(doc.id)}/>;
   const createBoard = useMutation({
     mutationFn: async (kind: BoardStarterKind) => {
       const owner = me.user.id;
@@ -183,7 +183,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     onError: () => setImportError(t("创建结果未确认，请检查文档库。")),
   });
   const createDriveItem = useMutation({
-    mutationFn: ({ kind, title }: { kind: "slides" | "sheet" | "folder"; title: string }) => driveApi.createNode(kind, title, null, true),
+    mutationFn: ({ kind, title }: { kind: "slides" | "sheet" | "survey" | "folder"; title: string }) => driveApi.createNode(kind, title, null, true),
     onSuccess: (entry) => {
       void qc.invalidateQueries({ queryKey: ["docs"] });
       void qc.invalidateQueries({ queryKey: ["drive"] });
@@ -249,6 +249,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
     <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "sheet", title: t("未命名表格") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-sheet><FileBadge kind="sheet" />{t("表格")}</button>
+    <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "survey", title: t("未命名问卷") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-survey><FileBadge kind="survey" />{t("问卷")}</button>
     <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "slides", title: t("未命名幻灯片") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="slides" />{t("幻灯片")}</button>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("base"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="base" />{t("多维表格")}</button>
     <div className="my-1 border-t" />
@@ -310,16 +311,17 @@ function HomeViewToggle({ view, onChange }: { view: HomeView; onChange: (view: H
   return <div role="group" aria-label={t("展示方式")} className="mb-2 flex h-8 items-center rounded-md bg-[#f5f6f7] p-0.5"><button type="button" title={t("列表视图")} aria-label={t("列表视图")} aria-pressed={view === "list"} onClick={() => onChange("list")} className={`grid size-7 place-items-center rounded ${view === "list" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><List size={16}/></button><button type="button" title={t("卡片视图")} aria-label={t("卡片视图")} aria-pressed={view === "grid"} onClick={() => onChange("grid")} className={`grid size-7 place-items-center rounded ${view === "grid" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><Grid2X2 size={15}/></button></div>;
 }
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
-  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="sheet">{t("表格")}</option><option value="board">{t("画板")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
+  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="sheet">{t("表格")}</option><option value="board">{t("画板")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="survey">{t("问卷")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
 }
 function BoardBadge() {
   return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;
 }
 
-function FileBadge({ kind, docType, icon, large = false }: { kind: "doc" | "base" | "slides" | "sheet" | "folder" | "file"; docType?: string; icon?: string; large?: boolean }) {
+function FileBadge({ kind, docType, icon, large = false }: { kind: "doc" | "base" | "slides" | "sheet" | "survey" | "folder" | "file"; docType?: string; icon?: string; large?: boolean }) {
   const sizeClass = large ? "size-14" : "size-5";
   if (kind === "folder") return <Folder size={large ? 56 : 20} fill="#ffcc4d" stroke="#f5a623" />;
   if (kind === "sheet") return <SheetColorIcon className={`${sizeClass} shrink-0`} />;
+  if (kind === "survey") return <span className={`grid ${sizeClass} shrink-0 place-items-center rounded bg-violet-600 text-white`}><ClipboardList size={large ? 32 : 13} /></span>;
   if (kind === "slides") return <SlidesColorIcon className={`${sizeClass} shrink-0`} />;
   if (kind === "file") return <span className={`grid ${sizeClass} shrink-0 place-items-center rounded bg-[#e8efff] text-[#3370ff]`}><FileText size={large ? 36 : 15}/></span>;
   if (isBoardDoc({ kind, docType })) return <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<WhiteboardIcon className={`${sizeClass} shrink-0 text-[#34c759]`} />} />;

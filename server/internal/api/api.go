@@ -166,6 +166,10 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/synced-blocks/{sid}":                        s.getSyncedBlock,
 		"PUT /api/synced-blocks/{sid}":                        s.updateSyncedBlock,
 		"GET /api/docs/{id}/subpages":                         s.listDocSubpages,
+		"GET /api/surveys/{id}":                               s.getSurvey,
+		"PUT /api/surveys/{id}":                               s.saveSurvey,
+		"POST /api/surveys/{id}/status":                       s.setSurveyStatus,
+		"GET /api/surveys/{id}/stats":                         s.getSurveyStats,
 		"GET /api/docs/{id}/comment-attempts/capabilities":    s.commentAttemptCapabilities,
 		"POST /api/docs/{id}/comment-attempts":                s.addCommentAttempt,
 		"GET /api/docs/{id}/comment-attempts/{mutationId}":    s.getCommentAttempt,
@@ -288,6 +292,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/bases/{id}/records/{rid}/comment-attempts/{mutationId}", s.requireUser(http.HandlerFunc(s.getRecordCommentAttempt)))
 	mux.Handle("POST /api/slides/{id}/background-all", s.requireUser(http.HandlerFunc(s.applySlidesBackground)))
 	mux.Handle("POST /api/slides/{id}/background-changes", s.requireUser(http.HandlerFunc(s.applySlidesBackgroundChanges)))
+	mux.Handle("GET /api/public/surveys/{token}", http.HandlerFunc(s.getPublicSurvey))
+	mux.Handle("POST /api/public/surveys/{token}/submit", http.HandlerFunc(s.submitPublicSurvey))
 	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
 	mux.Handle("GET /api/public/{token}/cover/image", http.HandlerFunc(s.getPublicCoverImage))
 	mux.Handle("GET /api/public/{token}/files/{id}", http.HandlerFunc(s.getPublicFile))

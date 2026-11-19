@@ -106,7 +106,7 @@ func validWikiGrantSubjectType(t string) bool {
 }
 
 func validWikiNodeKind(kind string) bool {
-	return kind == "doc" || kind == "sheet" || kind == "base" || kind == "slides" || kind == "folder"
+	return kind == "doc" || kind == "sheet" || kind == "base" || kind == "slides" || kind == "survey" || kind == "folder"
 }
 
 func roleFromRank(rank int) string {

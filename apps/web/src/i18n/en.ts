@@ -942,6 +942,8 @@ export const en: Record<string, string> = {
   "OpenAI 兼容": "OpenAI-compatible",
   "表格": "Spreadsheet",
   "未命名表格": "Untitled Spreadsheet",
+  "未命名问卷": "Untitled Survey",
+  "问卷": "Survey",
   "新建表格": "New Spreadsheet",
   "表格内容已被其他协作者修改，已刷新最新数据，请重试。": "Spreadsheet content was modified by another collaborator and has been refreshed. Please try again.",
   "保存失败，请检查网络后重试。": "Save failed. Please check your network and try again.",

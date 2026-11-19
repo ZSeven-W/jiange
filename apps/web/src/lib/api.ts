@@ -123,7 +123,7 @@ export interface DocMeta {
   createdAt: string;
   updatedAt: string;
   role?: Role;
-  kind?: "doc" | "base" | "folder" | "slides" | "file" | "sheet";
+  kind?: "doc" | "base" | "folder" | "slides" | "file" | "sheet" | "survey";
   docType?: string;
   workspaceName?: string;
   copyProtected?: boolean;
@@ -479,6 +479,97 @@ export const subpagesApi = {
   list: (docId: number) =>
     request<{ subpages: DocSubpage[] }>("GET", `/api/docs/${docId}/subpages`).then((r) => r.subpages),
 };
+
+export interface SurveySkipRule {
+  whenOption: string;
+  jumpToQuestionId: string;
+}
+
+export type SurveyQuestionType = "single" | "multi" | "text" | "rating" | "matrix" | "ranking" | "signature" | "file";
+
+export interface SurveyQuestion {
+  id: string;
+  type: SurveyQuestionType;
+  title: string;
+  description?: string;
+  required: boolean;
+  options?: string[];
+  matrixRows?: string[];
+  matrixCols?: string[];
+  maxRating?: number;
+  skipRules?: SurveySkipRule[];
+}
+
+export interface Survey {
+  nodeId: number;
+  description: string;
+  status: "draft" | "published" | "closed";
+  publicToken?: string;
+  allowAnonymous: boolean;
+  maxResponses: number;
+  questions: SurveyQuestion[];
+  revision: number;
+  publishedAt?: string;
+  closedAt?: string;
+  updatedAt: string;
+}
+
+export interface SurveyDetailResponse {
+  survey: Survey;
+  title: string;
+  role: Role;
+  responseCount: number;
+}
+
+export interface SurveyResponseRecord {
+  id: number;
+  surveyId: number;
+  respondentId?: number;
+  respondentName: string;
+  answers: Record<string, unknown>;
+  submittedAt: string;
+}
+
+export interface SurveyQuestionStat {
+  questionId: string;
+  title: string;
+  type: SurveyQuestionType;
+  answered: number;
+  optionCounts?: Record<string, number>;
+  average?: number;
+  ratingDist?: Record<string, number>;
+  matrixCounts?: Record<string, Record<string, number>>;
+  rankAvg?: Record<string, number>;
+  textSamples?: string[];
+}
+
+export interface SurveyStatsResponse {
+  totalResponses: number;
+  questionStats: SurveyQuestionStat[];
+  responses: SurveyResponseRecord[];
+}
+
+export interface PublicSurveyPayload {
+  title: string;
+  description: string;
+  allowAnonymous: boolean;
+  maxResponses: number;
+  responseCount: number;
+  full: boolean;
+  questions: SurveyQuestion[];
+}
+
+export const surveysApi = {
+  get: (id: number) => request<SurveyDetailResponse>("GET", `/api/surveys/${id}`),
+  save: (id: number, body: { description: string; questions: SurveyQuestion[]; allowAnonymous?: boolean; maxResponses?: number; expectedRevision?: number }) =>
+    request<{ survey: Survey }>("PUT", `/api/surveys/${id}`, body).then((r) => r.survey),
+  setStatus: (id: number, body: { status: "draft" | "published" | "closed"; allowAnonymous?: boolean; maxResponses?: number }) =>
+    request<{ survey: Survey }>("POST", `/api/surveys/${id}/status`, body).then((r) => r.survey),
+  stats: (id: number) => request<SurveyStatsResponse>("GET", `/api/surveys/${id}/stats`),
+  getPublic: (token: string) => request<PublicSurveyPayload>("GET", `/api/public/surveys/${encodeURIComponent(token)}`),
+  submitPublic: (token: string, body: { respondentName?: string; answers: Record<string, unknown> }) =>
+    request<{ response: SurveyResponseRecord }>("POST", `/api/public/surveys/${encodeURIComponent(token)}/submit`, body),
+};
 export const notificationsApi = {
   list: () => request<{ notifications: AppNotification[]; unread: number }>("GET", "/api/notifications"),
   markRead: (ids: number[] = []) => request<void>("POST", "/api/notifications/read", { ids }),
@@ -613,7 +704,7 @@ export const orgApi = {
 
 export type WikiVisibility = "workspace" | "private";
 export type WikiGrantSubjectType = "user" | "department" | "group";
-export type WikiNodeKind = "doc" | "sheet" | "base" | "slides" | "folder";
+export type WikiNodeKind = "doc" | "sheet" | "base" | "slides" | "survey" | "folder";
 
 export interface WikiSpace {
   id: number;
@@ -730,7 +821,7 @@ export const driveApi = {
   file: (nodeId: number) => request<FileMeta>("GET", `/api/drive/files/${nodeId}`),
   create: (title: string, parentId: number | null = null, personal = false, signal?: AbortSignal, expectedUserId?: number) =>
     request<DriveEntry>("POST", expectedUserId === undefined ? "/api/drive/folders" : "/api/drive/batch/folders", { title, parentId, scope: personal ? "personal" : "shared" }, signal, expectedUserId === undefined ? undefined : { "X-Jiange-User-Id": String(expectedUserId) }),
-  createNode: (kind: "doc" | "base" | "folder" | "slides" | "sheet", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
+  createNode: (kind: "doc" | "base" | "folder" | "slides" | "sheet" | "survey", title: string, parentId: number | null = null, personal = false, docType?: "board") =>
     request<DriveEntry>("POST", "/api/drive/nodes", { kind, title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }),
   createWordImportNode: (title: string, parentId: number | null, personal: boolean, userId: number, docType?: "board") =>
     request<DriveEntry>("POST", "/api/drive/word-import-nodes", { kind: "doc", title, parentId, scope: personal ? "personal" : "shared", ...(docType ? { docType } : {}) }, undefined, { "X-Jiange-User-Id": String(userId) }),

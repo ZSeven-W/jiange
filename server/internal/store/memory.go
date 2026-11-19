@@ -33,6 +33,9 @@ type Memory struct {
 	suggestions      []DocSuggestion
 	suggestionSeq    int64
 	syncedBlocks     map[string]SyncedBlock
+	surveys          map[int64]Survey
+	surveyResponses  []SurveyResponse
+	surveyRespSeq    int64
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate
@@ -55,6 +58,7 @@ func NewMemory() *Memory {
 		favorites:      map[int64][]int64{},
 		links:          map[[2]int64][]int64{},
 		syncedBlocks:   map[string]SyncedBlock{},
+		surveys:        map[int64]Survey{},
 	}
 }
 

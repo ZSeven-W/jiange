@@ -23,7 +23,7 @@ export const hrefOf = nodeHref;
 export function isBoardDoc(d: { kind?: string; docType?: string } | null | undefined): boolean {
   return (d?.kind ?? "doc") === "doc" && d?.docType === "board";
 }
-export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (d.kind === "sheet" ? t("未命名表格") : isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
+export const docTitle = (d: Pick<DocMeta, "title"> & { kind?: string; docType?: string }) => d.title.trim() || (d.kind === "sheet" ? t("未命名表格") : d.kind === "survey" ? t("未命名问卷") : isBoardDoc(d) ? t("未命名画板") : t("未命名文档"));
 
 export function renameErrorMessage(error: unknown): string {
   if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) return t("无法重命名：文档不存在或当前没有编辑权限。");
@@ -416,6 +416,7 @@ function DriveSidebar({ route, userId, searchOpen, onSearch, onCloseSearch }: { 
 
 function SidebarNodeIcon({ kind, docType, icon }: { kind: DocMeta["kind"]; docType?: string; icon?: string }) {
   if (kind === "sheet") return <SheetColorIcon className="size-[18px] shrink-0" />;
+  if (kind === "survey") return <span className="grid size-[18px] shrink-0 place-items-center rounded bg-violet-600 text-white"><ClipboardList size={12} /></span>;
   if (kind === "base") return <BaseColorIcon className="size-[18px] shrink-0" />;
   if (kind === "slides") return <SlidesColorIcon className="size-[18px] shrink-0" />;
   if (kind === "folder") return <FolderIcon size={18} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
@@ -638,4 +639,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, BookOpen, Building2, ChevronDown, ChevronRight, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChevronDown, ChevronRight, ClipboardList, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
