@@ -22,8 +22,17 @@ export function validateUploadCommand(captured: SlashInsertion): "ok" | "middle"
   const ids = captured.doc.visibleIds(captured.anchor);
   const start = ids.findIndex((id) => eqId(id, captured.commandIds![0]));
   if (start < 0 || captured.commandIds.some((id, i) => !ids[start + i] || !eqId(id, ids[start + i]))) return "changed";
-  if (captured.doc.richChars(captured.anchor).slice(start, start + captured.commandIds.length).some((char) => !!char.marks.math)) return "changed";
-  return start > 0 && start + captured.commandIds.length < ids.length ? "middle" : "ok";
+  const commandEnd = start + captured.commandIds.length;
+  if (captured.doc.richChars(captured.anchor).slice(start, commandEnd).some((char) => !!char.marks.math)) return "changed";
+  if (start > 0 && commandEnd < ids.length) {
+    const currentTailIds = ids.slice(commandEnd);
+    const expectedTailIds = captured.tailIds;
+    const tailUnchanged = !!expectedTailIds
+      && expectedTailIds.length === currentTailIds.length
+      && expectedTailIds.every((id, i) => eqId(id, currentTailIds[i]));
+    return tailUnchanged ? "ok" : "middle";
+  }
+  return "ok";
 }
 
 /** Insert uploaded assets without replacing a paragraph that peers may edit. */

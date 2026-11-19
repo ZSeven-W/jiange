@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { AlignCenter, AlignLeft, AlignRight, Bold, ChevronDown, Code2, Eraser, Italic, LayoutGrid, Link, Link2, MessageSquarePlus, Sparkles, Strikethrough, Underline } from "lucide-react";
 import { MENU_ICONS } from "./menu-icons";
 
-const TYPES: [string, string][] = [["paragraph", "文本"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["h4", "四级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
+const TYPES: [string, string][] = [["paragraph", "文本"], ["h1", "一级标题"], ["h2", "二级标题"], ["h3", "三级标题"], ["h4", "四级标题"], ["h5", "五级标题"], ["h6", "六级标题"], ["h7", "七级标题"], ["h8", "八级标题"], ["h9", "九级标题"], ["bullet", "无序列表"], ["ordered", "有序列表"], ["todo", "待办"], ["quote", "引用"], ["code", "代码块"]];
 const MARKS = [
   { key: "bold", label: "加粗", Icon: Bold },
   { key: "strike", label: "删除线", Icon: Strikethrough },

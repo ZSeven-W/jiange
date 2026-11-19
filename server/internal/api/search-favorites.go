@@ -570,6 +570,14 @@ func extractSearchableDocumentText(view collab.DocView) string {
 				appendSearchSegment(&b, block.Props["url"])
 			}
 			continue
+		case "embed":
+			appendSearchSegment(&b, block.Props["title"])
+			continue
+		case "reminder":
+			appendSearchSegment(&b, block.Props["date"])
+			appendSearchSegment(&b, block.Props["time"])
+			appendSearchSegment(&b, block.Props["label"])
+			continue
 		}
 		var text strings.Builder
 		for _, span := range block.Spans {

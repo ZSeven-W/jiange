@@ -63,7 +63,7 @@ func (d *Doc) MentionTargets(refs []MentionRef) map[MentionRef]MentionMatch {
 			continue
 		}
 		switch kind {
-		case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout":
+		case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "callout":
 		default:
 			continue
 		}

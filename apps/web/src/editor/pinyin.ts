@@ -57,6 +57,11 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "columns", label: "分栏", group: "常用", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
   { id: "synced", label: "同步块", group: "常用", icon: "同", py: ["tong", "bu", "kuai"], en: ["synced", "sync block"] },
   { id: "subpages", label: "子页面列表", group: "常用", icon: "子", py: ["zi", "ye", "mian", "lie", "biao"], en: ["subpages", "child pages"] },
+  { id: "reminder", label: "日期提醒", group: "常用", icon: "日", py: ["ri", "qi", "ti", "xing"], en: ["date", "reminder", "calendar", "time", "rq", "tx"] },
+  { id: "embed-sheet", label: "嵌入电子表格", group: "常用", icon: "表", py: ["qian", "ru", "dian", "zi", "biao", "ge"], en: ["sheet", "spreadsheet", "excel", "embed sheet", "dzbg"] },
+  { id: "embed-base", label: "嵌入多维表格", group: "常用", icon: "多", py: ["qian", "ru", "duo", "wei", "biao", "ge"], en: ["base", "bitable", "multitable", "embed base", "dwbg"] },
+  { id: "embed-survey", label: "嵌入问卷", group: "常用", icon: "问", py: ["qian", "ru", "wen", "juan"], en: ["survey", "form", "questionnaire", "embed survey"] },
+  { id: "embed-slides", label: "嵌入幻灯片", group: "其他", icon: "演", py: ["qian", "ru", "huan", "deng", "pian"], en: ["slides", "ppt", "deck", "embed slides", "hdp"] },
   { id: "bookmark", label: "网页卡片", group: "其他", icon: "链", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
   { id: "callout", label: "高亮块", group: "其他", icon: "亮", py: ["gao", "liang", "kuai"], en: ["callout", "highlight"] },
   { id: "math", label: "公式", group: "其他", icon: "∑", py: ["gong", "shi"], en: ["math", "latex", "formula", "eq"] },
@@ -65,6 +70,9 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "h4", label: "四级标题", group: "其他", icon: "H4", py: ["si", "ji", "biao", "ti"], en: ["h4", "heading4"] },
   { id: "h5", label: "五级标题", group: "其他", icon: "H5", py: ["wu", "ji", "biao", "ti"], en: ["h5", "heading5"] },
   { id: "h6", label: "六级标题", group: "其他", icon: "H6", py: ["liu", "ji", "biao", "ti"], en: ["h6", "heading6"] },
+  { id: "h7", label: "七级标题", group: "其他", icon: "H7", py: ["qi", "ji", "biao", "ti"], en: ["h7", "heading7"] },
+  { id: "h8", label: "八级标题", group: "其他", icon: "H8", py: ["ba", "ji", "biao", "ti"], en: ["h8", "heading8"] },
+  { id: "h9", label: "九级标题", group: "其他", icon: "H9", py: ["jiu", "ji", "biao", "ti"], en: ["h9", "heading9"] },
 ];
 
 export function filterItems(q: string, items = SLASH_ITEMS): MenuItem[] {

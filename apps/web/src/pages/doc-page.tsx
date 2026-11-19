@@ -671,7 +671,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const suggestionBlocks: SuggestionBlockOption[] = useMemo(() => {
     const doc = sync.client.doc;
     if (!doc) return [];
-    const textTypes = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout"]);
+    const textTypes = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "callout"]);
     return doc.view().blocks
       .filter((b) => b.type !== "title" && textTypes.has(b.type))
       .map((b) => ({ id: b.id, type: b.type, text: b.spans.map((sp) => sp.text).join("") }));

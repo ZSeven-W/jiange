@@ -4,7 +4,7 @@ import { coverMap, parseMerges } from "@/editor/table-ops";
 import { readFlow } from "@/editor/flowchart/model";
 
 export interface DocumentTextStats { characters: number; nonWhitespace: number }
-const TEXT_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "code", "callout"]);
+const TEXT_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "code", "callout"]);
 
 /** Count visible text in the loaded document, excluding its title and hidden merged cells. */
 export function documentTextStats(view: DocView): DocumentTextStats {

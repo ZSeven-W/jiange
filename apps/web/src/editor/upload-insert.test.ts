@@ -49,14 +49,27 @@ describe("uploaded block insertion", () => {
     expect(doc.text(block)).toBe(before);
   });
 
-  it("refuses a middle command without changing either side", () => {
+  it("safely splits a local middle upload and refuses if peer edits the suffix concurrently", () => {
     const { doc, block } = setup("前/图片后"), end = { b: block, o: 4 };
     const captured = captureSlashInsertion(doc, { b: block, o: 1 }, { a: end, f: end }, false)!;
-    expect(validateUploadCommand(captured)).toBe("middle");
+    expect(validateUploadCommand(captured)).toBe("ok");
     const tx = new Tx(doc);
-    expect(insertUploadedFiles(tx, captured, [image])).toBe("middle");
-    expect(tx.ops).toHaveLength(0);
+    const caret = insertUploadedFiles(tx, captured, [image, file]);
+    expect(caret && caret !== "middle").toBe(true);
+    expect(view(doc)).toEqual([["paragraph", "前"], ["image", ""], ["file", ""], ["paragraph", "后"]]);
+    const undo = new UndoManager();
+    undo.record(safeSlashUndo(tx), null, null);
+    undo.undo(doc);
     expect(doc.text(block)).toBe("前/图片后");
+
+    const { doc: doc2, block: b2 } = setup("前/图片后");
+    const cap2 = captureSlashInsertion(doc2, { b: b2, o: 1 }, { a: { b: b2, o: 4 }, f: { b: b2, o: 4 } }, false)!;
+    doc2.insertText(b2, 5, "远端");
+    expect(validateUploadCommand(cap2)).toBe("middle");
+    const tx2 = new Tx(doc2);
+    expect(insertUploadedFiles(tx2, cap2, [image])).toBe("middle");
+    expect(tx2.ops).toHaveLength(0);
+    expect(doc2.text(b2)).toBe("前/图片后远端");
   });
 
   it("keeps late collaborator text on the original empty paragraph visible", () => {

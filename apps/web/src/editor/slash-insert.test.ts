@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
 import { bodyBlocks } from "./model";
-import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
+import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, insertBlockAtSlashOffset, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
 
 function setup(text: string) {
   const doc = new Doc(1);
@@ -169,14 +169,35 @@ describe("asynchronous slash insertion", () => {
     expect(state(doc)).toEqual([["math", "x^2"], ["paragraph", "后面的字"]]);
   });
 
-  it("refuses a middle-of-paragraph insertion without changing or reordering text", () => {
+  it("safely splits a local middle-of-paragraph insertion while preserving marks and supporting undo", () => {
     const { doc, block } = setup("前/查询后");
+    new Tx(doc).format(block, 4, 5, "bold", "true");
     const end = { b: block, o: 4 };
     const captured = captureSlashInsertion(doc, { b: block, o: 1 }, { a: end, f: end }, false)!;
     const tx = new Tx(doc);
-    expect(insertSlashBlock(tx, captured, "diagram", {}, "graph TD; A-->B")).toBe("middle");
-    expect(tx.ops).toHaveLength(0);
-    expect(state(doc)).toEqual([["paragraph", "前/查询后"]]);
+    const caret = insertSlashBlock(tx, captured, "diagram", {}, "graph TD; A-->B");
+    expect(caret && caret !== "middle").toBe(true);
+    expect(state(doc)).toEqual([["paragraph", "前"], ["diagram", "graph TD; A-->B"], ["paragraph", "后"]]);
+    expect(doc.richChars(bodyBlocks(doc)[2])[0]?.marks.bold).toBe("true");
+    const undo = new UndoManager();
+    undo.record(safeSlashUndo(tx), null, null);
+    undo.undo(doc);
+    expect(doc.text(block)).toBe("前/查询后");
+    expect(doc.text(bodyBlocks(doc)[2])).toBe("");
+    undo.redo(doc);
+    expect(state(doc)).toEqual([["paragraph", "前"], ["diagram", "graph TD; A-->B"], ["paragraph", "后"]]);
+  });
+
+  it("splits synchronous mid-paragraph slash blocks (table/reminder/embed) cleanly", () => {
+    const { doc, block } = setup("前半段 后半段");
+    new Tx(doc).format(block, 4, 7, "italic", "true");
+    const tx = new Tx(doc);
+    const { inserted, caret } = insertBlockAtSlashOffset(tx, block, 4, "embed", { resourceKind: "sheet", resourceId: "12", title: "预算" });
+    expect(doc.blockInfo(inserted).props.resourceKind).toBe("sheet");
+    expect(state(doc)).toEqual([["paragraph", "前半段 "], ["embed", ""], ["paragraph", "后半段"]]);
+    expect(doc.text(caret.b)).toBe("后半段");
+    expect(caret.o).toBe(0);
+    expect(doc.richChars(caret.b).every((c) => c.marks.italic === "true")).toBe(true);
   });
 
   it("rechecks ordering after peer text arrives on both sides while the dialog is open", () => {

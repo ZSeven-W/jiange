@@ -94,7 +94,7 @@ import { applyColumnMove, captureColumnMove } from "./column-move";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";
 import { acquireAlignmentOwner, type AlignmentOwnerLease } from "./column-alignment-owner";
 import { browserConditionalJournalEnvironment, ConditionalJournal, conditionalJournalStorageKey } from "@/lib/conditional-journal";
-import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
+import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, insertBlockAtSlashOffset, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";
 import { CLIP_MIME, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-assets";
@@ -117,6 +117,8 @@ import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
 import { applyTableWrites, cellTableWrites, isCellTable, setTableCellAlignments, setTableCellFills, setTableCellRich, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableDataOf, tableRepairWrites, tableRowsOf, toggleTableCellRichMark, writeTable, type TableAlign, type TableAlignAxis, type TableCellMarkKey, type TableRichSpan } from "./table-cells";
 import { SyncedBlockView } from "./synced-block";
 import { SubpagesBlockView } from "./subpages-block";
+import { EmbedResourceBlock } from "./embed-block";
+import { formatLocalIsoDate, ReminderBlockView } from "./reminder-block";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -2104,40 +2106,27 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!m.fromButton && (!m.query || !resolveSlashQuery(tx.doc, m.query))) return;
       const b = targetBlock(tx);
       if (!b) return;
-      const offset = m.query ? consumeSlashQuery(tx, m.query) : 0;
+      const offset = m.query ? consumeSlashQuery(tx, m.query) : len(tx.doc, b);
       if (offset === null) return;
       applied = true;
       if (it.id === "divider") {
-        const info = tx.doc.blockInfo(b);
-        if (len(tx.doc, b) === 0) {
-          tx.setProp(b, "type", "divider");
-          const nb = tx.create("paragraph", b, info.parent);
-          return { b: nb, o: 0 };
-        }
-        const dv = tx.create("divider", b, info.parent);
-        const nb = tx.create("paragraph", dv, info.parent);
-        return { b: nb, o: 0 };
+        return insertBlockAtSlashOffset(tx, b, offset, "divider").caret;
       }
       if (it.id === "synced" || it.id === "subpages") {
-        const info = tx.doc.blockInfo(b);
-        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
-          tx.setProp(b, "type", it.id);
-          const nb = tx.create("paragraph", b, info.parent);
-          return { b: nb, o: 0 };
-        }
-        const sb = tx.create(it.id, b, info.parent);
-        const nb = tx.create("paragraph", sb, info.parent);
-        return { b: nb, o: 0 };
+        return insertBlockAtSlashOffset(tx, b, offset, it.id).caret;
+      }
+      if (it.id === "reminder") {
+        return insertBlockAtSlashOffset(tx, b, offset, "reminder", { date: formatLocalIsoDate(new Date()) }).caret;
+      }
+      if (it.id === "embed-sheet" || it.id === "embed-base" || it.id === "embed-survey" || it.id === "embed-slides") {
+        const resourceKind = it.id.slice("embed-".length);
+        return insertBlockAtSlashOffset(tx, b, offset, "embed", { resourceKind }).caret;
       }
       if (it.id === "flowchart") {
-        const info = tx.doc.blockInfo(b);
         const props = { "fc.v": "1", "fc.theme": "feishu" };
-        let fb = b;
-        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) { tx.setProp(b, "type", "flowchart"); for (const [k, v] of Object.entries(props)) tx.setProp(b, k, v); }
-        else fb = tx.create("flowchart", b, info.parent, props);
-        const nb = tx.create("paragraph", fb, info.parent);
-        setFlowAutoOpen(idKey(fb));
-        return { b: nb, o: 0 };
+        const res = insertBlockAtSlashOffset(tx, b, offset, "flowchart", props);
+        setFlowAutoOpen(idKey(res.inserted));
+        return res.caret;
       }
       if (it.id === "callout") {
         tx.setProp(b, "type", "callout");
@@ -2145,25 +2134,19 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         return { b, o: offset };
       }
       if (it.id === "table") {
-        const info = tx.doc.blockInfo(b);
-        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
-          tx.setProp(b, "type", "table");
-          tx.setProp(b, "tableData", JSON.stringify(chosenTable));
-          tx.setProp(b, "tableHeader", "none");
-          const nb = tx.create("paragraph", b, info.parent);
-          return { b: nb, o: 0 };
-        }
-        const tb = tx.create("table", b, info.parent, { tableData: JSON.stringify(chosenTable), tableHeader: "none" });
-        const nb = tx.create("paragraph", tb, info.parent);
-        return { b: nb, o: 0 };
+        return insertBlockAtSlashOffset(tx, b, offset, "table", { tableData: JSON.stringify(chosenTable), tableHeader: "none" }).caret;
       }
       if (it.id === "columns") {
         const info = tx.doc.blockInfo(b);
+        const n = len(tx.doc, b);
+        const tail = offset > 0 && offset < n && !TEXTLESS.has(info.type) ? tx.doc.richChars(b).slice(offset) : null;
+        if (tail) tx.delete(b, offset, n);
         const cb = tx.create("columns", b, info.parent);
         createdColumnGroup = cb;
         let previous: OpId | null = null;
         for (let i = 0; i < (columnCount ?? COLUMN_PICKER_MIN); i++) previous = createColumn(tx, cb, previous);
         const nb = tx.create("paragraph", cb, info.parent);
+        if (tail?.length) tx.insert(nb, 0, tail.map((c) => c.ch).join(""), tail.map((c) => c.marks));
         return { b: nb, o: 0 };
       }
       tx.setProp(b, "type", TYPE_FOR[it.id] ?? it.id);
@@ -3017,6 +3000,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               <Block
                 key={k + ":" + (remount[k] ?? 0)}
                 docId={sync.client.docId}
+                userId={userId}
                 id={k}
                 type={info.type}
                 props={info.props}
@@ -3035,6 +3019,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (readOnlyRef.current) return;
                   const tx = new Tx(doc);
                   tx.setProp(b, key, value);
+                  um.record(tx, sel.current, sel.current, "prop");
+                  sync.client.push(tx.ops);
+                  force((x) => x + 1);
+                  publish();
+                }}
+                onSetProps={readOnly ? undefined : (patch) => {
+                  if (readOnlyRef.current) return;
+                  const tx = new Tx(doc);
+                  for (const [kProp, vProp] of Object.entries(patch)) tx.setProp(b, kProp, vProp);
                   um.record(tx, sel.current, sel.current, "prop");
                   sync.client.push(tx.ops);
                   force((x) => x + 1);
@@ -3506,7 +3499,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
             if (!doc || !s) return;
             const selection = commentSelection(doc, s);
             if (!selection.ok) {
-              setCommentError(selection.reason === "cross-block" ? "暂不支持跨段落评论，请选择同一段文字。" : "请选择同一段中的有效文字。");
+              setCommentError(selection.reason === "cross-block" ? "暂不支持跨分栏评论，请选择正文或同一栏内的文字。" : "请选择有效的文字。");
               return;
             }
             setCommentError(null);
@@ -3568,7 +3561,7 @@ function wordLen(text: string, o: number, back: boolean): number {
 
 /** 块菜单在某类块上可用的动作；跨块选区（multi）时按“作用于其中适用的块”放开。 */
 /** 可设置段落对齐的块（与飞书一致：文本类块，不含代码块）。 */
-export const ALIGNABLE = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout"]);
+export const ALIGNABLE = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "callout"]);
 /** Align visible text while rejecting stale or cross-column selections. */
 export function setSelectionAlignment(tx: Tx, selection: Sel, align: Align): void {
   const doc = tx.doc;
@@ -3644,6 +3637,9 @@ const BLOCK_CLASS: Record<string, string> = {
   h4: "text-[18px] font-medium leading-[1.5] mt-3",
   h5: "text-[16px] font-medium leading-[1.6] mt-2.5",
   h6: "text-[16px] font-medium leading-[1.6] mt-2.5",
+  h7: "text-[15px] font-medium leading-[1.6] mt-2",
+  h8: "text-[14px] font-medium leading-[1.6] mt-2 text-muted-foreground",
+  h9: "text-[13px] font-medium leading-[1.6] mt-1.5 text-muted-foreground",
   bullet: "text-[16px] leading-[1.75] py-[3px]",
   ordered: "text-[16px] leading-[1.75] py-[3px]",
   todo: "text-[16px] leading-[1.75] py-[3px]",
@@ -3654,6 +3650,7 @@ const BLOCK_CLASS: Record<string, string> = {
 
 interface BlockProps {
   docId?: number;
+  userId?: number;
   /** 流程图块：写回图（逐对象属性）；未提供表示只读。 */
   onFlowChange?: (graph: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
   flowAI?: (messages: AIMessage[]) => Promise<string>;
@@ -3691,6 +3688,7 @@ interface BlockProps {
   activeThread?: number | null;
   onAnchorClick?: (cid: number) => void;
   onSetProp?: (key: string, value: string) => void;
+  onSetProps?: (patch: Record<string, string>) => void;
   onTableEdit?: (r: number, c: number, value: string, kind?: string) => void;
   onTableHeader?: (axis: "row" | "column", enabled: boolean) => void;
   onTableFill?: (target: TableFormatTarget, fill: string) => string | null;
@@ -3735,7 +3733,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onSetProps, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -4101,6 +4099,26 @@ function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPre
         <SyncedBlockView syncId={props.syncId} docId={docId} readOnly={!onSetProp} onBindSyncId={onSetProp ? (nextId) => onSetProp("syncId", nextId) : undefined} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
       ) : type === "subpages" ? (
         <SubpagesBlockView docId={docId} readOnly={!onSetProp} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
+      ) : type === "embed" ? (
+        <EmbedResourceBlock
+          resourceKind={props.resourceKind}
+          resourceId={props.resourceId}
+          title={props.title}
+          userId={userId}
+          readOnly={!onSetProps}
+          onBind={onSetProps ? (next) => onSetProps({ resourceKind: next.resourceKind, resourceId: next.resourceId, title: next.title }) : undefined}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
+      ) : type === "reminder" ? (
+        <ReminderBlockView
+          date={props.date}
+          time={props.time}
+          label={props.label}
+          done={props.done === "true"}
+          readOnly={!onSetProp}
+          onChange={onSetProp ? (key, value) => onSetProp(key, value) : undefined}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
       ) : type === "file" ? (
         <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (

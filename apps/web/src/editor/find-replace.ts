@@ -5,7 +5,7 @@ import { isDocumentReferenceMarks } from "@/lib/safe-url";
 // Body types whose text is visibly and directly editable by the body editor.
 // The title is searched separately; table cells have their own representation.
 // In particular, math/diagram text is hidden source.
-const SEARCHABLE_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "code", "callout"]);
+const SEARCHABLE_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "code", "callout"]);
 
 /** Whether a block's source is visible, editable text in the body editor. */
 export const isSearchableBlockType = (type: string): boolean => SEARCHABLE_TYPES.has(type);

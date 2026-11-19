@@ -17,6 +17,8 @@ import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
 import { isDocumentReferenceMarks, safeURL } from "@/lib/safe-url";
 import { BlockHandle } from "@/editor/block-handle";
+import { embedHref, embedKindLabel } from "@/editor/embed-block";
+import { ReminderBlockView } from "@/editor/reminder-block";
 import { columnWeights, COLUMN_WIDTHS } from "@/editor/column-widths";
 import { useTableStickyHeader } from "@/editor/table-sticky-header";
 import { parseTableWidths, visibleTableWidths } from "@/editor/table-widths";
@@ -174,6 +176,9 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "h4": content = <h4 className="mt-3 text-[18px] font-medium leading-[1.5]">{rich}</h4>; break;
         case "h5": content = <h5 className="mt-2.5 text-[16px] font-medium leading-[1.6]">{rich}</h5>; break;
         case "h6": content = <h6 className="mt-2.5 text-[16px] font-medium leading-[1.6]">{rich}</h6>; break;
+        case "h7": content = <div role="heading" aria-level={7} className="mt-2 text-[15px] font-medium leading-[1.6]">{rich}</div>; break;
+        case "h8": content = <div role="heading" aria-level={8} className="mt-2 text-[14px] font-medium leading-[1.6] text-muted-foreground">{rich}</div>; break;
+        case "h9": content = <div role="heading" aria-level={9} className="mt-1.5 text-[13px] font-medium leading-[1.6] text-muted-foreground">{rich}</div>; break;
         case "bullet": case "ordered": case "todo": content = <div className="flex gap-2 py-[3px] text-[16px] leading-[1.75]"><span className={cn("min-w-[18px] text-center", block.type !== "todo" && "text-primary")}>{block.type === "bullet" ? ["•", "◦", "▪"][indent % 3] : block.type === "ordered" ? `${number}.` : block.props.checked === "true" ? "☑" : "☐"}</span><span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", block.type === "todo" && block.props.checked === "true" && "text-subtle line-through")}>{rich}</span></div>; break;
         case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[3px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
         case "code": content = <div className="my-2 rounded-md bg-[#F5F6F7] dark:bg-[#23262a]"><div className="px-3.5 pt-2 text-[12px] text-subtle">{codeLangLabel(block.props.lang)}</div><pre className={cn("px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", block.props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>{rich}</pre></div>; break;
@@ -200,6 +205,22 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         }
         case "synced": content = <div className="my-2 rounded-lg border border-rose-200 bg-rose-50/20 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-synced-readonly>同步块{block.props.syncId ? `（${block.props.syncId}）` : ""}</div>; break;
         case "subpages": content = <div className="my-2 rounded-lg border bg-sidebar/30 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-subpages-readonly>子页面列表</div>; break;
+        case "embed": {
+          const kindLabel = embedKindLabel(block.props.resourceKind);
+          const href = publicToken ? "" : embedHref(block.props.resourceKind, block.props.resourceId);
+          const label = block.props.title || (block.props.resourceId ? `${kindLabel} #${block.props.resourceId}` : kindLabel);
+          content = (
+            <div className="my-2 flex max-w-[560px] items-center justify-between gap-3 rounded-lg border bg-surface px-3.5 py-2.5 text-[13px]" data-embed-readonly={block.props.resourceKind || "embed"}>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">{kindLabel}</span>
+                <span className="truncate font-medium text-foreground">{label}</span>
+              </span>
+              {href && <a href={href} className="shrink-0 text-[12px] text-primary hover:underline">打开</a>}
+            </div>
+          );
+          break;
+        }
+        case "reminder": content = <ReminderBlockView date={block.props.date} time={block.props.time} label={block.props.label} done={block.props.done === "true"} readOnly />; break;
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
       return <div key={block.id} data-readonly-block={block.type} data-public-block={onCopyBlockLink ? block.id : undefined} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} onPointerDown={(event) => touch(event, block.id)} className={cn(onCopyBlockLink && "group/public-block relative", activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{actions(block)}{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;

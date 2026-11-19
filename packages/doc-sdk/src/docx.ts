@@ -98,7 +98,7 @@ export function imageInfo(data: Uint8Array): Omit<DocxImage, "data"> | null {
   return null;
 }
 
-const TEXT_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo", "callout"]);
+const TEXT_TYPES = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "quote", "bullet", "ordered", "todo", "callout"]);
 const SOURCE_TYPES = new Set(["code", "math", "diagram"]);
 const DOCX_MARKS = new Set(["bold", "italic", "underline", "strike", "code", "link", "linkKind", "color", "bg"]);
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -343,7 +343,7 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
       case "title":
         if (text.trim()) out.push(paragraph(`<w:pStyle w:val="Title"/>`, w.runs(spans)));
         break;
-      case "h1": case "h2": case "h3": case "h4": case "h5": case "h6":
+      case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": case "h7": case "h8": case "h9":
         out.push(paragraph(`<w:pStyle w:val="Heading${block.type[1]}"/>${alignXml(block.props)}`, w.runs(spans)));
         break;
       case "bullet":
@@ -411,6 +411,21 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         out.push(paragraph("", w.runs([{ text: label, marks: url ? { link: url } : {} }])));
         break;
       }
+      case "embed": {
+        const kindLabel = block.props.resourceKind === "sheet" ? "电子表格" : block.props.resourceKind === "base" ? "多维表格" : block.props.resourceKind === "survey" ? "问卷" : block.props.resourceKind === "slides" ? "幻灯片" : "资源";
+        const route = block.props.resourceKind === "sheet" || block.props.resourceKind === "base" || block.props.resourceKind === "survey" || block.props.resourceKind === "slides" ? block.props.resourceKind : "doc";
+        const title = block.props.title || (block.props.resourceId ? `#${block.props.resourceId}` : kindLabel);
+        const url = block.props.resourceId ? `#/${route}/${block.props.resourceId}` : undefined;
+        out.push(paragraph("", w.runs([{ text: `嵌入${kindLabel}：${title}`, marks: url ? { link: url } : {} }])));
+        break;
+      }
+      case "reminder": {
+        const box = block.props.done === "true" ? TODO_CHECKED : TODO_UNCHECKED;
+        const when = [block.props.date, block.props.time].filter(Boolean).join(" ");
+        const body = [when, block.props.label].filter(Boolean).join(" ").trim() || "日期提醒";
+        out.push(paragraph(`<w:pStyle w:val="JiangeTodo"/>`, w.run(`${box} ⏰ ${body}`, {})));
+        break;
+      }
       case "columns": {
         const tbl = columnsTableXml(block, blocks, consumed, w);
         if (tbl) out.push(tbl);
@@ -433,7 +448,7 @@ const STYLES_XML = (() => {
 <w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/></w:style>
 <w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:semiHidden/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
 <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="52"/><w:szCs w:val="52"/></w:rPr></w:style>
-${heading(1, 40)}${heading(2, 32)}${heading(3, 28)}${heading(4, 26)}${heading(5, 24)}${heading(6, 22)}
+${heading(1, 40)}${heading(2, 32)}${heading(3, 28)}${heading(4, 26)}${heading(5, 24)}${heading(6, 22)}${heading(7, 22)}${heading(8, 20)}${heading(9, 20)}
 <w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="BBBFC4"/></w:pBdr><w:ind w:left="240"/></w:pPr><w:rPr><w:color w:val="646A73"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style>
 <w:style w:type="paragraph" w:customStyle="1" w:styleId="JiangeTodo"><w:name w:val="Jiange Todo"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/></w:pPr></w:style>
@@ -624,13 +639,13 @@ function parseNumbering(xml: XmlElement | undefined): NumberingInfo {
   return { formats };
 }
 
-type ParaKind = "paragraph" | "title" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "quote" | "code" | "jcode" | "math" | "diagram" | "callout" | "divider" | "todo" | "bullet" | "ordered";
+type ParaKind = "paragraph" | "title" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "h7" | "h8" | "h9" | "quote" | "code" | "jcode" | "math" | "diagram" | "callout" | "divider" | "todo" | "bullet" | "ordered";
 
 function styleKind(style: StyleInfo): ParaKind | undefined {
   const byId: Record<string, ParaKind> = { JiangeCode: "jcode", JiangeMath: "math", JiangeDiagram: "diagram", JiangeCallout: "callout", JiangeDivider: "divider", JiangeTodo: "todo" };
   if (byId[style.id]) return byId[style.id];
   const heading = style.name.match(/^heading ([1-9])$/) ?? style.id.match(/^Heading([1-9])$/);
-  if (heading) return `h${Math.min(6, Number(heading[1]))}` as ParaKind;
+  if (heading) return `h${Math.min(9, Number(heading[1]))}` as ParaKind;
   if (style.name === "title" || style.id === "Title") return "title";
   if (style.name === "quote" || style.name === "intense quote") return "quote";
   if (style.name === "html preformatted" || /\bcode\b/.test(style.name)) return "code";
@@ -657,7 +672,7 @@ class DocxReader {
     for (const style of chain) { kind = styleKind(style); if (kind) break; }
     const direct = child(pPr, "w:outlineLvl")?.attrs["w:val"];
     const outline = direct ?? chain.map((s) => child(s.pPr, "w:outlineLvl")?.attrs["w:val"]).find((v) => v !== undefined);
-    if (!kind && outline !== undefined && Number(outline) >= 0 && Number(outline) <= 5) kind = `h${Number(outline) + 1}` as ParaKind;
+    if (!kind && outline !== undefined && Number(outline) >= 0 && Number(outline) <= 8) kind = `h${Number(outline) + 1}` as ParaKind;
     const numPr = child(pPr, "w:numPr") ?? chain.map((s) => child(s.pPr, "w:numPr")).find(Boolean);
     const numId = child(numPr, "w:numId")?.attrs["w:val"];
     const ilvl = Number(child(numPr, "w:ilvl")?.attrs["w:val"] ?? 0) || 0;

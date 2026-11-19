@@ -98,7 +98,7 @@ describe("Word export → import round trip", () => {
   const view = {
     blocks: [
       b("title", "季度计划"),
-      b("h1", "一级标题"), b("h2", "二级"), b("h3", "三级"), b("h4", "四级"), b("h5", "五级"), b("h6", "六级"),
+      b("h1", "一级标题"), b("h2", "二级"), b("h3", "三级"), b("h4", "四级"), b("h5", "五级"), b("h6", "六级"), b("h7", "七级"), b("h8", "八级"), b("h9", "九级"),
       b("paragraph", [
         { text: "普通", marks: {} },
         { text: "粗体", marks: { bold: "true" } },

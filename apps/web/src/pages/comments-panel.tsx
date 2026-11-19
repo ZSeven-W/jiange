@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, commentsApi, type Comment, type User } from "@/lib/api";
-import { scrollToCommentThread } from "@/editor/comment-anchor";
+import { isCrossBlockComment, scrollToCommentThread } from "@/editor/comment-anchor";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { commentListKey, commentMembersKey, type SavedCommentDraft } from "./comment-access";
@@ -259,7 +259,12 @@ export function CommentsPanel({
             onClick={() => onActivate(activeThread === t.id ? null : t.id)}
             data-thread={t.id}
           >
-            {t.quote && <div className="mb-2.5 truncate border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle" data-thread-quote data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t.quote}</div>}
+            {t.quote && (
+              <div className={`mb-2.5 border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle ${isCrossBlockComment(t) ? "line-clamp-3 whitespace-pre-line" : "truncate"}`} data-thread-quote data-cross-block-thread={isCrossBlockComment(t) ? "true" : undefined} data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>
+                {isCrossBlockComment(t) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">跨段落</span>}
+                {t.quote}
+              </div>
+            )}
             <CommentAuthor name={t.userName} userId={t.userId} at={t.createdAt} />
             <div className="mt-1 pl-8"><CommentBody c={t} members={visibleMembers} /></div>
             {(replies.get(t.id) ?? []).map((rp) => (
@@ -474,7 +479,12 @@ function Composer({
   };
   return (
     <div ref={composerRef} tabIndex={-1} className="mb-3 rounded-lg border p-2 focus-within:border-primary" data-comment-composer>
-      {draft?.quote && !parentId && <div className="mb-1.5 truncate border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{draft.quote}</div>}
+      {draft?.quote && !parentId && (
+        <div className={`mb-1.5 border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground ${isCrossBlockComment(draft) ? "line-clamp-3 whitespace-pre-line" : "truncate"}`} data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>
+          {isCrossBlockComment(draft) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">跨段落</span>}
+          {draft.quote}
+        </div>
+      )}
       {posting && <p role="status" className="mb-1 text-[12px] text-muted-foreground">上一条评论正在发送，请稍候。</p>}
       {!canSubmit && <p role="status" className="mb-1 text-[12px] text-muted-foreground">正在验证评论权限，草稿仍可编辑。</p>}
       {originChanged && <p role="alert" className="mb-1 text-[12px] text-muted-foreground">未发送的文字属于之前的选区。 <button type="button" className="text-primary underline" onClick={() => { setTextOrigin(draft); onSnapshot({ text, draft, parentId }); }}>用于当前选区</button></p>}
@@ -510,15 +520,15 @@ function Composer({
           ))}
         </div>
       )}
-      <div className="mt-1 flex items-center">
-        <span className="text-[11px] text-subtle">Enter 发送，Shift+Enter 换行</span>
-        <div className="ml-auto flex gap-2">
+      <div className="mt-1 flex items-center gap-2">
+        <span className="min-w-0 truncate text-[11px] text-subtle">Enter 发送，Shift+Enter 换行</span>
+        <div className="ml-auto flex shrink-0 gap-1.5">
           {onCancel && (
-            <button className="h-6 rounded border px-2 text-[12px]" onClick={onCancel}>
+            <button className="h-6 shrink-0 whitespace-nowrap rounded border px-2 text-[12px]" onClick={onCancel}>
               取消
             </button>
           )}
-          <button className="h-6 rounded bg-primary px-2.5 text-[12px] text-white disabled:opacity-50" disabled={!text.trim() || posting || originChanged || !canSubmit} onClick={() => void post()} data-comment-send>
+          <button className="h-6 shrink-0 whitespace-nowrap rounded bg-primary px-2.5 text-[12px] text-white disabled:opacity-50" disabled={!text.trim() || posting || originChanged || !canSubmit} onClick={() => void post()} data-comment-send>
             发送
           </button>
         </div>

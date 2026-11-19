@@ -87,12 +87,28 @@ func publicCommonBlock(block collab.BlockView, children map[string]bool, columnC
 		keep("url", "name")
 	case "bookmark":
 		keep("url", "name", "title")
+	case "embed":
+		switch props["resourceKind"] {
+		case "sheet", "base", "survey", "slides":
+			clean["resourceKind"] = props["resourceKind"]
+		}
+		if id := publicFileID(props["resourceId"]); id != "" {
+			clean["resourceId"] = id
+		}
+		keep("title")
+	case "reminder":
+		keep("date", "time", "label")
+		if props["done"] == "true" {
+			clean["done"] = "true"
+		}
+	case "synced":
+		keep("syncId")
 	case "flowchart":
 		clean = publicFlowProps(props)
 	}
 	block.Props = clean
 	switch block.Type {
-	case "image", "file", "video", "bookmark", "flowchart", "divider", "columns":
+	case "image", "file", "video", "bookmark", "flowchart", "divider", "columns", "embed", "reminder", "synced", "subpages":
 		// These renderers do not display the block's text, which may be left
 		// over after a type conversion. Child blocks are handled separately.
 		block.Spans = []collab.Span{}

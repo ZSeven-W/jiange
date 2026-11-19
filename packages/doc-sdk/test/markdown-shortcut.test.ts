@@ -40,7 +40,7 @@ describe("Feishu Markdown typing shortcuts", () => {
       const tx = new Tx(doc); expect(markdownShortcut(tx, { b: block, o: 5 }, " ")).toBeNull(); expect(tx.ops).toHaveLength(0); expect(doc.text(block)).toBe("~符号~ ");
     }
   });
-  it.each([["#### ", "h4"], ["##### ", "h5"], ["###### ", "h6"]])("converts %s to %s", (syntax, type) => {
+  it.each([["#### ", "h4"], ["##### ", "h5"], ["###### ", "h6"], ["####### ", "h7"], ["######## ", "h8"], ["######### ", "h9"]])("converts %s to %s", (syntax, type) => {
     const { doc, block } = make(syntax); markdownShortcut(new Tx(doc), { b: block, o: syntax.length }, " ");
     expect(doc.blockInfo(block).type).toBe(type); expect(doc.text(block)).toBe("");
   });

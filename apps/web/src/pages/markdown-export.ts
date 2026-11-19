@@ -8,7 +8,7 @@ type ExportBlock = {
   spans: { text: string; marks: Record<string, string> }[];
 };
 
-const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "quote", "bullet", "ordered", "todo"]);
+const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "quote", "bullet", "ordered", "todo"]);
 const SPECIAL_BLOCKS = new Set(["code", "math", "diagram", "divider", "flowchart"]);
 const MARKS = new Set(["bold", "italic", "strike", "code", "link", "linkKind"]);
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;

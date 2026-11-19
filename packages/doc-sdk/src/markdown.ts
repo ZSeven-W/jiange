@@ -343,7 +343,7 @@ export function parseMarkdown(md: string): MdBlock[] {
       i++;
       continue;
     }
-    const heading = line.match(/^(#{1,6}) +(.*)$/);
+    const heading = line.match(/^(#{1,9}) +(.*)$/);
     if (heading) {
       const spans = parseInline(heading[2]);
       blocks.push({ type: "h" + heading[1].length, text: spans.map(s => s.text).join(""), props: {}, spans });
@@ -420,6 +420,9 @@ export function toMarkdown(blocks: MdBlock[]): string {
       case "h4":
       case "h5":
       case "h6":
+      case "h7":
+      case "h8":
+      case "h9":
         orderedNo = 0;
         out.push(`${"#".repeat(Number(b.type[1]))} ${inline}`);
         break;
@@ -478,6 +481,22 @@ export function toMarkdown(blocks: MdBlock[]): string {
         orderedNo = 0;
         out.push(`[${b.props.name ?? (b.text || "附件")}](${b.props.url ?? ""})`);
         break;
+      case "embed": {
+        orderedNo = 0;
+        const kindLabel = b.props.resourceKind === "sheet" ? "电子表格" : b.props.resourceKind === "base" ? "多维表格" : b.props.resourceKind === "survey" ? "问卷" : b.props.resourceKind === "slides" ? "幻灯片" : "资源";
+        const route = b.props.resourceKind === "sheet" || b.props.resourceKind === "base" || b.props.resourceKind === "survey" || b.props.resourceKind === "slides" ? b.props.resourceKind : "doc";
+        const title = b.props.title || (b.props.resourceId ? `#${b.props.resourceId}` : kindLabel);
+        const href = b.props.resourceId ? `#/${route}/${b.props.resourceId}` : "";
+        out.push(href ? `[嵌入${kindLabel}：${title}](${href})` : `[嵌入${kindLabel}：${title}]`);
+        break;
+      }
+      case "reminder": {
+        orderedNo = 0;
+        const when = [b.props.date, b.props.time].filter(Boolean).join(" ");
+        const body = [when, b.props.label].filter(Boolean).join(" ").trim() || "日期提醒";
+        out.push(`- [${b.props.done === "true" ? "x" : " "}] ⏰ ${body}`);
+        break;
+      }
       case "bullet":
         orderedNo = 0;
         out.push(`${pad}- ${inline}`);

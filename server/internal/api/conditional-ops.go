@@ -81,7 +81,7 @@ func conditionalTableKey(key string) bool {
 
 func conditionalTextBlock(kind string) bool {
 	switch kind {
-	case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "code", "callout":
+	case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "code", "callout":
 		return true
 	default:
 		return false

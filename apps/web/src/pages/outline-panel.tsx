@@ -8,11 +8,11 @@ export interface OutlineItem {
   text: string;
 }
 
-/** 从文档块列表提取标题大纲（h1-h6）。 */
+/** 从文档块列表提取标题大纲（h1-h9）。 */
 export function outlineOf(blocks: { id: string; type: string; spans: { text: string }[] }[]): OutlineItem[] {
   const out: OutlineItem[] = [];
   for (const b of blocks) {
-    if (!/^h[1-6]$/.test(b.type)) continue;
+    if (!/^h[1-9]$/.test(b.type)) continue;
     const text = b.spans.map((s) => s.text).join("").trim();
     if (text) out.push({ id: b.id, level: Number(b.type[1]), text });
   }
@@ -156,7 +156,7 @@ export function OutlinePanel({
     document.addEventListener("pointerdown", outside, true);
     return () => { document.removeEventListener("keydown", escape, true); document.removeEventListener("pointerdown", outside, true); };
   }, [miniOpen]);
-  const minLevel = items.reduce((m, it) => Math.min(m, it.level), 6);
+  const minLevel = items.reduce((m, it) => Math.min(m, it.level), 9);
   const rows = visibleOutline(items, collapsed);
   const toggle = (id: string) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const afterJump = () => {
@@ -198,7 +198,7 @@ export function OutlinePanel({
           {rows.map(({ item: it, hasChildren }) => {
             const active = activeId === it.id;
             const folded = collapsed.has(it.id);
-            const pad = 8 + (it.level - minLevel) * 15;
+            const pad = 8 + Math.min(it.level - minLevel, 6) * 14;
             return (
               <div key={it.id} className="group/row relative">
                 {hasChildren && <button type="button" aria-label={t(folded ? "展开 {title}" : "折叠 {title}", { title: it.text })} aria-expanded={!folded} onClick={() => toggle(it.id)} className={cn("absolute top-[5px] z-10 grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground", folded ? "" : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100")} style={{ left: pad - 18 }} data-outline-fold={it.id}>

@@ -415,7 +415,7 @@ func (s *Server) scanDocumentReferences(ctx context.Context, guard store.Restore
 
 func referenceTextBlock(kind string) bool {
 	switch kind {
-	case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote", "callout":
+	case "paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote", "callout":
 		return true
 	}
 	return false

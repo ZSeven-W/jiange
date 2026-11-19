@@ -1,5 +1,5 @@
-import { eqId, ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
-import { collapsed, type Pos, type Sel } from "./model";
+import { eqId, idKey, ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
+import { collapsed, mathSpansFromChars, TEXTLESS, type Pos, type Sel } from "./model";
 import { isMultiwordSlashPrefix } from "./pinyin";
 
 /** Open slash commands only at the beginning of a line or after whitespace. */
@@ -76,6 +76,7 @@ export interface SlashInsertion {
   anchor: OpId;
   beforeAnchor: boolean;
   commandIds: OpId[] | null;
+  tailIds?: OpId[] | null;
   parent?: OpId;
   type?: string;
 }
@@ -85,19 +86,84 @@ export function captureSlashInsertion(doc: Doc, at: Pos, sel: Sel | null, fromBu
   if (!doc.hasBlock(anchor)) return null;
   const info = doc.blockInfo(anchor);
   if (!eqId(info.parent, ROOT)) return null;
-  if (fromButton) return { doc, anchor, beforeAnchor: !insertAfter, commandIds: null, parent: info.parent, type: info.type };
+  if (fromButton) return { doc, anchor, beforeAnchor: !insertAfter, commandIds: null, tailIds: null, parent: info.parent, type: info.type };
   if (!sel || !collapsed(sel) || !eqId(sel.f.b, at.b) || at.o < 0 || sel.f.o <= at.o) return null;
   const ids = doc.visibleIds(at.b);
   const chars = doc.richChars(at.b);
   if (sel.f.o > ids.length || chars[at.o]?.ch !== "/" || chars.slice(at.o, sel.f.o).some((char) => !!char.marks.math)) return null;
-  return { doc, anchor, beforeAnchor: at.o === 0 && sel.f.o === ids.length, commandIds: ids.slice(at.o, sel.f.o), parent: info.parent, type: info.type };
+  return { doc, anchor, beforeAnchor: at.o === 0 && sel.f.o === ids.length, commandIds: ids.slice(at.o, sel.f.o), tailIds: ids.slice(sel.f.o), parent: info.parent, type: info.type };
+}
+
+function insertRichTail(tx: Tx, target: OpId, tail: { ch: string; marks: Record<string, string> }[]): void {
+  if (!tail.length) return;
+  tx.insert(target, 0, tail.map((c) => c.ch).join(""), tail.map((c) => c.marks));
+  const ids = tx.doc.visibleIds(target);
+  for (const span of mathSpansFromChars(tail)) {
+    if (ids[span.start]) tx.format(target, span.start, span.end, "mathId", idKey(ids[span.start]));
+  }
+}
+
+/**
+ * Insert a block-level element via synchronous slash command, safely splitting
+ * the current paragraph if the command appeared in the middle of existing text.
+ */
+export function insertBlockAtSlashOffset(
+  tx: Tx,
+  block: OpId,
+  offset: number,
+  type: string,
+  props: Record<string, string> = {},
+  text = "",
+): { inserted: OpId; caret: Pos } {
+  const doc = tx.doc;
+  const info = doc.blockInfo(block);
+  const n = doc.visibleIds(block).length;
+  const setProps = (target: OpId) => {
+    for (const [k, v] of Object.entries(props)) if (v) tx.setProp(target, k, v);
+  };
+  // Empty non-textless paragraph: convert in place and ensure a trailing paragraph.
+  if (n === 0 && !TEXTLESS.has(info.type)) {
+    tx.setProp(block, "type", type);
+    setProps(block);
+    if (text) tx.insert(block, 0, text);
+    const next = tx.create("paragraph", block, info.parent);
+    return { inserted: block, caret: { b: next, o: 0 } };
+  }
+  // At start of a non-empty paragraph: insert before the paragraph and keep its text intact.
+  if (offset === 0 && n > 0 && !TEXTLESS.has(info.type)) {
+    const siblings = doc.children(info.parent);
+    const index = siblings.findIndex((id) => eqId(id, block));
+    const after = index > 0 ? siblings[index - 1] : null;
+    const inserted = tx.create(type, after, info.parent);
+    setProps(inserted);
+    if (text) tx.insert(inserted, 0, text);
+    return { inserted, caret: { b: block, o: 0 } };
+  }
+  // In the middle of a paragraph: split tail into a new paragraph after the inserted block.
+  if (offset > 0 && offset < n && !TEXTLESS.has(info.type)) {
+    const tail = doc.richChars(block).slice(offset);
+    tx.delete(block, offset, n);
+    const inserted = tx.create(type, block, info.parent);
+    setProps(inserted);
+    if (text) tx.insert(inserted, 0, text);
+    const tailBlock = tx.create("paragraph", inserted, info.parent);
+    insertRichTail(tx, tailBlock, tail);
+    return { inserted, caret: { b: tailBlock, o: 0 } };
+  }
+  // At end of a paragraph or after a textless block: insert directly after.
+  const inserted = tx.create(type, block, info.parent);
+  setProps(inserted);
+  if (text) tx.insert(inserted, 0, text);
+  const next = tx.create("paragraph", inserted, info.parent);
+  return { inserted, caret: { b: next, o: 0 } };
 }
 
 /**
  * Apply only if the captured command still exists unchanged and contiguously.
- * Never move or delete unrelated paragraph text: it may have been authored by
- * another replica. A command in the middle cannot safely split a CRDT block,
- * so report it to the caller rather than silently changing content order.
+ * Never move or delete unrelated paragraph text authored concurrently by
+ * another replica. Local mid-paragraph commands split cleanly when the suffix
+ * still matches the captured tail IDs; concurrent edits on both sides still
+ * report "middle" so peer text is never silently reordered.
  */
 export function insertSlashBlock(tx: Tx, captured: SlashInsertion, type: string, props: Record<string, string>, text = ""): Pos | "middle" | null {
   const doc = tx.doc;
@@ -106,26 +172,43 @@ export function insertSlashBlock(tx: Tx, captured: SlashInsertion, type: string,
   if (!eqId(info.parent, ROOT)) return null;
   if ((captured.parent && !eqId(info.parent, captured.parent)) || (captured.type && captured.type !== info.type)) return null;
   let commandStart = -1;
+  let commandEnd = -1;
   let beforeAnchor = captured.beforeAnchor;
+  let splitTail: { ch: string; marks: Record<string, string> }[] | null = null;
   if (captured.commandIds) {
     const ids = doc.visibleIds(captured.anchor);
     commandStart = ids.findIndex((id) => eqId(id, captured.commandIds![0]));
     if (commandStart < 0 || captured.commandIds.some((id, i) => !ids[commandStart + i] || !eqId(id, ids[commandStart + i]))) return null;
-    const commandEnd = commandStart + captured.commandIds.length;
+    commandEnd = commandStart + captured.commandIds.length;
     if (doc.richChars(captured.anchor).slice(commandStart, commandEnd).some((char) => !!char.marks.math)) return null;
-    if (commandStart > 0 && commandEnd < ids.length) return "middle";
+    if (commandStart > 0 && commandEnd < ids.length) {
+      const currentTailIds = ids.slice(commandEnd);
+      const expectedTailIds = captured.tailIds;
+      const tailUnchanged = !!expectedTailIds
+        && expectedTailIds.length === currentTailIds.length
+        && expectedTailIds.every((id, i) => eqId(id, currentTailIds[i]));
+      if (!tailUnchanged) return "middle";
+      splitTail = doc.richChars(captured.anchor).slice(commandEnd);
+    }
     beforeAnchor = commandStart === 0;
   }
   const siblings = doc.children(info.parent);
   const index = siblings.findIndex((id) => eqId(id, captured.anchor));
   if (index < 0) return null;
-  if (captured.commandIds) tx.delete(captured.anchor, commandStart, commandStart + captured.commandIds.length);
+  if (captured.commandIds) {
+    tx.delete(captured.anchor, commandStart, splitTail ? doc.visibleIds(captured.anchor).length : commandEnd);
+  }
   const after = beforeAnchor ? (index > 0 ? siblings[index - 1] : null) : captured.anchor;
   const block = tx.create(type, after, info.parent);
   // Record properties separately so undo can clear our values while leaving
   // the block itself alive for operations from collaborators that arrive late.
   for (const [key, value] of Object.entries(props)) if (value) tx.setProp(block, key, value);
   if (text) tx.insert(block, 0, text);
+  if (splitTail) {
+    const tailBlock = tx.create("paragraph", block, info.parent);
+    insertRichTail(tx, tailBlock, splitTail);
+    return { b: tailBlock, o: 0 };
+  }
   // A slash-only paragraph remains after the new block; otherwise create a
   // new writable paragraph following the inserted atomic block.
   if (beforeAnchor && doc.blockInfo(captured.anchor).type === "paragraph") return { b: captured.anchor, o: 0 };

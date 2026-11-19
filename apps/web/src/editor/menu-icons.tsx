@@ -1,8 +1,12 @@
 import {
+  Bell,
   ChevronRight,
+  ClipboardList,
   Code2,
   Columns2,
+  FileSpreadsheet,
   FileText,
+  FolderTree,
   Heading1,
   Heading2,
   Heading3,
@@ -18,7 +22,9 @@ import {
   ListTodo,
   Paperclip,
   Play,
+  Presentation,
   Quote,
+  Repeat2,
   DiagramFlowVertical,
   Sigma,
   SquareCheck,
@@ -27,6 +33,21 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
+
+function makeHeadingIcon(digit: "7" | "8" | "9") {
+  return function HeadingN({ size = 16, strokeWidth = 1.7, className }: { size?: number; strokeWidth?: number; className?: string }) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+        <path d="M4 12h8M4 18V6M12 18V6" />
+        <text x="15.2" y="18" fill="currentColor" stroke="none" fontSize="11.5" fontWeight="600" fontFamily="system-ui, sans-serif">{digit}</text>
+      </svg>
+    );
+  };
+}
+
+const Heading7 = makeHeadingIcon("7");
+const Heading8 = makeHeadingIcon("8");
+const Heading9 = makeHeadingIcon("9");
 
 /** 斜杠菜单 icon：id → lucide 组件（lucide 没有的用自绘 SVG 补齐）。 */
 export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>> = {
@@ -37,6 +58,9 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   h4: Heading4,
   h5: Heading5,
   h6: Heading6,
+  h7: Heading7,
+  h8: Heading8,
+  h9: Heading9,
   bullet: List,
   ordered: ListOrdered,
   todo: SquareCheck,
@@ -54,6 +78,14 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   table: Table2,
   columns: Columns2,
   divider: Minus,
+  synced: Repeat2,
+  subpages: FolderTree,
+  reminder: Bell,
+  embed: FileSpreadsheet,
+  "embed-sheet": FileSpreadsheet,
+  "embed-base": Table2,
+  "embed-survey": ClipboardList,
+  "embed-slides": Presentation,
   doc: FileText, // @ 提及文档
 };
 

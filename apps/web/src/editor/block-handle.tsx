@@ -4,7 +4,7 @@ import { MENU_ICONS } from "./menu-icons";
 import { cn } from "@/lib/utils";
 
 /** 纯文本类块：可显示“+”空行入口，也可在块菜单中互相转换、缩进和设置颜色。 */
-export const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "bullet", "ordered", "todo", "quote"]);
+export const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote"]);
 export const CONVERTIBLE = TEXT_BLOCKS;
 /** 块菜单可设置文字/背景颜色的块。 */
 export const COLORABLE = new Set([...TEXT_BLOCKS, "callout"]);

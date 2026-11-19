@@ -39,12 +39,40 @@ describe("comment selection anchors", () => {
     expect(commentSelection(doc, { a: pos(1), f: pos(5) })).toEqual({ ok: false, reason: "invalid" });
   });
 
-  it("rejects selections across blocks in either direction", () => {
+  it("anchors cross-paragraph selections in either direction and projects highlights across all spanned blocks", () => {
     const { doc, first, second } = setup();
+    const tx = new Tx(doc);
+    const third = tx.create("paragraph", second, ROOT);
+    tx.insert(third, 0, "第三段文字");
     const a = { b: first, o: 2 };
-    const f = { b: second, o: 1 };
-    expect(commentSelection(doc, { a, f })).toEqual({ ok: false, reason: "cross-block" });
-    expect(commentSelection(doc, { a: f, f: a })).toEqual({ ok: false, reason: "cross-block" });
+    const f = { b: third, o: 3 };
+    const forward = commentSelection(doc, { a, f });
+    const backward = commentSelection(doc, { a: f, f: a });
+    expect(backward).toEqual(forward);
+    expect(forward).toEqual({
+      ok: true,
+      anchor: {
+        block: idKey(first),
+        startChar: idKey(doc.visibleIds(first)[2]),
+        endChar: `${idKey(third)}|${idKey(doc.visibleIds(third)[2])}`,
+        quote: "乙丙\n另一段\n第三段",
+      },
+    });
+    const anchor = forward.ok ? forward.anchor : null;
+    expect(anchor).not.toBeNull();
+    const crossComment: Comment = {
+      id: 31, docId: 1, userId: 1, userName: "测试",
+      block: anchor!.block, startChar: anchor!.startChar, endChar: anchor!.endChar, quote: anchor!.quote,
+      body: "跨段落批注", resolved: false, createdAt: "", updatedAt: "",
+    };
+    expect(projectCommentAnchors(doc, first, [crossComment])).toEqual({ flags: [null, null, 31, 31], threadIds: [31], blockThreadIds: [] });
+    expect(projectCommentAnchors(doc, second, [crossComment])).toEqual({ flags: [31, 31, 31], threadIds: [], blockThreadIds: [] });
+    expect(projectCommentAnchors(doc, third, [crossComment])).toEqual({ flags: [31, 31, 31, null, null], threadIds: [], blockThreadIds: [] });
+    // Deleting the end endpoint char invalidates projection across all spanned blocks.
+    new Tx(doc).delete(third, 2, 3);
+    expect(projectCommentAnchors(doc, first, [crossComment]).flags).toBeUndefined();
+    expect(projectCommentAnchors(doc, second, [crossComment]).flags).toBeUndefined();
+    expect(projectCommentAnchors(doc, third, [crossComment]).flags).toBeUndefined();
   });
 
   it("does not anchor hidden formula source", () => {
