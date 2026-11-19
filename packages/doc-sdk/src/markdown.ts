@@ -1,5 +1,5 @@
 import { readFlow, toMermaid } from "@jiange/whiteboard-sdk/model";
-import { tableDataOf } from "./table-cells.js";
+import { tableCellHasRichMarks, tableCellRich, tableDataOf, type TableRichSpan } from "./table-cells.js";
 /**
  * Markdown import/export for Jiange documents (P6).
  *
@@ -262,9 +262,30 @@ function tableRow(line: string): string[] | null {
   return cells;
 }
 
-function tableAsMarkdown(rows: string[][]): string[] {
-  const row = (cells: string[]) => `| ${cells.map(tableCellToMarkdown).join(" | ")} |`;
-  return [row(rows[0]), row(rows[0].map(() => "---")), ...rows.slice(1).map(row)];
+function richTableCellToMarkdown(spans: readonly TableRichSpan[]): string {
+  return spans.map((span) => {
+    let out = tableCellToMarkdown(span.text);
+    const m = span.marks;
+    if (!m) return out;
+    if (m.code) out = `\`${out}\``;
+    if (m.strike) out = `~~${out}~~`;
+    if (m.italic) out = `*${out}*`;
+    if (m.bold) out = `**${out}**`;
+    if (m.underline) out = `<u>${out}</u>`;
+    return out;
+  }).join("");
+}
+
+function tableAsMarkdown(rows: string[][], props?: Record<string, string>): string[] {
+  const row = (cells: string[], ri: number) => `| ${cells.map((cell, ci) => {
+    if (props) {
+      const spans = tableCellRich(props, ri, ci, cell);
+      if (tableCellHasRichMarks(spans)) return richTableCellToMarkdown(spans);
+    }
+    return tableCellToMarkdown(cell);
+  }).join(" | ")} |`;
+  const sep = `| ${rows[0].map(() => "---").join(" | ")} |`;
+  return [row(rows[0], 0), sep, ...rows.slice(1).map((r, idx) => row(r, idx + 1))];
 }
 
 // ---------- block parsing ----------
@@ -440,7 +461,7 @@ export function toMarkdown(blocks: MdBlock[]): string {
       case "table": {
         orderedNo = 0;
         const rows = markdownTableRows(tableDataOf(b.props));
-        if (rows) out.push("", ...tableAsMarkdown(rows), "");
+        if (rows) out.push("", ...tableAsMarkdown(rows, b.props), "");
         else {
           // Preserve malformed/legacy source instead of silently discarding it.
           const source = tableDataOf(b.props);

@@ -1,8 +1,8 @@
-import { tableCellAlign, tableCellFill, type TableHorizontalAlign, type TableVerticalAlign } from './table-cells';
+import { tableCellAlign, tableCellFill, tableCellHasRichMarks, tableCellRich, type TableHorizontalAlign, type TableRichSpan, type TableVerticalAlign } from './table-cells';
 import { formatTableTSV, planTablePasteGrid } from './table-clipboard';
 import { coverMap, expandRange, normRange, parseMerges, type CellRange, type Merge } from './table-ops';
 
-export interface RichTableCell { text: string; fill: string; horizontal: TableHorizontalAlign; vertical: TableVerticalAlign }
+export interface RichTableCell { text: string; fill: string; horizontal: TableHorizontalAlign; vertical: TableVerticalAlign; rich?: TableRichSpan[] }
 export type RichTableClipboard = { version: 1; cells: RichTableCell[][] } | { version: 2; cells: RichTableCell[][]; merges: Merge[] };
 const MAX_HTML = 2 * 1024 * 1024, MAX_CELLS = 1000, MAX_TEXT = 256 * 1024;
 const escapeHTML = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -12,10 +12,51 @@ const encode = (value: string) => {
   return btoa(binary);
 };
 const plainGrid = (cells: RichTableCell[][]) => cells.map(row => row.map(cell => cell.text));
+function isValidRichSpans(value: unknown, expectedText: string): value is TableRichSpan[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 512) return false;
+  let joined = '';
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    const span = item as Record<string, unknown>;
+    if (typeof span.text !== 'string') return false;
+    joined += span.text;
+    if (span.marks !== undefined) {
+      if (!span.marks || typeof span.marks !== 'object' || Array.isArray(span.marks)) return false;
+      const m = span.marks as Record<string, unknown>;
+      for (const [k, v] of Object.entries(m)) {
+        if (k === 'color') {
+          if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) return false;
+        } else if (['bold', 'italic', 'underline', 'strike', 'code'].includes(k)) {
+          if (typeof v !== 'boolean') return false;
+        } else return false;
+      }
+    }
+  }
+  return joined === expectedText;
+}
+
 function isRichCell(value: unknown): value is RichTableCell {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const cell = value as Record<string, unknown>;
-  return typeof cell.text === 'string' && typeof cell.fill === 'string' && (cell.fill === '' || /^#[0-9a-f]{6}$/i.test(cell.fill)) && typeof cell.horizontal === 'string' && ['left','center','right'].includes(cell.horizontal) && typeof cell.vertical === 'string' && ['top','middle','bottom'].includes(cell.vertical);
+  if (!(typeof cell.text === 'string' && typeof cell.fill === 'string' && (cell.fill === '' || /^#[0-9a-f]{6}$/i.test(cell.fill)) && typeof cell.horizontal === 'string' && ['left','center','right'].includes(cell.horizontal) && typeof cell.vertical === 'string' && ['top','middle','bottom'].includes(cell.vertical))) return false;
+  if (cell.rich !== undefined && !isValidRichSpans(cell.rich, cell.text)) return false;
+  return true;
+}
+
+function renderRichCellHTML(cell: RichTableCell): string {
+  if (!cell.rich || !tableCellHasRichMarks(cell.rich)) return escapeHTML(cell.text).replace(/\n/g, '<br>');
+  return cell.rich.map(span => {
+    let inner = escapeHTML(span.text).replace(/\n/g, '<br>');
+    const m = span.marks;
+    if (!m) return inner;
+    if (m.code) inner = `<code>${inner}</code>`;
+    if (m.strike) inner = `<s>${inner}</s>`;
+    if (m.underline) inner = `<u>${inner}</u>`;
+    if (m.italic) inner = `<em>${inner}</em>`;
+    if (m.bold) inner = `<strong>${inner}</strong>`;
+    if (m.color) inner = `<span style="color:${m.color}">${inner}</span>`;
+    return inner;
+  }).join('');
 }
 function validHiddenCells(cells: RichTableCell[][], merges: Merge[]): boolean {
   const covered=coverMap(merges);
@@ -34,7 +75,11 @@ export function tableRichHTML(rows: string[][], props: Record<string, string>, r
   const cells: RichTableCell[][] = Array.from({length: height}, (_, y) => Array.from({length: width}, (_, x) => {
     const row = r.r0+y, col = r.c0+x;
     if (cover.get(`${row}:${col}`) === 'hidden') return {text:'', fill:'', horizontal:'left', vertical:'top'};
-    return {text:rows[row][col], fill:tableCellFill(props,row,col), horizontal:tableCellAlign(props,row,col,'horizontal'), vertical:tableCellAlign(props,row,col,'vertical')};
+    const text = rows[row][col];
+    const spans = tableCellRich(props, row, col, text);
+    const cell: RichTableCell = {text, fill:tableCellFill(props,row,col), horizontal:tableCellAlign(props,row,col,'horizontal'), vertical:tableCellAlign(props,row,col,'vertical')};
+    if (tableCellHasRichMarks(spans)) cell.rich = spans;
+    return cell;
   }));
   if (cells.flat().reduce((n, cell) => n + cell.text.length, 0) > MAX_TEXT) return null;
   const relativeMerges: Merge[] = merges.filter(([row,col]) => row >= r.r0 && col >= r.c0 && row <= r.r1 && col <= r.c1).map(([row,col,rs,cs]) => [row-r.r0,col-r.c0,rs,cs]);
@@ -44,7 +89,7 @@ export function tableRichHTML(rows: string[][], props: Record<string, string>, r
   const body = cells.map((row, y) => `<tr>${row.map((cell,x) => {
     const info=cover.get(`${r.r0+y}:${r.c0+x}`); if(info==='hidden') return '';
     const span=info?.span, styles=[cell.fill && `background-color:${cell.fill}`,cell.horizontal!=='left' && `text-align:${cell.horizontal}`,cell.vertical!=='top' && `vertical-align:${cell.vertical}`].filter(Boolean).join(';');
-    return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ''}${span?.[1] ? ` colspan="${span[1]}"` : ''}${styles ? ` style="${styles}"` : ''}>${escapeHTML(cell.text).replace(/\n/g,'<br>')}</td>`;
+    return `<td${span?.[0] ? ` rowspan="${span[0]}"` : ''}${span?.[1] ? ` colspan="${span[1]}"` : ''}${styles ? ` style="${styles}"` : ''}>${renderRichCellHTML(cell)}</td>`;
   }).join('')}</tr>`).join('');
   const html=`<table data-jiange-cell-grid="${payload}">${body}</table>`;
   return html.length <= MAX_HTML ? html : null;
@@ -78,7 +123,11 @@ export function parseTableRichHTML(html: string, plain: string): RichTableClipbo
         size+=cell.text.length; if(size>MAX_TEXT)return null;
       }
     }
-    const normalized=(cells as RichTableCell[][]).map(row=>row.map(cell=>({text:cell.text,fill:cell.fill.toUpperCase(),horizontal:cell.horizontal,vertical:cell.vertical})));
+    const normalized=(cells as RichTableCell[][]).map(row=>row.map(cell=>{
+      const base: RichTableCell = {text:cell.text,fill:cell.fill.toUpperCase(),horizontal:cell.horizontal,vertical:cell.vertical};
+      if (cell.rich && tableCellHasRichMarks(cell.rich)) base.rich = cell.rich;
+      return base;
+    }));
     let result: RichTableClipboard;
     if ((value as {version:number}).version === 2) {
       const raw=(value as {merges?:unknown}).merges;

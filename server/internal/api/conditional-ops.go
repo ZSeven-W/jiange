@@ -15,6 +15,7 @@ import (
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
+	"github.com/ZSeven-W/jiange/server/internal/tableadmission"
 )
 
 const conditionalBatchLimit = 8 << 20
@@ -22,7 +23,7 @@ const conditionalJSONLimit = 12 << 20
 const conditionalMaxOps = 100000
 const conditionalSafeInteger = 1<<53 - 1
 
-var conditionalCellKey = regexp.MustCompile(`^tbl\.c\.[A-Za-z0-9_-]{1,40}\.[A-Za-z0-9_-]{1,40}$`)
+var conditionalCellKey = regexp.MustCompile(`^tbl\.(?:c|fmt|fill|halign|valign)\.[A-Za-z0-9_-]{1,40}\.[A-Za-z0-9_-]{1,40}$`)
 var conditionalColumnID = regexp.MustCompile(`^\d+:\d+$`)
 var conditionalColumnPosition = regexp.MustCompile(`^[0-9A-Za-z]{1,512}$`)
 
@@ -217,7 +218,23 @@ func conditionalColumnUngroupBatch(ops []collab.Op) (moves []collab.Op, archive 
 	return moves, archive, true
 }
 
-// commitConditionalOps accepts text changes, table-cell properties, bounded table/column widths, and same-parent column moves.
+func conditionalTableCRDTBatch(ops []collab.Op) (collab.OpID, bool) {
+	if len(ops) == 0 {
+		return collab.OpID{}, false
+	}
+	block := ops[0].Block
+	if block == collab.Root {
+		return collab.OpID{}, false
+	}
+	for _, op := range ops {
+		if op.T != collab.TTable || op.Block != block || len(op.Payload) == 0 {
+			return collab.OpID{}, false
+		}
+	}
+	return block, true
+}
+
+// commitConditionalOps accepts text changes, table-cell properties, bounded table/column widths, same-parent column moves, and formal CRDT table batches.
 // Title text changes also update the matching directory name in the same commit.
 // A durable receipt makes an exact retry safe even after the head advances.
 // This endpoint alone cannot prevent stale writes from older sync clients.
@@ -271,6 +288,10 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 	if archiveBatch || createColumnBatch {
 		ungroupBatch = false
 	}
+	tableCRDTBlock, tableCRDTBatch := conditionalTableCRDTBatch(ops)
+	if archiveBatch || createColumnBatch || ungroupBatch {
+		tableCRDTBatch = false
+	}
 	client := ops[0].ID.Client
 	if client == 0 || client > conditionalSafeInteger {
 		httpx.Error(w, http.StatusBadRequest, "invalid_ops", "提交操作无效")
@@ -316,6 +337,11 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		case collab.TBlockSet:
 			if !archiveBatch && !createColumnBatch && !ungroupBatch && !conditionalTableKey(op.Key) && !conditionalAlignment(op) && !conditionalColumnWidths(op) && !conditionalTableWidths(op) {
 				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持此属性操作")
+				return
+			}
+		case collab.TTable:
+			if !tableCRDTBatch {
+				httpx.Error(w, http.StatusBadRequest, "invalid_ops", "不支持混合表格 CRDT 操作")
 				return
 			}
 		default:
@@ -367,13 +393,41 @@ func (s *Server) commitConditionalOps(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusConflict, "document_changed", "文档已变化，请同步后重新操作")
 		return
 	}
-	if rejectUnsupportedTableView(w, state) {
+	if !tableCRDTBatch && rejectUnsupportedTableView(w, state) {
 		return
 	}
 	originalTitle, originalKind, originalVisible := state.VisibleBlockText(collab.OpID{Client: 0, Clock: 1})
 	blockKinds := make(map[collab.OpID]string)
 	titleChanged := false
-	if archiveBatch {
+	if tableCRDTBatch {
+		storedOps, err := s.Store.OpsAfter(r.Context(), d.ID, 0, int(in.Head)+1)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		records := make([]tableadmission.Record, len(storedOps))
+		for i, rec := range storedOps {
+			records[i] = tableadmission.Record{Seq: rec.Seq, Data: rec.Bytes}
+		}
+		proj, err := tableadmission.RebuildOrInit(state, in.Head, tableCRDTBlock, records)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "表格 CRDT 状态无效")
+			return
+		}
+		if _, err = proj.PrepareBatch(client, ops); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_ops", "表格 CRDT 操作校验未通过")
+			return
+		}
+		for _, op := range ops {
+			if err = state.TryApply(op); err != nil {
+				if lookup() {
+					return
+				}
+				httpx.Error(w, http.StatusConflict, "invalid_history", "操作依赖已变化，请同步后重新操作")
+				return
+			}
+		}
+	} else if archiveBatch {
 		move := ops[len(ops)-1]
 		valid := state.CanArchiveColumn(move.Block)
 		if len(ops) == 4 {

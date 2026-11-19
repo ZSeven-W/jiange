@@ -1,4 +1,4 @@
-import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill, tableDataOf, type TableHorizontalAlign, type TableVerticalAlign } from "./table-cells.js";
+import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill, tableCellRich, tableDataOf, type TableHorizontalAlign, type TableRichSpan, type TableVerticalAlign } from "./table-cells.js";
 import { exportableTableMerges, exportableTableWidths, type TableMerge } from "./docx-tables.js";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
@@ -247,6 +247,32 @@ function indentLevel(props: Record<string, string>): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(8, Math.floor(n))) : 0;
 }
 
+function splitRichLines(spans: readonly TableRichSpan[]): TableRichSpan[][] {
+  const lines: TableRichSpan[][] = [[]];
+  for (const span of spans) {
+    const parts = span.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) lines.push([]);
+      if (parts[i]) lines[lines.length - 1].push(span.marks ? { text: parts[i], marks: span.marks } : { text: parts[i] });
+    }
+  }
+  return lines;
+}
+
+function tableCellRunsXml(spans: readonly TableRichSpan[], heading: boolean): string {
+  return spans.map((span) => {
+    const m = span.marks;
+    const rPr: string[] = [];
+    if (heading || m?.bold) rPr.push("<w:b/><w:bCs/>");
+    if (m?.italic) rPr.push("<w:i/><w:iCs/>");
+    if (m?.underline) rPr.push('<w:u w:val="single"/>');
+    if (m?.strike) rPr.push("<w:strike/>");
+    if (m?.code) rPr.push('<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/><w:shd w:val="clear" w:color="auto" w:fill="F2F3F5"/>');
+    if (m?.color) rPr.push(`<w:color w:val="${m.color.slice(1)}"/>`);
+    return `<w:r>${rPr.length ? `<w:rPr>${rPr.join("")}</w:rPr>` : ""}${textContentXml(span.text)}</w:r>`;
+  }).join("");
+}
+
 function tableXml(rows: string[][], props: Record<string, string>): string {
   const cols = rows[0].length;
   const fixed = exportableTableWidths(props.tableWidths, rows).twips;
@@ -264,10 +290,12 @@ function tableXml(rows: string[][], props: Record<string, string>): string {
     if (merge && c !== merge[1]) return "";
     const span = merge?.[3] ?? 1, vertical = merge && merge[2] > 1 ? (r === merge[0] ? '<w:vMerge w:val="restart"/>' : '<w:vMerge/>') : "";
     const heading = (header && r === 0) || (headerColumn && c === 0);
-    const horizontal = tableCellAlign(props, merge?.[0] ?? r, c, "horizontal"), vAlign = tableCellAlign(props, merge?.[0] ?? r, c, "vertical");
-    const paras = cell.split("\n").map((line) => paragraph(horizontal === "left" ? "" : `<w:jc w:val="${horizontal}"/>`, line ? `<w:r>${heading ? "<w:rPr><w:b/><w:bCs/></w:rPr>" : ""}${textContentXml(line)}</w:r>` : "")).join("");
+    const anchorRow = merge?.[0] ?? r;
+    const horizontal = tableCellAlign(props, anchorRow, c, "horizontal"), vAlign = tableCellAlign(props, anchorRow, c, "vertical");
+    const richLines = splitRichLines(tableCellRich(props, anchorRow, c, cell));
+    const paras = richLines.map((lineSpans) => paragraph(horizontal === "left" ? "" : `<w:jc w:val="${horizontal}"/>`, lineSpans.length ? tableCellRunsXml(lineSpans, heading) : "")).join("");
     const width = widths.slice(c, c + span).reduce((sum, n) => sum + n, 0);
-    const fill = tableCellFill(props, merge?.[0] ?? r, c).slice(1) || (heading ? "F5F6F7" : "");
+    const fill = tableCellFill(props, anchorRow, c).slice(1) || (heading ? "F5F6F7" : "");
     return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ""}${vertical}${fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : ""}${vAlign === "top" ? "" : `<w:vAlign w:val="${vAlign === "middle" ? "center" : "bottom"}"/>`}</w:tcPr>${paras}</w:tc>`;
   }).join("")}</w:tr>`).join("");
   const layout = fixed ? `<w:tblW w:w="${widths.reduce((sum, n) => sum + n, 0)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` : `<w:tblW w:w="0" w:type="auto"/>`;

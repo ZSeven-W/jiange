@@ -61,7 +61,7 @@ func publicTableProps(props map[string]string) (map[string]string, error) {
 		case "tbl.v", "tbl.rows", "tbl.cols", "tbl.base", "tbl.m":
 			continue
 		}
-		if !strings.HasPrefix(key, "tbl.c.") && !strings.HasPrefix(key, "tbl.fill.") && !strings.HasPrefix(key, "tbl.halign.") && !strings.HasPrefix(key, "tbl.valign.") {
+		if !strings.HasPrefix(key, "tbl.c.") && !strings.HasPrefix(key, "tbl.fmt.") && !strings.HasPrefix(key, "tbl.fill.") && !strings.HasPrefix(key, "tbl.halign.") && !strings.HasPrefix(key, "tbl.valign.") {
 			return nil, errPublicTableUnavailable
 		}
 	}
@@ -75,7 +75,7 @@ func publicTableProps(props map[string]string) (map[string]string, error) {
 		// A partially migrated table is ambiguous. Recognized legacy visual
 		// cell styles are safe to project by position.
 		for key, value := range props {
-			if strings.HasPrefix(key, "tbl.") && value != "" && !strings.HasPrefix(key, "tbl.fill.") && !strings.HasPrefix(key, "tbl.halign.") && !strings.HasPrefix(key, "tbl.valign.") {
+			if strings.HasPrefix(key, "tbl.") && value != "" && !strings.HasPrefix(key, "tbl.fmt.") && !strings.HasPrefix(key, "tbl.fill.") && !strings.HasPrefix(key, "tbl.halign.") && !strings.HasPrefix(key, "tbl.valign.") {
 				return nil, errPublicTableUnavailable
 			}
 		}
@@ -131,6 +131,9 @@ func publicTableProps(props map[string]string) (map[string]string, error) {
 					out[fmt.Sprintf("tbl.%s.r%d.c%d", kind, r, c)] = value
 				}
 			}
+			if rich := publicTableRichFmt(props["tbl.fmt."+sourceR+"."+sourceC], rows[r][c]); rich != "" {
+				out[fmt.Sprintf("tbl.fmt.r%d.c%d", r, c)] = rich
+			}
 		}
 	}
 	data, _ := json.Marshal(rows)
@@ -151,6 +154,65 @@ func publicTableProps(props map[string]string) (map[string]string, error) {
 		out["tableHeaderColumn"] = "column"
 	}
 	return out, nil
+}
+
+type publicRichMarks struct {
+	Bold      bool   `json:"bold,omitempty"`
+	Italic    bool   `json:"italic,omitempty"`
+	Underline bool   `json:"underline,omitempty"`
+	Strike    bool   `json:"strike,omitempty"`
+	Code      bool   `json:"code,omitempty"`
+	Color     string `json:"color,omitempty"`
+}
+
+type publicRichSpan struct {
+	Text  string           `json:"text"`
+	Marks *publicRichMarks `json:"marks,omitempty"`
+}
+
+func publicTableRichFmt(raw string, plainText string) string {
+	if raw == "" || len(raw) > 65536 || plainText == "" {
+		return ""
+	}
+	var parsed []publicRichSpan
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil || len(parsed) == 0 || len(parsed) > 512 {
+		return ""
+	}
+	clean := make([]publicRichSpan, 0, len(parsed))
+	var joined strings.Builder
+	hasAnyMark := false
+	for _, span := range parsed {
+		if span.Text == "" {
+			continue
+		}
+		joined.WriteString(span.Text)
+		var m *publicRichMarks
+		if span.Marks != nil {
+			cm := publicRichMarks{
+				Bold:      span.Marks.Bold,
+				Italic:    span.Marks.Italic,
+				Underline: span.Marks.Underline,
+				Strike:    span.Marks.Strike,
+				Code:      span.Marks.Code,
+			}
+			if publicTableFill.MatchString(span.Marks.Color) {
+				cm.Color = strings.ToUpper(span.Marks.Color)
+			}
+			if cm.Bold || cm.Italic || cm.Underline || cm.Strike || cm.Code || cm.Color != "" {
+				m = &cm
+				hasAnyMark = true
+			}
+		}
+		clean = append(clean, publicRichSpan{Text: span.Text, Marks: m})
+	}
+	if !hasAnyMark || joined.String() != plainText {
+		return ""
+	}
+	b, err := json.Marshal(clean)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func duplicateIDs(ids []string) bool {

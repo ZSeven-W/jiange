@@ -35,7 +35,7 @@
 
 | 能力项 | 状态 | 具体差距与代码依据 | 优先级 |
 | --- | --- | --- | --- |
-| 表格单元格富内容与正式 CRDT | **部分** | 正式表格单元格仍是纯文本（`packages/doc-sdk/src/table-cells.ts`），不支持段落、列表、图片、附件、公式或单元格内多样式富文本；同格并发仍是后写胜出，并发增删行列和合并存在结构竞争。实验性 `tableExperimental` 与 `tableadmission` 尚未接入协同线格式、编辑器、剪贴板、导出和版本恢复。 | **P0** |
+| 表格单元格富内容与正式 CRDT | **已落地（P0 Slice 5，2026-11-19）** | 已接入服务端正式 CRDT 表格批次准入（`tableadmission.RebuildOrInit` + `PrepareBatch` 接入 `/api/docs/{id}/conditional-ops`），并落地单元格行内多样式富文本（加粗/斜体/下划线/删除线/行内代码/文字颜色、整格与字符子区间切换、`tbl.fmt.<r>.<c>` 逐格独立属性），打通编辑器工具栏/快捷键、只读与公开分享页、剪贴板 HTML 往返、DOCX `<w:rPr>` 与 Markdown 导出（详见 [document-table-rich-report-20261119.md](document-table-rich-report-20261119.md)）；表格内嵌块级图片/附件/公式留作后续 P1 增强。 | **已完成（P0）** |
 | 分栏容器与末栏处理 | **已落地（P0 Slice 4，2026-11-19）** | 已支持分栏内混排多块内容（段落/标题/列表/待办/引用/高亮块/代码块/分割线）、服务端 10 栏上限与条件加栏/移栏/取消分栏（前序提升所有嵌套子块）、仅剩 1 栏时安全归档整组，以及 DOCX 无边框多列表格导出（详见 [document-columns-multiblock-report-20261119.md](document-columns-multiblock-report-20261119.md)）。 | **已完成** |
 | 协同 GC、离线与升级门禁 | **部分** | 无损墓碑保留使快照随删除量增长，客户端参与的安全墓碑回收协议尚未落地；`JIANGE_ENABLE_CONDITIONAL_CANCEL` 需人工排空旧实例后开启；关闭标签页或浏览器崩溃后的待确认恢复（目前依赖浏览器 `sessionStorage`/Web Locks）与跨实例主动排空仍未全场景闭环。 | **P0** |
 | 修订模式（建议与审阅） | **已缺** | 代码中无修订建议模式、接受/拒绝单条或全部修订、建议批注与撤回机制，普通评论和历史版本无法替代修订模式。 | **P1** |

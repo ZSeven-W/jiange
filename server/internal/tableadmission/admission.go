@@ -174,6 +174,99 @@ func (p *Projection) PrepareMarks(author uint64, frames []collab.Op) (*Prepared,
 	if len(docState) > maxStateBytes {
 		return nil, invalid("document state limit")
 	}
+	if tableSnapshot, err := table.Snapshot(); err != nil {
+		return nil, invalid("table snapshot")
+	} else {
+		return &Prepared{head: p.head, docState: docState, tableSnapshot: tableSnapshot}, nil
+	}
+}
+
+// RebuildOrInit mirrors Rebuild but also allows bootstrapping the very first
+// formal CRDT table batch on an existing visible "table" block (tableOps == 0).
+func RebuildOrInit(expected *collab.Doc, head int64, block collab.OpID, records []Record) (*Projection, error) {
+	if expected == nil || expected.Pending() != 0 || head <= 0 || head > maxRecords || int64(len(records)) != head || block == collab.Root {
+		return nil, invalid("head or scope")
+	}
+	expectedBytes := expected.EncodeState()
+	if len(expectedBytes) > maxStateBytes {
+		return nil, invalid("document state limit")
+	}
+	doc, table := collab.NewDoc(), tableexperimental.New()
+	total, decoded := 0, 0
+	for i, record := range records {
+		if record.Seq != int64(i+1) || len(record.Data) == 0 || len(record.Data) > maxRecordBytes || len(record.Data) > maxHistoryBytes-total {
+			return nil, invalid("log sequence or size")
+		}
+		total += len(record.Data)
+		ops, err := collab.DecodeOps(record.Data)
+		if err != nil || len(ops) == 0 || len(ops) > maxRecords-decoded {
+			return nil, invalid("document record")
+		}
+		decoded += len(ops)
+		for _, op := range ops {
+			if op.T == collab.TTable && op.Block == block {
+				inner, err := decodePayload(op)
+				if err != nil {
+					return nil, err
+				}
+				if _, err = table.Apply(inner); err != nil {
+					return nil, invalid("table history")
+				}
+			}
+			if err := doc.TryApply(op); err != nil {
+				return nil, invalid("document history")
+			}
+		}
+	}
+	if doc.Pending() != 0 || table.PendingCount() != 0 || len(table.Rejected()) != 0 || !bytes.Equal(doc.EncodeState(), expectedBytes) {
+		return nil, invalid("incomplete or inconsistent state")
+	}
+	_, kind, visible := doc.VisibleBlockText(block)
+	if !visible || kind != "table" {
+		return nil, invalid("table block is not visible")
+	}
+	return &Projection{head: head, block: block, doc: doc, table: table}, nil
+}
+
+// PrepareBatch validates a single-table formal CRDT batch (structural ops, cell
+// text ops, or rich text-mark ops) on private clones without mutating live state.
+func (p *Projection) PrepareBatch(author uint64, frames []collab.Op) (*Prepared, error) {
+	if p == nil || p.doc == nil || p.table == nil || author == 0 || author > maxSafeInteger || len(frames) == 0 || len(frames) > maxBatch || p.doc.Pending() != 0 || p.table.PendingCount() != 0 || len(p.table.Rejected()) != 0 || uint64(p.table.MaxClock()) > p.doc.Clock() {
+		return nil, invalid("batch scope")
+	}
+	doc, err := collab.DecodeState(p.doc.EncodeState())
+	if err != nil {
+		return nil, invalid("document clone")
+	}
+	table, err := p.table.Clone()
+	if err != nil {
+		return nil, invalid("table clone")
+	}
+	clock, total := p.doc.Clock(), 0
+	for _, frame := range frames {
+		if frame.Block != p.block || frame.ID.Client != author || frame.ID.Clock <= clock || frame.ID.Clock > maxSafeInteger || len(frame.Payload) > maxHistoryBytes-total {
+			return nil, invalid("author, order or block")
+		}
+		clock = frame.ID.Clock
+		total += len(frame.Payload)
+		inner, err := decodePayload(frame)
+		if err != nil {
+			return nil, err
+		}
+		if applied, err := table.Apply(inner); err != nil || !applied {
+			return nil, invalid("table operation")
+		}
+		if err := doc.TryApply(frame); err != nil {
+			return nil, invalid("document operation")
+		}
+	}
+	if table.PendingCount() != 0 || len(table.Rejected()) != 0 {
+		return nil, invalid("unresolved table operation")
+	}
+	docState := doc.EncodeState()
+	if len(docState) > maxStateBytes {
+		return nil, invalid("document state limit")
+	}
 	tableSnapshot, err := table.Snapshot()
 	if err != nil {
 		return nil, invalid("table snapshot")

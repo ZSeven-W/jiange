@@ -1,6 +1,7 @@
 import { FlowSvg } from "@/editor/flowchart/flowchart-block";
 import { flowBounds, readFlow } from "@/editor/flowchart/model";
-import { tableCellAlign, tableCellFill, tableDataOf } from "@/editor/table-cells";
+import { tableCellAlign, tableCellFill, tableCellHasRichMarks, tableCellRich, tableDataOf } from "@/editor/table-cells";
+import { renderTableRichSpans } from "@/editor/table-rich-render";
 import { calloutStyle } from "@/editor/block-styles";
 import { codeLangLabel } from "@/editor/code-block-header";
 import { imageAlign } from "@/editor/image-block";
@@ -115,7 +116,9 @@ function ReadOnlyTable({ data, merges, widths, fillProps = {}, header = true, he
   return <div ref={root} className={cn("my-2 w-fit max-w-full overflow-x-auto", activeComment && "rounded-[2px] outline outline-2 outline-offset-2 outline-[#F0B400]")} data-table-block><table className="table-fixed border-collapse text-[14px] leading-[1.6]" style={{ width: columnWidths.reduce((total, width) => total + width, 0) }}><colgroup>{columnWidths.map((width, ci) => <col key={ci} style={{ width }} />)}</colgroup><tbody>{rows.map((row, ri) => <tr key={ri} data-table-title-row={ri === 0 ? "true" : undefined}>{Array.isArray(row) && row.map((cell, ci) => {
     const cov = cover.get(`${ri}:${ci}`);
     if (cov === "hidden") return null;
-    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap break-words border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar")} style={{ backgroundColor: tableCellFill(fillProps, ri, ci) || undefined, textAlign: tableCellAlign(fillProps, ri, ci, "horizontal"), verticalAlign: tableCellAlign(fillProps, ri, ci, "vertical") }}>{typeof cell === "string" || typeof cell === "number" ? String(cell) : ""}</td>;
+    const text = typeof cell === "string" || typeof cell === "number" ? String(cell) : "";
+    const richSpans = tableCellRich(fillProps, ri, ci, text);
+    return <td key={ci} rowSpan={cov?.span[0]} colSpan={cov?.span[1]} className={cn("h-[38px] min-w-[90px] whitespace-pre-wrap break-words border border-[#DEE0E3] px-2.5 py-[7px] align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar")} style={{ backgroundColor: tableCellFill(fillProps, ri, ci) || undefined, textAlign: tableCellAlign(fillProps, ri, ci, "horizontal"), verticalAlign: tableCellAlign(fillProps, ri, ci, "vertical") }}>{tableCellHasRichMarks(richSpans) ? renderTableRichSpans(richSpans) : text}</td>;
   })}</tr>)}</tbody></table></div>;
 }
 

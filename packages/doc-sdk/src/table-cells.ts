@@ -24,11 +24,26 @@ export const TBL_MIRROR = "tbl.m";
 export const TBL_BASE = "tbl.base";
 export const cellKey = (row: string, col: string) => `tbl.c.${row}.${col}`;
 export const cellFillKey = (row: string, col: string) => `tbl.fill.${row}.${col}`;
+export const cellRichKey = (row: string, col: string) => `tbl.fmt.${row}.${col}`;
 export type TableAlignAxis = "horizontal" | "vertical";
 export type TableHorizontalAlign = "left" | "center" | "right";
 export type TableVerticalAlign = "top" | "middle" | "bottom";
 export type TableAlign = TableHorizontalAlign | TableVerticalAlign;
 export const cellAlignKey = (row: string, col: string, axis: TableAlignAxis) => `tbl.${axis === "horizontal" ? "halign" : "valign"}.${row}.${col}`;
+
+export interface TableCellMarks {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  color?: string;
+}
+export type TableCellMarkKey = keyof TableCellMarks;
+export interface TableRichSpan {
+  text: string;
+  marks?: TableCellMarks;
+}
 
 /** FNV-1a 32-bit over UTF-8, lowercase hex (mirrored in Go for server search). */
 export function tableHash(value: string): string {
@@ -246,4 +261,169 @@ export function tableRepairWrites(props: Record<string, string>, client: number)
   const grid = JSON.stringify(cellGrid(props));
   if (grid === props.tableData) return null;
   return { tableData: grid, [TBL_MIRROR]: tableHash(grid) };
+}
+
+function normalizeCellMarks(raw: unknown): TableCellMarks | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const out: TableCellMarks = {};
+  if (obj.bold === true) out.bold = true;
+  if (obj.italic === true) out.italic = true;
+  if (obj.underline === true) out.underline = true;
+  if (obj.strike === true) out.strike = true;
+  if (obj.code === true) out.code = true;
+  if (typeof obj.color === "string" && /^#[0-9a-f]{6}$/i.test(obj.color)) out.color = obj.color.toUpperCase();
+  return Object.keys(out).length ? out : undefined;
+}
+
+function sameCellMarks(a?: TableCellMarks, b?: TableCellMarks): boolean {
+  return (a?.bold ?? false) === (b?.bold ?? false)
+    && (a?.italic ?? false) === (b?.italic ?? false)
+    && (a?.underline ?? false) === (b?.underline ?? false)
+    && (a?.strike ?? false) === (b?.strike ?? false)
+    && (a?.code ?? false) === (b?.code ?? false)
+    && (a?.color ?? "") === (b?.color ?? "");
+}
+
+export function compactTableRichSpans(spans: readonly TableRichSpan[]): TableRichSpan[] {
+  const out: TableRichSpan[] = [];
+  for (const span of spans) {
+    if (!span.text) continue;
+    const marks = normalizeCellMarks(span.marks);
+    const prev = out[out.length - 1];
+    if (prev && sameCellMarks(prev.marks, marks)) prev.text += span.text;
+    else out.push(marks ? { text: span.text, marks } : { text: span.text });
+  }
+  return out;
+}
+
+export function serializeTableRichSpans(spans: readonly TableRichSpan[]): string {
+  const compact = compactTableRichSpans(spans);
+  if (!compact.length || compact.every((s) => !s.marks)) return "";
+  return JSON.stringify(compact);
+}
+
+/** Parse per-cell rich spans from tbl.fmt.<r>.<c>, reconciling cleanly with plainText. */
+export function parseTableRichSpans(raw: string | undefined, plainText: string): TableRichSpan[] {
+  const fallback: TableRichSpan[] = plainText ? [{ text: plainText }] : [];
+  if (!raw || raw.length > 65536) return fallback;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 512) return fallback;
+    const spans: TableRichSpan[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return fallback;
+      const rec = item as Record<string, unknown>;
+      if (typeof rec.text !== "string") return fallback;
+      const marks = normalizeCellMarks(rec.marks);
+      if (rec.text) spans.push(marks ? { text: rec.text, marks } : { text: rec.text });
+    }
+    const compact = compactTableRichSpans(spans);
+    const joined = compact.map((s) => s.text).join("");
+    if (joined === plainText) return compact;
+    // If the cell text changed via plain-text editing, preserve uniform cell-level marks.
+    if (compact.length > 0 && compact.every((s) => sameCellMarks(s.marks, compact[0].marks)) && compact[0].marks && plainText) {
+      return [{ text: plainText, marks: { ...compact[0].marks } }];
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function tableCellRich(props: Record<string, string>, row: number, col: number, plainText?: string): TableRichSpan[] {
+  const text = plainText ?? (tableRowsOf(props)[row]?.[col] ?? "");
+  if (!Number.isSafeInteger(row) || row < 0 || !Number.isSafeInteger(col) || col < 0) return text ? [{ text }] : [];
+  const rows = props[TBL_VERSION] === "2" ? ids(props[TBL_ROWS]) : null, cols = props[TBL_VERSION] === "2" ? ids(props[TBL_COLS]) : null;
+  const r = rows ? rows[row] : `r${row}`, c = cols ? cols[col] : `c${col}`;
+  if (!r || !c) return text ? [{ text }] : [];
+  return parseTableRichSpans(props[cellRichKey(r, c)], text);
+}
+
+export function tableCellHasRichMarks(spans: readonly TableRichSpan[]): boolean {
+  return spans.some((s) => !!s.marks && Object.keys(s.marks).length > 0);
+}
+
+export function tableCellHasMark(props: Record<string, string>, row: number, col: number, mark: TableCellMarkKey, plainText?: string): boolean {
+  const spans = tableCellRich(props, row, col, plainText);
+  if (!spans.length) return false;
+  return spans.every((s) => Boolean(s.marks?.[mark]));
+}
+
+/** Toggle a mark on either a character sub-range [start, end) or the entire cell. */
+export function toggleTableCellRichMark(
+  props: Record<string, string>,
+  row: number,
+  col: number,
+  plainText: string,
+  mark: TableCellMarkKey,
+  value?: string,
+  range?: { start: number; end: number },
+): TableRichSpan[] {
+  if (!plainText) return [];
+  const base = tableCellRich(props, row, col, plainText);
+  const start = range && Number.isSafeInteger(range.start) && Number.isSafeInteger(range.end) && range.start >= 0 && range.end <= plainText.length && range.start < range.end ? range.start : 0;
+  const end = range && Number.isSafeInteger(range.start) && Number.isSafeInteger(range.end) && range.start >= 0 && range.end <= plainText.length && range.start < range.end ? range.end : plainText.length;
+
+  // Split base spans at [start, end) boundaries.
+  const pieces: { text: string; marks?: TableCellMarks; inside: boolean }[] = [];
+  let offset = 0;
+  for (const span of base) {
+    const spanStart = offset;
+    const spanEnd = offset + span.text.length;
+    offset = spanEnd;
+    if (spanEnd <= start || spanStart >= end) {
+      pieces.push({ text: span.text, marks: span.marks ? { ...span.marks } : undefined, inside: false });
+      continue;
+    }
+    const cutStart = Math.max(spanStart, start);
+    const cutEnd = Math.min(spanEnd, end);
+    if (cutStart > spanStart) {
+      pieces.push({ text: span.text.slice(0, cutStart - spanStart), marks: span.marks ? { ...span.marks } : undefined, inside: false });
+    }
+    pieces.push({ text: span.text.slice(cutStart - spanStart, cutEnd - spanStart), marks: span.marks ? { ...span.marks } : undefined, inside: true });
+    if (cutEnd < spanEnd) {
+      pieces.push({ text: span.text.slice(cutEnd - spanStart), marks: span.marks ? { ...span.marks } : undefined, inside: false });
+    }
+  }
+
+  const targetPieces = pieces.filter((p) => p.inside && p.text.length > 0);
+  if (!targetPieces.length) return base;
+
+  const isColor = mark === "color";
+  const colorVal = isColor && typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : "";
+  const alreadyActive = isColor
+    ? colorVal !== "" && targetPieces.every((p) => p.marks?.color === colorVal)
+    : targetPieces.every((p) => Boolean(p.marks?.[mark]));
+
+  const nextSpans: TableRichSpan[] = pieces.map((piece) => {
+    if (!piece.inside) return piece.marks ? { text: piece.text, marks: piece.marks } : { text: piece.text };
+    const nextMarks: TableCellMarks = { ...(piece.marks ?? {}) };
+    if (isColor) {
+      if (!colorVal || alreadyActive) delete nextMarks.color;
+      else nextMarks.color = colorVal;
+    } else if (alreadyActive) {
+      delete nextMarks[mark];
+    } else {
+      nextMarks[mark] = true;
+    }
+    const normalized = normalizeCellMarks(nextMarks);
+    return normalized ? { text: piece.text, marks: normalized } : { text: piece.text };
+  });
+  return compactTableRichSpans(nextSpans);
+}
+
+/** Write per-cell rich text registers; existing rows/columns retain their stable IDs. */
+export function setTableCellRich(tx: Tx, block: OpId, cells: readonly { row: number; col: number; spans: readonly TableRichSpan[] }[]): void {
+  const props = tx.doc.blockInfo(block).props;
+  const rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
+  if (props[TBL_VERSION] !== "2" || !rows || !cols) throw new Error("table must be migrated before setting cell rich text");
+  for (const { row, col } of cells) {
+    if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col) || row < 0 || col < 0 || row >= rows.length || col >= cols.length) {
+      throw new Error("invalid table cell rich text target");
+    }
+  }
+  for (const { row, col, spans } of cells) {
+    tx.setProp(block, cellRichKey(rows[row], cols[col]), serializeTableRichSpans(spans));
+  }
 }

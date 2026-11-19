@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Columns3, Combine, Copy, Eraser, LayoutGrid, PaintBucket, Plus, Rows3, SquareSplitHorizontal, Trash2, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, Bold, Code, Columns3, Combine, Copy, Eraser, Italic, LayoutGrid, PaintBucket, Palette, Plus, Rows3, SquareSplitHorizontal, Strikethrough, Trash2, Underline, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseTableData } from "./model";
 import { applyTableOp, canMove, coverMap, expandRange, mergeCells, normRange, parseMerges, planSelectionDelete, planTableAxisDelete, planTableReorder, remapWidths, splitCell, type CellRange, type Merge, type TableOp, type Widths } from "./table-ops";
@@ -11,7 +11,8 @@ import { tableSelectionScrollSpeed, tableVerticalScrollParent } from "./table-se
 import { useTableStickyHeader } from "./table-sticky-header";
 import { equalizedTableWidths, visibleTableWidths } from "./table-widths";
 import { snapTableWidth, type TableWidthSnapCandidate } from "./table-width-snap";
-import { tableCellAlign, tableCellFill, type TableAlign, type TableAlignAxis } from "./table-cells";
+import { tableCellAlign, tableCellFill, tableCellHasMark, tableCellHasRichMarks, tableCellRich, type TableAlign, type TableAlignAxis, type TableCellMarkKey } from "./table-cells";
+import { renderTableRichSpans } from "./table-rich-render";
 import { tableFormatCells, type TableFormatTarget } from "./table-fill";
 
 type GripSel = { kind: "row" | "col"; index: number };
@@ -63,10 +64,11 @@ function syncFindOverlay(input: HTMLTextAreaElement) {
   overlay.scrollTop = input.scrollTop; overlay.scrollLeft = input.scrollLeft;
 }
 
-export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onBeginReorder, onEdit, onChange, onFill, onAlign, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
+export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, header = true, headerColumn = false, onHeader, onHeaderColumn, onBeginResize, onBeginReorder, onEdit, onChange, onFill, onAlign, onRichMark, onPasteCells, onCutCells, onClearCells, onAppendRow, onDeleteSelection, onDelete, readOnly, canCopy = true, initialGrip = null, findCells = [], findNavigation = 0 }: {
   data: string; merges?: string; widths?: Widths; header?: boolean; headerColumn?: boolean; onHeader?: (on: boolean) => void; onHeaderColumn?: (on: boolean) => void;
   fillProps?: Record<string, string>; onFill?: (target: TableFormatTarget, fill: string) => string | null;
   onAlign?: (target: TableFormatTarget, axis: TableAlignAxis, align: TableAlign) => string | null;
+  onRichMark?: (target: TableFormatTarget, mark: TableCellMarkKey, value?: string, textRange?: { start: number; end: number }) => string | null;
   onBeginResize?: (index: number, indices?: readonly number[]) => TableResizeSession | null;
   onBeginReorder?: () => TableReorderSession | null;
   onEdit: (r: number, c: number, v: string, kind?: string) => void;
@@ -101,6 +103,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const [moreOpen, setMoreOpen] = useState(false);
   const [fillOpen, setFillOpen] = useState(false);
   const [alignOpen, setAlignOpen] = useState(false);
+  const [textColorOpen, setTextColorOpen] = useState(false);
   const [widthPreview, setWidthPreview] = useState<number[] | null>(null);
   const [widthGuide, setWidthGuide] = useState<TableWidthSnapCandidate | null>(null);
   const [rowBounds, setRowBounds] = useState<{ top: number; height: number }[]>([]);
@@ -317,7 +320,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   useEffect(() => {
     if (!grip && !axisSelection && !range && !moreOpen && !fillOpen && !alignOpen) return;
-    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setAxisSelection(null); setRange(null); setTouchSelecting(false); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } };
+    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) { setGrip(null); setAxisSelection(null); setRange(null); setTouchSelecting(false); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); setTextColorOpen(false); } };
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [grip, axisSelection, range, moreOpen, fillOpen, alignOpen]);
@@ -532,6 +535,15 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   const allAligned = (axis: TableAlignAxis, value: TableAlign) => {
     return !!formatCells?.length && formatCells.every(({ row, col }) => tableCellAlign(fillProps, row, col, axis) === value);
   };
+  const allMarked = (mark: TableCellMarkKey) => {
+    return !!formatCells?.length && formatCells.every(({ row, col }) => tableCellHasMark(fillProps, row, col, mark, rows[row]?.[col] ?? ""));
+  };
+  const activeTextRange = (): { start: number; end: number } | undefined => {
+    if (!focus || multi || axisSelection) return undefined;
+    const el = document.activeElement;
+    if (!(el instanceof HTMLTextAreaElement) || el.dataset.tableCell !== `${focus.r}:${focus.c}`) return undefined;
+    return el.selectionStart < el.selectionEnd ? { start: el.selectionStart, end: el.selectionEnd } : undefined;
+  };
   const multi = !!selected && (selected.r0 !== selected.r1 || selected.c0 !== selected.c1);
   const deletion = selected && onDeleteSelection ? planSelectionDelete(rows, merges, widths, selected) : null;
   const focusMerge = focus && splitCell(merges, focus.r, focus.c) !== null;
@@ -552,7 +564,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
   };
   return (
     <div ref={root} contentEditable={false} className={cn("group/t relative my-2 w-fit max-w-full select-none sm:mt-3", editable && "-ml-4 pl-4", !readOnly && "sm:pb-4 sm:pr-4")} data-table-block data-table-touch-selecting={touchSelecting ? "true" : undefined} data-table-axis-selection={axisSelection ? `${axisSelection.kind}:${axisSelection.indices.join(',')}` : undefined}
-      onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); } }}
+      onKeyDown={(event) => { if (event.key === "Escape" && (moreOpen || fillOpen || alignOpen || textColorOpen)) { event.preventDefault(); event.stopPropagation(); setMoreOpen(false); setFillOpen(false); setAlignOpen(false); setTextColorOpen(false); } }}
       onCopy={(event) => {
         if (!canCopy) { event.preventDefault(); event.stopPropagation(); return; }
         if (!multi || !selected) return;
@@ -578,7 +590,7 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
         setClipboardNotice(error ? `${error}请检查剪贴板后重试。` : "");
         if (!error) { setRange(null); setGrip(null); setTouchSelecting(false); }
       }}>
-      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || axisSelection || moreOpen || fillOpen || alignOpen || touchSelecting ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
+      {!readOnly && <div className="pointer-events-none relative z-30 sm:h-11"><span className={cn("pointer-events-auto mb-4 w-max max-w-[calc(100vw-32px)] items-center gap-0.5 whitespace-nowrap rounded-lg border bg-surface p-0.5 text-subtle shadow-[0_4px_16px_rgba(31,35,41,0.12)] sm:absolute sm:bottom-4 sm:left-0 sm:mb-0", multi || axisSelection || moreOpen || fillOpen || alignOpen || textColorOpen || touchSelecting ? "flex" : "hidden group-focus-within/t:flex sm:invisible sm:flex sm:group-hover/t:visible sm:group-focus-within/t:visible")} data-table-toolbar>
         {editable && (multi || focusMerge) && <span className="relative flex">
           <button type="button" title="更多表格操作" aria-label="更多表格操作" aria-haspopup="menu" aria-expanded={moreOpen} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground sm:size-7", moreOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setFillOpen(false); setAlignOpen(false); setGripMenuHidden(true); setMoreOpen((open) => !open); }} data-table-more><LayoutGrid size={15} strokeWidth={1.7} /></button>
           {moreOpen && <span role="menu" className="absolute left-0 top-9 z-40 w-44 rounded-lg border border-[#DEE0E3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-more-menu>
@@ -603,6 +615,39 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
           </span>}
         </span>}
         {editable && (multi || focusMerge) && <span className="mx-0.5 h-4 w-px bg-border" />}
+        {onRichMark && <>
+          {([
+            ["bold", "加粗 (⌘B)", Bold],
+            ["italic", "斜体 (⌘I)", Italic],
+            ["underline", "下划线 (⌘U)", Underline],
+            ["strike", "删除线 (⌘⇧S)", Strikethrough],
+            ["code", "行内代码 (⌘E)", Code],
+          ] as const).map(([mark, title, Icon]) => (
+            <button
+              key={mark}
+              type="button"
+              title={title}
+              aria-label={title}
+              aria-pressed={allMarked(mark)}
+              disabled={!formatTarget}
+              className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", allMarked(mark) && "bg-[#E1EAFF] text-primary")}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { if (formatTarget) setClipboardNotice(onRichMark(formatTarget, mark, undefined, activeTextRange()) ?? ""); }}
+              data-table-rich-mark={mark}
+            >
+              <Icon size={14} strokeWidth={1.8} />
+            </button>
+          ))}
+          <span className="relative flex">
+            <button type="button" title="文字颜色" aria-label="文字颜色" aria-haspopup="menu" aria-expanded={textColorOpen} disabled={!formatTarget} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", textColorOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setFillOpen(false); setAlignOpen(false); setGripMenuHidden(true); setTextColorOpen((open) => !open); }} data-table-rich-mark="color"><Palette size={14} strokeWidth={1.8} /></button>
+            {textColorOpen && <span role="menu" aria-label="文字颜色" className="absolute left-0 top-9 z-40 w-[200px] rounded-lg border border-[#DEE0E3] bg-surface p-2 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-text-color-menu>
+              <span className="block px-1 pb-2 text-xs text-muted-foreground">文字颜色</span>
+              <span className="grid grid-cols-6 gap-1">{["#1F2329", "#D83931", "#DE7802", "#2EA121", "#245BDB", "#7F3BF5", "#646A73", "#F54A45", "#FF8800", "#34C724", "#3370FF", "#A259FF"].map(color => <button key={color} type="button" role="menuitem" aria-label={color} title={color} className="size-7 rounded border border-black/10 hover:outline hover:outline-2 hover:outline-primary" style={{ backgroundColor: color }} onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onRichMark(formatTarget, "color", color, activeTextRange()) ?? ""); setTextColorOpen(false); }} data-table-text-color={color} />)}</span>
+              <button type="button" role="menuitem" className="mt-2 h-8 w-full rounded px-1 text-left hover:bg-hover" onMouseDown={e => e.preventDefault()} onClick={() => { if (formatTarget) setClipboardNotice(onRichMark(formatTarget, "color", "", activeTextRange()) ?? ""); setTextColorOpen(false); }} data-table-text-color-reset>默认颜色</button>
+            </span>}
+          </span>
+          <span className="mx-0.5 h-4 w-px bg-border" />
+        </>}
         {onFill && <span className="relative flex">
           <button type="button" title="单元格背景色" aria-label="单元格背景色" aria-haspopup="menu" aria-expanded={fillOpen} disabled={!formatTarget} className={cn("grid size-9 place-items-center rounded hover:bg-hover hover:text-foreground disabled:opacity-40 sm:size-7", fillOpen && "bg-hover")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMoreOpen(false); setAlignOpen(false); setGripMenuHidden(true); setFillOpen(open => !open); }} data-table-fill><PaintBucket size={15} strokeWidth={1.7} /></button>
           {fillOpen && <span role="menu" aria-label="单元格背景色" className="absolute left-0 top-9 z-40 w-[230px] rounded-lg border border-[#DEE0E3] bg-surface p-2 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-table-fill-menu>
@@ -647,15 +692,26 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                 const found = candidate?.value === cell ? candidate : undefined;
                 const activeFind = found?.ranges.some((range) => range.active) ?? false;
                 const showMirror = !!found && !(editing?.r === ri && editing.c === ci);
+                const richSpans = tableCellRich(fillProps, ri, ci, cell);
+                const hasRich = tableCellHasRichMarks(richSpans);
+                const showRichOverlay = hasRich && !showMirror && !(editing?.r === ri && editing.c === ci);
+                const uniformMarks = hasRich && richSpans.length === 1 ? richSpans[0].marks : undefined;
                 return (
                   <td key={ci} rowSpan={span?.[0]} colSpan={span?.[1]} className={cn("relative min-w-[100px] border border-[#D9DBDF] p-0 align-top dark:border-border", (header && ri === 0 || headerColumn && ci === 0) && "bg-[#F5F6F7] font-medium dark:bg-sidebar", sel && "bg-[#E1EAFF] dark:bg-primary/20")} style={{ backgroundColor: tableCellFill(fillProps, ri, ci) || undefined, backgroundImage: sel && tableCellFill(fillProps, ri, ci) ? "linear-gradient(#3370ff33,#3370ff33)" : undefined, textAlign: tableCellAlign(fillProps, ri, ci, "horizontal"), verticalAlign: tableCellAlign(fillProps, ri, ci, "vertical") }} data-table-position={`${ri}:${ci}`} data-cell-selected={sel ? "true" : undefined} data-merged={span ? `${span[0]}x${span[1]}` : undefined} data-find-match={found ? "true" : undefined} data-find-active={activeFind ? "true" : undefined}>
-                    {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap break-words px-2 py-[8.5px]">{found ? tableFindText(cell, found.ranges) : cell}</span> : (
+                    {readOnly ? <span className="block min-h-[39px] whitespace-pre-wrap break-words px-2 py-[8.5px]">{found ? tableFindText(cell, found.ranges) : hasRich ? renderTableRichSpans(richSpans) : cell}</span> : (
                       <div className="relative grid">
                       <div aria-hidden="true" className="invisible col-start-1 row-start-1 max-h-[237px] min-h-[39px] overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]">{cell}{"\u200b"}</div>
                       {found && <div aria-hidden="true" data-table-find-overlay className={cn("pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]", !showMirror && "invisible")}>{tableFindText(cell, found.ranges)}{"\u200b"}</div>}
+                      {hasRich && <div aria-hidden="true" data-table-rich-overlay className={cn("pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-[8.5px]", !showRichOverlay && "invisible")}>{renderTableRichSpans(richSpans)}{"\u200b"}</div>}
                       <textarea
                         value={cell}
-                        style={{ textAlign: tableCellAlign(fillProps, ri, ci, "horizontal") }}
+                        style={{
+                          textAlign: tableCellAlign(fillProps, ri, ci, "horizontal"),
+                          fontWeight: uniformMarks?.bold ? 600 : undefined,
+                          fontStyle: uniformMarks?.italic ? "italic" : undefined,
+                          textDecoration: [uniformMarks?.underline && "underline", uniformMarks?.strike && "line-through"].filter(Boolean).join(" ") || undefined,
+                          color: uniformMarks?.color || undefined,
+                        }}
                         rows={Math.min(10, Math.max(1, cell.split("\n").length))}
                         onChange={(e) => {
                           if (multi) { e.currentTarget.value = cell; return; }
@@ -671,6 +727,24 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           }
                         }}
                         onKeyDown={(e) => {
+                          if (onRichMark && (e.metaKey || e.ctrlKey) && !e.altKey && !e.nativeEvent.isComposing) {
+                            const key = e.key.toLowerCase();
+                            const mark: TableCellMarkKey | null = !e.shiftKey && key === "b" ? "bold"
+                              : !e.shiftKey && key === "i" ? "italic"
+                              : !e.shiftKey && key === "u" ? "underline"
+                              : !e.shiftKey && key === "e" ? "code"
+                              : e.shiftKey && key === "s" ? "strike"
+                              : null;
+                            if (mark) {
+                              e.preventDefault(); e.stopPropagation();
+                              const target: TableFormatTarget = formatTarget ?? { kind: "range", range: { r0: ri, r1: ri, c0: ci, c1: ci } };
+                              const rangeSel = !multi && e.currentTarget.selectionStart < e.currentTarget.selectionEnd
+                                ? { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd }
+                                : undefined;
+                              setClipboardNotice(onRichMark(target, mark, undefined, rangeSel) ?? "");
+                              return;
+                            }
+                          }
                           if (multi && selected && !e.nativeEvent.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
                             e.preventDefault(); e.stopPropagation();
                             setClipboardNotice(onClearCells?.(selected) ?? (onClearCells ? "" : "当前无法清空选区，表格未修改。"));
@@ -721,13 +795,14 @@ export function TableBlock({ data, merges: rawMerges, widths, fillProps = {}, he
                           setMoreOpen(false);
                           setFillOpen(false);
                           setAlignOpen(false);
+                          setTextColorOpen(false);
                           setGrip(null);
                           setAxisSelection(null);
                           setTouchSelecting(false);
                           if (e.shiftKey && focus) { e.preventDefault(); setRange(normRange({ r0: focus.r, c0: focus.c, r1: ri, c1: ci })); }
                           else setRange(null);
                         }}
-                        className={cn("relative col-start-1 row-start-1 block h-full max-h-[237px] min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none", multi && sel ? "caret-transparent" : "focus:shadow-[inset_0_0_0_2px_#3370FF]", showMirror && "text-transparent")}
+                        className={cn("relative col-start-1 row-start-1 block h-full max-h-[237px] min-h-[39px] w-full resize-none bg-transparent px-2 py-[8.5px] outline-none", multi && sel ? "caret-transparent" : "focus:shadow-[inset_0_0_0_2px_#3370FF]", (showMirror || showRichOverlay) && "text-transparent")}
                         data-table-cell={`${ri}:${ci}`}
                       />
                       </div>
