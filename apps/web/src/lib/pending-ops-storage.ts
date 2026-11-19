@@ -110,8 +110,76 @@ export function writePendingOps(storage: Storage, key: string, draft: PendingOps
 export function prepareBrowserPendingSession(getEnvironment: () => StorageEnvironment, userId: number, docId: number, random: () => string): Promise<PendingSession> {
   return Promise.resolve().then(() => {
     const { local, session, locks } = getEnvironment();
-    return preparePendingSession(local, session, locks, userId, docId, random);
+    const effectiveLocks = locks ?? createStorageLeaseLockProvider(local, random());
+    return preparePendingSession(local, session, effectiveLocks, userId, docId, random);
   });
+}
+
+const LEASE_PREFIX = "jiange:pending-lease:v1:";
+const DEFAULT_LEASE_TTL_MS = 15_000;
+
+/**
+ * Fallback LockProvider backed by localStorage heartbeat leases for browsers
+ * without Web Locks (e.g. non-HTTPS LAN / embedded WebViews). Leases expire
+ * automatically after tab closes or crashes so a new tab can safely recover
+ * abandoned pending drafts.
+ */
+export function createStorageLeaseLockProvider(
+  storage: Storage,
+  ownerId: string,
+  ttlMs = DEFAULT_LEASE_TTL_MS,
+  now: () => number = () => Date.now(),
+): LockProvider {
+  return {
+    async request(name: string, optionsOrCb: unknown, maybeCb?: unknown): Promise<unknown> {
+      const cb = (typeof optionsOrCb === "function" ? optionsOrCb : maybeCb) as ((lock: { name: string } | null) => Promise<unknown> | unknown);
+      const leaseKey = LEASE_PREFIX + name;
+      const t = now();
+      try {
+        const raw = storage.getItem(leaseKey);
+        if (raw) {
+          const existing = JSON.parse(raw) as { owner?: unknown; expiresAt?: unknown };
+          if (typeof existing?.expiresAt === "number" && existing.expiresAt > t && existing.owner !== ownerId) {
+            return await cb(null);
+          }
+        }
+        const writeLease = () => {
+          storage.setItem(leaseKey, JSON.stringify({ owner: ownerId, expiresAt: now() + ttlMs }));
+        };
+        writeLease();
+        const verified = JSON.parse(storage.getItem(leaseKey) ?? "null") as { owner?: unknown } | null;
+        if (verified?.owner !== ownerId) return await cb(null);
+        const heartbeat = typeof setInterval === "function"
+          ? setInterval(() => { try { writeLease(); } catch { /* ignore */ } }, Math.max(1000, Math.floor(ttlMs / 3)))
+          : null;
+        try {
+          return await cb({ name });
+        } finally {
+          if (heartbeat !== null) clearInterval(heartbeat);
+          try {
+            const cur = JSON.parse(storage.getItem(leaseKey) ?? "null") as { owner?: unknown } | null;
+            if (cur?.owner === ownerId) storage.removeItem(leaseKey);
+          } catch { /* ignore */ }
+        }
+      } catch {
+        return await cb(null);
+      }
+    },
+  } as LockProvider;
+}
+
+/** Summarizes persisted cross-session pending & recovery drafts for a user/doc pair. */
+export function inspectCrossSessionDrafts(storage: Storage, userId: number, docId: number): { activeCount: number; recoveryCount: number; totalOps: number } {
+  const active = accountKeys(storage, userId, docId);
+  const recovery = recoveryDraftKeys(storage, userId, docId);
+  let totalOps = 0;
+  for (const key of [...active, ...recovery]) {
+    try {
+      const parsed = parse(storage.getItem(key));
+      if (parsed) totalOps += parsed.ops.length;
+    } catch { /* corrupt entries remain countable via active/recovery */ }
+  }
+  return { activeCount: active.length, recoveryCount: recovery.length, totalOps };
 }
 
 /** A lease is held until release; an occupied lock is never waited on. */

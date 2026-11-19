@@ -519,3 +519,75 @@ func removeNode(arr []*charNode, n *charNode) []*charNode {
 	}
 	return arr
 }
+
+// TombstoneStats reports the number of live characters and character tombstones
+// currently held across all non-root blocks (excluding each block's root sentinel).
+func (d *Doc) TombstoneStats() (liveChars, tombstones int) {
+	for id, b := range d.blocks {
+		if id == Root {
+			continue
+		}
+		for _, n := range b.chars {
+			if n == b.root {
+				continue
+			}
+			if n.deleted {
+				tombstones++
+			} else {
+				liveChars++
+			}
+		}
+	}
+	return liveChars, tombstones
+}
+
+// CompactAtBarrier safely prunes leaf character tombstones whose OpID.Clock is
+// at or below barrierClock. It must only be invoked as part of a coordinated
+// client-participating GC barrier (where active replicas have acknowledged the
+// horizon and apply the identical CompactAtBarrier locally), preserving all
+// mark anchors, live descendants, and column-archive tombstones.
+func (d *Doc) CompactAtBarrier(barrierClock uint64) int {
+	if barrierClock == 0 {
+		return 0
+	}
+	removed := 0
+	for id, b := range d.blocks {
+		if id == Root {
+			continue
+		}
+		if b.deleted {
+			t := b.props["type"]
+			b.props = map[string]propReg{"type": t}
+			b.marks = nil
+		}
+		anchored := map[OpID]bool{}
+		for _, m := range b.marks {
+			anchored[m.start.Char] = true
+			anchored[m.end.Char] = true
+		}
+		blockRemoved := 0
+		for changed := true; changed; {
+			changed = false
+			for cid, n := range b.chars {
+				if n == b.root || !n.deleted || cid.Clock > barrierClock || len(n.left) > 0 || len(n.right) > 0 || anchored[cid] {
+					continue
+				}
+				p := n.parent
+				if n.side == 0 {
+					p.left = removeNode(p.left, n)
+				} else {
+					p.right = removeNode(p.right, n)
+				}
+				delete(b.chars, cid)
+				d.unoccupy(cid)
+				removed++
+				blockRemoved++
+				changed = true
+			}
+		}
+		if blockRemoved > 0 {
+			b.order = nil
+		}
+	}
+	return removed
+}

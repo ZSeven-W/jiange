@@ -19,7 +19,7 @@ import { Avatar } from "@/components/brand";
 import { AddIcon, BuildingIcon, DownBoldIcon, EditIcon, MoreIcon, SearchIcon } from "@/components/feishu-icons";
 import { StarterTemplates, type StarterTemplate } from "./starter-templates";
 import { parseTitleConsistency, TitleConsistency } from "./title-consistency";
-import { TitleAutoSync, TitleSyncReadError, titleSyncSessionStorage, type TitleSyncOutcome } from "./title-auto-sync";
+import { TitleAutoSync, TitleSyncReadError, titleSyncDurableStorage, type TitleSyncOutcome } from "./title-auto-sync";
 import { DocumentReferencesPanel } from "./document-references";
 import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starter-template-ops";
 import { peekStarter, takeStarter } from "./pending-starter";
@@ -877,7 +877,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     }, {
       commit: async (snapshot, signal) => (await fetch(`/api/docs/${id}/title-consistency`, { method: "POST", credentials: "same-origin", cache: "no-store", headers, body: JSON.stringify(snapshot), signal })).status,
       read: async (signal) => { const res = await fetch(`/api/docs/${id}/title-consistency`, { credentials: "same-origin", cache: "no-store", headers, signal }); if (!res.ok) throw new TitleSyncReadError(res.status); return parseTitleConsistency(await res.json()); },
-    }, () => { if (current()) invalidateDocumentNames(); }, titleSyncSessionStorage(account, id));
+    }, () => { if (current()) invalidateDocumentNames(); }, titleSyncDurableStorage(account, id));
   }, [id, me.user.id, invalidateDocumentNames, sync.client]);
   useEffect(() => { titleSync.activate(); setTitleSyncNotice(null); setTitleSyncRevision((n) => n + 1); return () => titleSync.dispose(); }, [titleSync]);
   useEffect(() => {

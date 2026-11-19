@@ -12,12 +12,32 @@ export type TitleSyncStorage = Pick<Storage, "getItem" | "setItem" | "removeItem
 
 /** Per-tab storage: names never move between accounts or documents. */
 export function titleSyncStorageKey(user: number, doc: number) { return `jiange:title-sync:v1:${user}:${doc}`; }
+/** Cross-session durable storage key (survives tab closes and browser crashes). */
+export function titleSyncDurableStorageKey(user: number, doc: number) { return `jiange:title-sync:v2:${user}:${doc}`; }
+const TITLE_SYNC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function titleSyncSessionStorage(user: number, doc: number): { storage: TitleSyncStorage; key: string } | undefined {
   try { return { storage: window.sessionStorage, key: titleSyncStorageKey(user, doc) }; } catch { return undefined; }
 }
-function validPending(value: unknown): value is { pending: Pending; conflicted: boolean } {
+
+/**
+ * Prefers localStorage so pending title-to-directory syncs survive full tab
+ * closes and browser crashes; falls back to sessionStorage if localStorage is
+ * unavailable. Legacy v1 session entries are migrated seamlessly on activate().
+ */
+export function titleSyncDurableStorage(user: number, doc: number): { storage: TitleSyncStorage; key: string; legacySession?: { storage: TitleSyncStorage; key: string } } | undefined {
+  const legacySession = titleSyncSessionStorage(user, doc);
+  try {
+    return { storage: window.localStorage, key: titleSyncDurableStorageKey(user, doc), legacySession };
+  } catch {
+    return legacySession;
+  }
+}
+
+function validPending(value: unknown): value is { pending: Pending; conflicted: boolean; updatedAt?: number } {
   if (!value || typeof value !== "object") return false;
-  const item = value as { pending?: Pending; conflicted?: unknown }, p = item.pending;
+  const item = value as { pending?: Pending; conflicted?: unknown; updatedAt?: unknown }, p = item.pending;
+  if (item.updatedAt !== undefined && (!Number.isFinite(item.updatedAt) || (item.updatedAt as number) < 0)) return false;
   const validTitle = (s: unknown) => typeof s === "string" && s.length <= 10000;
   const nonnegative = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
   return !!p && validTitle(p.baseline) && validTitle(p.target) && (p.epoch === null || nonnegative(p.epoch)) && nonnegative(p.historyRevision) && (p.confirmed === undefined || validTitle(p.confirmed)) && typeof item.conflicted === "boolean" && (p.uncertain === undefined || !!p.uncertain && validTitle(p.uncertain.title) && nonnegative(p.uncertain.epoch) && nonnegative(p.uncertain.head));
@@ -33,23 +53,37 @@ export class TitleAutoSync {
   private active: AbortController | null = null;
   private disposed = false;
   private conflicted = false;
-  constructor(private readonly observe: () => TitleSyncPoint | null, private readonly transport: TitleSyncTransport, private readonly onCommitted: () => void, private readonly storage?: { storage: TitleSyncStorage; key: string }) {}
+  constructor(private readonly observe: () => TitleSyncPoint | null, private readonly transport: TitleSyncTransport, private readonly onCommitted: () => void, private readonly storage?: { storage: TitleSyncStorage; key: string; legacySession?: { storage: TitleSyncStorage; key: string } }) {}
   private persist() {
     if (!this.storage) return;
     try {
-      if (this.pending?.target !== undefined) this.storage.storage.setItem(this.storage.key, JSON.stringify({ pending: this.pending, conflicted: this.conflicted }));
+      if (this.pending?.target !== undefined) this.storage.storage.setItem(this.storage.key, JSON.stringify({ pending: this.pending, conflicted: this.conflicted, updatedAt: Date.now() }));
       else this.storage.storage.removeItem(this.storage.key);
+      if (this.storage.legacySession) this.storage.legacySession.storage.removeItem(this.storage.legacySession.key);
     } catch { /* Continue in memory if browser storage is unavailable. */ }
   }
   activate() {
     this.disposed = false;
     if (this.pending || !this.storage) return;
-    try {
-      const raw = this.storage.storage.getItem(this.storage.key);
-      if (!raw || raw.length > 50000) return;
-      const parsed: unknown = JSON.parse(raw);
-      if (validPending(parsed)) { this.pending = parsed.pending; this.conflicted = parsed.conflicted; this.restored = true; }
-    } catch { /* Do not trust or act on corrupt storage. */ }
+    const tryLoad = (store: TitleSyncStorage, key: string): boolean => {
+      try {
+        const raw = store.getItem(key);
+        if (!raw || raw.length > 50000) return false;
+        const parsed: unknown = JSON.parse(raw);
+        if (!validPending(parsed)) return false;
+        if (parsed.updatedAt !== undefined && Date.now() - parsed.updatedAt > TITLE_SYNC_TTL_MS) {
+          store.removeItem(key);
+          return false;
+        }
+        this.pending = parsed.pending; this.conflicted = parsed.conflicted; this.restored = true;
+        return true;
+      } catch { return false; }
+    };
+    if (!tryLoad(this.storage.storage, this.storage.key) && this.storage.legacySession) {
+      if (tryLoad(this.storage.legacySession.storage, this.storage.legacySession.key)) {
+        this.persist();
+      }
+    }
   }
   edit(baseline: string, epoch: number | null, historyRevision: number, target?: string) {
     if (this.disposed) return;

@@ -735,4 +735,66 @@ export class Doc {
     });
     return { id: idKey(b.id), parent: parentKey, type: b.props.get("type")?.value ?? "", props, spans };
   }
+
+  /** Reports live character and tombstone counts across all non-root blocks. */
+  tombstoneStats(): { liveChars: number; tombstones: number } {
+    const rootKey = idKey(ROOT);
+    let liveChars = 0;
+    let tombstones = 0;
+    for (const [k, b] of this.blocks) {
+      if (k === rootKey) continue;
+      for (const n of b.chars.values()) {
+        if (n === b.root) continue;
+        if (n.deleted) tombstones++;
+        else liveChars++;
+      }
+    }
+    return { liveChars, tombstones };
+  }
+
+  /**
+   * Safely prunes leaf character tombstones with `id.clock <= barrierClock`.
+   * Matches Go `Doc.CompactAtBarrier` deterministically for client-participating
+   * GC barriers: preserves mark anchors, live descendants, and block tombstones.
+   */
+  compactAtBarrier(barrierClock: number): number {
+    if (!Number.isSafeInteger(barrierClock) || barrierClock <= 0) return 0;
+    const rootKey = idKey(ROOT);
+    let removed = 0;
+    for (const [k, b] of this.blocks) {
+      if (k === rootKey) continue;
+      if (b.deleted) {
+        const typeReg = b.props.get("type");
+        b.props.clear();
+        if (typeReg) b.props.set("type", typeReg);
+        b.marks = [];
+      }
+      const anchored = new Set<string>();
+      for (const m of b.marks) {
+        anchored.add(idKey(m.start.char));
+        anchored.add(idKey(m.end.char));
+      }
+      let blockRemoved = 0;
+      for (let changed = true; changed;) {
+        changed = false;
+        for (const [ck, n] of [...b.chars.entries()]) {
+          if (n === b.root || !n.deleted || n.id.clock > barrierClock || n.left.length > 0 || n.right.length > 0 || anchored.has(ck)) {
+            continue;
+          }
+          const p = n.parent;
+          if (p) {
+            const arr = n.side === 0 ? p.left : p.right;
+            const idx = arr.indexOf(n);
+            if (idx >= 0) arr.splice(idx, 1);
+          }
+          b.chars.delete(ck);
+          removed++;
+          blockRemoved++;
+          changed = true;
+        }
+      }
+      if (blockRemoved > 0) b.order = null;
+    }
+    return removed;
+  }
 }
