@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -92,6 +93,10 @@ func (s *Server) writeSheetCells(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.Store.WriteSheetCells(r.Context(), g, id, batch)
+	if errors.Is(err, store.ErrSheetValidation) {
+		httpx.Error(w, http.StatusUnprocessableEntity, "validation_failed", "单元格内容不符合数据验证规则")
+		return
+	}
 	if driveWriteErr(w, err, "write sheet cells") {
 		return
 	}

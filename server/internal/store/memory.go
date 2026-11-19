@@ -39,6 +39,8 @@ type Memory struct {
 	searchIndex      map[int64]SearchIndexEntry
 	driveShortcuts   []DriveShortcut
 	driveShortcutSeq int64
+	sheetComments    []SheetComment
+	sheetCommentSeq  int64
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate

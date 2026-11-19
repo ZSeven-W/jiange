@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { DocMeta, Me, SheetSnapshot, SheetWorksheet } from "@/lib/api";
+import type { DocMeta, Me, SheetComment, SheetSnapshot, SheetWorksheet } from "@/lib/api";
 import { SheetPage } from "./sheet-page";
 
 const me: Me = {
@@ -19,6 +19,9 @@ function makeWorksheet(overrides: Partial<SheetWorksheet> = {}): SheetWorksheet 
     frozenCols: overrides.frozenCols ?? 0,
     merges: overrides.merges ?? [],
     filter: overrides.filter ?? {},
+    validations: overrides.validations ?? [],
+    conditionalFormats: overrides.conditionalFormats ?? [],
+    protectedRanges: overrides.protectedRanges ?? [],
     revision: overrides.revision ?? 1,
     rows: overrides.rows ?? [
       { id: 101, pos: 0 },
@@ -34,7 +37,11 @@ function makeWorksheet(overrides: Partial<SheetWorksheet> = {}): SheetWorksheet 
   };
 }
 
-function renderSheetPage(metaOverrides: Partial<DocMeta> = {}, snapshot?: SheetSnapshot): string {
+function renderSheetPage(
+  metaOverrides: Partial<DocMeta> = {},
+  snapshot?: SheetSnapshot,
+  comments: SheetComment[] = [],
+): string {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } });
   const meta: DocMeta = {
     id: 7,
@@ -53,6 +60,7 @@ function renderSheetPage(metaOverrides: Partial<DocMeta> = {}, snapshot?: SheetS
   qc.setQueryData(["doc", 7, 1], meta);
   qc.setQueryData(["sheet-ancestors", 7, 1], []);
   qc.setQueryData(["home-pins", 1], []);
+  qc.setQueryData(["sheet-comments", 7, 1], { comments });
   if (snapshot) {
     qc.setQueryData(["sheet", 7, 1], snapshot);
   }
@@ -145,6 +153,63 @@ describe("SheetPage", () => {
     const html = renderSheetPage({ title: "只读视图", role: "view" }, snapshot);
     expect(html).toContain("只读权限");
     expect(html).not.toContain("data-sheet-templates");
+  });
+
+  it("renders conditional formatting over formulas, validation dropdown trigger, protected range state, and cell comment badges", () => {
+    const ws = makeWorksheet({
+      id: 11,
+      validations: [
+        { id: "v1", top: 0, left: 0, bottom: 2, right: 0, type: "list", options: ["进行中", "已完成"], strict: true },
+      ],
+      conditionalFormats: [
+        { id: "c1", top: 0, left: 1, bottom: 2, right: 1, op: "gt", value1: "100", bg: "#dcfce7", color: "#166534", bold: true },
+      ],
+      protectedRanges: [
+        { id: "p1", top: 1, left: 2, bottom: 2, right: 2, description: "锁定区" },
+      ],
+      cells: [
+        { rowId: 101, columnId: 201, raw: "进行中", style: {}, revision: 1 },
+        { rowId: 101, columnId: 202, raw: "=60+65", style: {}, revision: 1 },
+      ],
+    });
+    const snapshot: SheetSnapshot = {
+      nodeId: 7,
+      workspaceId: 1,
+      parentId: null,
+      title: "高级规则表",
+      role: "edit",
+      creatorId: 9,
+      creatorName: "Admin",
+      driveRevision: 1,
+      workbookRevision: 3,
+      updatedAt: "2026-11-19T00:00:00Z",
+      sheets: [ws],
+    };
+    const comments: SheetComment[] = [
+      {
+        id: 501,
+        nodeId: 7,
+        worksheetId: 11,
+        rowId: 101,
+        columnId: 202,
+        authorId: 9,
+        authorName: "Admin",
+        body: "请核对公式结果",
+        resolved: false,
+        createdAt: "2026-11-19T08:00:00Z",
+        updatedAt: "2026-11-19T08:00:00Z",
+      },
+    ];
+    const html = renderSheetPage({ title: "高级规则表", role: "edit" }, snapshot, comments);
+    expect(html).toContain('data-sheet-tool="validation"');
+    expect(html).toContain('data-sheet-tool="cond-fmt"');
+    expect(html).toContain('data-sheet-tool="protect"');
+    expect(html).toContain('data-sheet-tool="comments"');
+    expect(html).toContain('data-sheet-comment-count');
+    expect(html).toContain('data-sheet-cond-bg="#dcfce7"');
+    expect(html).toContain('data-sheet-cell-dropdown-btn="0:0"');
+    expect(html).toContain('data-sheet-protected="blocked"');
+    expect(html).toContain('data-sheet-cell-comment-badge="0:1"');
   });
 
   it("renders ResourceTypeNotice when the node kind is not sheet", () => {

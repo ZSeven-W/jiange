@@ -73,6 +73,13 @@ func DocumentDownloadAllowed(meta DocMeta, role string) bool {
 	return documentActionAllowed(meta, role, meta.DownloadMinRole)
 }
 
+func DocumentCommentAllowed(meta DocMeta, role string) bool {
+	if RoleRank(role) == 0 {
+		return false
+	}
+	return commentRoleAllowed(role, meta.CommentMinRole)
+}
+
 // RawOp is one encoded operation (a single-op batch) and its identity.
 type RawOp struct {
 	ClientID int64

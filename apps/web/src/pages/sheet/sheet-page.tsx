@@ -11,6 +11,10 @@ import {
   type SheetCell,
   type SheetCellStyle,
   type SheetCellWrite,
+  type SheetComment,
+  type SheetConditionalFormat,
+  type SheetDataValidation,
+  type SheetProtectedRange,
   type SheetSnapshot,
   type SheetWorksheet,
 } from "@/lib/api";
@@ -23,7 +27,7 @@ import { SheetColorIcon } from "@/components/feishu-icons";
 import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
-import { ChevronRight, Home, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
+import { ChevronRight, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
 import {
@@ -42,6 +46,13 @@ import {
 import { exportWorkbookToXlsx, parseXlsxForWorkbook } from "./workbook-xlsx";
 import { FORMULA_QUICK_LIST, formatSheetRefPrefix, SHEET_STARTER_TEMPLATES, type SheetStarterTemplate } from "./workbook-templates";
 import { SheetTabsBar, SheetToolbar } from "./sheet-toolbar";
+import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
+import {
+  evaluateSheetConditionalFormat,
+  evaluateSheetValidation,
+  findSheetDropdown,
+  isSheetCellProtected,
+} from "./sheet-rules";
 
 const DEFAULT_COL_WIDTH = 105;
 const DEFAULT_ROW_HEIGHT = 27;
@@ -89,6 +100,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const userId = me.user.id;
   const metaQueryKey = useMemo(() => ["doc", sheetId, userId], [sheetId, userId]);
   const workbookQueryKey = useMemo(() => ["sheet", sheetId, userId], [sheetId, userId]);
+  const commentsQueryKey = useMemo(() => ["sheet-comments", sheetId, userId], [sheetId, userId]);
 
   const meta = useQuery({
     queryKey: metaQueryKey,
@@ -114,6 +126,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const workbook = useQuery({
     queryKey: workbookQueryKey,
     queryFn: () => sheetsApi.get(sheetId, userId),
+    enabled: !!isSheetKind && !meta.isError,
+    retry: false,
+  });
+  const commentsQuery = useQuery({
+    queryKey: commentsQueryKey,
+    queryFn: () => sheetsApi.listComments(sheetId, userId),
     enabled: !!isSheetKind && !meta.isError,
     retry: false,
   });
@@ -157,6 +175,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [pendingImport, setPendingImport] = useState<{ filename: string; sheets: ReturnType<typeof parseXlsxForWorkbook> extends Promise<infer R> ? R : never } | null>(null);
   const [importing, setImporting] = useState(false);
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
+  const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
+  const [dropdownCell, setDropdownCell] = useState<{ sheetId: number; row: number; col: number } | null>(null);
 
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -191,9 +211,21 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const role = meta.data?.role ?? workbook.data?.role ?? "view";
   const canEdit = !!isSheetKind && !meta.isError && !workbook.isError && (role === "edit" || role === "manage");
+  const canComment =
+    !!isSheetKind &&
+    !meta.isError &&
+    !workbook.isError &&
+    (meta.data?.commentMinRole === "edit" ? role === "edit" || role === "manage" : role === "view" || role === "edit" || role === "manage");
   // Copy protection follows the workbook's copy/download policy (分享 → 权限设置).
   const canCopy = canCopyContent(meta.data);
   const canDownload = canDownloadDocument(meta.data);
+
+  const sharesQuery = useQuery({
+    queryKey: ["sheet-shares", sheetId, userId],
+    queryFn: () => docsApi.sharesForAccount(sheetId, userId),
+    enabled: !!isSheetKind && !meta.isError && role === "manage" && activePanel === "protect",
+    retry: false,
+  });
 
   useEffect(() => {
     setNameBoxText(formatSelectionAddress(selection));
@@ -213,6 +245,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           if (!current || msg.workbookRevision > current.workbookRevision) {
             void qc.invalidateQueries({ queryKey: workbookQueryKey });
           }
+          void qc.invalidateQueries({ queryKey: commentsQueryKey });
         } else if (msg?.type === "presence" && Array.isArray(msg.collaborators)) {
           setCollaborators(msg.collaborators.filter((c: RemoteCollaborator) => c.userId !== userId));
         }
@@ -224,7 +257,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       wsRef.current = null;
       socket.close();
     };
-  }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey]);
+  }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey, commentsQueryKey]);
 
   useEffect(() => {
     const ws = wsRef.current;
@@ -259,6 +292,26 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const gridMap = useMemo(
     () => (activeSheet ? buildWorksheetGridMap(activeSheet) : { rowPosById: new Map<number, number>(), colPosById: new Map<number, number>(), cellByKey: new Map<string, SheetCell>() }),
     [activeSheet],
+  );
+  const allComments = commentsQuery.data?.comments ?? [];
+  const unresolvedCommentsByCellKey = useMemo(() => {
+    const map = new Map<string, SheetComment[]>();
+    if (!activeSheet) return map;
+    for (const cm of allComments) {
+      if (cm.worksheetId !== activeSheet.id || cm.resolved) continue;
+      const r = gridMap.rowPosById.get(cm.rowId);
+      const c = gridMap.colPosById.get(cm.columnId);
+      if (r === undefined || c === undefined) continue;
+      const k = `${r}:${c}`;
+      const list = map.get(k);
+      if (list) list.push(cm);
+      else map.set(k, [cm]);
+    }
+    return map;
+  }, [activeSheet, allComments, gridMap.rowPosById, gridMap.colPosById]);
+  const unresolvedCommentCount = useMemo(
+    () => (activeSheet ? allComments.filter((c) => c.worksheetId === activeSheet.id && !c.resolved).length : 0),
+    [activeSheet, allComments],
   );
   const mergeLookup = useMemo(() => buildMergeLookup(activeSheet?.merges ?? []), [activeSheet?.merges]);
   const visibleRows = useMemo(() => (activeSheet ? getVisibleRowIndices(activeSheet, activeEvalMap) : []), [activeSheet, activeEvalMap]);
@@ -365,6 +418,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       const localMap: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[] = [];
 
       const seen = new Set<string>();
+      let warningMsg = "";
       for (const edit of edits) {
         if (edit.row < 0 || edit.row >= targetWS.rows.length || edit.col < 0 || edit.col >= targetWS.columns.length) continue;
         const k = `${edit.row}:${edit.col}`;
@@ -377,6 +431,21 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         const nextStyle = edit.style !== undefined ? edit.style : undefined;
         if ((nextRaw === undefined || nextRaw === (cur?.raw ?? "")) && (nextStyle === undefined || JSON.stringify(nextStyle) === JSON.stringify(cur?.style ?? {}))) {
           continue;
+        }
+        const prot = isSheetCellProtected(targetWS.protectedRanges, edit.row, edit.col, userId, role);
+        if (prot.blocked) {
+          setErrorMessage(t("该单元格位于保护区域内，暂无编辑权限"));
+          return false;
+        }
+        if (nextRaw !== undefined) {
+          const valCheck = evaluateSheetValidation(nextRaw, targetWS.validations, edit.row, edit.col);
+          if (!valCheck.valid) {
+            if (valCheck.strict) {
+              setErrorMessage(valCheck.message);
+              return false;
+            }
+            if (!warningMsg) warningMsg = valCheck.message;
+          }
         }
         writes.push({
           rowId,
@@ -410,13 +479,17 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           setUndoStack((prev) => [...prev.slice(-49), { worksheetId: targetWS.id, forward: forwardUndo, backward: backwardUndo }]);
           setRedoStack([]);
         }
-        setStatusMessage("");
+        setStatusMessage(warningMsg ? `${t("校验警告")}：${warningMsg}` : "");
         return true;
       } catch (err) {
         if (!mountedRef.current) return false;
         if (err instanceof ApiError && err.status === 409) {
           setErrorMessage(t("表格内容已被其他协作者修改，已刷新最新数据，请重试。"));
           void qc.invalidateQueries({ queryKey: workbookQueryKey });
+        } else if (err instanceof ApiError && err.status === 422) {
+          setErrorMessage(err.message || t("单元格内容不符合数据验证规则"));
+        } else if (err instanceof ApiError && err.status === 403) {
+          setErrorMessage(err.message || t("该单元格位于保护区域内，暂无编辑权限"));
         } else {
           setErrorMessage(err instanceof Error ? err.message : t("保存失败，请检查网络后重试。"));
         }
@@ -425,7 +498,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         if (mountedRef.current) setSavingCount((n) => Math.max(0, n - 1));
       }
     },
-    [activeSheet, canEdit, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey],
+    [activeSheet, canEdit, role, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey],
   );
 
   const runUndoRedo = async (direction: "undo" | "redo") => {
@@ -463,6 +536,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const beginEdit = (point: SheetPoint, initialValue?: string, source: "cell" | "formula" = "cell") => {
     if (!canEdit || !activeSheet) return;
     const snapped = normalizePointForMerge(point, mergeLookup);
+    const prot = isSheetCellProtected(activeSheet.protectedRanges, snapped.row, snapped.col, userId, role);
+    if (prot.blocked) {
+      setErrorMessage(t("该单元格位于保护区域内，暂无编辑权限"));
+      return;
+    }
+    setDropdownCell(null);
     const curRaw = gridMap.cellByKey.get(pointKey(snapped))?.raw ?? "";
     setSelection({ anchor: snapped, focus: snapped });
     setEditing({
@@ -546,6 +625,72 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     } finally {
       setSavingCount((n) => Math.max(0, n - 1));
     }
+  };
+
+  const handleUpdateValidations = async (next: SheetDataValidation[]) => {
+    if (!activeSheet) return;
+    await handleWorksheetPatch(activeSheet.id, { validations: next });
+  };
+
+  const handleUpdateCondFormats = async (next: SheetConditionalFormat[]) => {
+    if (!activeSheet) return;
+    await handleWorksheetPatch(activeSheet.id, { conditionalFormats: next });
+  };
+
+  const handleUpdateProtectedRanges = async (next: SheetProtectedRange[]) => {
+    if (!activeSheet) return;
+    await handleWorksheetPatch(activeSheet.id, { protectedRanges: next });
+  };
+
+  const handleCreateComment = async (body: string): Promise<boolean> => {
+    if (!activeSheet || !canComment) return false;
+    const rowId = activeSheet.rows[selection.focus.row]?.id;
+    const columnId = activeSheet.columns[selection.focus.col]?.id;
+    if (!rowId || !columnId) return false;
+    setErrorMessage("");
+    try {
+      const res = await sheetsApi.createComment(sheetId, userId, {
+        worksheetId: activeSheet.id,
+        rowId,
+        columnId,
+        body,
+      });
+      qc.setQueryData<{ comments: SheetComment[] }>(commentsQueryKey, (old) => ({
+        comments: [...(old?.comments ?? []), res.comment],
+      }));
+      return true;
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("发送评论失败"));
+      return false;
+    }
+  };
+
+  const handleToggleResolveComment = async (cm: SheetComment) => {
+    setErrorMessage("");
+    try {
+      const res = await sheetsApi.updateComment(sheetId, userId, cm.id, { resolved: !cm.resolved });
+      qc.setQueryData<{ comments: SheetComment[] }>(commentsQueryKey, (old) => ({
+        comments: (old?.comments ?? []).map((item) => (item.id === cm.id ? res.comment : item)),
+      }));
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("更新评论状态失败"));
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    setErrorMessage("");
+    try {
+      await sheetsApi.deleteComment(sheetId, userId, commentId);
+      qc.setQueryData<{ comments: SheetComment[] }>(commentsQueryKey, (old) => ({
+        comments: (old?.comments ?? []).filter((item) => item.id !== commentId),
+      }));
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("删除评论失败"));
+    }
+  };
+
+  const handleTogglePanel = (mode: SheetPanelMode) => {
+    setActivePanel((cur) => (cur === mode ? null : mode));
   };
 
   const matchingMerge = useMemo(() => {
@@ -1220,6 +1365,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         }
         onSortCol={(asc) => void handleSort(asc)}
         onOpenFind={() => setFindOpen(true)}
+        activePanel={activePanel}
+        unresolvedCommentCount={unresolvedCommentCount}
+        onTogglePanel={handleTogglePanel}
       />
 
       {/* Name Box + fx + Formula Bar */}
@@ -1325,7 +1473,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         />
       </div>
 
-      {/* Main Grid Viewport */}
+      {/* Main Grid Viewport + Optional Right Drawer */}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
       <div
         ref={gridRef}
         role="grid"
@@ -1334,7 +1483,13 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         aria-colcount={activeSheet.columns.length}
         tabIndex={0}
         data-sheet-grid
-        onKeyDown={(e) => void handleGridKeyDown(e)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && dropdownCell) {
+            setDropdownCell(null);
+            return;
+          }
+          void handleGridKeyDown(e);
+        }}
         onCopy={handleCopy}
         onPaste={(e) => void handlePaste(e)}
         onPointerUp={() => {
@@ -1523,6 +1678,13 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const cell = gridMap.cellByKey.get(key);
                   const style = cell?.style ?? {};
                   const ev = activeEvalMap[key];
+                  const condStyle = evaluateSheetConditionalFormat(cell?.raw ?? "", ev, activeSheet.conditionalFormats, rowIdx, colIdx);
+                  const dropdownRule = canEdit ? findSheetDropdown(activeSheet.validations, rowIdx, colIdx) : null;
+                  const valState = evaluateSheetValidation(cell?.raw ?? "", activeSheet.validations, rowIdx, colIdx);
+                  const protState = isSheetCellProtected(activeSheet.protectedRanges, rowIdx, colIdx, userId, role);
+                  const cellUnresolvedComments = unresolvedCommentsByCellKey.get(key);
+                  const isDropdownOpen =
+                    dropdownCell?.sheetId === activeSheet.id && dropdownCell.row === rowIdx && dropdownCell.col === colIdx;
                   const isSel = selected(selection, point);
                   const isFocus = selection.focus.row === rowIdx && selection.focus.col === colIdx;
                   const isEditingCell = editing?.sheetId === activeSheet.id && editing.source === "cell" && editing.point.row === rowIdx && editing.point.col === colIdx;
@@ -1547,11 +1709,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                       : "text-left";
                   const showFillHandle = canEdit && !editing && rowIdx === b.bottom && colIdx === b.right;
 
+                  const effectiveBg = condStyle?.bg || style.bg;
+                  const effectiveColor = condStyle?.color || style.color || "#1f2329";
+                  const effectiveBold = !!(condStyle?.bold || style.bold);
+
                   const cellBg = refHighlight
                     ? `${refHighlight.color}18`
                     : isSel && !isFocus
                       ? "#edf3ff"
-                      : style.bg || "#ffffff";
+                      : effectiveBg || (protState.blocked ? "#fafbfc" : "#ffffff");
 
                   return (
                     <div
@@ -1560,6 +1726,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                       aria-label={sheetAddress(point)}
                       aria-selected={isSel}
                       data-sheet-cell={key}
+                      data-sheet-cond-bg={condStyle?.bg || undefined}
+                      data-sheet-protected={protState.protected ? (protState.blocked ? "blocked" : "allowed") : undefined}
                       style={{
                         width: cw,
                         height: rh,
@@ -1572,10 +1740,10 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                           width: mergedW,
                           height: mergedH,
                           backgroundColor: cellBg,
-                          color: style.color || "#1f2329",
+                          color: effectiveColor,
                           fontFamily: style.fontFamily || undefined,
                           fontSize: style.fontSize ? `${style.fontSize}px` : "12px",
-                          fontWeight: style.bold ? 600 : undefined,
+                          fontWeight: effectiveBold ? 600 : undefined,
                           fontStyle: style.italic ? "italic" : undefined,
                           textDecoration: [style.underline ? "underline" : "", style.strike ? "line-through" : ""].filter(Boolean).join(" ") || undefined,
                           boxShadow: combinedShadow,
@@ -1584,10 +1752,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                           borderBottom: style.borders?.bottom ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
                           borderLeft: style.borders?.left ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
                           outline: remoteCollab ? `2px solid ${colorFor(remoteCollab.userId - 1)}` : undefined,
-                          zIndex: mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight ? 1 : undefined,
+                          zIndex: isDropdownOpen ? 30 : mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight ? 1 : undefined,
                         }}
                         onPointerDown={(e) => {
                           if (e.button !== 0 || isEditingCell) return;
+                          setDropdownCell(null);
                           if (insertFormulaRefAtClick(point)) {
                             e.preventDefault();
                             return;
@@ -1655,10 +1824,88 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                           />
                         ) : (
                           <span
-                            className={`block w-full ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
+                            className={`block w-full ${dropdownRule && !protState.blocked ? "pr-4" : ""} ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
                           >
                             {displayValue}
                           </span>
+                        )}
+                        {!valState.valid && !isEditingCell && (
+                          <span
+                            data-sheet-cell-invalid={key}
+                            title={valState.message}
+                            className="pointer-events-none absolute left-0 top-0 z-10 size-0 border-r-[7px] border-t-[7px] border-r-transparent border-t-[#d83931]"
+                          />
+                        )}
+                        {protState.protected && isFocus && !isEditingCell && (
+                          <span
+                            data-sheet-cell-lock={key}
+                            title={protState.rule?.description || t("受保护区域")}
+                            className="pointer-events-none absolute left-0.5 top-0.5 z-10 text-[#d46b08]/80"
+                          >
+                            <Lock size={9} />
+                          </span>
+                        )}
+                        {cellUnresolvedComments && cellUnresolvedComments.length > 0 && !isEditingCell && (
+                          <button
+                            type="button"
+                            title={t("{count} 条单元格评论", { count: cellUnresolvedComments.length })}
+                            aria-label={t("查看 {addr} 评论", { addr: sheetAddress(point) })}
+                            data-sheet-cell-comment-badge={key}
+                            onPointerDown={(evBtn) => evBtn.stopPropagation()}
+                            onClick={(evBtn) => {
+                              evBtn.stopPropagation();
+                              setSelection({ anchor: point, focus: point });
+                              setActivePanel("comments");
+                            }}
+                            className="absolute right-0 top-0 z-10 size-0 border-l-[8px] border-t-[8px] border-l-transparent border-t-[#ff8800]"
+                          />
+                        )}
+                        {dropdownRule && !protState.blocked && !isEditingCell && (
+                          <>
+                            <button
+                              type="button"
+                              aria-label={t("选择下拉选项")}
+                              data-sheet-cell-dropdown-btn={key}
+                              onPointerDown={(evBtn) => evBtn.stopPropagation()}
+                              onClick={(evBtn) => {
+                                evBtn.stopPropagation();
+                                setSelection({ anchor: point, focus: point });
+                                setDropdownCell((cur) =>
+                                  cur && cur.sheetId === activeSheet.id && cur.row === rowIdx && cur.col === colIdx
+                                    ? null
+                                    : { sheetId: activeSheet.id, row: rowIdx, col: colIdx },
+                                );
+                              }}
+                              className={`absolute right-1 top-1/2 z-10 grid size-4 -translate-y-1/2 place-items-center rounded text-[10px] text-[#646a73] hover:bg-[#e1eaff] hover:text-[#3370ff] ${isFocus || isDropdownOpen ? "opacity-100" : "opacity-60"}`}
+                            >
+                              ▾
+                            </button>
+                            {isDropdownOpen && (
+                              <div
+                                role="listbox"
+                                data-sheet-dropdown-menu={key}
+                                onPointerDown={(evMenu) => evMenu.stopPropagation()}
+                                className="absolute left-0 top-full z-50 mt-0.5 max-h-48 min-w-[120px] overflow-y-auto rounded-md border border-[#dee0e3] bg-white py-1 shadow-lg"
+                              >
+                                {(dropdownRule.options ?? []).map((opt) => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={(cell?.raw ?? "") === opt}
+                                    data-sheet-dropdown-option={opt}
+                                    onClick={() => {
+                                      setDropdownCell(null);
+                                      void commitCellEdits([{ row: rowIdx, col: colIdx, raw: opt }]);
+                                    }}
+                                    className={`flex h-7 w-full items-center px-2.5 text-left text-[12px] hover:bg-[#f2f3f5] ${(cell?.raw ?? "") === opt ? "bg-[#eef3ff] font-medium text-[#3370ff]" : "text-[#1f2329]"}`}
+                                  >
+                                    <span className="truncate">{opt}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
                         )}
                         {remoteCollab && (
                           <span
@@ -1689,6 +1936,35 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             );
           })}
         </div>
+      </div>
+
+      {activePanel && (
+        <SheetSidePanel
+          mode={activePanel}
+          onChangeMode={setActivePanel}
+          onClose={() => setActivePanel(null)}
+          activeSheet={activeSheet}
+          selectionBoundsRect={selectionBounds(selection)}
+          focusedPoint={selection.focus}
+          userId={userId}
+          role={role}
+          canEdit={canEdit}
+          canComment={canComment}
+          comments={allComments}
+          rowPosById={gridMap.rowPosById}
+          colPosById={gridMap.colPosById}
+          shareMembers={sharesQuery.data?.members ?? []}
+          onSelectRange={(rect) => {
+            setSelection({ anchor: { row: rect.top, col: rect.left }, focus: { row: rect.bottom, col: rect.right } });
+          }}
+          onUpdateValidations={handleUpdateValidations}
+          onUpdateCondFormats={handleUpdateCondFormats}
+          onUpdateProtectedRanges={handleUpdateProtectedRanges}
+          onCreateComment={handleCreateComment}
+          onToggleResolveComment={handleToggleResolveComment}
+          onDeleteComment={handleDeleteComment}
+        />
+      )}
       </div>
 
       {/* Empty-sheet Quick Templates Strip (aligned with Feishu empty sheet footer strip) */}

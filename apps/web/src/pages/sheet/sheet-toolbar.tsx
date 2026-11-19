@@ -19,9 +19,12 @@ import {
   Highlighter,
   Italic,
   List,
+  ListChecks,
+  Lock,
   Maximize2,
   Menu,
   Merge,
+  MessageSquare,
   Minimize2,
   MoreHorizontal,
   Palette,
@@ -30,12 +33,14 @@ import {
   Redo2,
   Rows3,
   Search,
+  Sparkles,
   Strikethrough,
   Trash2,
   Underline,
   Undo2,
   WrapText,
 } from "lucide-react";
+import type { SheetPanelMode } from "./sheet-panels";
 
 const TEXT_COLORS = ["#1f2329", "#d83931", "#ff8800", "#00b42a", "#3370ff", "#7b56d9"];
 const BG_COLORS = ["", "#fff7e6", "#eef3ff", "#e8ffea", "#ffece8", "#f2f3f5"];
@@ -249,6 +254,9 @@ export interface SheetToolbarProps {
   onToggleFilter: () => void;
   onSortCol: (ascending: boolean) => void;
   onOpenFind: () => void;
+  activePanel: SheetPanelMode | null;
+  unresolvedCommentCount: number;
+  onTogglePanel: (mode: SheetPanelMode) => void;
 }
 
 export function SheetToolbar(props: SheetToolbarProps) {
@@ -283,6 +291,9 @@ export function SheetToolbar(props: SheetToolbarProps) {
     onToggleFilter,
     onSortCol,
     onOpenFind,
+    activePanel,
+    unresolvedCommentCount,
+    onTogglePanel,
   } = props;
 
   const [openMenu, setOpenMenu] = useState<"file" | "insert" | "color" | "bg" | "numfmt" | "freeze" | null>(null);
@@ -481,6 +492,30 @@ export function SheetToolbar(props: SheetToolbarProps) {
       {labeledBtn(t("升序"), false, !canEdit, () => onSortCol(true), <ArrowUpAZ size={15} />, "sort-asc")}
       {labeledBtn(t("降序"), false, !canEdit, () => onSortCol(false), <ArrowDownAZ size={15} />, "sort-desc")}
       {labeledBtn(t("查找替换"), false, false, onOpenFind, <Search size={15} />, "find-replace")}
+
+      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+
+      {labeledBtn(t("数据验证"), activePanel === "validation", false, () => onTogglePanel("validation"), <ListChecks size={15} />, "validation")}
+      {labeledBtn(t("条件格式"), activePanel === "condfmt", false, () => onTogglePanel("condfmt"), <Sparkles size={15} />, "cond-fmt")}
+      {labeledBtn(t("保护区域"), activePanel === "protect", false, () => onTogglePanel("protect"), <Lock size={15} />, "protect")}
+      {labeledBtn(
+        t("评论"),
+        activePanel === "comments",
+        false,
+        () => onTogglePanel("comments"),
+        <span className="relative inline-flex">
+          <MessageSquare size={15} />
+          {unresolvedCommentCount > 0 && (
+            <span
+              data-sheet-comment-count
+              className="absolute -right-2.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[#ff8800] px-1 text-[9px] font-semibold leading-none text-white"
+            >
+              {unresolvedCommentCount > 99 ? "99+" : unresolvedCommentCount}
+            </span>
+          )}
+        </span>,
+        "comments",
+      )}
     </div>
   );
 }

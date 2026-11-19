@@ -100,18 +100,21 @@ type SheetCell struct {
 }
 
 type SheetWorksheet struct {
-	ID         int64             `json:"id"`
-	NodeID     int64             `json:"nodeId"`
-	Title      string            `json:"title"`
-	Pos        int               `json:"pos"`
-	FrozenRows int               `json:"frozenRows"`
-	FrozenCols int               `json:"frozenCols"`
-	Merges     []SheetMerge      `json:"merges"`
-	Filter     SheetFilterConfig `json:"filter"`
-	Revision   int64             `json:"revision"`
-	Rows       []SheetAxis       `json:"rows"`
-	Columns    []SheetAxis       `json:"columns"`
-	Cells      []SheetCell       `json:"cells"`
+	ID                 int64                    `json:"id"`
+	NodeID             int64                    `json:"nodeId"`
+	Title              string                   `json:"title"`
+	Pos                int                      `json:"pos"`
+	FrozenRows         int                      `json:"frozenRows"`
+	FrozenCols         int                      `json:"frozenCols"`
+	Merges             []SheetMerge             `json:"merges"`
+	Filter             SheetFilterConfig        `json:"filter"`
+	Validations        []SheetDataValidation    `json:"validations"`
+	ConditionalFormats []SheetConditionalFormat `json:"conditionalFormats"`
+	ProtectedRanges    []SheetProtectedRange    `json:"protectedRanges"`
+	Revision           int64                    `json:"revision"`
+	Rows               []SheetAxis              `json:"rows"`
+	Columns            []SheetAxis              `json:"columns"`
+	Cells              []SheetCell              `json:"cells"`
 }
 
 type SheetSnapshot struct {
@@ -157,13 +160,16 @@ type SheetBatchResult struct {
 }
 
 type WorksheetPatch struct {
-	Title            *string            `json:"title,omitempty"`
-	Pos              *int               `json:"pos,omitempty"`
-	FrozenRows       *int               `json:"frozenRows,omitempty"`
-	FrozenCols       *int               `json:"frozenCols,omitempty"`
-	Merges           *[]SheetMerge      `json:"merges,omitempty"`
-	Filter           *SheetFilterConfig `json:"filter,omitempty"`
-	ExpectedRevision *int64             `json:"expectedRevision,omitempty"`
+	Title              *string                   `json:"title,omitempty"`
+	Pos                *int                      `json:"pos,omitempty"`
+	FrozenRows         *int                      `json:"frozenRows,omitempty"`
+	FrozenCols         *int                      `json:"frozenCols,omitempty"`
+	Merges             *[]SheetMerge             `json:"merges,omitempty"`
+	Filter             *SheetFilterConfig        `json:"filter,omitempty"`
+	Validations        *[]SheetDataValidation    `json:"validations,omitempty"`
+	ConditionalFormats *[]SheetConditionalFormat `json:"conditionalFormats,omitempty"`
+	ProtectedRanges    *[]SheetProtectedRange    `json:"protectedRanges,omitempty"`
+	ExpectedRevision   *int64                    `json:"expectedRevision,omitempty"`
 }
 
 type SheetAxisOp struct {
@@ -599,6 +605,9 @@ func cloneSheetWorksheet(w SheetWorksheet) SheetWorksheet {
 	w.Columns = slices.Clone(w.Columns)
 	w.Merges = slices.Clone(w.Merges)
 	w.Filter = cloneSheetFilter(w.Filter)
+	w.Validations = cloneSheetValidations(w.Validations)
+	w.ConditionalFormats = cloneSheetCondFormats(w.ConditionalFormats)
+	w.ProtectedRanges = cloneSheetProtectedRanges(w.ProtectedRanges)
 	cells := make([]SheetCell, len(w.Cells))
 	for i, c := range w.Cells {
 		c.Style = cloneSheetStyle(c.Style)

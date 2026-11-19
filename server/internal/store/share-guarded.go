@@ -293,8 +293,8 @@ func managedPermissions(meta DocMeta, patch ManagedDocPatch) (string, string, bo
 		}
 		return RoleView, RoleView, false, nil
 	}
-	// Spreadsheets have copy/download policies but no comments yet.
-	policyKind := meta.Kind == "doc" || meta.Kind == "sheet" && patch.CommentMinRole == nil
+	// Documents and spreadsheets support split copy/download/comment policies.
+	policyKind := meta.Kind == "doc" || meta.Kind == "sheet"
 	if !policyKind || patch.ExpectedPermissionsRevision == nil || patch.ExpectedCopyProtected != nil || *patch.ExpectedPermissionsRevision != meta.PermissionsRevision {
 		return "", "", false, ErrConflict
 	}

@@ -979,6 +979,72 @@ export interface SheetCell {
   revision: number;
 }
 
+export interface SheetDataValidation {
+  id: string;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  type: "list" | "number" | "date";
+  options?: string[];
+  min?: string;
+  max?: string;
+  strict: boolean;
+  hint?: string;
+}
+
+export type SheetCondFormatOp =
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "eq"
+  | "neq"
+  | "between"
+  | "contains"
+  | "empty"
+  | "not_empty";
+
+export interface SheetConditionalFormat {
+  id: string;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  op: SheetCondFormatOp;
+  value1?: string;
+  value2?: string;
+  bg?: string;
+  color?: string;
+  bold?: boolean;
+}
+
+export interface SheetProtectedRange {
+  id: string;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  description?: string;
+  allowedUserIds?: number[];
+}
+
+export interface SheetComment {
+  id: number;
+  nodeId: number;
+  worksheetId: number;
+  rowId: number;
+  columnId: number;
+  authorId: number;
+  authorName: string;
+  body: string;
+  resolved: boolean;
+  resolvedBy?: number;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SheetWorksheet {
   id: number;
   nodeId: number;
@@ -988,6 +1054,9 @@ export interface SheetWorksheet {
   frozenCols: number;
   merges: SheetMerge[];
   filter: SheetFilterConfig;
+  validations?: SheetDataValidation[];
+  conditionalFormats?: SheetConditionalFormat[];
+  protectedRanges?: SheetProtectedRange[];
   revision: number;
   rows: SheetAxis[];
   columns: SheetAxis[];
@@ -1043,6 +1112,9 @@ export interface WorksheetPatch {
   frozenCols?: number;
   merges?: SheetMerge[];
   filter?: SheetFilterConfig;
+  validations?: SheetDataValidation[];
+  conditionalFormats?: SheetConditionalFormat[];
+  protectedRanges?: SheetProtectedRange[];
   expectedRevision?: number;
 }
 
@@ -1095,6 +1167,20 @@ export const sheetsApi = {
     request<SheetSnapshot>("POST", `/api/sheets/${nodeId}/import-xlsx`, { expectedWorkbookRevision, mutationId, sheets }, undefined, sheetHeaders(userId)),
   duplicate: (nodeId: number, userId: number, signal?: AbortSignal) =>
     request<DocMeta>("POST", `/api/docs/${nodeId}/account-duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
+  listComments: (nodeId: number, userId: number, worksheetId?: number) =>
+    request<{ comments: SheetComment[] }>(
+      "GET",
+      `/api/sheets/${nodeId}/comments${worksheetId ? `?worksheetId=${worksheetId}` : ""}`,
+      undefined,
+      undefined,
+      sheetHeaders(userId),
+    ),
+  createComment: (nodeId: number, userId: number, body: { worksheetId: number; rowId: number; columnId: number; body: string }) =>
+    request<{ comment: SheetComment }>("POST", `/api/sheets/${nodeId}/comments`, body, undefined, sheetHeaders(userId)),
+  updateComment: (nodeId: number, userId: number, commentId: number, patch: { body?: string; resolved?: boolean }) =>
+    request<{ comment: SheetComment }>("PATCH", `/api/sheets/${nodeId}/comments/${commentId}`, patch, undefined, sheetHeaders(userId)),
+  deleteComment: (nodeId: number, userId: number, commentId: number) =>
+    request<void>("DELETE", `/api/sheets/${nodeId}/comments/${commentId}`, undefined, undefined, sheetHeaders(userId)),
 };
 export interface SearchFilters {
   kind?: string;

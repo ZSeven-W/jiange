@@ -253,15 +253,16 @@ func exerciseSheetStore(t *testing.T, st store.Store) {
 	if err != nil || copied.Kind != "sheet" || copied.Title != "Q4 预算表 副本" {
 		t.Fatalf("CopySheetWorkbook got %+v err=%v", copied, err)
 	}
-	// Spreadsheets support the split copy/download policy, but not comments.
+	// Spreadsheets support the split copy/download/comment policy.
 	ownerMeta, err := st.GetDoc(ctx, owner.ID, entry.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manageOnly, viewRole, revision := store.RoleManage, store.RoleView, ownerMeta.PermissionsRevision
-	if err = st.PatchManagedDocGuarded(ctx, ownerGuard, entry.ID, store.ManagedDocPatch{CommentMinRole: &viewRole, ExpectedPermissionsRevision: &revision}); !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("sheet comment policy should be rejected, got %v", err)
+	manageOnly, editRole, revision := store.RoleManage, store.RoleEdit, ownerMeta.PermissionsRevision
+	if err = st.PatchManagedDocGuarded(ctx, ownerGuard, entry.ID, store.ManagedDocPatch{CommentMinRole: &editRole, ExpectedPermissionsRevision: &revision}); err != nil {
+		t.Fatalf("sheet comment policy: %v", err)
 	}
+	revision++
 	if err = st.PatchManagedDocGuarded(ctx, ownerGuard, entry.ID, store.ManagedDocPatch{DownloadMinRole: &manageOnly, ExpectedPermissionsRevision: &revision}); err != nil {
 		t.Fatalf("sheet download policy: %v", err)
 	}

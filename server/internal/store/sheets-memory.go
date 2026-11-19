@@ -31,20 +31,23 @@ type memSheetReceipt struct {
 }
 
 type memWorksheet struct {
-	id         int64
-	nodeID     int64
-	title      string
-	pos        int
-	frozenRows int
-	frozenCols int
-	merges     []SheetMerge
-	filter     SheetFilterConfig
-	revision   int64
-	rows       []SheetAxis
-	columns    []SheetAxis
-	rowIndex   map[int64]bool
-	colIndex   map[int64]bool
-	cells      map[memSheetCellKey]SheetCell
+	id                 int64
+	nodeID             int64
+	title              string
+	pos                int
+	frozenRows         int
+	frozenCols         int
+	merges             []SheetMerge
+	filter             SheetFilterConfig
+	validations        []SheetDataValidation
+	conditionalFormats []SheetConditionalFormat
+	protectedRanges    []SheetProtectedRange
+	revision           int64
+	rows               []SheetAxis
+	columns            []SheetAxis
+	rowIndex           map[int64]bool
+	colIndex           map[int64]bool
+	cells              map[memSheetCellKey]SheetCell
 }
 
 type memWorkbook struct {
@@ -122,18 +125,21 @@ func (w *memWorksheet) toModel() SheetWorksheet {
 		return cells[i].ColumnID < cells[j].ColumnID
 	})
 	return cloneSheetWorksheet(SheetWorksheet{
-		ID:         w.id,
-		NodeID:     w.nodeID,
-		Title:      w.title,
-		Pos:        w.pos,
-		FrozenRows: w.frozenRows,
-		FrozenCols: w.frozenCols,
-		Merges:     w.merges,
-		Filter:     w.filter,
-		Revision:   w.revision,
-		Rows:       w.rows,
-		Columns:    w.columns,
-		Cells:      cells,
+		ID:                 w.id,
+		NodeID:             w.nodeID,
+		Title:              w.title,
+		Pos:                w.pos,
+		FrozenRows:         w.frozenRows,
+		FrozenCols:         w.frozenCols,
+		Merges:             w.merges,
+		Filter:             w.filter,
+		Validations:        w.validations,
+		ConditionalFormats: w.conditionalFormats,
+		ProtectedRanges:    w.protectedRanges,
+		Revision:           w.revision,
+		Rows:               w.rows,
+		Columns:            w.columns,
+		Cells:              cells,
 	})
 }
 
@@ -250,7 +256,7 @@ func (m *Memory) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID int
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d, wb, _, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
+	d, wb, role, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
 	if err != nil {
 		return SheetBatchResult{}, err
 	}
@@ -272,10 +278,32 @@ func (m *Memory) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID int
 	if wb.revision >= sheetMaxRevision || ws.revision >= sheetMaxRevision {
 		return SheetBatchResult{}, ErrConflict
 	}
+	var rowPos map[int64]int
+	var colPos map[int64]int
+	if len(ws.protectedRanges) > 0 || len(ws.validations) > 0 {
+		rowPos = make(map[int64]int, len(ws.rows))
+		for _, r := range ws.rows {
+			rowPos[r.ID] = r.Pos
+		}
+		colPos = make(map[int64]int, len(ws.columns))
+		for _, c := range ws.columns {
+			colPos[c.ID] = c.Pos
+		}
+	}
 	revisions := make([]SheetCellRevision, 0, len(prepared.Cells))
 	for _, w := range prepared.Cells {
 		if !ws.rowIndex[w.RowID] || !ws.colIndex[w.ColumnID] {
 			return SheetBatchResult{}, ErrNotFound
+		}
+		if len(ws.protectedRanges) > 0 {
+			if err := checkProtectedCellWrite(role, g.UserID, rowPos[w.RowID], colPos[w.ColumnID], ws.protectedRanges); err != nil {
+				return SheetBatchResult{}, err
+			}
+		}
+		if w.Raw != nil && len(ws.validations) > 0 {
+			if err := checkCellValidationWrite(*w.Raw, rowPos[w.RowID], colPos[w.ColumnID], ws.validations); err != nil {
+				return SheetBatchResult{}, err
+			}
 		}
 		cur := ws.cells[memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}]
 		if cur.Revision != w.ExpectedRevision || cur.Revision >= sheetMaxRevision {
@@ -372,7 +400,7 @@ func (m *Memory) CreateWorksheet(ctx context.Context, g RestoreGuard, nodeID int
 func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID, worksheetID int64, patch WorksheetPatch) (SheetWorksheet, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d, wb, _, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
+	d, wb, role, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
 	if err != nil {
 		return SheetWorksheet{}, 0, err
 	}
@@ -436,6 +464,33 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 			return SheetWorksheet{}, 0, ErrConflict
 		}
 	}
+	nextValidations := cloneSheetValidations(ws.validations)
+	if patch.Validations != nil {
+		var ok bool
+		nextValidations, ok = validateAndNormalizeSheetValidations(*patch.Validations, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
+	nextCondFormats := cloneSheetCondFormats(ws.conditionalFormats)
+	if patch.ConditionalFormats != nil {
+		var ok bool
+		nextCondFormats, ok = validateAndNormalizeSheetCondFormats(*patch.ConditionalFormats, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
+	nextProtected := cloneSheetProtectedRanges(ws.protectedRanges)
+	if patch.ProtectedRanges != nil {
+		if role != RoleManage {
+			return SheetWorksheet{}, 0, ErrForbidden
+		}
+		var ok bool
+		nextProtected, ok = validateAndNormalizeSheetProtectedRanges(*patch.ProtectedRanges, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
 	if err := driveMemoryEnd(ctx, g, expires); err != nil {
 		return SheetWorksheet{}, 0, err
 	}
@@ -454,6 +509,9 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 	ws.frozenCols = nextFrozenCols
 	ws.merges = nextMerges
 	ws.filter = nextFilter
+	ws.validations = nextValidations
+	ws.conditionalFormats = nextCondFormats
+	ws.protectedRanges = nextProtected
 	ws.revision++
 	wb.revision++
 	d.meta.UpdatedAt = time.Now()
@@ -483,6 +541,9 @@ func (m *Memory) DeleteWorksheet(ctx context.Context, g RestoreGuard, nodeID, wo
 		wb.order = slices.Delete(wb.order, idx, idx+1)
 	}
 	delete(wb.sheets, worksheetID)
+	m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {
+		return c.WorksheetID == worksheetID
+	})
 	for pos, id := range wb.order {
 		wb.sheets[id].pos = pos
 	}
@@ -495,7 +556,7 @@ func (m *Memory) DeleteWorksheet(ctx context.Context, g RestoreGuard, nodeID, wo
 func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, worksheetID int64, op SheetAxisOp) (SheetWorksheet, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d, wb, _, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
+	d, wb, role, expires, err := m.authorizeSheetLocked(ctx, g, nodeID, RoleEdit)
 	if err != nil {
 		return SheetWorksheet{}, 0, err
 	}
@@ -533,9 +594,15 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 			ws.rows[i].Pos = i
 		}
 		ws.merges = adjustSheetMergesInsert(ws.merges, "row", op.Index, count)
+		ws.validations = adjustSheetValidationsInsert(ws.validations, "row", op.Index, count)
+		ws.conditionalFormats = adjustSheetCondFormatsInsert(ws.conditionalFormats, "row", op.Index, count)
+		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "row", op.Index, count)
 	case "delete_row":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.rows) || len(ws.rows)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
+		}
+		if err := checkProtectedAxisDelete(role, g.UserID, "row", op.Index, count, ws.protectedRanges); err != nil {
+			return SheetWorksheet{}, 0, err
 		}
 		if err := driveMemoryEnd(ctx, g, expires); err != nil {
 			return SheetWorksheet{}, 0, err
@@ -555,7 +622,13 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 				delete(ws.cells, k)
 			}
 		}
+		m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {
+			return c.WorksheetID == ws.id && removed[c.RowID]
+		})
 		ws.merges = adjustSheetMergesDelete(ws.merges, "row", op.Index, count)
+		ws.validations = adjustSheetValidationsDelete(ws.validations, "row", op.Index, count)
+		ws.conditionalFormats = adjustSheetCondFormatsDelete(ws.conditionalFormats, "row", op.Index, count)
+		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "row", op.Index, count)
 		if ws.frozenRows > len(ws.rows)-1 {
 			ws.frozenRows = max(0, len(ws.rows)-1)
 		}
@@ -589,9 +662,15 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 			ws.columns[i].Pos = i
 		}
 		ws.merges = adjustSheetMergesInsert(ws.merges, "col", op.Index, count)
+		ws.validations = adjustSheetValidationsInsert(ws.validations, "col", op.Index, count)
+		ws.conditionalFormats = adjustSheetCondFormatsInsert(ws.conditionalFormats, "col", op.Index, count)
+		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "col", op.Index, count)
 	case "delete_col":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.columns) || len(ws.columns)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
+		}
+		if err := checkProtectedAxisDelete(role, g.UserID, "col", op.Index, count, ws.protectedRanges); err != nil {
+			return SheetWorksheet{}, 0, err
 		}
 		if err := driveMemoryEnd(ctx, g, expires); err != nil {
 			return SheetWorksheet{}, 0, err
@@ -611,7 +690,13 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 				delete(ws.cells, k)
 			}
 		}
+		m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {
+			return c.WorksheetID == ws.id && removed[c.ColumnID]
+		})
 		ws.merges = adjustSheetMergesDelete(ws.merges, "col", op.Index, count)
+		ws.validations = adjustSheetValidationsDelete(ws.validations, "col", op.Index, count)
+		ws.conditionalFormats = adjustSheetCondFormatsDelete(ws.conditionalFormats, "col", op.Index, count)
+		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "col", op.Index, count)
 		if ws.frozenCols > len(ws.columns)-1 {
 			ws.frozenCols = max(0, len(ws.columns)-1)
 		}
@@ -668,6 +753,9 @@ func (m *Memory) ReplaceSheetWorkbook(ctx context.Context, g RestoreGuard, nodeI
 	}
 	wb.order = make([]int64, 0, len(prepared))
 	wb.sheets = make(map[int64]*memWorksheet, len(prepared))
+	m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {
+		return c.NodeID == nodeID
+	})
 	for pos, item := range prepared {
 		ws := m.createMemWorksheetLocked(nodeID, item.Title, pos, item.Rows, item.Cols)
 		ws.frozenRows = item.FrozenRows
@@ -766,6 +854,9 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		UpdatedAt:        now,
 		DriveRevision:    1,
 		Role:             RoleManage,
+		CopyMinRole:      RoleView,
+		DownloadMinRole:  RoleView,
+		CommentMinRole:   RoleView,
 		InheritParentACL: true,
 	}
 	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}
@@ -796,6 +887,9 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		dstWS.frozenCols = srcWS.frozenCols
 		dstWS.merges = slices.Clone(srcWS.merges)
 		dstWS.filter = cloneSheetFilter(srcWS.filter)
+		dstWS.validations = cloneSheetValidations(srcWS.validations)
+		dstWS.conditionalFormats = cloneSheetCondFormats(srcWS.conditionalFormats)
+		dstWS.protectedRanges = cloneSheetProtectedRanges(srcWS.protectedRanges)
 		for k, cell := range srcWS.cells {
 			if cell.Raw == "" && cell.Style == (SheetCellStyle{}) {
 				continue

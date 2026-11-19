@@ -238,7 +238,7 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 	}
 	id := int64(len(m.d.docs) + 1)
 	meta := DocMeta{ID: id, WorkspaceID: ws, ParentID: pp, Kind: kind, DocType: docType, Title: title, CreatorID: g.UserID, CreatorName: m.users[g.UserID-1].Name, CreatedAt: now, UpdatedAt: now, DriveRevision: 1, InheritParentACL: true}
-	if kind == "doc" {
+	if kind == "doc" || kind == "sheet" {
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
 	d := &memDoc{meta: meta, driveRevision: 1, personal: personal, ids: map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{}}

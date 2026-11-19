@@ -196,7 +196,7 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
           enabled={!!settingsReady}
           error={settingsMessage}
           backRef={settingsBackRef}
-          showComment={meta.kind !== "sheet"}
+          showComment
           onBack={() => { restoreSettingsFocus.current = true; setShowSettings(false); setSettingsError(""); }}
           onChange={(permissionKey, next) => {
             if (!settingsReady || !permissions) return;

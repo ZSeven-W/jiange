@@ -260,6 +260,10 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/sheets/{id}/worksheets/{wid}":    s.deleteWorksheet,
 		"POST /api/sheets/{id}/worksheets/{wid}/axes": s.mutateSheetAxis,
 		"POST /api/sheets/{id}/import-xlsx":           s.importSheetXlsx,
+		"GET /api/sheets/{id}/comments":               s.listSheetComments,
+		"POST /api/sheets/{id}/comments":              s.createSheetComment,
+		"PATCH /api/sheets/{id}/comments/{cid}":       s.patchSheetComment,
+		"DELETE /api/sheets/{id}/comments/{cid}":      s.deleteSheetComment,
 
 		// 企业组织架构（成员角色 / 部门 / 用户组）
 		"GET /api/workspaces/{wsId}/org":                          s.getWorkspaceOrg,

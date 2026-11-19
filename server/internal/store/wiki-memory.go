@@ -557,7 +557,7 @@ func (m *Memory) CreateWikiNodeGuarded(ctx context.Context, guard RestoreGuard, 
 		WikiSpaceID:      &spID,
 		WikiSpaceName:    sp.Name,
 	}
-	if kind == "doc" {
+	if kind == "doc" || kind == "sheet" {
 		meta.CopyMinRole, meta.DownloadMinRole, meta.CommentMinRole = RoleView, RoleView, RoleView
 	}
 	d := &memDoc{

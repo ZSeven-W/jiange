@@ -110,10 +110,15 @@ func lockSheetPG(ctx context.Context, tx pgx.Tx, g RestoreGuard, nodeID int64, m
 	return info, expires, nil
 }
 
+const worksheetMetaCols = "id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, revision"
+
 func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	var ws SheetWorksheet
-	var mergesRaw, filterRaw []byte
-	err := row.Scan(&ws.ID, &ws.NodeID, &ws.Title, &ws.Pos, &ws.FrozenRows, &ws.FrozenCols, &mergesRaw, &filterRaw, &ws.Revision)
+	var mergesRaw, filterRaw, validationsRaw, condFormatsRaw, protectedRaw []byte
+	err := row.Scan(
+		&ws.ID, &ws.NodeID, &ws.Title, &ws.Pos, &ws.FrozenRows, &ws.FrozenCols,
+		&mergesRaw, &filterRaw, &validationsRaw, &condFormatsRaw, &protectedRaw, &ws.Revision,
+	)
 	if err != nil {
 		return SheetWorksheet{}, err
 	}
@@ -125,6 +130,24 @@ func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	}
 	if len(filterRaw) > 0 {
 		if err := json.Unmarshal(filterRaw, &ws.Filter); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.Validations = []SheetDataValidation{}
+	if len(validationsRaw) > 0 {
+		if err := json.Unmarshal(validationsRaw, &ws.Validations); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.ConditionalFormats = []SheetConditionalFormat{}
+	if len(condFormatsRaw) > 0 {
+		if err := json.Unmarshal(condFormatsRaw, &ws.ConditionalFormats); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.ProtectedRanges = []SheetProtectedRange{}
+	if len(protectedRaw) > 0 {
+		if err := json.Unmarshal(protectedRaw, &ws.ProtectedRanges); err != nil {
 			return SheetWorksheet{}, err
 		}
 	}
@@ -196,7 +219,7 @@ func loadWorksheetChildrenPG(ctx context.Context, tx pgx.Tx, ws *SheetWorksheet)
 }
 
 func loadSheetSnapshotPG(ctx context.Context, tx pgx.Tx, info pgSheetNode) (SheetSnapshot, error) {
-	rows, err := tx.Query(ctx, `SELECT id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id`, info.nodeID)
+	rows, err := tx.Query(ctx, `SELECT `+worksheetMetaCols+` FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id`, info.nodeID)
 	if err != nil {
 		return SheetSnapshot{}, err
 	}
@@ -373,7 +396,9 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 
 		var wsRev int64
-		e = tx.QueryRow(ctx, `SELECT revision FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, prepared.WorksheetID, nodeID).Scan(&wsRev)
+		var validationsRaw, protectedRaw []byte
+		e = tx.QueryRow(ctx, `SELECT revision, validations, protected_ranges FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, prepared.WorksheetID, nodeID).
+			Scan(&wsRev, &validationsRaw, &protectedRaw)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -382,6 +407,18 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 		if info.workbookRevision >= sheetMaxRevision || wsRev >= sheetMaxRevision {
 			return ErrConflict
+		}
+		var validations []SheetDataValidation
+		if len(validationsRaw) > 0 {
+			if e = json.Unmarshal(validationsRaw, &validations); e != nil {
+				return e
+			}
+		}
+		var protectedRanges []SheetProtectedRange
+		if len(protectedRaw) > 0 {
+			if e = json.Unmarshal(protectedRaw, &protectedRanges); e != nil {
+				return e
+			}
 		}
 
 		rowIDSet := map[int64]bool{}
@@ -399,18 +436,67 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 			}
 		}
 
-		var validRows, validCols int
-		if e = tx.QueryRow(ctx, `SELECT count(*) FROM sheet_rows WHERE worksheet_id=$1 AND id=ANY($2)`, prepared.WorksheetID, rowIDs).Scan(&validRows); e != nil {
+		rowPosMap := make(map[int64]int, len(rowIDs))
+		rRows, e := tx.Query(ctx, `SELECT id, pos FROM sheet_rows WHERE worksheet_id=$1 AND id=ANY($2)`, prepared.WorksheetID, rowIDs)
+		if e != nil {
 			return e
 		}
-		if validRows != len(rowIDs) {
-			return ErrNotFound
+		for rRows.Next() {
+			var id int64
+			var pos int
+			if e = rRows.Scan(&id, &pos); e != nil {
+				rRows.Close()
+				return e
+			}
+			rowPosMap[id] = pos
 		}
-		if e = tx.QueryRow(ctx, `SELECT count(*) FROM sheet_columns WHERE worksheet_id=$1 AND id=ANY($2)`, prepared.WorksheetID, colIDs).Scan(&validCols); e != nil {
+		if e = rRows.Err(); e != nil {
+			rRows.Close()
 			return e
 		}
-		if validCols != len(colIDs) {
+		rRows.Close()
+		if len(rowPosMap) != len(rowIDs) {
 			return ErrNotFound
+		}
+
+		colPosMap := make(map[int64]int, len(colIDs))
+		cRows, e := tx.Query(ctx, `SELECT id, pos FROM sheet_columns WHERE worksheet_id=$1 AND id=ANY($2)`, prepared.WorksheetID, colIDs)
+		if e != nil {
+			return e
+		}
+		for cRows.Next() {
+			var id int64
+			var pos int
+			if e = cRows.Scan(&id, &pos); e != nil {
+				cRows.Close()
+				return e
+			}
+			colPosMap[id] = pos
+		}
+		if e = cRows.Err(); e != nil {
+			cRows.Close()
+			return e
+		}
+		cRows.Close()
+		if len(colPosMap) != len(colIDs) {
+			return ErrNotFound
+		}
+
+		if len(protectedRanges) > 0 || len(validations) > 0 {
+			for _, w := range prepared.Cells {
+				rPos := rowPosMap[w.RowID]
+				cPos := colPosMap[w.ColumnID]
+				if len(protectedRanges) > 0 {
+					if e = checkProtectedCellWrite(info.role, g.UserID, rPos, cPos, protectedRanges); e != nil {
+						return e
+					}
+				}
+				if w.Raw != nil && len(validations) > 0 {
+					if e = checkCellValidationWrite(*w.Raw, rPos, cPos, validations); e != nil {
+						return e
+					}
+				}
+			}
 		}
 
 		existing := make(map[memSheetCellKey]SheetCell, len(prepared.Cells))
@@ -591,7 +677,7 @@ func (p *Postgres) CreateWorksheet(ctx context.Context, g RestoreGuard, nodeID i
 		if _, e = tx.Exec(ctx, `INSERT INTO sheet_columns (worksheet_id, pos) SELECT $1, n FROM generate_series(0, $2::int - 1) n`, wid, sheetInitialCols); e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `SELECT id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision FROM sheet_worksheets WHERE id=$1`, wid))
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `SELECT `+worksheetMetaCols+` FROM sheet_worksheets WHERE id=$1`, wid))
 		if e != nil {
 			return e
 		}
@@ -616,7 +702,7 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 		if info.workbookRevision >= sheetMaxRevision {
 			return ErrConflict
 		}
-		rows, e := tx.Query(ctx, `SELECT id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id FOR UPDATE`, nodeID)
+		rows, e := tx.Query(ctx, `SELECT `+worksheetMetaCols+` FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id FOR UPDATE`, nodeID)
 		if e != nil {
 			return e
 		}
@@ -708,6 +794,33 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 				return ErrConflict
 			}
 		}
+		nextValidations := ws.Validations
+		if patch.Validations != nil {
+			var ok bool
+			nextValidations, ok = validateAndNormalizeSheetValidations(*patch.Validations, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
+		nextCondFormats := ws.ConditionalFormats
+		if patch.ConditionalFormats != nil {
+			var ok bool
+			nextCondFormats, ok = validateAndNormalizeSheetCondFormats(*patch.ConditionalFormats, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
+		nextProtected := ws.ProtectedRanges
+		if patch.ProtectedRanges != nil {
+			if info.role != RoleManage {
+				return ErrForbidden
+			}
+			var ok bool
+			nextProtected, ok = validateAndNormalizeSheetProtectedRanges(*patch.ProtectedRanges, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
 
 		if e = drivePGEnd(ctx, g, expires); e != nil {
 			return e
@@ -738,8 +851,20 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision`,
-			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON)))
+		validationsJSON, e := json.Marshal(nextValidations)
+		if e != nil {
+			return e
+		}
+		condFormatsJSON, e := json.Marshal(nextCondFormats)
+		if e != nil {
+			return e
+		}
+		protectedJSON, e := json.Marshal(nextProtected)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, validations=$7::jsonb, conditional_formats=$8::jsonb, protected_ranges=$9::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)))
 		if e != nil {
 			return e
 		}
@@ -822,7 +947,7 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		if info.workbookRevision >= sheetMaxRevision {
 			return ErrConflict
 		}
-		ws, e := scanWorksheetMetaPG(tx.QueryRow(ctx, `SELECT id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, worksheetID, nodeID))
+		ws, e := scanWorksheetMetaPG(tx.QueryRow(ctx, `SELECT `+worksheetMetaCols+` FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, worksheetID, nodeID))
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -850,6 +975,9 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		nextFrozenRows := ws.FrozenRows
 		nextFrozenCols := ws.FrozenCols
 		nextFilter := ws.Filter
+		nextValidations := ws.Validations
+		nextCondFormats := ws.ConditionalFormats
+		nextProtected := ws.ProtectedRanges
 
 		switch op.Op {
 		case "insert_row":
@@ -866,9 +994,15 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 				return e
 			}
 			nextMerges = adjustSheetMergesInsert(nextMerges, "row", op.Index, count)
+			nextValidations = adjustSheetValidationsInsert(nextValidations, "row", op.Index, count)
+			nextCondFormats = adjustSheetCondFormatsInsert(nextCondFormats, "row", op.Index, count)
+			nextProtected = adjustSheetProtectedInsert(nextProtected, "row", op.Index, count)
 		case "delete_row":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > rowCount || rowCount-count < 1 {
 				return ErrConflict
+			}
+			if e = checkProtectedAxisDelete(info.role, g.UserID, "row", op.Index, count, nextProtected); e != nil {
+				return e
 			}
 			if e = drivePGEnd(ctx, g, expires); e != nil {
 				return e
@@ -880,6 +1014,9 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 				return e
 			}
 			nextMerges = adjustSheetMergesDelete(nextMerges, "row", op.Index, count)
+			nextValidations = adjustSheetValidationsDelete(nextValidations, "row", op.Index, count)
+			nextCondFormats = adjustSheetCondFormatsDelete(nextCondFormats, "row", op.Index, count)
+			nextProtected = adjustSheetProtectedDelete(nextProtected, "row", op.Index, count)
 			newRows := rowCount - count
 			if nextFrozenRows > newRows-1 {
 				nextFrozenRows = max(0, newRows-1)
@@ -911,9 +1048,15 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 				return e
 			}
 			nextMerges = adjustSheetMergesInsert(nextMerges, "col", op.Index, count)
+			nextValidations = adjustSheetValidationsInsert(nextValidations, "col", op.Index, count)
+			nextCondFormats = adjustSheetCondFormatsInsert(nextCondFormats, "col", op.Index, count)
+			nextProtected = adjustSheetProtectedInsert(nextProtected, "col", op.Index, count)
 		case "delete_col":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > colCount || colCount-count < 1 {
 				return ErrConflict
+			}
+			if e = checkProtectedAxisDelete(info.role, g.UserID, "col", op.Index, count, nextProtected); e != nil {
+				return e
 			}
 			if e = drivePGEnd(ctx, g, expires); e != nil {
 				return e
@@ -925,6 +1068,9 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 				return e
 			}
 			nextMerges = adjustSheetMergesDelete(nextMerges, "col", op.Index, count)
+			nextValidations = adjustSheetValidationsDelete(nextValidations, "col", op.Index, count)
+			nextCondFormats = adjustSheetCondFormatsDelete(nextCondFormats, "col", op.Index, count)
+			nextProtected = adjustSheetProtectedDelete(nextProtected, "col", op.Index, count)
 			newCols := colCount - count
 			if nextFrozenCols > newCols-1 {
 				nextFrozenCols = max(0, newCols-1)
@@ -954,8 +1100,20 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision`,
-			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON)))
+		validationsJSON, e := json.Marshal(nextValidations)
+		if e != nil {
+			return e
+		}
+		condFormatsJSON, e := json.Marshal(nextCondFormats)
+		if e != nil {
+			return e
+		}
+		protectedJSON, e := json.Marshal(nextProtected)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, validations=$6::jsonb, conditional_formats=$7::jsonb, protected_ranges=$8::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)))
 		if e != nil {
 			return e
 		}
@@ -1184,7 +1342,7 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 			}
 		}
 
-		srcRows, e := tx.Query(ctx, `SELECT id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id FOR SHARE`, c.SourceID)
+		srcRows, e := tx.Query(ctx, `SELECT `+worksheetMetaCols+` FROM sheet_worksheets WHERE node_id=$1 ORDER BY pos, id FOR SHARE`, c.SourceID)
 		if e != nil {
 			return e
 		}
@@ -1235,9 +1393,21 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 			if e != nil {
 				return e
 			}
+			validationsJSON, e := json.Marshal(src.Validations)
+			if e != nil {
+				return e
+			}
+			condFormatsJSON, e := json.Marshal(src.ConditionalFormats)
+			if e != nil {
+				return e
+			}
+			protectedJSON, e := json.Marshal(src.ProtectedRanges)
+			if e != nil {
+				return e
+			}
 			var wid int64
-			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,1) RETURNING id`,
-				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON)).Scan(&wid); e != nil {
+			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,1) RETURNING id`,
+				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)).Scan(&wid); e != nil {
 				return e
 			}
 			rPos := make([]int, len(src.Rows))
