@@ -41,6 +41,8 @@ type Memory struct {
 	driveShortcutSeq int64
 	sheetComments    []SheetComment
 	sheetCommentSeq  int64
+	baseDashboards   []BaseDashboard
+	baseDashboardSeq int64
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate

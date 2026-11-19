@@ -267,6 +267,31 @@ export interface View {
   config: ViewConfig;
   pos: number;
 }
+export type DashboardWidgetType = "metric" | "bar" | "horizontal_bar" | "pie" | "line" | "pivot";
+export type DashboardMetric = "count" | "sum" | "avg" | "min" | "max" | "checked_pct";
+
+export interface DashboardWidget {
+  id: string;
+  type: DashboardWidgetType;
+  title: string;
+  tableId?: number;
+  span: 1 | 2;
+  groupFieldId?: number;
+  metric: DashboardMetric;
+  valueFieldId?: number;
+}
+
+export interface BaseDashboard {
+  id: number;
+  baseId: number;
+  name: string;
+  widgets: DashboardWidget[];
+  revision: number;
+  updatedBy?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type BaseSnapshot = { base: DocMeta; tables?: BaseTable[]; activeTableId?: number; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean };
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
@@ -317,6 +342,20 @@ export const baseApi = {
     request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells, expected }),
   /** Undo of a created record: delete only while it holds exactly `expected`. */
   deleteRecordIf: (id: number, rid: number, expected: Record<string, Cell | number[] | null>) => request<void>("DELETE", `/api/bases/${id}/records/${rid}`, { expected, exact: true }),
+  batchDeleteRecords: (id: number, ids: number[]) =>
+    request<{ deleted: BaseRecord[] }>("POST", `/api/bases/${id}/records/batch-delete`, { ids }),
+  batchRestoreRecords: (id: number, records: { tableId?: number; position?: number; cells: Record<string, Cell | number[] | null> }[]) =>
+    request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/records/batch-restore`, { records }),
+  batchUpdateRecords: (id: number, updates: { id: number; expected?: Record<string, Cell | number[] | null>; cells: Record<string, Cell | number[] | null> }[]) =>
+    request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/records/batch-update`, { updates }),
+  listDashboards: (id: number) =>
+    request<{ dashboards: BaseDashboard[] }>("GET", `/api/bases/${id}/dashboards`).then((r) => r.dashboards),
+  createDashboard: (id: number, name: string, widgets: DashboardWidget[]) =>
+    request<{ dashboard: BaseDashboard }>("POST", `/api/bases/${id}/dashboards`, { name, widgets }).then((r) => r.dashboard),
+  updateDashboard: (id: number, did: number, patch: { name?: string; widgets?: DashboardWidget[]; expectedRevision?: number }) =>
+    request<{ dashboard: BaseDashboard }>("PATCH", `/api/bases/${id}/dashboards/${did}`, patch).then((r) => r.dashboard),
+  deleteDashboard: (id: number, did: number) =>
+    request<void>("DELETE", `/api/bases/${id}/dashboards/${did}`),
   automations: (id: number) => request<{ automations: Automation[] }>("GET", `/api/bases/${id}/automations`).then((r) => r.automations),
   addAutomation: (id: number, a: Partial<Automation>) => request<Automation>("POST", `/api/bases/${id}/automations`, a),
   updateAutomation: (id: number, aid: number, a: Partial<Automation>) => request<Automation>("PATCH", `/api/bases/${id}/automations/${aid}`, a),

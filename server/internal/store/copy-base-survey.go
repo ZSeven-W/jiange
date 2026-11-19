@@ -523,6 +523,24 @@ func (m *Memory) CopyBase(ctx context.Context, c BaseCopy) (DocMeta, error) {
 		}
 		m.b.views = append(m.b.views, nv)
 	}
+	// Copy configured dashboards with remapped table & field IDs.
+	for _, db := range m.baseDashboards {
+		if db.BaseID != c.SourceID {
+			continue
+		}
+		m.baseDashboardSeq++
+		uid := c.UserID
+		m.baseDashboards = append(m.baseDashboards, BaseDashboard{
+			ID:        m.baseDashboardSeq,
+			BaseID:    newID,
+			Name:      db.Name,
+			Widgets:   RemapDashboardWidgets(db.Widgets, tableMap, fieldMap),
+			Revision:  1,
+			UpdatedBy: &uid,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
 	return d.meta, nil
 }
 
@@ -900,6 +918,37 @@ func (p *Postgres) CopyBase(ctx context.Context, c BaseCopy) (meta DocMeta, err 
 			cfg := RemapBaseViewConfig(v.Config, fieldMap)
 			if _, e = tx.Exec(ctx, `INSERT INTO bt_views (base_id, table_id, type, name, config, pos) VALUES ($1,$2,$3,$4,$5::jsonb,$6)`,
 				meta.ID, tid, v.Type, v.Name, string(cfg), v.Pos); e != nil {
+				return e
+			}
+		}
+
+		// Clone dashboards with remapped table & field IDs.
+		dRows, e := tx.Query(ctx, `SELECT id, base_id, name, widgets, revision, updated_by, created_at, updated_at FROM bt_dashboards WHERE base_id=$1 ORDER BY id FOR SHARE`, c.SourceID)
+		if e != nil {
+			return e
+		}
+		var srcDashboards []BaseDashboard
+		for dRows.Next() {
+			db, se := scanBaseDashboardPG(dRows)
+			if se != nil {
+				dRows.Close()
+				return se
+			}
+			srcDashboards = append(srcDashboards, db)
+		}
+		if e = dRows.Err(); e != nil {
+			dRows.Close()
+			return e
+		}
+		dRows.Close()
+		for _, db := range srcDashboards {
+			remapped := RemapDashboardWidgets(db.Widgets, tableMap, fieldMap)
+			wJSON, me := json.Marshal(remapped)
+			if me != nil {
+				return me
+			}
+			if _, e = tx.Exec(ctx, `INSERT INTO bt_dashboards (base_id, name, widgets, revision, updated_by) VALUES ($1,$2,$3::jsonb,1,$4)`,
+				meta.ID, db.Name, string(wJSON), c.UserID); e != nil {
 				return e
 			}
 		}

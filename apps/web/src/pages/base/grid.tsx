@@ -387,45 +387,67 @@ export function Grid({
     finally { refreshWrites(onMutate); }
   };
 
-  const deleteRecord = async (rec: BaseRecord) => {
-    const op = ledger.begin(t("删除记录 #{id}", { id: rec.id }), "", `record:delete:${rec.id}`);
+  const deleteRecordsAtomic = async (recs: BaseRecord[], label: string) => {
+    if (!recs.length) return false;
+    const ids = recs.map((r) => r.id);
+    const scope = ids.length === 1 ? `record:delete:${ids[0]}` : "batch";
+    const op = ledger.begin(label, "", scope);
     if (op === null) return false;
-    try { await baseApi.deleteRecord(baseId, rec.id); ledger.complete(op); return true; }
-    catch { ledger.fail(op, t("无法确认是否删除。请刷新并核对记录。")); return false; }
-    finally { refreshWrites(onMutate); }
+    try {
+      const res = await baseApi.batchDeleteRecords(baseId, ids);
+      ledger.complete(op);
+      undo?.stack.record({
+        label,
+        cells: [],
+        created: [],
+        deleted: res.deleted.map((r) => ({
+          rid: r.id,
+          tableId: r.tableId,
+          position: r.position,
+          cells: definedCells(r.cells),
+        })),
+      });
+      return true;
+    } catch {
+      ledger.fail(op, t("无法确认是否删除。请刷新并核对记录。"));
+      return false;
+    } finally {
+      refreshWrites(onMutate);
+    }
   };
 
   const deleteChecked = async (expected?: number[]) => {
     setDragError(null);
     const targets = records.filter((r) => checked.has(r.id));
     if (expected && !sameRecordTargets(expected, targets.map((record) => record.id))) { setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。")); return; }
-    if (!targets.length || !(await ask(t("删除选中的 {n} 条记录？", { n: targets.length }), t("删除后无法直接撤销。")))) return;
-    for (let index = 0; index < targets.length; index++) {
-      const pending = targets.slice(index).map((record) => record.id);
-      // A successful deletion refreshes the snapshot. Wait for that refresh
-      // rather than treating our own invalidation as a permission change.
-      const ready = await waitForBatchTargets(() => current.current, baseId, pending, []);
-      const snapshot = current.current;
-      if (!ready || snapshot.baseId !== baseId || !snapshot.mounted || !snapshot.canEdit || !checkedTargetsCurrent(pending, checkedRef.current, snapshot.visibleRecords, snapshot.detailAccessReady && snapshot.selectionAccessReady)) {
-        setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。"));
-        return;
-      }
-      const rec = targets[index];
-      if (!(await deleteRecord(rec))) return;
-      setChecked((prev) => { const next = new Set(prev); next.delete(rec.id); return next; });
+    if (!targets.length || !(await ask(t("删除选中的 {n} 条记录？", { n: targets.length }), t("删除后可通过撤销恢复。")))) return;
+    const ids = targets.map((record) => record.id);
+    const ready = await waitForBatchTargets(() => current.current, baseId, ids, []);
+    const snapshot = current.current;
+    if (!ready || snapshot.baseId !== baseId || !snapshot.mounted || !snapshot.canEdit || !checkedTargetsCurrent(ids, checkedRef.current, snapshot.visibleRecords, snapshot.detailAccessReady && snapshot.selectionAccessReady)) {
+      setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。"));
+      return;
+    }
+    const ok = await deleteRecordsAtomic(targets, t("删除 {n} 条记录", { n: targets.length }));
+    if (ok) {
+      setChecked((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
     }
   };
 
   const deleteOne = async (id: number) => {
     setDragError(null);
-    if (!(await ask(t("删除这条记录？"), t("删除后无法直接撤销。")))) return;
+    if (!(await ask(t("删除这条记录？"), t("删除后可通过撤销恢复。")))) return;
     const ready = await waitForBatchTargets(() => current.current, baseId, [id], []);
     const snapshot = current.current;
     const record = snapshot.visibleRecords.find((item) => item.id === id);
     if (!ready || !record || !snapshot.mounted || !snapshot.canEdit || snapshot.baseId !== baseId || !snapshot.detailAccessReady || !snapshot.selectionAccessReady) {
       setDragError(t("选择的记录或访问权限已变化，剩余记录未删除，请重新核对。")); return;
     }
-    await deleteRecord(record);
+    await deleteRecordsAtomic([record], t("删除记录 #{id}", { id: record.id }));
   };
 
   const openDetail = (id: number, tab: "detail" | "history", comment = false) => {
@@ -788,9 +810,9 @@ export function Grid({
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
     {dragError && <p role="alert" className="border-b px-3 py-2 text-[12px] text-destructive">{dragError}</p>}
     {checkedCount > 0 && (
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px] [@media(hover:hover)_and_(pointer:fine)]:hidden" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
+      <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-[#f0f4ff] px-4 text-[13px]" role="toolbar" aria-label={t("批量操作")} data-batch-bar>
         <span>{t("已选择")} <b className="font-medium text-primary">{checkedCount}</b> {t("条记录")}</span>
-        {canEdit && <button type="button" disabled={!detailAccessReady || !selectionAccessReady} className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white disabled:opacity-50" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />{t("删除")}</button>}
+        {canEdit && <button type="button" disabled={!detailAccessReady || !selectionAccessReady} className="flex h-7 items-center gap-1 rounded-md px-2 text-destructive hover:bg-white disabled:opacity-50" onClick={() => void deleteChecked()} data-batch-delete><Trash2 size={14} strokeWidth={1.7} />{t("批量删除")}</button>}
         <button type="button" className="ml-auto grid size-7 place-items-center rounded-md text-subtle hover:bg-white" aria-label={t("取消选择")} onClick={() => setChecked(new Set())}><X size={15} /></button>
       </div>
     )}

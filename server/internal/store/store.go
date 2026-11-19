@@ -44,6 +44,8 @@ type Store interface {
 	AutomationStore
 	RecentStore
 	BaseSnapshotStore
+	BaseDashboardStore
+	BaseBatchStore
 	AIStore
 	TemplateStore
 	DocTypeStore

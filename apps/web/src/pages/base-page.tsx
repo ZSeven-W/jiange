@@ -129,7 +129,10 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const configDrafts = useRef(new Map<string, ViewConfig>());
   const [filter, setFilter] = useState("");
   const [pane, setPane] = useState<"table" | "dashboard">("table");
-  const refresh = () => qc.invalidateQueries({ queryKey: ["base", id] });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["base-dashboards", id] });
+    return qc.invalidateQueries({ queryKey: ["base", id] });
+  };
 
   useEffect(() => {
     if (detailRecord === null || !q.isFetchedAfterMount || q.isFetching) return;
@@ -320,6 +323,9 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     setCellsIf: (rid, expected, cells) => baseApi.setCellsIf(id, rid, expected, cells),
     deleteRecordIf: (rid, expected) => baseApi.deleteRecordIf(id, rid, expected),
     addRecord: (cells) => baseApi.addRecord(id, cells as Record<string, import("@/lib/api").Cell>, activeTableId),
+    batchUpdateCells: (updates) => baseApi.batchUpdateRecords(id, updates),
+    batchDeleteRecords: (ids) => baseApi.batchDeleteRecords(id, ids),
+    batchRestoreRecords: (recs) => baseApi.batchRestoreRecords(id, recs),
   };
   const runUndo = async (redo: boolean) => {
     if (!canEdit || ledger.blocked("batch") || ledger.hasCellWrites()) return;
@@ -413,7 +419,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
             <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
           </nav>
         {pane === "dashboard" && !baseSidebarOpen && <div className="hidden h-11 shrink-0 items-center border-b bg-[#f7f8fa] px-3 md:flex"><button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="flex h-8 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button></div>}
-        {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
+        {pane === "dashboard" && <Dashboard baseId={id} activeTableId={activeTableId} records={q.data.records} fields={fields} members={members} canEdit={canEdit} />}
         <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", pane === "dashboard" && "hidden")}>
           <div className="flex min-h-0 flex-1 flex-col bg-surface">
       {/* 视图导航 */}

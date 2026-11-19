@@ -3,23 +3,34 @@ import type { Cell } from "@/lib/api";
 /**
  * 多维表格撤销/重做（本人本页会话内的操作）。
  *
- * 每一步记录写入前后的单元格值；撤销/重做都走服务端条件写入（expected），
- * 若单元格已被他人或其他标签页改动则拒绝执行并丢弃该步，绝不覆盖较新的内容。
- * 新增的记录撤销时仅在其内容仍完全等于本人写入值时删除。
+ * 每一步记录写入前后的单元格值、新增记录及被删除记录快照；
+ * 单元格撤销/重做走服务端条件写入（多行时走原子批量接口），
+ * 删除记录撤销走服务端原子批量恢复，重做再原子删除恢复后的记录。
  */
 export type UndoCellValue = Cell | number[] | null;
 export interface UndoCellChange { rid: number; fid: number; before: UndoCellValue; after: UndoCellValue }
+export interface UndoDeletedRecord {
+  rid: number;
+  tableId?: number;
+  position: number;
+  cells: Record<string, UndoCellValue>;
+}
 export interface UndoStep {
   label: string;
   cells: UndoCellChange[];
   /** 本步新增的记录（rid → 新增时写入的非空单元格）。 */
   created: { rid: number; cells: Record<string, UndoCellValue> }[];
+  /** 本步原子删除的记录快照（用于撤销恢复与重做删除）。 */
+  deleted?: UndoDeletedRecord[];
 }
 
 export interface UndoApi {
   setCellsIf: (rid: number, expected: Record<string, UndoCellValue>, cells: Record<string, UndoCellValue>) => Promise<unknown>;
   deleteRecordIf: (rid: number, expected: Record<string, UndoCellValue>) => Promise<unknown>;
   addRecord: (cells: Record<string, UndoCellValue>) => Promise<{ id: number; cells: Record<string, UndoCellValue | undefined> }>;
+  batchUpdateCells?: (updates: { id: number; expected: Record<string, UndoCellValue>; cells: Record<string, UndoCellValue> }[]) => Promise<unknown>;
+  batchDeleteRecords?: (ids: number[]) => Promise<{ deleted: { id: number; tableId?: number; position: number; cells: Record<string, UndoCellValue | undefined> }[] }>;
+  batchRestoreRecords?: (records: { tableId?: number; position: number; cells: Record<string, UndoCellValue> }[]) => Promise<{ records: { id: number; tableId?: number; position: number; cells: Record<string, UndoCellValue | undefined> }[] }>;
 }
 
 export type UndoOutcome = { ok: true; label: string } | { ok: false; label: string; conflict: boolean };
@@ -62,8 +73,9 @@ export class BaseUndoStack {
 
   record(step: UndoStep) {
     const cells = step.cells.filter((c) => !sameCell(c.before, c.after));
-    if (!cells.length && !step.created.length) return;
-    this.undoSteps.push({ ...step, cells });
+    const deleted = step.deleted ?? [];
+    if (!cells.length && !step.created.length && !deleted.length) return;
+    this.undoSteps.push({ ...step, cells, ...(deleted.length ? { deleted } : {}) });
     if (this.undoSteps.length > LIMIT) this.undoSteps.shift();
     this.redoSteps = [];
     this.emit();
@@ -76,7 +88,12 @@ export class BaseUndoStack {
     if (!step || this.busy) return null;
     this.busy = true; this.emit();
     try {
-      for (const [rid, row] of groupByRecord(step.cells.filter((c) => !step.created.some((r) => r.rid === c.rid)), "before")) await api.setCellsIf(rid, row.expected, row.cells);
+      const grouped = groupByRecord(step.cells.filter((c) => !step.created.some((r) => r.rid === c.rid)), "before");
+      if (grouped.size > 1 && api.batchUpdateCells) {
+        await api.batchUpdateCells([...grouped.entries()].map(([id, row]) => ({ id, expected: row.expected, cells: row.cells })));
+      } else {
+        for (const [rid, row] of grouped) await api.setCellsIf(rid, row.expected, row.cells);
+      }
       for (const rec of step.created) {
         // The record may have been edited later in this step's own cell list.
         const expected = { ...rec.cells };
@@ -84,8 +101,29 @@ export class BaseUndoStack {
         for (const k of Object.keys(expected)) if (emptyCell(expected[k])) delete expected[k];
         await api.deleteRecordIf(rec.rid, expected);
       }
+      let redoDeleted = step.deleted;
+      if (step.deleted && step.deleted.length > 0) {
+        if (api.batchRestoreRecords) {
+          const res = await api.batchRestoreRecords(
+            step.deleted.map((rec) => ({ tableId: rec.tableId, position: rec.position, cells: rec.cells })),
+          );
+          redoDeleted = res.records.map((r, i) => ({
+            rid: r.id,
+            tableId: r.tableId ?? step.deleted![i]?.tableId,
+            position: r.position,
+            cells: definedCells(r.cells),
+          }));
+        } else {
+          const restored: UndoDeletedRecord[] = [];
+          for (const rec of step.deleted) {
+            const added = await api.addRecord(rec.cells);
+            restored.push({ rid: added.id, tableId: rec.tableId, position: rec.position, cells: definedCells(added.cells) });
+          }
+          redoDeleted = restored;
+        }
+      }
       this.undoSteps.pop();
-      this.redoSteps.push(step);
+      this.redoSteps.push({ ...step, ...(redoDeleted?.length ? { deleted: redoDeleted } : {}) });
       return { ok: true, label: step.label };
     } catch (err) {
       // Partial undo cannot be redone safely; drop the step and history after it.
@@ -111,10 +149,36 @@ export class BaseUndoStack {
         // Capture what the server actually stored (field defaults included).
         created.push({ rid: added.id, cells: definedCells(added.cells) });
       }
-      for (const [rid, row] of groupByRecord(step.cells.filter((c) => !remap.has(c.rid)), "after")) await api.setCellsIf(rid, row.expected, row.cells);
+      const grouped = groupByRecord(step.cells.filter((c) => !remap.has(c.rid)), "after");
+      if (grouped.size > 1 && api.batchUpdateCells) {
+        await api.batchUpdateCells([...grouped.entries()].map(([id, row]) => ({ id, expected: row.expected, cells: row.cells })));
+      } else {
+        for (const [rid, row] of grouped) await api.setCellsIf(rid, row.expected, row.cells);
+      }
+      let nextDeleted = step.deleted;
+      if (step.deleted && step.deleted.length > 0) {
+        if (api.batchDeleteRecords) {
+          const res = await api.batchDeleteRecords(step.deleted.map((r) => r.rid));
+          nextDeleted = res.deleted.map((r) => ({
+            rid: r.id,
+            tableId: r.tableId,
+            position: r.position,
+            cells: definedCells(r.cells),
+          }));
+        } else {
+          for (const rec of step.deleted) {
+            await api.deleteRecordIf(rec.rid, rec.cells);
+          }
+        }
+      }
       this.redoSteps.pop();
       // Re-created records get new IDs; their content is now captured in `created`.
-      this.undoSteps.push({ label: step.label, cells: step.cells.filter((c) => !remap.has(c.rid)), created });
+      this.undoSteps.push({
+        label: step.label,
+        cells: step.cells.filter((c) => !remap.has(c.rid)),
+        created,
+        ...(nextDeleted?.length ? { deleted: nextDeleted } : {}),
+      });
       return { ok: true, label: step.label };
     } catch (err) {
       this.redoSteps = [];

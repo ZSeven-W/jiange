@@ -75,4 +75,81 @@ describe("base undo/redo", () => {
     stack.record({ label: "二", cells: [{ rid: 1, fid: 10, before: "a", after: "c" }], created: [] });
     expect(stack.canRedo).toBe(false);
   });
+
+  it("undoes and redoes atomic batch record deletion via restore/delete", async () => {
+    const rows = new Map<number, { tableId?: number; position: number; cells: Record<string, UndoCellValue> }>([
+      [10, { tableId: 1, position: 1, cells: { "1": "Alpha" } }],
+      [11, { tableId: 1, position: 2, cells: { "1": "Beta" } }],
+    ]);
+    let nextId = 200;
+    const api: UndoApi = {
+      setCellsIf: async () => {},
+      deleteRecordIf: async () => {},
+      addRecord: async () => ({ id: nextId++, cells: {} }),
+      batchDeleteRecords: async (ids) => {
+        const deleted = ids.map((id) => {
+          const r = rows.get(id)!;
+          rows.delete(id);
+          return { id, tableId: r.tableId, position: r.position, cells: { ...r.cells } };
+        });
+        return { deleted };
+      },
+      batchRestoreRecords: async (recs) => {
+        const records = recs.map((r) => {
+          const id = nextId++;
+          rows.set(id, { tableId: r.tableId, position: r.position, cells: { ...r.cells } });
+          return { id, tableId: r.tableId, position: r.position, cells: { ...r.cells } };
+        });
+        return { records };
+      },
+    };
+    const stack = new BaseUndoStack();
+    const res = await api.batchDeleteRecords!([10, 11]);
+    stack.record({
+      label: "删除 2 条记录",
+      cells: [],
+      created: [],
+      deleted: res.deleted.map((r) => ({ rid: r.id, tableId: r.tableId, position: r.position, cells: r.cells as Record<string, UndoCellValue> })),
+    });
+    expect(rows.size).toBe(0);
+    expect((await stack.undo(api))?.ok).toBe(true);
+    expect(rows.size).toBe(2);
+    expect([...rows.values()].map((r) => r.cells["1"])).toEqual(["Alpha", "Beta"]);
+    expect((await stack.redo(api))?.ok).toBe(true);
+    expect(rows.size).toBe(0);
+  });
+
+  it("uses atomic batchUpdateCells when undoing multi-record cell edits", async () => {
+    const rows = new Map<number, Record<string, UndoCellValue>>([[1, { "10": "x2" }], [2, { "10": "y2" }]]);
+    let batchCalls = 0;
+    const api: UndoApi = {
+      setCellsIf: async () => { throw new Error("should use batchUpdateCells"); },
+      deleteRecordIf: async () => {},
+      addRecord: async () => ({ id: 99, cells: {} }),
+      batchUpdateCells: async (updates) => {
+        batchCalls++;
+        for (const u of updates) {
+          const row = rows.get(u.id)!;
+          for (const [k, v] of Object.entries(u.expected)) if (!sameCell(row[k], v)) throw new ApiError(409, "cells_changed", "changed");
+        }
+        for (const u of updates) {
+          const row = rows.get(u.id)!;
+          for (const [k, v] of Object.entries(u.cells)) row[k] = v;
+        }
+      },
+    };
+    const stack = new BaseUndoStack();
+    stack.record({
+      label: "粘贴",
+      cells: [
+        { rid: 1, fid: 10, before: "x1", after: "x2" },
+        { rid: 2, fid: 10, before: "y1", after: "y2" },
+      ],
+      created: [],
+    });
+    expect((await stack.undo(api))?.ok).toBe(true);
+    expect(batchCalls).toBe(1);
+    expect(rows.get(1)!["10"]).toBe("x1");
+    expect(rows.get(2)!["10"]).toBe("y1");
+  });
 });
