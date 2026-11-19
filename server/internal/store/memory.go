@@ -36,6 +36,7 @@ type Memory struct {
 	surveys          map[int64]Survey
 	surveyResponses  []SurveyResponse
 	surveyRespSeq    int64
+	searchIndex      map[int64]SearchIndexEntry
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate
@@ -59,6 +60,7 @@ func NewMemory() *Memory {
 		links:          map[[2]int64][]int64{},
 		syncedBlocks:   map[string]SyncedBlock{},
 		surveys:        map[int64]Survey{},
+		searchIndex:    map[int64]SearchIndexEntry{},
 	}
 }
 

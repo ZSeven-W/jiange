@@ -17,7 +17,7 @@ type searchableMindNode struct {
 
 // Only search topics that the client can render from a valid root. Orphaned,
 // malformed and cyclic properties must not become invisible search results.
-func searchableMindTopics(props map[string]string, contains func(string) bool) bool {
+func collectSearchableMindTopics(props map[string]string) []string {
 	nodes := make(map[string]searchableMindNode)
 	for key, raw := range props {
 		if !strings.HasPrefix(key, "fc.m.") || raw == "" {
@@ -51,10 +51,8 @@ func searchableMindTopics(props map[string]string, contains func(string) bool) b
 		}
 		nodes[id] = searchableMindNode{parent: parent, text: text}
 	}
+	var out []string
 	for id, node := range nodes {
-		if !contains(node.text) {
-			continue
-		}
 		seen := make(map[string]bool)
 		current := id
 		depth := 0
@@ -65,13 +63,23 @@ func searchableMindTopics(props map[string]string, contains func(string) bool) b
 			}
 			seen[current] = true
 			if n.parent == "" {
-				return true
+				out = append(out, node.text)
+				break
 			}
 			depth++
 			if depth > 32 {
 				break
 			}
 			current = n.parent
+		}
+	}
+	return out
+}
+
+func searchableMindTopics(props map[string]string, contains func(string) bool) bool {
+	for _, topic := range collectSearchableMindTopics(props) {
+		if contains(topic) {
+			return true
 		}
 	}
 	return false

@@ -31,4 +31,22 @@ describe("search API", () => {
     await expect(extrasApi.search("词")).rejects.toMatchObject({ status: 503, code: "search_incomplete" });
     await expect(extrasApi.search("词")).rejects.toBeInstanceOf(ApiError);
   });
+
+  it("serializes optional kind, owner, folderId, and date range filters", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ docs: [{ id: 9 }] })));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      extrasApi.search("报告", undefined, {
+        kind: "survey",
+        owner: "mine",
+        folderId: 42,
+        updatedFrom: "2026-11-01",
+        updatedTo: "2026-11-19",
+      }),
+    ).resolves.toEqual([{ id: 9 }]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/search?q=%E6%8A%A5%E5%91%8A&kind=survey&owner=mine&folderId=42&updatedFrom=2026-11-01&updatedTo=2026-11-19",
+      expect.any(Object),
+    );
+  });
 });

@@ -1066,11 +1066,27 @@ export const sheetsApi = {
   duplicate: (nodeId: number, userId: number, signal?: AbortSignal) =>
     request<DocMeta>("POST", `/api/docs/${nodeId}/account-duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
 };
+export interface SearchFilters {
+  kind?: string;
+  owner?: string;
+  folderId?: number;
+  updatedFrom?: string;
+  updatedTo?: string;
+}
+
 export const extrasApi = {
-  search: (q: string, signal?: AbortSignal) => request<{ docs?: DocMeta[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`, undefined, signal).then((r) => {
-    if (!Array.isArray(r?.docs)) throw new ApiError(502, "search_incomplete", "搜索未完成，请稍后重试。");
-    return r.docs;
-  }),
+  search: (q: string, signal?: AbortSignal, filters?: SearchFilters) => {
+    const params: string[] = [`q=${encodeURIComponent(q)}`];
+    if (filters?.kind && filters.kind !== "all") params.push(`kind=${encodeURIComponent(filters.kind)}`);
+    if (filters?.owner && filters.owner !== "all") params.push(`owner=${encodeURIComponent(filters.owner)}`);
+    if (filters?.folderId && filters.folderId > 0) params.push(`folderId=${encodeURIComponent(String(filters.folderId))}`);
+    if (filters?.updatedFrom) params.push(`updatedFrom=${encodeURIComponent(filters.updatedFrom)}`);
+    if (filters?.updatedTo) params.push(`updatedTo=${encodeURIComponent(filters.updatedTo)}`);
+    return request<{ docs?: DocMeta[] }>("GET", `/api/search?${params.join("&")}`, undefined, signal).then((r) => {
+      if (!Array.isArray(r?.docs)) throw new ApiError(502, "search_incomplete", "搜索未完成，请稍后重试。");
+      return r.docs;
+    });
+  },
   favorites: () => request<{ docs: DocMeta[] }>("GET", "/api/favorites").then((r) => r.docs),
   star: (id: number) => request<void>("PUT", `/api/docs/${id}/star`),
   unstar: (id: number) => request<void>("DELETE", `/api/docs/${id}/star`),

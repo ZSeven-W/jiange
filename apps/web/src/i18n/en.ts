@@ -1251,4 +1251,13 @@ export const en: Record<string, string> = {
   "删除数据表「{name}」？": "Delete table \"{name}\"?",
   "该数据表下的所有字段、记录和视图都将被永久删除。": "All fields, records, and views in this table will be permanently deleted.",
   "删除数据表失败，默认数据表不可删除。": "Failed to delete table. The default table cannot be deleted.",
+  "所在目录": "Folder",
+  "所在目录筛选": "Filter by folder",
+  "全部目录": "All folders",
+  "开始日期": "Start date",
+  "更新开始日期": "Updated from date",
+  "结束日期": "End date",
+  "更新结束日期": "Updated to date",
+  "按筛选条件搜索": "Searching with active filters",
+  "重置筛选": "Reset filters",
 };
