@@ -52,7 +52,17 @@ func (m *Memory) ReorderFieldsGuarded(ctx context.Context, guard BaseWriteGuard,
 	if err != nil {
 		return err
 	}
-	fields := memoryFieldsForBase(m.b.fields, baseID)
+	allFields := memoryFieldsForBase(m.b.fields, baseID)
+	var tableID int64
+	if len(expected) > 0 {
+		for _, f := range allFields {
+			if f.ID == expected[0] {
+				tableID = f.TableID
+				break
+			}
+		}
+	}
+	fields := fieldsForTable(allFields, tableID)
 	// Memory and PostgreSQL use the same deterministic order when positions tie.
 	sort.Slice(fields, func(i, j int) bool {
 		if fields[i].Position == fields[j].Position {
@@ -76,7 +86,9 @@ func (m *Memory) ReorderFieldsGuarded(ctx context.Context, guard BaseWriteGuard,
 	}
 	for i := range m.b.fields {
 		if m.b.fields[i].BaseID == baseID {
-			m.b.fields[i].Position = positions[m.b.fields[i].ID]
+			if pos, ok := positions[m.b.fields[i].ID]; ok {
+				m.b.fields[i].Position = pos
+			}
 		}
 	}
 	m.appendBtEventLocked(baseID, json.RawMessage(`{"kind":"reload"}`))
@@ -94,10 +106,20 @@ func (p *Postgres) ReorderFieldsGuarded(ctx context.Context, guard BaseWriteGuar
 		if _, err = tx.Exec(ctx, `LOCK TABLE base_fields IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return err
 		}
-		fields, err := pgFields(ctx, tx, baseID)
+		allFields, err := pgFields(ctx, tx, baseID)
 		if err != nil {
 			return err
 		}
+		var tableID int64
+		if len(expected) > 0 {
+			for _, f := range allFields {
+				if f.ID == expected[0] {
+					tableID = f.TableID
+					break
+				}
+			}
+		}
+		fields := fieldsForTable(allFields, tableID)
 		ordered, changed, err := fieldOrderPlan(fields, expected, desired)
 		if err != nil || !changed {
 			return err

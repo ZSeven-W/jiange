@@ -28,6 +28,11 @@ func (m *Memory) Views(_ context.Context, base int64) ([]View, error) {
 func (m *Memory) AddView(_ context.Context, v View) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tid, err := m.resolveTableIDLocked(v.BaseID, v.TableID)
+	if err != nil {
+		return View{}, err
+	}
+	v.TableID = tid
 	v.ID = m.id()
 	if v.Pos == 0 {
 		v.Pos = float64(v.ID)
@@ -79,6 +84,8 @@ func (m *Memory) UpdateView(_ context.Context, v View) (View, error) {
 			if v.Config == nil {
 				v.Config = x.Config
 			}
+			v.TableID = x.TableID
+			v.OwnerID = x.OwnerID
 			if err := m.invalidateFormOnTypeChangeLocked(x, v); err != nil {
 				return View{}, err
 			}
@@ -92,20 +99,26 @@ func (m *Memory) UpdateView(_ context.Context, v View) (View, error) {
 func (m *Memory) DeleteView(_ context.Context, base, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	count, found := 0, false
-	for _, v := range m.b.views {
-		if v.BaseID == base {
-			count++
-			if v.ID == id {
-				found = true
-			}
+	var target *View
+	for i := range m.b.views {
+		if m.b.views[i].BaseID == base && m.b.views[i].ID == id {
+			target = &m.b.views[i]
+			break
 		}
 	}
-	if !found {
+	if target == nil {
 		return ErrNotFound
 	}
-	if count <= 1 {
-		return ErrConflict
+	if target.OwnerID == nil {
+		sharedCount := 0
+		for _, v := range m.b.views {
+			if v.BaseID == base && v.TableID == target.TableID && v.OwnerID == nil {
+				sharedCount++
+			}
+		}
+		if sharedCount <= 1 {
+			return ErrConflict
+		}
 	}
 	n := len(m.b.views)
 	out := m.b.views[:0]
@@ -130,8 +143,12 @@ func (m *Memory) QueryRecords(_ context.Context, base int64, fields []Field, cfg
 	if err != nil {
 		return nil, err
 	}
+	tid := fieldsSingleTableID(fields)
 	out := []Record{}
 	for _, i := range btquery.SortIndexes(specs, cfg, len(recs), func(i int) map[string]json.RawMessage { return recs[i].Cells }) {
+		if tid > 0 && recs[i].TableID != 0 && recs[i].TableID != tid {
+			continue
+		}
 		if btquery.Match(specs, cfg, recs[i].Cells) {
 			out = append(out, recs[i])
 			if limit > 0 && len(out) >= limit {
@@ -159,10 +176,14 @@ func (m *Memory) QueryRecordsConstrained(ctx context.Context, base int64, fields
 	if limit <= 0 || limit > 10000 {
 		limit = 10000
 	}
+	tid := fieldsSingleTableID(fields)
 	out := []Record{}
 	for _, i := range btquery.SortIndexes(specs, cfg, len(recs), func(i int) map[string]json.RawMessage { return recs[i].Cells }) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if tid > 0 && recs[i].TableID != 0 && recs[i].TableID != tid {
+			continue
 		}
 		if !btquery.Match(specs, cfg, recs[i].Cells) {
 			continue

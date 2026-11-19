@@ -77,6 +77,10 @@ func (r *pgBaseSnapshotReader) QueryRecordsConstrained(ctx context.Context, base
 	specs := Specs(fields)
 	args := []any{base}
 	var clauses []string
+	if tid := fieldsSingleTableID(fields); tid > 0 {
+		args = append(args, tid)
+		clauses = append(clauses, fmt.Sprintf("table_id=$%d", len(args)))
+	}
 	for _, c := range mandatory {
 		if err := btquery.ValidateLocked(specs, c); err != nil {
 			return nil, err
@@ -392,7 +396,7 @@ func (r *pgBaseSnapshotReader) LinkFieldsTargeting(ctx context.Context, targetBa
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		rows, err := r.tx.Query(ctx, `SELECT f.id, f.base_id FROM base_fields f JOIN nodes n ON n.id=f.base_id`+roleJoins+`
+		rows, err := r.tx.Query(ctx, `SELECT f.id, f.base_id, f.table_id, f.target_table_id FROM base_fields f JOIN nodes n ON n.id=f.base_id`+roleJoins+`
 			WHERE n.deleted_at IS NULL AND n.kind='base' AND f.type='link' AND f.options->>0=$2 AND f.id>$3 AND (`+roleSQL+`) <> '' ORDER BY f.id LIMIT $4`, r.uid, strconv.FormatInt(targetBase, 10), after, pageSize)
 		if err != nil {
 			return nil, err
@@ -400,7 +404,7 @@ func (r *pgBaseSnapshotReader) LinkFieldsTargeting(ctx context.Context, targetBa
 		var page []LinkFieldRef
 		for rows.Next() {
 			var ref LinkFieldRef
-			if err := rows.Scan(&ref.FieldID, &ref.BaseID); err != nil {
+			if err := rows.Scan(&ref.FieldID, &ref.BaseID, &ref.TableID, &ref.TargetTableID); err != nil {
 				rows.Close()
 				return nil, err
 			}

@@ -97,9 +97,9 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 		ALTER TABLE bt_events RENAME TO bt_events_all;
 		ALTER TABLE bt_automations RENAME TO bt_automations_all;
 		ALTER TABLE bt_public_form_links RENAME TO bt_public_form_links_all;
-		CREATE VIEW base_fields WITH (security_barrier=true) AS SELECT id,base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple FROM base_fields_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
-		CREATE VIEW base_records WITH (security_barrier=true) AS SELECT id,base_id,cells,position,creator_id,created_at,updated_at FROM base_records_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
-		CREATE VIEW bt_views WITH (security_barrier=true) AS SELECT id,base_id,type,name,config,pos FROM bt_views_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW base_fields WITH (security_barrier=true) AS SELECT id,base_id,table_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple,target_table_id FROM base_fields_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW base_records WITH (security_barrier=true) AS SELECT id,base_id,table_id,cells,position,creator_id,created_at,updated_at FROM base_records_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
+		CREATE VIEW bt_views WITH (security_barrier=true) AS SELECT id,base_id,table_id,owner_id,type,name,config,pos FROM bt_views_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_links WITH (security_barrier=true) AS SELECT id,base_id,field_id,from_record,to_record FROM bt_links_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_events WITH (security_barrier=true) AS SELECT id,base_id,body,at,actor_id,actor_kind FROM bt_events_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
 		CREATE VIEW bt_automations WITH (security_barrier=true) AS SELECT id,base_id,name,enabled,trigger_kind,config,last_fired_at FROM bt_automations_all WHERE table_scope=0 WITH LOCAL CHECK OPTION;
@@ -124,6 +124,9 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 		DECLARE primary_id bigint;
 		BEGIN
 		  IF TG_OP='INSERT' THEN
+		    IF NEW.table_id IS NULL THEN
+		      SELECT id INTO NEW.table_id FROM bt_tables WHERE base_id=NEW.base_id AND is_default LIMIT 1;
+		    END IF;
 		    SELECT id INTO primary_id FROM base_fields_all WHERE base_id=NEW.base_id AND table_scope=NEW.table_scope AND is_primary;
 		    IF primary_id IS NULL THEN
 		      IF EXISTS (SELECT 1 FROM base_fields_all WHERE base_id=NEW.base_id AND table_scope=NEW.table_scope) THEN
@@ -187,6 +190,7 @@ func TestPostgresMultitableCompatibilityViews(t *testing.T) {
 	}
 	grant := "GRANT USAGE ON SCHEMA " + qs + " TO " + qr + "; " +
 		"GRANT SELECT,UPDATE ON nodes TO " + qr + "; " +
+		"GRANT SELECT ON bt_tables TO " + qr + "; " +
 		"GRANT SELECT,INSERT,UPDATE,DELETE ON base_fields,base_records,bt_views,bt_links,bt_events,bt_automations,bt_public_form_links TO " + qr + "; " +
 		"GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA " + qs + " TO " + qr
 	if _, err = owner.Exec(ctx, grant); err != nil {

@@ -31,7 +31,7 @@ func (m *Memory) LinkFieldsTargeting(_ context.Context, targetBase int64) ([]Lin
 	out := []LinkFieldRef{}
 	for _, f := range m.b.fields {
 		if f.Type == "link" && len(f.Options) > 0 && f.Options[0] == strconv.FormatInt(targetBase, 10) {
-			out = append(out, LinkFieldRef{FieldID: f.ID, BaseID: f.BaseID})
+			out = append(out, LinkFieldRef{FieldID: f.ID, BaseID: f.BaseID, TableID: f.TableID, TargetTableID: f.TargetTableID})
 		}
 	}
 	return out, nil

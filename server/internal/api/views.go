@@ -22,10 +22,12 @@ import (
 )
 
 type viewInput struct {
-	Name   *string          `json:"name"`
-	Type   *string          `json:"type"`
-	Config *json.RawMessage `json:"config"`
-	Pos    *float64         `json:"pos"`
+	TableID    *int64           `json:"tableId"`
+	IsPersonal *bool            `json:"isPersonal"`
+	Name       *string          `json:"name"`
+	Type       *string          `json:"type"`
+	Config     *json.RawMessage `json:"config"`
+	Pos        *float64         `json:"pos"`
 }
 
 var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true, "gantt": true}
@@ -68,20 +70,43 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := store.View{BaseID: b.ID, Type: "grid", Name: "表格视图"}
+	if tid := queryTableID(r); tid > 0 {
+		v.TableID = tid
+	}
+	if in.TableID != nil && *in.TableID > 0 {
+		v.TableID = *in.TableID
+	}
 	if in.Type != nil && *in.Type == "kanban" {
 		v.Name = "看板视图"
 	}
 	if !in.apply(w, &v) {
 		return
 	}
-	if b.Role != store.RoleManage {
-		var cfg btquery.Config
-		if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
-			httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
+	u, _ := UserFrom(r.Context())
+	if in.IsPersonal != nil && *in.IsPersonal {
+		uid := u.ID
+		v.OwnerID = &uid
+		if v.Type == "form" {
+			httpx.Error(w, http.StatusBadRequest, "invalid_view", "个人视图不支持表单类型")
 			return
 		}
+	}
+	var cfg btquery.Config
+	if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
+		return
+	}
+	if v.OwnerID != nil && (cfg.Locked || cfg.ConfigLocked) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持权限锁定或视图配置锁定")
+		return
+	}
+	if b.Role != store.RoleManage {
 		if cfg.Locked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
+			return
+		}
+		if cfg.ConfigLocked {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以锁定视图配置")
 			return
 		}
 	}
@@ -127,6 +152,11 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "view not found")
 		return
 	}
+	u, _ := UserFrom(r.Context())
+	if cur.OwnerID != nil && *cur.OwnerID != u.ID {
+		httpx.Error(w, http.StatusNotFound, "not_found", "view not found")
+		return
+	}
 	var in viewInput
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -135,14 +165,25 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 	if !in.apply(w, &v) {
 		return
 	}
+	var curCfg, cfg btquery.Config
+	if len(cur.Config) > 0 {
+		_ = json.Unmarshal(cur.Config, &curCfg)
+	}
+	if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
+		return
+	}
+	if v.OwnerID != nil && (cfg.Locked || cfg.ConfigLocked) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持权限锁定或视图配置锁定")
+		return
+	}
 	if b.Role != store.RoleManage {
-		var cfg btquery.Config
-		if len(v.Config) > 0 && json.Unmarshal(v.Config, &cfg) != nil {
-			httpx.Error(w, http.StatusBadRequest, "invalid_config", "invalid view configuration")
-			return
-		}
 		if cfg.Locked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
+			return
+		}
+		if curCfg.ConfigLocked || cfg.ConfigLocked {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "此视图已锁定配置，只有管理员可以修改")
 			return
 		}
 	}
@@ -329,11 +370,12 @@ func (s *Server) checkViewConfig(w http.ResponseWriter, r *http.Request, baseID 
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", "config must be a view config object")
 		return false
 	}
-	fields, err := s.Store.Fields(r.Context(), baseID)
+	allFields, err := s.Store.Fields(r.Context(), baseID)
 	if err != nil {
 		s.fail(w, r, err)
 		return false
 	}
+	fields := filterFieldsByTable(allFields, v.TableID)
 	if err := btquery.Validate(store.Specs(fields), cfg); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", err.Error())
 		return false
@@ -355,6 +397,7 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		TableID int64            `json:"tableId"`
 		Filters *btquery.Filters `json:"filters"`
 		Sorts   []btquery.Sort   `json:"sorts"`
 		Limit   int              `json:"limit"`
@@ -363,9 +406,18 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	if in.TableID <= 0 {
+		if qtid := queryTableID(r); qtid > 0 {
+			in.TableID = qtid
+		}
+	}
 	u, _ := UserFrom(r.Context())
-	read, err := s.readBaseAllowed(r.Context(), u.ID, b.ID)
+	read, err := readBaseTableAllowedWith(r.Context(), s.Store, u.ID, b.ID, in.TableID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "not_found", "table not found")
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}

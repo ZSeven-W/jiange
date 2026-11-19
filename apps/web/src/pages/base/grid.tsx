@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type FillRule, type RowHeight, type User } from "@/lib/api";
+import { ApiError, baseApi, type BaseRecord, type BaseTable, type Cell, type Field, type FillRule, type RowHeight, type User } from "@/lib/api";
 import { rowFill, rowHeightPx } from "./fill";
 import { ask } from "@/components/ui/ask";
 import { t } from "@/lib/i18n";
@@ -40,6 +40,8 @@ interface Edit {
 
 export function Grid({
   baseId,
+  tableId,
+  tables = [],
   userId,
   canEdit,
   fields,
@@ -60,6 +62,8 @@ export function Grid({
   undo,
 }: {
   baseId: number;
+  tableId?: number;
+  tables?: BaseTable[];
   userId: number;
   canEdit: boolean;
   fields: Field[];
@@ -355,7 +359,7 @@ export function Grid({
         await ensureCurrent();
         const cells: Record<string, Cell> = {};
         for (const [k, v] of Object.entries(row.cells)) if (v !== null) cells[k] = v;
-        const added = await baseApi.addRecord(baseId, cells);
+        const added = await baseApi.addRecord(baseId, cells, tableId);
         createdRows.push(added);
         return added;
       });
@@ -378,7 +382,7 @@ export function Grid({
   const addRecord = async () => {
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
-    try { const rec = await baseApi.addRecord(baseId); ledger.complete(op); undo?.stack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
+    try { const rec = await baseApi.addRecord(baseId, {}, tableId); ledger.complete(op); undo?.stack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
     catch { ledger.fail(op, t("无法确认是否创建。请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(onMutate); }
   };
@@ -463,7 +467,7 @@ export function Grid({
     const op = ledger.begin(label, cellDraft(patch), fid === undefined ? "field:create" : `field:edit:${fid}`);
     if (op === null) throw new Error("previous result unresolved");
     try {
-      if (fid === undefined) await baseApi.addField(baseId, patch);
+      if (fid === undefined) await baseApi.addField(baseId, tableId ? { ...patch, tableId } : patch);
       else await baseApi.patchField(baseId, fid, patch);
       ledger.complete(op);
     } catch (error) {
@@ -889,8 +893,8 @@ export function Grid({
                       </span>
                     )}
                   </div>
-                {editField?.id === f.id && <FieldForm members={members} initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
-                {insertAt?.fid === f.id && <FieldForm members={members} onCancel={() => setInsertAt(null)} onSubmit={(patch) => saveField({ ...patch, position: insertAt.position }).then(() => setInsertAt(null))} onAcknowledge={() => ledger.discardKey("field:create")} />}
+                {editField?.id === f.id && <FieldForm baseId={baseId} tables={tables} activeTableId={tableId} members={members} initial={f} onCancel={() => setEditField(null)} onSubmit={(patch) => saveField(patch, f.id)} onAcknowledge={() => ledger.discardKey(`field:edit:${f.id}`)} />}
+                {insertAt?.fid === f.id && <FieldForm baseId={baseId} tables={tables} activeTableId={tableId} members={members} onCancel={() => setInsertAt(null)} onSubmit={(patch) => saveField({ ...patch, position: insertAt.position }).then(() => setInsertAt(null))} onAcknowledge={() => ledger.discardKey("field:create")} />}
                 {canEdit && <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40" onMouseDown={(e) => startResize(e, f)} data-resize={f.id} />}
               </th>
               </Fragment>
@@ -910,7 +914,7 @@ export function Grid({
                 <button className="size-full text-[16px] text-subtle hover:text-foreground" onClick={() => setNewField((v) => !v)} aria-label={t("添加字段")} disabled={ledger.blocked("field:create")}>
                   +
                 </button>
-                {newField && <FieldForm members={members} onCancel={() => setNewField(false)} onSubmit={(f) => saveField(f)} onAcknowledge={() => ledger.discardKey("field:create")} />}
+                {newField && <FieldForm baseId={baseId} tables={tables} activeTableId={tableId} members={members} onCancel={() => setNewField(false)} onSubmit={(f) => saveField(f)} onAcknowledge={() => ledger.discardKey("field:create")} />}
               </th>
             )}
           </tr>

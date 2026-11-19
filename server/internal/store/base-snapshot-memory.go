@@ -59,6 +59,9 @@ func (m *Memory) snapshotPolicyLocked(ctx context.Context, uid, baseID int64) (m
 	}
 	sort.SliceStable(views, func(i, j int) bool { return views[i].Pos < views[j].Pos })
 	for _, view := range views {
+		if view.OwnerID != nil {
+			continue
+		}
 		var cfg btquery.Config
 		if len(view.Config) > 0 && !bytes.Equal(view.Config, []byte("null")) {
 			if err := json.Unmarshal(view.Config, &cfg); err != nil {
@@ -342,6 +345,15 @@ func (m *Memory) cloneBaseSnapshotLocked(ctx context.Context, uid, baseID int64)
 		}
 		v.Config = slices.Clone(v.Config)
 		snapshot.b.views = append(snapshot.b.views, v)
+	}
+	for id := range allowed {
+		m.ensureDefaultTableLocked(id)
+	}
+	for _, tbl := range m.b.tables {
+		if !allowed[tbl.BaseID] {
+			continue
+		}
+		snapshot.b.tables = append(snapshot.b.tables, tbl)
 	}
 	// Match the same locked policy used by the API before selecting the first
 	// page. Cloning all records in every related Base would make a small source

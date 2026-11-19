@@ -30,6 +30,9 @@ func parseBasePolicy(b store.DocMeta, fields []store.Field, views []store.View) 
 		return p, nil
 	}
 	for _, v := range views {
+		if v.OwnerID != nil {
+			continue
+		}
 		var cfg btquery.Config
 		if len(v.Config) != 0 && !bytes.Equal(v.Config, []byte("null")) {
 			if err := json.Unmarshal(v.Config, &cfg); err != nil {
@@ -137,6 +140,8 @@ func stripBaseRecords(recs []store.Record, fields []store.Field, p baseReadPolic
 
 type baseReadable struct {
 	meta              store.DocMeta
+	tables            []store.BaseTable
+	tableID           int64
 	allFields, fields []store.Field
 	views             []store.View
 	policy            baseReadPolicy
@@ -146,11 +151,15 @@ type baseReadable struct {
 }
 
 func (s *Server) readBaseAllowed(ctx context.Context, uid, id int64) (baseReadable, error) {
-	return readBaseAllowedWith(ctx, s.Store, uid, id)
+	return readBaseTableAllowedWith(ctx, s.Store, uid, id, 0)
 }
 
 func readBaseAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id int64) (baseReadable, error) {
-	out, err := readBasePolicyWith(ctx, reader, uid, id)
+	return readBaseTableAllowedWith(ctx, reader, uid, id, 0)
+}
+
+func readBaseTableAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id, tableID int64) (baseReadable, error) {
+	out, err := readBaseTablePolicyWith(ctx, reader, uid, id, tableID)
 	if err != nil {
 		return out, err
 	}
@@ -165,6 +174,10 @@ func readBaseAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, u
 // readBasePolicyWith obtains the permissions/schema without loading an
 // arbitrary prefix of another table. Associated records are fetched by ID.
 func readBasePolicyWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id int64) (baseReadable, error) {
+	return readBaseTablePolicyWith(ctx, reader, uid, id, 0)
+}
+
+func readBaseTablePolicyWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id, requestedTableID int64) (baseReadable, error) {
 	var out baseReadable
 	meta, err := reader.GetDoc(ctx, uid, id)
 	if err != nil {
@@ -173,19 +186,49 @@ func readBasePolicyWith(ctx context.Context, reader store.BaseSnapshotReader, ui
 	if meta.Kind != "base" || store.RoleRank(meta.Role) < store.RoleRank(store.RoleView) {
 		return out, store.ErrNotFound
 	}
-	fields, err := reader.Fields(ctx, id)
+	tables, err := reader.BaseTables(ctx, id)
 	if err != nil {
 		return out, err
 	}
-	views, err := reader.Views(ctx, id)
+	var activeTableID int64
+	if requestedTableID > 0 {
+		found := false
+		for _, tbl := range tables {
+			if tbl.ID == requestedTableID {
+				activeTableID = tbl.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return out, store.ErrNotFound
+		}
+	} else {
+		for _, tbl := range tables {
+			if tbl.IsDefault {
+				activeTableID = tbl.ID
+				break
+			}
+		}
+		if activeTableID == 0 && len(tables) > 0 {
+			activeTableID = tables[0].ID
+		}
+	}
+	allFields, err := reader.Fields(ctx, id)
 	if err != nil {
 		return out, err
 	}
+	allViews, err := reader.Views(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	fields := filterFieldsByTable(allFields, activeTableID)
+	views := filterViewsByTable(allViews, activeTableID)
 	policy, err := parseBasePolicy(meta, fields, views)
 	if err != nil {
 		return out, err
 	}
-	return baseReadable{meta: meta, allFields: fields, fields: visibleBaseFields(fields, policy), views: views, policy: policy}, nil
+	return baseReadable{meta: meta, tables: tables, tableID: activeTableID, allFields: fields, fields: visibleBaseFields(fields, policy), views: views, policy: policy}, nil
 }
 
 // Recheck the original session and the relevant permission configuration after
@@ -210,14 +253,16 @@ func (s *Server) recheckBaseRead(ctx context.Context, r *http.Request, snapshot 
 	if meta.Kind != "base" || meta.Role != snapshot.meta.Role || meta.WorkspaceID != snapshot.meta.WorkspaceID || meta.CopyProtected != snapshot.meta.CopyProtected || !reflect.DeepEqual(meta.ParentID, snapshot.meta.ParentID) {
 		return store.ErrConflict
 	}
-	fields, err := s.Store.Fields(ctx, meta.ID)
+	allFields, err := s.Store.Fields(ctx, meta.ID)
 	if err != nil {
 		return err
 	}
-	views, err := s.Store.Views(ctx, meta.ID)
+	allViews, err := s.Store.Views(ctx, meta.ID)
 	if err != nil {
 		return err
 	}
+	fields := filterFieldsByTable(allFields, snapshot.tableID)
+	views := filterViewsByTable(allViews, snapshot.tableID)
 	if !reflect.DeepEqual(fields, snapshot.allFields) || !reflect.DeepEqual(views, snapshot.views) {
 		return store.ErrConflict
 	}
@@ -261,16 +306,17 @@ func (s *Server) finishBaseRead(w http.ResponseWriter, r *http.Request, reads []
 	// A Base can be reached by multiple link/lookup fields. Merge its visible
 	// IDs so current-access checks do not grow with the number of link fields.
 	merged := make([]baseReadable, 0, len(reads))
-	indexes := make(map[int64]int, len(reads))
-	seen := make(map[int64]map[int64]bool, len(reads))
-	seenMembers := make(map[int64]map[int64]bool, len(reads))
+	indexes := make(map[[2]int64]int, len(reads))
+	seen := make(map[[2]int64]map[int64]bool, len(reads))
+	seenMembers := make(map[[2]int64]map[int64]bool, len(reads))
 	for _, read := range reads {
-		idx, ok := indexes[read.meta.ID]
+		key := [2]int64{read.meta.ID, read.tableID}
+		idx, ok := indexes[key]
 		if !ok {
 			idx = len(merged)
-			indexes[read.meta.ID] = idx
-			seen[read.meta.ID] = map[int64]bool{}
-			seenMembers[read.meta.ID] = map[int64]bool{}
+			indexes[key] = idx
+			seen[key] = map[int64]bool{}
+			seenMembers[key] = map[int64]bool{}
 			copy := read
 			copy.records = nil
 			copy.memberIDs = nil
@@ -284,14 +330,14 @@ func (s *Server) finishBaseRead(w http.ResponseWriter, r *http.Request, reads []
 			}
 		}
 		for _, record := range read.records {
-			if !seen[read.meta.ID][record.ID] {
-				seen[read.meta.ID][record.ID] = true
+			if !seen[key][record.ID] {
+				seen[key][record.ID] = true
 				merged[idx].records = append(merged[idx].records, record)
 			}
 		}
 		for _, id := range read.memberIDs {
 			name, present := read.memberNames[id]
-			if seenMembers[read.meta.ID][id] {
+			if seenMembers[key][id] {
 				oldName, oldPresent := merged[idx].memberNames[id]
 				if oldPresent != present || (present && oldName != name) {
 					httpx.Error(w, http.StatusConflict, "access_changed", "表格成员已变化，请重试")
@@ -299,7 +345,7 @@ func (s *Server) finishBaseRead(w http.ResponseWriter, r *http.Request, reads []
 				}
 				continue
 			}
-			seenMembers[read.meta.ID][id] = true
+			seenMembers[key][id] = true
 			merged[idx].memberIDs = append(merged[idx].memberIDs, id)
 			if present {
 				merged[idx].memberNames[id] = name
@@ -360,6 +406,24 @@ func (s *Server) allowLinkTarget(w http.ResponseWriter, r *http.Request, sourceI
 	if !s.allowBaseWrite(w, r, target) {
 		return false
 	}
+	if field.TargetTableID != nil && *field.TargetTableID > 0 {
+		tables, err := s.Store.BaseTables(r.Context(), targetID)
+		if err != nil {
+			s.fail(w, r, err)
+			return false
+		}
+		validTable := false
+		for _, tbl := range tables {
+			if tbl.ID == *field.TargetTableID {
+				validTable = true
+				break
+			}
+		}
+		if !validTable {
+			httpx.Error(w, http.StatusBadRequest, "invalid_link", "关联的目标数据表不存在")
+			return false
+		}
+	}
 	if len(field.Options) > 1 {
 		companionID, err := strconv.ParseInt(field.Options[1], 10, 64)
 		if err != nil || companionID <= 0 {
@@ -411,12 +475,19 @@ func (s *Server) allowLinkTarget(w http.ResponseWriter, r *http.Request, sourceI
 // A view config can itself contain filter values for a hidden field. Remove
 // those rules from metadata returned to non-managers; the actual mandatory
 // policy remains on the server and is never taken from this representation.
-func visibleBaseViews(views []store.View, p baseReadPolicy) []store.View {
-	if len(p.hidden) == 0 {
-		return views
+func visibleBaseViews(views []store.View, p baseReadPolicy, callerUserID int64) []store.View {
+	filtered := make([]store.View, 0, len(views))
+	for _, v := range views {
+		if v.OwnerID != nil && *v.OwnerID != callerUserID {
+			continue
+		}
+		filtered = append(filtered, v)
 	}
-	out := make([]store.View, 0, len(views))
-	for _, view := range views {
+	if len(p.hidden) == 0 {
+		return filtered
+	}
+	out := make([]store.View, 0, len(filtered))
+	for _, view := range filtered {
 		var obj map[string]json.RawMessage
 		if len(view.Config) == 0 || json.Unmarshal(view.Config, &obj) != nil || obj == nil {
 			out = append(out, view)

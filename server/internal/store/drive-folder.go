@@ -260,12 +260,13 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 		}
 	}
 	if kind == "base" {
-		field := Field{BaseID: id, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
-		view := View{BaseID: id, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
+		tbl := BaseTable{ID: m.id(), BaseID: id, Name: "数据表", Position: 1, IsDefault: true}
+		field := Field{BaseID: id, TableID: tbl.ID, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
+		view := View{BaseID: id, TableID: tbl.ID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
 		records := make([]Record, 5)
 		for i := range records {
 			uid := g.UserID
-			records[i] = Record{BaseID: id, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
+			records[i] = Record{BaseID: id, TableID: tbl.ID, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
 		}
 		field.ID = m.id()
 		view.ID = m.id()
@@ -273,6 +274,7 @@ func (m *Memory) CreateDriveNodeWithType(ctx context.Context, g RestoreGuard, ws
 			records[i].ID = m.id()
 			records[i].Position = float64(records[i].ID)
 		}
+		m.b.tables = append(m.b.tables, tbl)
 		m.b.fields = append(m.b.fields, field)
 		m.b.views = append(m.b.views, view)
 		m.b.records = append(m.b.records, records...)

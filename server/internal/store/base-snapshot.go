@@ -16,6 +16,7 @@ var ErrBaseSnapshotTooLarge = errors.New("store: base snapshot too large")
 // must not retain the reader after the callback returns.
 type BaseSnapshotReader interface {
 	GetDoc(context.Context, int64, int64) (DocMeta, error)
+	BaseTables(context.Context, int64) ([]BaseTable, error)
 	Fields(context.Context, int64) ([]Field, error)
 	Views(context.Context, int64) ([]View, error)
 	QueryRecordsConstrained(context.Context, int64, []Field, []btquery.Config, btquery.Config, int) ([]Record, error)

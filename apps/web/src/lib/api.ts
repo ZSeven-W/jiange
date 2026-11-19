@@ -170,8 +170,17 @@ export type FieldType =
   | "formula"
   | "link"
   | "lookup";
+export interface BaseTable {
+  id: number;
+  baseId: number;
+  name: string;
+  position: number;
+  isDefault: boolean;
+}
 export interface Field {
   id: number;
+  tableId?: number;
+  targetTableId?: number;
   name: string;
   type: FieldType;
   /** Stable record-title field; it is not inferred from visible column order. */
@@ -198,6 +207,7 @@ export type Cell = string | number | boolean | string[] | number[] | AttachmentR
 export interface BaseRecord {
   id: number;
   baseId: number;
+  tableId?: number;
   cells: Record<string, Cell>;
   position: number;
   creatorId?: number;
@@ -231,6 +241,8 @@ export interface ViewConfig {
   hidden?: number[];
   /** 管理视图：filters 强制生效、hidden 字段对非 manage 角色剔除/写保护 */
   locked?: boolean;
+  /** 锁定视图配置（飞书语义）：仅管理员可修改视图筛选/排序/隐藏配置，不影响正常读写数据 */
+  configLocked?: boolean;
   /** Grid row height preset (Feishu 行高). */
   rowHeight?: RowHeight;
   /** Conditional row fill (Feishu 填色); first matching rule wins. Evaluated client-side on visible data. */
@@ -248,22 +260,36 @@ export interface FillRule extends FilterRule {
 export interface View {
   id: number;
   baseId: number;
+  tableId?: number;
+  ownerId?: number;
   type: "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt";
   name: string;
   config: ViewConfig;
   pos: number;
 }
-type BaseSnapshot = { base: DocMeta; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean };
+type BaseSnapshot = { base: DocMeta; tables?: BaseTable[]; activeTableId?: number; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean };
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
-  get: (id: number, signal?: AbortSignal) =>
+  get: (id: number, signal?: AbortSignal, tableId?: number | null) =>
     request<BaseSnapshot>(
       "GET",
-      `/api/bases/${id}`,
+      tableId ? `/api/bases/${id}?tableId=${tableId}` : `/api/bases/${id}`,
       undefined,
       signal,
     ),
-  getForAccount: (id: number, userId: number, signal?: AbortSignal) => request<BaseSnapshot>("GET", `/api/bases/${id}/account-snapshot`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
+  getForAccount: (id: number, userId: number, signal?: AbortSignal, tableId?: number | null) =>
+    request<BaseSnapshot>(
+      "GET",
+      tableId ? `/api/bases/${id}/account-snapshot?tableId=${tableId}` : `/api/bases/${id}/account-snapshot`,
+      undefined,
+      signal,
+      { "X-Jiange-User-Id": String(userId) },
+    ),
+  listTables: (id: number) => request<{ tables: BaseTable[] }>("GET", `/api/bases/${id}/tables`).then((r) => r.tables),
+  createTable: (id: number, name: string) => request<BaseTable>("POST", `/api/bases/${id}/tables`, { name }),
+  renameTable: (id: number, tid: number, name: string) => request<BaseTable>("PATCH", `/api/bases/${id}/tables/${tid}`, { name }),
+  deleteTable: (id: number, tid: number) => request<void>("DELETE", `/api/bases/${id}/tables/${tid}`),
+  reorderTables: (id: number, ids: number[]) => request<{ tables: BaseTable[] }>("POST", `/api/bases/${id}/tables/reorder`, { ids }).then((r) => r.tables),
   /** 双向关联：反向引用列表 */
   reverse: (id: number) =>
     request<{ expansions?: { reverse?: { sourceBase: number; fieldId: number; from: Record<string, number[]>; titles: Record<string, string> }[] } }>("GET", `/api/bases/${id}`).then((r) => r.expansions?.reverse ?? []),
@@ -279,7 +305,8 @@ export const baseApi = {
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   reorderFields: (id: number, expectedFieldIds: number[], desiredFieldIds: number[]) => request<void>("POST", `/api/bases/${id}/fields/reorder`, { expectedFieldIds, desiredFieldIds }),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),
-  addRecord: (id: number, cells: Record<string, Cell> = {}) => request<BaseRecord>("POST", `/api/bases/${id}/records`, { cells }),
+  addRecord: (id: number, cells: Record<string, Cell> = {}, tableId?: number | null) =>
+    request<BaseRecord>("POST", `/api/bases/${id}/records`, tableId ? { cells, tableId } : { cells }),
   setCells: (id: number, rid: number, cells: Record<string, Cell | number[] | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),
   compareCells: (id: number, rid: number, expected: Record<string, Cell | null>, cells: Record<string, Cell | null>) =>
     request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}/compare-cells`, { expected, cells }),
@@ -294,14 +321,14 @@ export const baseApi = {
   addAutomation: (id: number, a: Partial<Automation>) => request<Automation>("POST", `/api/bases/${id}/automations`, a),
   updateAutomation: (id: number, aid: number, a: Partial<Automation>) => request<Automation>("PATCH", `/api/bases/${id}/automations/${aid}`, a),
   deleteAutomation: (id: number, aid: number) => request<void>("DELETE", `/api/bases/${id}/automations/${aid}`),
-  addView: (id: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/views`, v),
-  addViewForAccount: (id: number, userId: number, v: Partial<View>) => request<View>("POST", `/api/bases/${id}/account-views`, v, undefined, { "X-Jiange-User-Id": String(userId) }),
+  addView: (id: number, v: Partial<View> & { isPersonal?: boolean }) => request<View>("POST", `/api/bases/${id}/views`, v),
+  addViewForAccount: (id: number, userId: number, v: Partial<View> & { isPersonal?: boolean }) => request<View>("POST", `/api/bases/${id}/account-views`, v, undefined, { "X-Jiange-User-Id": String(userId) }),
   patchView: (id: number, vid: number, v: Partial<View>) => request<View>("PATCH", `/api/bases/${id}/views/${vid}`, v),
   renameView: (id: number, vid: number, expectedName: string, name: string) => request<View>("POST", `/api/bases/${id}/views/${vid}/rename`, { expectedName, name }),
   duplicateView: (id: number, vid: number) => request<View>("POST", `/api/bases/${id}/views/${vid}/duplicate`, {}),
   reorderViews: (id: number, expectedViewIds: number[], viewIds: number[]) => request<{ views: View[] }>("POST", `/api/bases/${id}/views/reorder`, { expectedViewIds, viewIds }),
   deleteView: (id: number, vid: number) => request<void>("DELETE", `/api/bases/${id}/views/${vid}`),
-  query: (id: number, q: { filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }, signal?: AbortSignal) =>
+  query: (id: number, q: { tableId?: number; filters?: ViewConfig["filters"]; sorts?: ViewConfig["sorts"]; limit?: number }, signal?: AbortSignal) =>
     request<{ records: BaseRecord[] }>("POST", `/api/bases/${id}/query`, q, signal),
   importCSV: (id: number, csv: string, header = true, types?: string[]) =>
     request<{ imported: number; fields: number; errors: { row: number; err: string }[] }>("POST", `/api/bases/${id}/import`, { csv, header, types }),

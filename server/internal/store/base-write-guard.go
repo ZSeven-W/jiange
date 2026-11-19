@@ -70,7 +70,7 @@ func lockBaseWrite(ctx context.Context, tx pgx.Tx, guard BaseWriteGuard, baseID 
 	if role == RoleManage {
 		return role, expires, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT config FROM bt_views WHERE base_id=$1`, baseID)
+	rows, err := tx.Query(ctx, `SELECT config FROM bt_views WHERE base_id=$1 AND owner_id IS NULL`, baseID)
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -152,7 +152,7 @@ func (m *Memory) checkBaseWriteLocked(guard BaseWriteGuard, baseID int64) (strin
 	}
 	if role != RoleManage {
 		for _, v := range m.b.views {
-			if v.BaseID != baseID {
+			if v.BaseID != baseID || v.OwnerID != nil {
 				continue
 			}
 			var cfg btquery.Config

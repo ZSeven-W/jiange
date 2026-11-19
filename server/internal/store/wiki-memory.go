@@ -585,14 +585,16 @@ func (m *Memory) CreateWikiNodeGuarded(ctx context.Context, guard RestoreGuard, 
 			d.ops = append(d.ops, SeqOp{int64(i + 1), op.ClientID, op.Bytes})
 		}
 	} else if kind == "base" {
-		field := Field{ID: m.id(), BaseID: id, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
-		view := View{ID: m.id(), BaseID: id, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
+		tbl := BaseTable{ID: m.id(), BaseID: id, Name: "数据表", Position: 1, IsDefault: true}
+		field := Field{ID: m.id(), BaseID: id, TableID: tbl.ID, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
+		view := View{ID: m.id(), BaseID: id, TableID: tbl.ID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
 		records := make([]Record, 5)
 		for i := range records {
 			uid := guard.UserID
 			recID := m.id()
-			records[i] = Record{ID: recID, BaseID: id, Cells: map[string]json.RawMessage{}, Position: float64(recID), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
+			records[i] = Record{ID: recID, BaseID: id, TableID: tbl.ID, Cells: map[string]json.RawMessage{}, Position: float64(recID), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
 		}
+		m.b.tables = append(m.b.tables, tbl)
 		m.b.fields = append(m.b.fields, field)
 		m.b.views = append(m.b.views, view)
 		m.b.records = append(m.b.records, records...)

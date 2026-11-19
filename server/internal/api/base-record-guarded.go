@@ -23,6 +23,7 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		return
 	}
 	var in struct {
+		TableID  int64                      `json:"tableId"`
 		Cells    map[string]json.RawMessage `json:"cells"`
 		Position float64                    `json:"position"`
 		Move     bool                       `json:"move"`
@@ -32,6 +33,11 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 	}
 	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
 		return
+	}
+	if in.TableID <= 0 {
+		if qtid := queryTableID(r); qtid > 0 {
+			in.TableID = qtid
+		}
 	}
 	if operation == "delete" && len(in.Cells) != 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "删除记录不能携带单元格")
@@ -54,7 +60,7 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "仅修改或删除记录时可指定预期值")
 		return
 	}
-	mutation := store.BaseRecordMutation{Operation: operation, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position, Expected: in.Expected, ExpectExact: in.Exact}
+	mutation := store.BaseRecordMutation{Operation: operation, TableID: in.TableID, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position, Expected: in.Expected, ExpectExact: in.Exact}
 	record, affected, err := s.Store.MutateRecordGuarded(r.Context(), guard, b.ID, mutation, func(fields []store.Field) error {
 		if msg := checkCells(fields, in.Cells); msg != "" {
 			return invalidRecordCells{msg}

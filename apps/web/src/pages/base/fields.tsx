@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Cell, Field, FieldType, User } from "@/lib/api";
+import type { BaseTable, Cell, Field, FieldType, User } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { t, useI18n } from "@/lib/i18n";
@@ -18,8 +18,14 @@ export function FieldForm({
   onCancel,
   onAcknowledge,
   members = [],
+  baseId,
+  tables = [],
+  activeTableId,
 }: {
   members?: User[];
+  baseId?: number;
+  tables?: BaseTable[];
+  activeTableId?: number;
   initial?: Field;
   onSubmit: (f: Partial<Field>) => void | Promise<void>;
   onCancel: () => void;
@@ -30,6 +36,11 @@ export function FieldForm({
   const [type, setType] = useState<FieldType>(initial?.type ?? "text");
   const [multi, setMulti] = useState(initial?.multiple ?? false);
   const [opts, setOpts] = useState((initial?.options ?? []).join(", "));
+  const [targetTableId, setTargetTableId] = useState<number>(() => {
+    if (initial?.targetTableId) return initial.targetTableId;
+    const other = tables.find((tbl) => tbl.id !== activeTableId);
+    return other?.id ?? tables[0]?.id ?? 0;
+  });
   const [desc, setDesc] = useState(initial?.description ?? "");
   const [formula, setFormula] = useState(initial?.formula ?? "");
   const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
@@ -114,7 +125,18 @@ export function FieldForm({
         if (saving || uncertain) return;
         setSaving(true); setError("");
         try {
-          await onSubmit({ name: name.trim() || initial?.name || t("新字段"), type, description: desc.trim(), formula: type === "formula" ? formula.trim() : undefined, options: def.hasOptions ? names : undefined, optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined, multiple: type === "person" ? multi : false, defaultValue: defaultCell(type, dflt, names, members) });
+          const linkOptions = type === "link" && baseId ? [String(baseId)] : undefined;
+          await onSubmit({
+            name: name.trim() || initial?.name || t("新字段"),
+            type,
+            description: desc.trim(),
+            formula: type === "formula" ? formula.trim() : undefined,
+            options: def.hasOptions ? names : linkOptions,
+            optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined,
+            targetTableId: type === "link" && targetTableId > 0 ? targetTableId : undefined,
+            multiple: type === "person" ? multi : false,
+            defaultValue: defaultCell(type, dflt, names, members),
+          });
           onCancel();
         } catch {
           setError(t("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。"));
@@ -223,6 +245,18 @@ export function FieldForm({
             ))}
           </div>
         </div>
+      )}
+      {type === "link" && tables.length > 0 && (
+        <label className="block space-y-1.5" data-field-link-target>
+          <span className="text-[12px] text-muted-foreground">{t("关联数据表")}</span>
+          <select value={targetTableId || ""} onChange={(e) => setTargetTableId(Number(e.target.value))} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
+            {tables.map((tbl) => (
+              <option key={tbl.id} value={tbl.id}>
+                {tbl.name}{tbl.id === activeTableId ? ` (${t("当前表")})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
       {type === "formula" && (
         <textarea

@@ -171,27 +171,28 @@ func (s *Server) expandBase(ctx context.Context, uid int64, source *baseReadable
 func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid int64, source *baseReadable, withExpansions bool) (map[string]any, []baseReadable, error) {
 	expansions := map[string]any{}
 	reads := []baseReadable{}
-	cache := map[int64]baseReadable{}
-	unavailable := map[int64]bool{}
-	getTarget := func(id int64) (baseReadable, bool, error) {
-		if id <= 0 || unavailable[id] {
+	cache := map[[2]int64]baseReadable{}
+	unavailable := map[[2]int64]bool{}
+	getTarget := func(id, tableID int64) (baseReadable, bool, error) {
+		key := [2]int64{id, tableID}
+		if id <= 0 || unavailable[key] {
 			return baseReadable{}, false, nil
 		}
-		if id == source.meta.ID {
+		if id == source.meta.ID && (tableID == 0 || tableID == source.tableID) {
 			return *source, true, nil
 		}
-		if cached, ok := cache[id]; ok {
+		if cached, ok := cache[key]; ok {
 			return cached, true, nil
 		}
-		t, err := readBasePolicyWith(ctx, reader, uid, id)
+		t, err := readBaseTablePolicyWith(ctx, reader, uid, id, tableID)
 		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrForbidden) {
-			unavailable[id] = true
+			unavailable[key] = true
 			return baseReadable{}, false, nil
 		}
 		if err != nil {
 			return baseReadable{}, false, err
 		}
-		cache[id] = t
+		cache[key] = t
 		reads = append(reads, t)
 		return t, true, nil
 	}
@@ -208,7 +209,11 @@ func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid in
 		if len(f.Options) > 0 {
 			targetID, _ = strconv.ParseInt(f.Options[0], 10, 64)
 		}
-		target, ok, err := getTarget(targetID)
+		var targetTableID int64
+		if f.TargetTableID != nil {
+			targetTableID = *f.TargetTableID
+		}
+		target, ok, err := getTarget(targetID, targetTableID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -357,7 +362,10 @@ func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid in
 		self[r.ID] = true
 	}
 	for _, ref := range reverse {
-		other, ok, err := getTarget(ref.BaseID)
+		if ref.TargetTableID != nil && *ref.TargetTableID > 0 && source.tableID > 0 && *ref.TargetTableID != source.tableID {
+			continue
+		}
+		other, ok, err := getTarget(ref.BaseID, ref.TableID)
 		if err != nil {
 			return nil, nil, err
 		}

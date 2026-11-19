@@ -283,10 +283,24 @@ func (m *Memory) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, c
 			expires = expiration
 		}
 	}
-	fields := memoryFieldsForBase(m.b.fields, change.BaseID)
+	allFields := memoryFieldsForBase(m.b.fields, change.BaseID)
+	var targetTableID int64
+	if change.Before != nil && change.Before.TableID > 0 {
+		targetTableID = change.Before.TableID
+	} else if change.After != nil && change.After.TableID > 0 {
+		targetTableID = change.After.TableID
+	} else if tid := fieldsSingleTableID(change.Fields); tid > 0 {
+		targetTableID = tid
+	}
+	if targetTableID <= 0 {
+		targetTableID = m.defaultTableIDLocked(change.BaseID)
+	} else if !m.tableBelongsToBaseLocked(change.BaseID, targetTableID) {
+		return FieldMutationResult{}, ErrNotFound
+	}
+	fields := fieldsForTable(allFields, targetTableID)
 	var views []View
 	for _, v := range m.b.views {
-		if v.BaseID == change.BaseID {
+		if v.BaseID == change.BaseID && v.TableID == targetTableID {
 			views = append(views, v)
 		}
 	}
@@ -348,22 +362,45 @@ func (m *Memory) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard, c
 	switch {
 	case change.Before == nil:
 		f := *change.After
+		f.TableID = targetTableID
 		f.IsPrimary = len(fields) == 0
 		f.ID = m.id()
 		if f.Position == 0 {
 			f.Position = float64(f.ID)
 		}
-		if target, _ := linkTarget(&f); target != 0 && target != change.BaseID {
-			name := strings.TrimSpace(m.doc(change.BaseID).meta.Title)
-			if name == "" {
-				name = "未命名多维表格"
+		if target, _ := linkTarget(&f); target != 0 {
+			var compTableID int64
+			if f.TargetTableID != nil && *f.TargetTableID > 0 {
+				if !m.tableBelongsToBaseLocked(target, *f.TargetTableID) {
+					return FieldMutationResult{}, ErrNotFound
+				}
+				compTableID = *f.TargetTableID
+			} else {
+				compTableID = m.defaultTableIDLocked(target)
 			}
-			companion := Field{ID: m.id(), BaseID: target, Name: name, Type: "link", IsPrimary: len(memoryFieldsForBase(m.b.fields, target)) == 0}
-			companion.Position = float64(companion.ID)
-			companion.Options = []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}
-			f.Options = []string{strconv.FormatInt(target, 10), strconv.FormatInt(companion.ID, 10)}
-			m.b.fields = append(m.b.fields, companion)
-			result.Notify = append(result.Notify, target)
+			if target != change.BaseID || compTableID != f.TableID {
+				name := strings.TrimSpace(m.doc(change.BaseID).meta.Title)
+				if target == change.BaseID {
+					for _, tbl := range m.b.tables {
+						if tbl.ID == f.TableID {
+							name = tbl.Name
+							break
+						}
+					}
+				}
+				if name == "" {
+					name = "未命名多维表格"
+				}
+				srcTID := f.TableID
+				companion := Field{ID: m.id(), BaseID: target, TableID: compTableID, Name: name, Type: "link", IsPrimary: len(fieldsForTable(memoryFieldsForBase(m.b.fields, target), compTableID)) == 0, TargetTableID: &srcTID}
+				companion.Position = float64(companion.ID)
+				companion.Options = []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}
+				f.Options = []string{strconv.FormatInt(target, 10), strconv.FormatInt(companion.ID, 10)}
+				m.b.fields = append(m.b.fields, companion)
+				if target != change.BaseID {
+					result.Notify = append(result.Notify, target)
+				}
+			}
 		}
 		m.b.fields = append(m.b.fields, f)
 		result.Field = f
@@ -430,12 +467,12 @@ func pgFields(ctx context.Context, tx pgx.Tx, baseID int64) ([]Field, error) {
 }
 
 func pgViews(ctx context.Context, tx pgx.Tx, baseID int64) ([]View, error) {
-	rows, err := tx.Query(ctx, `SELECT id,base_id,type,name,config,pos FROM bt_views WHERE base_id=$1 ORDER BY pos,id`, baseID)
+	rows, err := tx.Query(ctx, `SELECT id,base_id,table_id,owner_id,type,name,config,pos FROM bt_views WHERE base_id=$1 ORDER BY pos,id`, baseID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (v View, err error) {
-		err = r.Scan(&v.ID, &v.BaseID, &v.Type, &v.Name, &v.Config, &v.Pos)
+		err = r.Scan(&v.ID, &v.BaseID, &v.TableID, &v.OwnerID, &v.Type, &v.Name, &v.Config, &v.Pos)
 		return
 	})
 }
@@ -454,14 +491,34 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 		if _, err = tx.Exec(ctx, `LOCK TABLE base_fields,base_records,bt_links IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return err
 		}
-		fields, err := pgFields(ctx, tx, change.BaseID)
+		allFields, err := pgFields(ctx, tx, change.BaseID)
 		if err != nil {
 			return err
 		}
-		views, err := pgViews(ctx, tx, change.BaseID)
+		var targetTableID int64
+		if change.Before != nil && change.Before.TableID > 0 {
+			targetTableID = change.Before.TableID
+		} else if change.After != nil && change.After.TableID > 0 {
+			targetTableID = change.After.TableID
+		} else if tid := fieldsSingleTableID(change.Fields); tid > 0 {
+			targetTableID = tid
+		}
+		if targetTableID > 0 {
+			var okID int64
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE id=$1 AND base_id=$2`, targetTableID, change.BaseID).Scan(&okID); err != nil {
+				return notFound(err)
+			}
+		} else {
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, change.BaseID).Scan(&targetTableID); err != nil {
+				return notFound(err)
+			}
+		}
+		fields := fieldsForTable(allFields, targetTableID)
+		allViews, err := pgViews(ctx, tx, change.BaseID)
 		if err != nil {
 			return err
 		}
+		views := filterViewsByTable(allViews, targetTableID)
 		if err = validFieldChange(change, fields, views); err != nil {
 			return err
 		}
@@ -482,28 +539,49 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 		switch {
 		case change.Before == nil:
 			f := *change.After
-			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1 ELSE $8 END,$9,$10,$11) RETURNING `+fieldCols, change.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, len(fields) == 0, defaultJSON(f), multipleFlag(f)))
+			f.TableID = targetTableID
+			f, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,table_id,name,type,options,option_colors,description,formula,position,is_primary,default_value,multiple,target_table_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $9::float8=0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE table_id=$2),0)+1 ELSE $9 END,$10,$11,$12,$13) RETURNING `+fieldCols, change.BaseID, f.TableID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, len(fields) == 0, defaultJSON(f), multipleFlag(f), f.TargetTableID))
 			if err != nil {
 				return err
 			}
-			if target, _ := linkTarget(&f); target != 0 && target != change.BaseID {
-				var name string
-				if err = tx.QueryRow(ctx, `SELECT title FROM nodes WHERE id=$1`, change.BaseID).Scan(&name); err != nil {
-					return err
+			if target, _ := linkTarget(&f); target != 0 {
+				var compTableID int64
+				if f.TargetTableID != nil && *f.TargetTableID > 0 {
+					if err = tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE id=$1 AND base_id=$2`, *f.TargetTableID, target).Scan(&compTableID); err != nil {
+						return notFound(err)
+					}
+				} else {
+					if err = tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, target).Scan(&compTableID); err != nil {
+						return notFound(err)
+					}
 				}
-				name = strings.TrimSpace(name)
-				if name == "" {
-					name = "未命名多维表格"
+				if target != change.BaseID || compTableID != f.TableID {
+					var name string
+					if target == change.BaseID {
+						if err = tx.QueryRow(ctx, `SELECT name FROM bt_tables WHERE id=$1`, f.TableID).Scan(&name); err != nil {
+							return err
+						}
+					} else {
+						if err = tx.QueryRow(ctx, `SELECT title FROM nodes WHERE id=$1`, change.BaseID).Scan(&name); err != nil {
+							return err
+						}
+					}
+					name = strings.TrimSpace(name)
+					if name == "" {
+						name = "未命名多维表格"
+					}
+					companion, err := scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,table_id,name,type,options,position,is_primary,target_table_id) VALUES ($1,$2,$3,'link',$4,COALESCE((SELECT max(position) FROM base_fields WHERE table_id=$2),0)+1,NOT EXISTS (SELECT 1 FROM base_fields WHERE table_id=$2),$5) RETURNING `+fieldCols, target, compTableID, name, opts(Field{Options: []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}}), f.TableID))
+					if err != nil {
+						return err
+					}
+					f.Options = []string{strconv.FormatInt(target, 10), strconv.FormatInt(companion.ID, 10)}
+					if _, err = tx.Exec(ctx, `UPDATE base_fields SET options=$3 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, opts(f)); err != nil {
+						return err
+					}
+					if target != change.BaseID {
+						result.Notify = append(result.Notify, target)
+					}
 				}
-				companion, err := scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id,name,type,options,position,is_primary) VALUES ($1,$2,'link',$3,COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1),0)+1,NOT EXISTS (SELECT 1 FROM base_fields WHERE base_id=$1)) RETURNING `+fieldCols, target, name, opts(Field{Options: []string{strconv.FormatInt(change.BaseID, 10), strconv.FormatInt(f.ID, 10)}})))
-				if err != nil {
-					return err
-				}
-				f.Options = []string{strconv.FormatInt(target, 10), strconv.FormatInt(companion.ID, 10)}
-				if _, err = tx.Exec(ctx, `UPDATE base_fields SET options=$3 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, opts(f)); err != nil {
-					return err
-				}
-				result.Notify = append(result.Notify, target)
 			}
 			result.Field = f
 		case change.After == nil:
@@ -524,7 +602,7 @@ func (p *Postgres) MutateFieldGuarded(ctx context.Context, guard BaseWriteGuard,
 			result.Field = *change.Before
 		default:
 			f := *change.After
-			if _, err = tx.Exec(ctx, `UPDATE base_fields SET name=$3,type=$4,options=$5,option_colors=$6,description=$7,formula=$8,position=$9,default_value=$10,multiple=$11 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE base_fields SET name=$3,type=$4,options=$5,option_colors=$6,description=$7,formula=$8,position=$9,default_value=$10,multiple=$11,target_table_id=$12 WHERE base_id=$1 AND id=$2`, change.BaseID, f.ID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f), f.TargetTableID); err != nil {
 				return err
 			}
 			if fieldChangesCells(*change.Before, f) {

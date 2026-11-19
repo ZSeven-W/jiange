@@ -27,7 +27,54 @@ func viewCopyName(original, requested string) (string, error) {
 	return string(runes) + " 副本", nil
 }
 
-func guardedViewValid(role string, v View, fields []Field) error {
+func sameOwner(a, b *int64) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func viewConfigLocked(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var cfg btquery.Config
+	return json.Unmarshal(raw, &cfg) == nil && cfg.ConfigLocked
+}
+
+func stripConfigLock(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return raw
+	}
+	delete(obj, "configLocked")
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+func fieldsForTable(fields []Field, tableID int64) []Field {
+	if tableID <= 0 {
+		return fields
+	}
+	out := make([]Field, 0, len(fields))
+	for _, f := range fields {
+		if f.TableID == tableID {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func guardedViewValid(role string, callerID int64, v View, fields []Field) error {
 	if v.Name == "" || !utf8.ValidString(v.Name) || utf8.RuneCountInString(v.Name) > 100 {
 		return ErrConflict
 	}
@@ -38,14 +85,29 @@ func guardedViewValid(role string, v View, fields []Field) error {
 	if len(v.Config) > 0 && string(v.Config) != "null" && json.Unmarshal(v.Config, &cfg) != nil {
 		return ErrConflict
 	}
-	if cfg.Locked && role != RoleManage {
+	if v.OwnerID != nil {
+		if *v.OwnerID != callerID {
+			return ErrForbidden
+		}
+		if v.Type == "form" {
+			return ErrConflict
+		}
+		if cfg.Locked {
+			return ErrForbidden
+		}
+		if cfg.ConfigLocked {
+			return ErrConflict
+		}
+	}
+	if (cfg.Locked || cfg.ConfigLocked) && role != RoleManage {
 		return ErrForbidden
 	}
-	if err := btquery.Validate(Specs(fields), cfg); err != nil {
+	tableFields := fieldsForTable(fields, v.TableID)
+	if err := btquery.Validate(Specs(tableFields), cfg); err != nil {
 		return ErrConflict
 	}
 	if cfg.Locked {
-		if err := btquery.ValidateLocked(Specs(fields), cfg); err != nil {
+		if err := btquery.ValidateLocked(Specs(tableFields), cfg); err != nil {
 			return ErrConflict
 		}
 	}
@@ -95,7 +157,7 @@ func (m *Memory) viewFieldsLocked(baseID int64) []Field {
 }
 
 func sameView(a, b View) bool {
-	return a.ID == b.ID && a.BaseID == b.BaseID && a.Type == b.Type && a.Name == b.Name && a.Pos == b.Pos && bytes.Equal(a.Config, b.Config)
+	return a.ID == b.ID && a.BaseID == b.BaseID && (a.TableID == 0 || b.TableID == 0 || a.TableID == b.TableID) && sameOwner(a.OwnerID, b.OwnerID) && a.Type == b.Type && a.Name == b.Name && a.Pos == b.Pos && bytes.Equal(a.Config, b.Config)
 }
 
 func (m *Memory) viewOrderLocked(baseID int64) []View {
@@ -112,6 +174,29 @@ func (m *Memory) viewOrderLocked(baseID int64) []View {
 		}
 		return out[i].Pos < out[j].Pos
 	})
+	return out
+}
+
+func filterViewsByTable(views []View, tableID int64) []View {
+	if tableID <= 0 {
+		return views
+	}
+	out := make([]View, 0, len(views))
+	for _, v := range views {
+		if v.TableID == tableID {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func filterVisibleViewsForUser(views []View, userID int64) []View {
+	out := make([]View, 0, len(views))
+	for _, v := range views {
+		if v.OwnerID == nil || *v.OwnerID == userID {
+			out = append(out, v)
+		}
+	}
 	return out
 }
 
@@ -155,7 +240,9 @@ func (m *Memory) saveViewOrderLocked(baseID int64, ordered []View) {
 	}
 	for i := range m.b.views {
 		if m.b.views[i].BaseID == baseID {
-			m.b.views[i].Pos = positions[m.b.views[i].ID]
+			if pos, ok := positions[m.b.views[i].ID]; ok {
+				m.b.views[i].Pos = pos
+			}
 		}
 	}
 }
@@ -171,16 +258,22 @@ func (m *Memory) AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v Vie
 	if err != nil {
 		return View{}, err
 	}
+	tid, err := m.resolveTableIDLocked(v.BaseID, v.TableID)
+	if err != nil {
+		return View{}, err
+	}
+	v.TableID = tid
 	if v.Type == "" {
 		v.Type = "grid"
 	}
 	if v.Config == nil {
 		v.Config = json.RawMessage(`{}`)
 	}
-	if err = guardedViewValid(role, v, m.viewFieldsLocked(v.BaseID)); err != nil {
+	fields := fieldsForTable(m.viewFieldsLocked(v.BaseID), v.TableID)
+	if err = guardedViewValid(role, guard.UserID, v, fields); err != nil {
 		return View{}, err
 	}
-	if err = primaryVisibilityValid(nil, v, m.viewFieldsLocked(v.BaseID)); err != nil {
+	if err = primaryVisibilityValid(nil, v, fields); err != nil {
 		return View{}, err
 	}
 	if err = ctx.Err(); err != nil {
@@ -191,7 +284,7 @@ func (m *Memory) AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v Vie
 	}
 	v.ID = m.id()
 	if v.Pos == 0 {
-		current := m.viewOrderLocked(v.BaseID)
+		current := filterViewsByTable(m.viewOrderLocked(v.BaseID), v.TableID)
 		if len(current) == 0 {
 			v.Pos = 1
 		} else {
@@ -215,18 +308,29 @@ func (m *Memory) UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, be
 	if after.ID != before.ID || after.BaseID != before.BaseID {
 		return View{}, ErrConflict
 	}
-	if err = guardedViewValid(role, after, m.viewFieldsLocked(before.BaseID)); err != nil {
-		return View{}, err
-	}
-	if err = primaryVisibilityValid(&before, after, m.viewFieldsLocked(before.BaseID)); err != nil {
-		return View{}, err
-	}
 	for i, v := range m.b.views {
 		if v.ID != before.ID || v.BaseID != before.BaseID {
 			continue
 		}
+		if v.OwnerID != nil && *v.OwnerID != guard.UserID {
+			return View{}, ErrNotFound
+		}
+		if !sameOwner(v.OwnerID, after.OwnerID) {
+			return View{}, ErrConflict
+		}
 		if !sameView(v, before) {
 			return View{}, ErrConflict
+		}
+		if role != RoleManage && viewConfigLocked(v.Config) {
+			return View{}, ErrForbidden
+		}
+		after.TableID = v.TableID
+		fields := fieldsForTable(m.viewFieldsLocked(before.BaseID), v.TableID)
+		if err = guardedViewValid(role, guard.UserID, after, fields); err != nil {
+			return View{}, err
+		}
+		if err = primaryVisibilityValid(&before, after, fields); err != nil {
+			return View{}, err
 		}
 		if role != RoleManage && v.Type == "form" && validPublicFormHash(m.b.formLinks[[2]int64{before.BaseID, before.ID}].hash) && (after.Type != "form" || !samePublicFormConfig(v.Config, after.Config)) {
 			return View{}, ErrForbidden
@@ -252,7 +356,7 @@ func (m *Memory) UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, be
 func (m *Memory) RenameViewGuarded(ctx context.Context, guard BaseWriteGuard, baseID, viewID int64, expectedName, name string) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, expiry, err := m.checkBaseWriteLocked(guard, baseID)
+	role, expiry, err := m.checkBaseWriteLocked(guard, baseID)
 	if err != nil {
 		return View{}, err
 	}
@@ -262,6 +366,12 @@ func (m *Memory) RenameViewGuarded(ctx context.Context, guard BaseWriteGuard, ba
 	for i, v := range m.b.views {
 		if v.BaseID != baseID || v.ID != viewID {
 			continue
+		}
+		if v.OwnerID != nil && *v.OwnerID != guard.UserID {
+			return View{}, ErrNotFound
+		}
+		if role != RoleManage && viewConfigLocked(v.Config) {
+			return View{}, ErrForbidden
 		}
 		if v.Name != expectedName {
 			return View{}, ErrConflict
@@ -290,7 +400,23 @@ func (m *Memory) DuplicateView(ctx context.Context, guard BaseWriteGuard, baseID
 	if err != nil {
 		return View{}, err
 	}
-	ordered := m.viewOrderLocked(baseID)
+	allOrdered := m.viewOrderLocked(baseID)
+	var target View
+	found := false
+	for _, v := range allOrdered {
+		if v.ID == viewID {
+			target = v
+			found = true
+			break
+		}
+	}
+	if !found {
+		return View{}, ErrNotFound
+	}
+	if target.OwnerID != nil && *target.OwnerID != guard.UserID {
+		return View{}, ErrNotFound
+	}
+	ordered := filterViewsByTable(allOrdered, target.TableID)
 	index := -1
 	for i, v := range ordered {
 		if v.ID == viewID {
@@ -298,13 +424,15 @@ func (m *Memory) DuplicateView(ctx context.Context, guard BaseWriteGuard, baseID
 			break
 		}
 	}
-	if index < 0 {
-		return View{}, ErrNotFound
+	copyView := target
+	if role != RoleManage && viewConfigLocked(copyView.Config) {
+		copyView.Config = stripConfigLock(copyView.Config)
 	}
-	if err = guardedViewValid(role, ordered[index], m.viewFieldsLocked(baseID)); err != nil {
+	fields := fieldsForTable(m.viewFieldsLocked(baseID), target.TableID)
+	if err = guardedViewValid(role, guard.UserID, copyView, fields); err != nil {
 		return View{}, err
 	}
-	name, err = viewCopyName(ordered[index].Name, name)
+	name, err = viewCopyName(target.Name, name)
 	if err != nil {
 		return View{}, err
 	}
@@ -314,7 +442,6 @@ func (m *Memory) DuplicateView(ctx context.Context, guard BaseWriteGuard, baseID
 	if !guard.currentTime().Before(expiry) {
 		return View{}, ErrUnauthenticated
 	}
-	copyView := ordered[index]
 	copyView.ID, copyView.Name = m.id(), name
 	copyView.Config = append(json.RawMessage(nil), copyView.Config...)
 	ordered = append(ordered, View{})
@@ -334,7 +461,17 @@ func (m *Memory) ReorderViews(ctx context.Context, guard BaseWriteGuard, baseID 
 	if err != nil {
 		return nil, err
 	}
-	current := m.viewOrderLocked(baseID)
+	all := m.viewOrderLocked(baseID)
+	var tableID int64
+	if len(expected) > 0 {
+		for _, v := range all {
+			if v.ID == expected[0] {
+				tableID = v.TableID
+				break
+			}
+		}
+	}
+	current := filterVisibleViewsForUser(filterViewsByTable(all, tableID), guard.UserID)
 	if !viewOrderMatches(current, expected) {
 		return nil, ErrConflict
 	}
@@ -361,21 +498,36 @@ func (m *Memory) DeleteViewGuarded(ctx context.Context, guard BaseWriteGuard, ba
 		return err
 	}
 	ordered := m.viewOrderLocked(baseID)
-	found := false
-	for _, v := range ordered {
-		if v.ID == viewID {
-			if role != RoleManage && v.Type == "form" && validPublicFormHash(m.b.formLinks[[2]int64{baseID, viewID}].hash) {
-				return ErrForbidden
-			}
-			found = true
+	var target *View
+	for i := range ordered {
+		if ordered[i].ID == viewID {
+			target = &ordered[i]
 			break
 		}
 	}
-	if !found {
+	if target == nil {
 		return ErrNotFound
 	}
-	if len(ordered) <= 1 {
-		return ErrConflict
+	if target.OwnerID != nil {
+		if *target.OwnerID != guard.UserID {
+			return ErrNotFound
+		}
+	} else {
+		if role != RoleManage && viewConfigLocked(target.Config) {
+			return ErrForbidden
+		}
+		if role != RoleManage && target.Type == "form" && validPublicFormHash(m.b.formLinks[[2]int64{baseID, viewID}].hash) {
+			return ErrForbidden
+		}
+		sharedCount := 0
+		for _, v := range ordered {
+			if v.TableID == target.TableID && v.OwnerID == nil {
+				sharedCount++
+			}
+		}
+		if sharedCount <= 1 {
+			return ErrConflict
+		}
 	}
 	if err = ctx.Err(); err != nil {
 		return err
@@ -396,12 +548,12 @@ func (m *Memory) DeleteViewGuarded(ctx context.Context, guard BaseWriteGuard, ba
 }
 
 func pgViewsLocked(ctx context.Context, tx pgx.Tx, baseID int64) ([]View, error) {
-	rows, err := tx.Query(ctx, `SELECT id,base_id,type,name,config,pos FROM bt_views WHERE base_id=$1 ORDER BY pos,id`, baseID)
+	rows, err := tx.Query(ctx, `SELECT id,base_id,table_id,owner_id,type,name,config,pos FROM bt_views WHERE base_id=$1 ORDER BY pos,id`, baseID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (v View, err error) {
-		err = r.Scan(&v.ID, &v.BaseID, &v.Type, &v.Name, &v.Config, &v.Pos)
+		err = r.Scan(&v.ID, &v.BaseID, &v.TableID, &v.OwnerID, &v.Type, &v.Name, &v.Config, &v.Pos)
 		return v, err
 	})
 }
@@ -449,20 +601,32 @@ func (p *Postgres) AddViewGuarded(ctx context.Context, guard BaseWriteGuard, v V
 		if err != nil {
 			return err
 		}
-		fields, err := pgViewFieldsLocked(ctx, tx, v.BaseID)
+		var tid int64
+		if v.TableID > 0 {
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE id=$1 AND base_id=$2`, v.TableID, v.BaseID).Scan(&tid); err != nil {
+				return notFound(err)
+			}
+		} else {
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, v.BaseID).Scan(&tid); err != nil {
+				return notFound(err)
+			}
+		}
+		v.TableID = tid
+		allFields, err := pgViewFieldsLocked(ctx, tx, v.BaseID)
 		if err != nil {
 			return err
 		}
-		if err = guardedViewValid(role, v, fields); err != nil {
+		fields := fieldsForTable(allFields, v.TableID)
+		if err = guardedViewValid(role, guard.UserID, v, fields); err != nil {
 			return err
 		}
 		if err = primaryVisibilityValid(nil, v, fields); err != nil {
 			return err
 		}
 		result = v
-		err = tx.QueryRow(ctx, `INSERT INTO bt_views (base_id,type,name,config,pos)
-			VALUES ($1,$2,$3,$4,CASE WHEN $5::float8=0 THEN COALESCE((SELECT max(pos) FROM bt_views WHERE base_id=$1),0)+1 ELSE $5 END)
-			RETURNING id,config,pos`, v.BaseID, v.Type, v.Name, v.Config, v.Pos).Scan(&result.ID, &result.Config, &result.Pos)
+		err = tx.QueryRow(ctx, `INSERT INTO bt_views (base_id,table_id,owner_id,type,name,config,pos)
+			VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $7::float8=0 THEN COALESCE((SELECT max(pos) FROM bt_views WHERE base_id=$1 AND table_id=$2),0)+1 ELSE $7 END)
+			RETURNING id,table_id,owner_id,config,pos`, v.BaseID, v.TableID, v.OwnerID, v.Type, v.Name, v.Config, v.Pos).Scan(&result.ID, &result.TableID, &result.OwnerID, &result.Config, &result.Pos)
 		if err != nil {
 			return err
 		}
@@ -489,45 +653,56 @@ func (p *Postgres) UpdateViewGuarded(ctx context.Context, guard BaseWriteGuard, 
 		if err != nil {
 			return err
 		}
-		fields, err := pgViewFieldsLocked(ctx, tx, before.BaseID)
+		allFields, err := pgViewFieldsLocked(ctx, tx, before.BaseID)
 		if err != nil {
-			return err
-		}
-		if err = guardedViewValid(role, after, fields); err != nil {
-			return err
-		}
-		if err = primaryVisibilityValid(&before, after, fields); err != nil {
 			return err
 		}
 		views, err := pgViewsLocked(ctx, tx, before.BaseID)
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, v := range views {
-			if v.ID == before.ID {
-				if !sameView(v, before) {
-					return ErrConflict
-				}
-				if role != RoleManage && v.Type == "form" && (after.Type != "form" || !samePublicFormConfig(v.Config, after.Config)) {
-					var published bool
-					if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bt_public_form_links WHERE base_id=$1 AND view_id=$2 AND token_hash IS NOT NULL)`, before.BaseID, before.ID).Scan(&published); err != nil {
-						return err
-					}
-					if published {
-						return ErrForbidden
-					}
-				}
-				found = true
+		var current *View
+		for i := range views {
+			if views[i].ID == before.ID {
+				current = &views[i]
 				break
 			}
 		}
-		if !found {
+		if current == nil {
 			return ErrNotFound
 		}
+		if current.OwnerID != nil && *current.OwnerID != guard.UserID {
+			return ErrNotFound
+		}
+		if !sameOwner(current.OwnerID, after.OwnerID) {
+			return ErrConflict
+		}
+		if !sameView(*current, before) {
+			return ErrConflict
+		}
+		if role != RoleManage && viewConfigLocked(current.Config) {
+			return ErrForbidden
+		}
+		after.TableID = current.TableID
+		fields := fieldsForTable(allFields, current.TableID)
+		if err = guardedViewValid(role, guard.UserID, after, fields); err != nil {
+			return err
+		}
+		if err = primaryVisibilityValid(&before, after, fields); err != nil {
+			return err
+		}
+		if role != RoleManage && current.Type == "form" && (after.Type != "form" || !samePublicFormConfig(current.Config, after.Config)) {
+			var published bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bt_public_form_links WHERE base_id=$1 AND view_id=$2 AND token_hash IS NOT NULL)`, before.BaseID, before.ID).Scan(&published); err != nil {
+				return err
+			}
+			if published {
+				return ErrForbidden
+			}
+		}
 		result = after
-		err = tx.QueryRow(ctx, `UPDATE bt_views SET type=$3,name=$4,config=$5,pos=$6 WHERE base_id=$1 AND id=$2 RETURNING config,pos`,
-			before.BaseID, before.ID, after.Type, after.Name, after.Config, after.Pos).Scan(&result.Config, &result.Pos)
+		err = tx.QueryRow(ctx, `UPDATE bt_views SET type=$3,name=$4,config=$5,pos=$6 WHERE base_id=$1 AND id=$2 RETURNING table_id,owner_id,config,pos`,
+			before.BaseID, before.ID, after.Type, after.Name, after.Config, after.Pos).Scan(&result.TableID, &result.OwnerID, &result.Config, &result.Pos)
 		if err != nil {
 			return notFound(err)
 		}
@@ -550,7 +725,7 @@ func (p *Postgres) RenameViewGuarded(ctx context.Context, guard BaseWriteGuard, 
 		return View{}, ErrConflict
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
-		_, expiry, err := lockBaseWrite(ctx, tx, guard, baseID)
+		role, expiry, err := lockBaseWrite(ctx, tx, guard, baseID)
 		if err != nil {
 			return err
 		}
@@ -568,6 +743,12 @@ func (p *Postgres) RenameViewGuarded(ctx context.Context, guard BaseWriteGuard, 
 		}
 		if !found {
 			return ErrNotFound
+		}
+		if result.OwnerID != nil && *result.OwnerID != guard.UserID {
+			return ErrNotFound
+		}
+		if role != RoleManage && viewConfigLocked(result.Config) {
+			return ErrForbidden
 		}
 		if result.Name != expectedName {
 			return ErrConflict
@@ -598,10 +779,26 @@ func (p *Postgres) DuplicateView(ctx context.Context, guard BaseWriteGuard, base
 		if err != nil {
 			return err
 		}
-		ordered, err := pgViewsLocked(ctx, tx, baseID)
+		allOrdered, err := pgViewsLocked(ctx, tx, baseID)
 		if err != nil {
 			return err
 		}
+		var target View
+		found := false
+		for _, v := range allOrdered {
+			if v.ID == viewID {
+				target = v
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if target.OwnerID != nil && *target.OwnerID != guard.UserID {
+			return ErrNotFound
+		}
+		ordered := filterViewsByTable(allOrdered, target.TableID)
 		index := -1
 		for i, v := range ordered {
 			if v.ID == viewID {
@@ -609,23 +806,23 @@ func (p *Postgres) DuplicateView(ctx context.Context, guard BaseWriteGuard, base
 				break
 			}
 		}
-		if index < 0 {
-			return ErrNotFound
-		}
-		fields, err := pgViewFieldsLocked(ctx, tx, baseID)
+		allFields, err := pgViewFieldsLocked(ctx, tx, baseID)
 		if err != nil {
 			return err
 		}
-		if err = guardedViewValid(role, ordered[index], fields); err != nil {
+		result = target
+		if role != RoleManage && viewConfigLocked(result.Config) {
+			result.Config = stripConfigLock(result.Config)
+		}
+		if err = guardedViewValid(role, guard.UserID, result, fieldsForTable(allFields, target.TableID)); err != nil {
 			return err
 		}
-		name, err = viewCopyName(ordered[index].Name, name)
+		name, err = viewCopyName(target.Name, name)
 		if err != nil {
 			return err
 		}
-		result = ordered[index]
 		result.Name = name
-		err = tx.QueryRow(ctx, `INSERT INTO bt_views (base_id,type,name,config,pos) VALUES ($1,$2,$3,$4,0) RETURNING id`, baseID, result.Type, result.Name, result.Config).Scan(&result.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO bt_views (base_id,table_id,owner_id,type,name,config,pos) VALUES ($1,$2,$3,$4,$5,$6,0) RETURNING id`, baseID, result.TableID, result.OwnerID, result.Type, result.Name, result.Config).Scan(&result.ID)
 		if err != nil {
 			return err
 		}
@@ -656,10 +853,20 @@ func (p *Postgres) ReorderViews(ctx context.Context, guard BaseWriteGuard, baseI
 		if err != nil {
 			return err
 		}
-		views, err := pgViewsLocked(ctx, tx, baseID)
+		all, err := pgViewsLocked(ctx, tx, baseID)
 		if err != nil {
 			return err
 		}
+		var tableID int64
+		if len(expected) > 0 {
+			for _, v := range all {
+				if v.ID == expected[0] {
+					tableID = v.TableID
+					break
+				}
+			}
+		}
+		views := filterVisibleViewsForUser(filterViewsByTable(all, tableID), guard.UserID)
 		if !viewOrderMatches(views, expected) {
 			return ErrConflict
 		}
@@ -694,27 +901,42 @@ func (p *Postgres) DeleteViewGuarded(ctx context.Context, guard BaseWriteGuard, 
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, v := range views {
-			if v.ID == viewID {
-				if role != RoleManage && v.Type == "form" {
-					var published bool
-					if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bt_public_form_links WHERE base_id=$1 AND view_id=$2 AND token_hash IS NOT NULL)`, baseID, viewID).Scan(&published); err != nil {
-						return err
-					}
-					if published {
-						return ErrForbidden
-					}
-				}
-				found = true
+		var target *View
+		for i := range views {
+			if views[i].ID == viewID {
+				target = &views[i]
 				break
 			}
 		}
-		if !found {
+		if target == nil {
 			return ErrNotFound
 		}
-		if len(views) <= 1 {
-			return ErrConflict
+		if target.OwnerID != nil {
+			if *target.OwnerID != guard.UserID {
+				return ErrNotFound
+			}
+		} else {
+			if role != RoleManage && viewConfigLocked(target.Config) {
+				return ErrForbidden
+			}
+			if role != RoleManage && target.Type == "form" {
+				var published bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bt_public_form_links WHERE base_id=$1 AND view_id=$2 AND token_hash IS NOT NULL)`, baseID, viewID).Scan(&published); err != nil {
+					return err
+				}
+				if published {
+					return ErrForbidden
+				}
+			}
+			sharedCount := 0
+			for _, v := range views {
+				if v.TableID == target.TableID && v.OwnerID == nil {
+					sharedCount++
+				}
+			}
+			if sharedCount <= 1 {
+				return ErrConflict
+			}
 		}
 		tag, err := tx.Exec(ctx, `DELETE FROM bt_views WHERE base_id=$1 AND id=$2`, baseID, viewID)
 		if err != nil {

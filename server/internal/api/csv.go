@@ -585,15 +585,52 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := UserFrom(r.Context())
-	fields, err := s.Store.Fields(r.Context(), b.ID)
+	requestedTableID := queryTableID(r)
+	if requestedTableID < 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_table", "无效的数据表 ID")
+		return
+	}
+	tables, err := s.Store.BaseTables(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	recs, err := s.Store.Records(r.Context(), b.ID)
+	var activeTableID int64
+	if requestedTableID > 0 {
+		for _, tbl := range tables {
+			if tbl.ID == requestedTableID {
+				activeTableID = tbl.ID
+				break
+			}
+		}
+		if activeTableID == 0 {
+			httpx.Error(w, http.StatusNotFound, "not_found", "数据表不存在")
+			return
+		}
+	} else {
+		for _, tbl := range tables {
+			if tbl.IsDefault {
+				activeTableID = tbl.ID
+				break
+			}
+		}
+	}
+	allFields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	fields := filterFieldsByTable(allFields, activeTableID)
+	allRecs, err := s.Store.Records(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	recs := make([]store.Record, 0, len(allRecs))
+	for _, rec := range allRecs {
+		if activeTableID == 0 || rec.TableID == 0 || rec.TableID == activeTableID {
+			recs = append(recs, rec)
+		}
 	}
 	memberNames := s.csvMemberNames(r.Context(), u.ID, b.WorkspaceID)
 	var buf bytes.Buffer

@@ -8,10 +8,20 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/btquery"
 )
 
-// Field is a typed column of a base.
+// BaseTable is one data table inside a multi-table Base (Feishu 数据表).
+type BaseTable struct {
+	ID        int64   `json:"id"`
+	BaseID    int64   `json:"baseId"`
+	Name      string  `json:"name"`
+	Position  float64 `json:"position"`
+	IsDefault bool    `json:"isDefault"`
+}
+
+// Field is a typed column of a base table.
 type Field struct {
 	ID      int64    `json:"id"`
 	BaseID  int64    `json:"baseId"`
+	TableID int64    `json:"tableId,omitempty"`
 	Name    string   `json:"name"`
 	Type    string   `json:"type"`              // see FieldTypes
 	Options []string `json:"options,omitempty"` // select / multi_select choices
@@ -30,6 +40,9 @@ type Field struct {
 	// Multiple allows a person field to store an array of member ids. Only
 	// meaningful for type=person; created_by is always single-valued.
 	Multiple bool `json:"multiple,omitempty"`
+	// TargetTableID optionally targets a specific bt_tables.id for type=link
+	// (enabling same-base and cross-base multi-table links).
+	TargetTableID *int64 `json:"targetTableId,omitempty"`
 }
 
 // Record is a row; Cells maps field id (decimal string) to a JSON value.
@@ -38,6 +51,7 @@ type Field struct {
 type Record struct {
 	ID        int64                      `json:"id"`
 	BaseID    int64                      `json:"baseId"`
+	TableID   int64                      `json:"tableId,omitempty"`
 	Cells     map[string]json.RawMessage `json:"cells"`
 	Position  float64                    `json:"position"`
 	CreatorID *int64                     `json:"creatorId,omitempty"`
@@ -65,10 +79,12 @@ func FieldReadOnly(t string) bool {
 	return t == "created_by" || t == "created_at" || t == "modified_at"
 }
 
-// LinkFieldRef is a link field whose options point at a target base.
+// LinkFieldRef is a link field whose options point at a target base (and optional table).
 type LinkFieldRef struct {
-	FieldID int64
-	BaseID  int64
+	FieldID       int64
+	BaseID        int64
+	TableID       int64
+	TargetTableID *int64
 }
 
 // BtEvent is one bitable mutation in the per-base realtime event log. Body
@@ -81,13 +97,17 @@ type BtEvent struct {
 }
 
 // View is a saved grid/kanban configuration (filters, sorts, group, hidden).
+// When OwnerID is non-nil, the view is a personal view visible/editable only to
+// its owner and never participates in shared data-permission restrictions.
 type View struct {
-	ID     int64           `json:"id"`
-	BaseID int64           `json:"baseId"`
-	Type   string          `json:"type"` // grid | kanban
-	Name   string          `json:"name"`
-	Config json.RawMessage `json:"config"`
-	Pos    float64         `json:"pos"`
+	ID      int64           `json:"id"`
+	BaseID  int64           `json:"baseId"`
+	TableID int64           `json:"tableId,omitempty"`
+	OwnerID *int64          `json:"ownerId,omitempty"`
+	Type    string          `json:"type"` // grid | kanban | gallery | calendar | form | gantt
+	Name    string          `json:"name"`
+	Config  json.RawMessage `json:"config"`
+	Pos     float64         `json:"pos"`
 }
 
 // BaseStore persists bitable schemas and rows. Access control is done by
@@ -98,6 +118,11 @@ type BaseStore interface {
 	// and rows atomically. It rechecks membership and the target parent in the
 	// same critical section/transaction as publication.
 	CreateInitializedBase(ctx context.Context, workspaceID, creatorID int64, parentID *int64, title string) (DocMeta, error)
+	BaseTables(ctx context.Context, baseID int64) ([]BaseTable, error)
+	CreateBaseTableGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, name string) (BaseTable, error)
+	RenameBaseTableGuarded(ctx context.Context, guard BaseWriteGuard, baseID, tableID int64, name string) (BaseTable, error)
+	DeleteBaseTableGuarded(ctx context.Context, guard BaseWriteGuard, baseID, tableID int64) error
+	ReorderBaseTablesGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, ids []int64) ([]BaseTable, error)
 	Fields(ctx context.Context, baseID int64) ([]Field, error)
 	AddField(ctx context.Context, f Field) (Field, error)
 	UpdateField(ctx context.Context, f Field) (Field, error)

@@ -34,9 +34,10 @@ export function createdViewSelectionResult(selection: CreatedViewSelection, stat
 
 export function NewViewMenu({ open, onOpenChange, canEdit, busy, onCreate }: {
   open: boolean; onOpenChange: (open: boolean) => void; canEdit: boolean; busy: boolean;
-  onCreate: (type: View["type"], name: string) => void;
+  onCreate: (type: View["type"], name: string, isPersonal?: boolean) => void;
 }) {
   const { t } = useI18n();
+  const [personal, setPersonal] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const onOpenRef = useRef(onOpenChange); onOpenRef.current = onOpenChange;
@@ -65,8 +66,12 @@ export function NewViewMenu({ open, onOpenChange, canEdit, busy, onCreate }: {
   return <>
     <button ref={trigger} type="button" disabled={busy} className="grid size-8 shrink-0 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground disabled:opacity-50" title={t("新建视图")} aria-label={t("新建视图")} aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)} data-new-view-menu><Plus size={15}/></button>
     {open && position && createPortal(<div ref={panel} role="menu" aria-label={t("新建视图")} style={position} className="fixed z-[100] overflow-y-auto rounded-lg border border-[#dee0e3] bg-surface p-1 text-[13px] text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.14)]" data-new-view-panel>
-      <div className="px-2.5 pb-1 pt-2 text-[12px] text-subtle">{t("基础视图")}</div>
-      {VIEW_CHOICES.map(({ type, label }) => <button key={type} type="button" role="menuitem" disabled={busy} className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover disabled:opacity-50" onClick={() => { onOpenChange(false); onCreate(type, t(label)); }}><ViewGlyph type={type}/>{t(label)}</button>)}
+      <label className="mx-1 mb-1 flex cursor-pointer items-center gap-2 rounded-md border-b px-2 py-2 text-[12px] text-muted-foreground hover:bg-hover" data-new-view-personal>
+        <input type="checkbox" className="accent-primary" checked={personal} onChange={(e) => setPersonal(e.target.checked)} />
+        <span>{t("设为个人视图（仅自己可见）")}</span>
+      </label>
+      <div className="px-2.5 pb-1 pt-1 text-[12px] text-subtle">{t("基础视图")}</div>
+      {VIEW_CHOICES.filter((c) => !personal || c.type !== "form").map(({ type, label }) => <button key={type} type="button" role="menuitem" disabled={busy} className="flex h-8 w-full items-center gap-2.5 rounded px-2.5 text-left hover:bg-hover disabled:opacity-50" onClick={() => { onOpenChange(false); onCreate(type, personal ? `${t("个人")}${t(label)}` : t(label), personal); setPersonal(false); }}><ViewGlyph type={type}/>{t(label)}</button>)}
     </div>, document.body)}
   </>;
 }

@@ -82,6 +82,11 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := UserFrom(r.Context())
+	requestedTableID := queryTableID(r)
+	if requestedTableID < 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_table", "无效的数据表 ID")
+		return
+	}
 	var read baseReadable
 	var targets []baseReadable
 	var expansions map[string]any
@@ -92,7 +97,7 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 	defer cancelSnapshot()
 	err := s.Store.WithBaseReadSnapshot(snapshotCtx, u.ID, b.ID, func(reader store.BaseSnapshotReader) error {
 		var err error
-		read, err = readBaseAllowedWith(snapshotCtx, reader, u.ID, b.ID)
+		read, err = readBaseTableAllowedWith(snapshotCtx, reader, u.ID, b.ID, requestedTableID)
 		if err != nil {
 			return err
 		}
@@ -210,15 +215,18 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"base": meta, "fields": read.fields, "records": read.records, "head": head,
-		"members": members, "views": visibleBaseViews(read.views, read.policy), "expansions": expansions,
+		"base": meta, "tables": read.tables, "activeTableId": read.tableID,
+		"fields": read.fields, "records": read.records, "head": head,
+		"members": members, "views": visibleBaseViews(read.views, read.policy, u.ID), "expansions": expansions,
 		"writeRestricted": len(read.policy.mandatory) > 0,
 	})
 }
 
 type fieldInput struct {
-	Name         *string   `json:"name"`
-	Type         *string   `json:"type"`
+	TableID       *int64    `json:"tableId"`
+	TargetTableID *int64    `json:"targetTableId"`
+	Name          *string   `json:"name"`
+	Type          *string   `json:"type"`
 	Options      *[]string `json:"options"`
 	OptionColors *[]int    `json:"optionColors"`
 	Description  *string   `json:"description"`
@@ -276,6 +284,20 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	}
 	if in.Position != nil {
 		f.Position = *in.Position
+	}
+	if in.TableID != nil && *in.TableID > 0 {
+		f.TableID = *in.TableID
+	}
+	if in.TargetTableID != nil {
+		if *in.TargetTableID > 0 {
+			id := *in.TargetTableID
+			f.TargetTableID = &id
+		} else {
+			f.TargetTableID = nil
+		}
+	}
+	if f.Type != "link" {
+		f.TargetTableID = nil
 	}
 	// 允许多选 is a person-only attribute; every other type stays single.
 	if in.Multiple != nil {
@@ -357,17 +379,35 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := store.Field{BaseID: b.ID, Name: "新字段", Type: "text"}
+	if tid := queryTableID(r); tid > 0 {
+		f.TableID = tid
+	}
 	if !in.apply(w, &f) {
 		return
 	}
 	if !s.validPersonDefault(w, r, b, in, f) {
 		return
 	}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
+	allFields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	targetTableID := f.TableID
+	if targetTableID <= 0 {
+		tables, err := s.Store.BaseTables(r.Context(), b.ID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		for _, tbl := range tables {
+			if tbl.IsDefault {
+				targetTableID = tbl.ID
+				break
+			}
+		}
+	}
+	fields := filterFieldsByTable(allFields, targetTableID)
 	if f.Type == "formula" && f.Formula != "" && !validateFormula(w, fields, 0, f.Formula) {
 		return
 	}
@@ -399,12 +439,12 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
+	allFields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	i := slices.IndexFunc(fields, func(f store.Field) bool { return f.ID == pathID(r, "fid") })
+	i := slices.IndexFunc(allFields, func(f store.Field) bool { return f.ID == pathID(r, "fid") })
 	if i < 0 {
 		httpx.Error(w, http.StatusNotFound, "not_found", "field not found")
 		return
@@ -413,7 +453,8 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	old := fields[i]
+	old := allFields[i]
+	fields := filterFieldsByTable(allFields, old.TableID)
 	f := old
 	if !in.apply(w, &f) {
 		return
@@ -629,12 +670,12 @@ func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
-	fields, err := s.Store.Fields(r.Context(), b.ID)
+	allFields, err := s.Store.Fields(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	idx := slices.IndexFunc(fields, func(f store.Field) bool { return f.ID == pathID(r, "fid") })
+	idx := slices.IndexFunc(allFields, func(f store.Field) bool { return f.ID == pathID(r, "fid") })
 	if idx < 0 {
 		httpx.Error(w, http.StatusNotFound, "not_found", "field not found")
 		return
@@ -643,7 +684,8 @@ func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	old := fields[idx]
+	old := allFields[idx]
+	fields := filterFieldsByTable(allFields, old.TableID)
 	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, Fields: fields})
 	if err != nil {
 		s.fieldMutationError(w, r, err)

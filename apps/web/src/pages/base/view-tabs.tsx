@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { t, useI18n } from "@/lib/i18n";
 import { createPortal } from "react-dom";
-import { ArrowLeft, ArrowRight, Copy, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Copy, Lock, MoreVertical, Pencil, Shield, Trash2, UserRound } from "lucide-react";
 import { ApiError, baseApi, type View } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
 import { popupPosition } from "./popup-position";
@@ -151,7 +151,7 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
           const next = event.key === "Home" ? 0 : event.key === "End" ? views.length - 1 : event.key === "ArrowRight" ? (index + 1) % views.length : (index + views.length - 1) % views.length;
           if (!views[next]) return;
           event.preventDefault(); onSelect(views[next].id); tabs.current.get(views[next].id)?.focus();
-        }}>{icon(view.type)}<span>{view.name}</span></button>
+        }}>{icon(view.type)}<span>{view.name}</span>{view.ownerId != null && <span title={t("个人视图（仅自己可见）")} className="inline-flex items-center text-primary"><UserRound size={12} /></span>}{view.config?.configLocked && <span title={t("已锁定视图配置")} className="inline-flex items-center text-amber-600"><Lock size={11} /></span>}{view.config?.locked && <span title={t("权限视图")} className="inline-flex items-center text-rose-600"><Shield size={11} /></span>}</button>
         {canEdit && <button type="button" ref={(el) => { if (el) anchors.current.set(view.id, el); else anchors.current.delete(view.id); }} aria-label={t("{name}视图菜单", { name: view.name })} aria-expanded={menu === view.id} disabled={busy || ledger.blocked("view:write")} onClick={() => setMenu(menu === view.id ? null : view.id)} className={`mr-1 grid size-6 place-items-center rounded hover:bg-hover disabled:opacity-50 ${view.id === activeId ? "text-muted-foreground" : "text-subtle sm:opacity-0 sm:group-hover/view:opacity-100"}`}><MoreVertical size={16} /></button>}
       </div>)}
     </div>

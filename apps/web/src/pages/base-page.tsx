@@ -35,13 +35,14 @@ import { FormSetup, validFormSelection } from "./base/form-setup";
 import { saveFormConfig } from "./base/public-form-api";
 import { BaseAuthorizationEpoch, BaseAuthorizationFence, isBaseAuthorizationError, newBaseQueryScope, recordsForAuthorizedQuery } from "./base/query-authorization";
 import { refreshWrites, useWriteLedger, WriteIssues } from "./base/write-safety";
+import { ask, askText } from "@/components/ui/ask";
 import { ShareDialog } from "@/components/share-dialog";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
 
 export { view } from "./base/view";
 
@@ -66,10 +67,12 @@ const EMPTY_CONFIG: ViewConfig = {};
 export function BasePage({ id, userId }: { id: number; userId: number }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
-  const key = ["base", id];
+  const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
+  useEffect(() => { setSelectedTableId(null); }, [id]);
+  const key = ["base", id, selectedTableId ?? "default"];
   // A fresh object is required on each successful access check. The filtered
   // query is scoped to that exact authorization snapshot, never an old cache.
-  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.getForAccount(id, userId, signal), refetchOnMount: "always", structuralSharing: false });
+  const q = useQuery({ queryKey: key, queryFn: ({ signal }) => baseApi.getForAccount(id, userId, signal, selectedTableId), refetchOnMount: "always", structuralSharing: false });
   const [queryScope] = useState(newBaseQueryScope);
   const authorizationEpoch = useRef(new BaseAuthorizationEpoch());
   const queryEpoch = authorizationEpoch.current.read(id, q.data, q.isFetching);
@@ -151,9 +154,10 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const filtersActive = (cfg.filters?.rules?.length ?? 0) > 0;
   const sortsActive = (cfg.sorts?.length ?? 0) > 0;
   const queryActive = filtersActive || sortsActive;
+  const activeTableId = q.data?.activeTableId ?? selectedTableId ?? undefined;
   const serverQuery = useQuery({
-    queryKey: ["base", id, "query", queryScope, queryEpoch, cfg],
-    queryFn: ({ signal }) => baseApi.query(id, { filters: cfg.filters, sorts: cfg.sorts }, signal),
+    queryKey: ["base", id, "query", activeTableId ?? "default", queryScope, queryEpoch, cfg],
+    queryFn: ({ signal }) => baseApi.query(id, { tableId: activeTableId, filters: cfg.filters, sorts: cfg.sorts }, signal),
     enabled: queryActive && accessReady && !q.isFetching,
   });
   const queryDenied = queryActive && serverQuery.isError && isBaseAuthorizationError(serverQuery.error);
@@ -241,7 +245,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     }
     finally { savingKey.current = null; setSavingView(false); }
   };
-  const newView = async (type: import("@/lib/api").View["type"], name: string) => {
+  const newView = async (type: import("@/lib/api").View["type"], name: string, isPersonal = false) => {
     setViewMenuOpen(false);
     const scope = createScope.current;
     const selectionRevision = viewSelectionRevision.current;
@@ -252,7 +256,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     if (op === null) return;
     let v: import("@/lib/api").View;
     try {
-      const response: unknown = await baseApi.addViewForAccount(id, userId, { type, name });
+      const response: unknown = await baseApi.addViewForAccount(id, userId, { type, name, tableId: activeTableId, isPersonal: isPersonal || undefined });
       if (!isCreatedView(response, id, type, name)) throw new Error("invalid view response");
       v = response;
     } catch (error) {
@@ -272,10 +276,48 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     try { await refresh(); }
     catch { if (currentScope()) setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
   };
+  const tables = q.data.tables ?? [];
+  const createTable = async () => {
+    const name = await askText(t("新建数据表"), t("数据表名称"), `${t("数据表")} ${tables.length + 1}`);
+    if (!name?.trim()) return;
+    try {
+      const tbl = await baseApi.createTable(id, name.trim());
+      setPane("table");
+      setViewId(null);
+      setSelectedTableId(tbl.id);
+      await refresh();
+    } catch {
+      setViewError(t("新建数据表失败，请检查权限后重试。"));
+    }
+  };
+  const renameTable = async (tbl: import("@/lib/api").BaseTable) => {
+    const name = await askText(t("重命名数据表"), t("数据表名称"), tbl.name);
+    if (!name?.trim() || name.trim() === tbl.name) return;
+    try {
+      await baseApi.renameTable(id, tbl.id, name.trim());
+      await refresh();
+    } catch {
+      setViewError(t("重命名数据表失败，请稍后重试。"));
+    }
+  };
+  const removeTable = async (tbl: import("@/lib/api").BaseTable) => {
+    if (tbl.isDefault) return;
+    if (!await ask(t("删除数据表「{name}」？", { name: tbl.name }), t("该数据表下的所有字段、记录和视图都将被永久删除。"))) return;
+    try {
+      await baseApi.deleteTable(id, tbl.id);
+      if (activeTableId === tbl.id) {
+        setViewId(null);
+        setSelectedTableId(null);
+      }
+      await refresh();
+    } catch {
+      setViewError(t("删除数据表失败，默认数据表不可删除。"));
+    }
+  };
   const undoApi: UndoApi = {
     setCellsIf: (rid, expected, cells) => baseApi.setCellsIf(id, rid, expected, cells),
     deleteRecordIf: (rid, expected) => baseApi.deleteRecordIf(id, rid, expected),
-    addRecord: (cells) => baseApi.addRecord(id, cells as Record<string, import("@/lib/api").Cell>),
+    addRecord: (cells) => baseApi.addRecord(id, cells as Record<string, import("@/lib/api").Cell>, activeTableId),
   };
   const runUndo = async (redo: boolean) => {
     if (!canEdit || ledger.blocked("batch") || ledger.hasCellWrites()) return;
@@ -289,7 +331,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
     setUndoNotice(null);
-    try { const rec = await baseApi.addRecord(id); ledger.complete(op); undoStack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
+    try { const rec = await baseApi.addRecord(id, {}, activeTableId); ledger.complete(op); undoStack.record({ label: t("新增记录"), cells: [], created: [{ rid: rec.id, cells: definedCells(rec.cells) }] }); }
     catch { ledger.fail(op, t("无法确认是否创建，请刷新并核对记录，勿直接重复新增。")); }
     finally { refreshWrites(refresh); }
   };
@@ -315,15 +357,45 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       <div className="flex min-h-0 flex-1">
         <aside className={cn("hidden w-[240px] shrink-0 flex-col border-r bg-surface px-3 py-3 md:flex", !baseSidebarOpen && "md:hidden")} data-base-sidebar>
           <div className="mb-2 flex items-center gap-1"><label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-subtle focus-within:bg-hover"><Search size={15}/><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label><button ref={collapseBaseSidebar} type="button" aria-label={t("收起数据表侧栏")} title={t("收起数据表侧栏")} onClick={() => { setBaseSidebarOpen(false); requestAnimationFrame(() => expandBaseSidebar.current?.focus({ preventScroll: true })); }} className="grid size-7 shrink-0 place-items-center rounded text-subtle hover:bg-hover"><ChevronsLeft size={15}/></button></div>
-          <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
-          <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+          <div className="mb-1 flex items-center justify-between px-2 pt-1 text-[11px] font-medium text-subtle">
+            <span>{t("数据表")}</span>
+            {canEdit && <button type="button" onClick={() => void createTable()} title={t("新建数据表")} aria-label={t("新建数据表")} className="grid size-5 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground" data-add-table><Plus size={13} /></button>}
+          </div>
+          <div className="space-y-0.5 overflow-y-auto" data-base-table-list>
+            {tables.length > 0 ? tables.map((tbl) => {
+              const active = pane === "table" && tbl.id === activeTableId;
+              return (
+                <div key={tbl.id} className={cn("group flex h-9 items-center gap-1 rounded-md px-2 text-[13px]", active ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-base-table-item={tbl.id}>
+                  <button type="button" onClick={() => { setPane("table"); if (tbl.id !== activeTableId) { setViewId(null); setSelectedTableId(tbl.id); } }} aria-current={active ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                    <Table2 size={15} strokeWidth={1.7} className="shrink-0" />
+                    <span className="truncate">{tbl.name}</span>
+                  </button>
+                  {canEdit && (
+                    <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                      <button type="button" onClick={() => void renameTable(tbl)} title={t("重命名数据表")} aria-label={t("重命名数据表")} className="grid size-6 place-items-center rounded hover:bg-surface/80"><Pencil size={12} /></button>
+                      {!tbl.isDefault && <button type="button" onClick={() => void removeTable(tbl)} title={t("删除数据表")} aria-label={t("删除数据表")} className="grid size-6 place-items-center rounded text-destructive hover:bg-surface/80"><Trash2 size={12} /></button>}
+                    </span>
+                  )}
+                </div>
+              );
+            }) : (
+              <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
+            )}
+          </div>
+          <div className="my-2 border-t" />
+          <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary dark:bg-accent" : "text-muted-foreground hover:bg-hover")} data-sidebar-dashboard><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
           {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="mt-1 flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-hover"><Workflow size={16} strokeWidth={1.7} />{t("工作流")}</button>}
           {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => { setPane("table"); setViewMenuOpen(true); }} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <nav aria-label={t("多维表格导航")} className="flex shrink-0 gap-1 border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
-            <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
-            <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
+          <nav aria-label={t("多维表格导航")} className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
+            {tables.length > 0 ? tables.map((tbl) => (
+              <button key={tbl.id} type="button" onClick={() => { setPane("table"); if (tbl.id !== activeTableId) { setViewId(null); setSelectedTableId(tbl.id); } }} aria-current={pane === "table" && tbl.id === activeTableId ? "page" : undefined} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" && tbl.id === activeTableId ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={15} strokeWidth={1.7} />{tbl.name}</button>
+            )) : (
+              <button type="button" onClick={() => setPane("table")} aria-current={pane === "table" ? "page" : undefined} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={16} strokeWidth={1.7} />{t("数据表")}</button>
+            )}
+            {canEdit && <button type="button" onClick={() => void createTable()} title={t("新建数据表")} aria-label={t("新建数据表")} className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-hover"><Plus size={15} /></button>}
+            <button type="button" onClick={() => { setPane("dashboard"); setViewMenuOpen(false); }} aria-current={pane === "dashboard" ? "page" : undefined} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "dashboard" ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><LayoutDashboard size={16} strokeWidth={1.7} />{t("仪表盘")}</button>
           </nav>
         {pane === "dashboard" && !baseSidebarOpen && <div className="hidden h-11 shrink-0 items-center border-b bg-[#f7f8fa] px-3 md:flex"><button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="flex h-8 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button></div>}
         {pane === "dashboard" && <Dashboard records={q.data.records} fields={fields} members={members} />}
@@ -333,11 +405,11 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 whitespace-nowrap border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
         {pane === "table" && !baseSidebarOpen && <button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="mr-1 hidden h-8 shrink-0 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover md:flex"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button>}
         <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewGlyph type={type} />} onSelect={(view) => { viewSelectionRevision.current++; setViewId(view); }} onRefresh={refresh} />
-        <NewViewMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen} canEdit={canEdit} busy={q.isFetching || ledger.blocked("view:write")} onCreate={(type, name) => void newView(type, name)} />
+        <NewViewMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen} canEdit={canEdit} busy={q.isFetching || ledger.blocked("view:write")} onCreate={(type, name, isPersonal) => void newView(type, name, isPersonal)} />
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
-        {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
+        {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} configLocked={!!cfg.configLocked} isPersonal={current.ownerId != null} canManage={base.role === "manage"} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onConfigLockedChange={(configLocked) => setCfg({ ...cfg, configLocked: configLocked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
@@ -407,7 +479,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {!canExportBase(base, q.data.writeRestricted) ? (
           <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
         ) : (
-          <a href={`/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
+          <a href={activeTableId ? `/api/bases/${id}/export?tableId=${activeTableId}` : `/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
         )}
         <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索记录")} className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
         {current?.type !== "grid" && <span className="px-2 text-subtle">
@@ -474,7 +546,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} userId={userId} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });

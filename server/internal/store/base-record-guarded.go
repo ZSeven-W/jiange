@@ -19,6 +19,7 @@ import (
 // add; cells and position are validated again under the transaction lock.
 type BaseRecordMutation struct {
 	Operation string // add, update, move, delete
+	TableID   int64
 	RecordID  int64
 	Cells     map[string]json.RawMessage
 	Position  float64
@@ -275,13 +276,23 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 		}
 		switch mutation.Operation {
 		case "add":
+			var tid int64
+			if mutation.TableID > 0 {
+				if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE id=$1 AND base_id=$2`, mutation.TableID, baseID).Scan(&tid); err != nil {
+					return notFound(err)
+				}
+			} else {
+				if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, baseID).Scan(&tid); err != nil {
+					return notFound(err)
+				}
+			}
 			cells := make(map[string]json.RawMessage, len(mutation.Cells))
 			for k, v := range mutation.Cells {
 				if !nullCell(v) {
 					cells[k] = v
 				}
 			}
-			result, err = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id,cells,position,creator_id) VALUES ($1,$2,CASE WHEN $3::float8=0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1),0)+1 ELSE $3 END,$4) RETURNING `+recordCols, baseID, cells, mutation.Position, guard.UserID))
+			result, err = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id,table_id,cells,position,creator_id) VALUES ($1,$2,$3,CASE WHEN $4::float8=0 THEN COALESCE((SELECT max(position) FROM base_records WHERE table_id=$2),0)+1 ELSE $4 END,$5) RETURNING `+recordCols, baseID, tid, cells, mutation.Position, guard.UserID))
 		case "update":
 			var current Record
 			current, err = scanRecord(tx.QueryRow(ctx, `SELECT `+recordCols+` FROM base_records WHERE base_id=$1 AND id=$2 FOR UPDATE`, baseID, mutation.RecordID))
@@ -497,6 +508,10 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 	now := time.Now()
 	switch mutation.Operation {
 	case "add":
+		tid, err := m.resolveTableIDLocked(baseID, mutation.TableID)
+		if err != nil {
+			return Record{}, nil, err
+		}
 		cells := map[string]json.RawMessage{}
 		for k, v := range mutation.Cells {
 			if !nullCell(v) {
@@ -505,7 +520,7 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 		}
 		uid := guard.UserID
 		next := m.b.nextID + 1
-		result = Record{ID: next, BaseID: baseID, Cells: cells, CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now, Position: mutation.Position}
+		result = Record{ID: next, BaseID: baseID, TableID: tid, Cells: cells, CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now, Position: mutation.Position}
 		if result.Position == 0 {
 			result.Position = float64(next)
 		}

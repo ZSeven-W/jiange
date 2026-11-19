@@ -11,6 +11,7 @@ import (
 )
 
 type memBase struct {
+	tables      []BaseTable
 	fields      []Field
 	records     []Record
 	recordIndex map[int64]int // lazily populated; validated after slice deletion
@@ -29,6 +30,7 @@ func (m *Memory) CreateBase(ctx context.Context, ws, creator int64, parent *int6
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.doc(d.ID).meta.Kind = "base"
+	m.ensureDefaultTableLocked(d.ID)
 	d.Kind = "base"
 	return d, nil
 }
@@ -59,15 +61,16 @@ func (m *Memory) CreateInitializedBase(ctx context.Context, ws, creator int64, p
 		meta: DocMeta{ID: baseID, Kind: "base", WorkspaceID: ws, ParentID: parentID, Title: title, CreatorID: creator, CreatorName: m.users[creator-1].Name, CreatedAt: now, UpdatedAt: now},
 		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
 	}
-	field := Field{BaseID: baseID, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
-	view := View{BaseID: baseID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
+	if err := ctx.Err(); err != nil {
+		return DocMeta{}, err
+	}
+	tbl := BaseTable{ID: m.id(), BaseID: baseID, Name: "数据表", Position: 1, IsDefault: true}
+	field := Field{BaseID: baseID, TableID: tbl.ID, Name: "文本", Type: "text", Position: 1, IsPrimary: true}
+	view := View{BaseID: baseID, TableID: tbl.ID, Name: "表格", Type: "grid", Config: json.RawMessage(`{}`), Pos: 1}
 	records := make([]Record, 5)
 	for i := range records {
 		uid := creator
-		records[i] = Record{BaseID: baseID, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
-	}
-	if err := ctx.Err(); err != nil {
-		return DocMeta{}, err
+		records[i] = Record{BaseID: baseID, TableID: tbl.ID, Cells: map[string]json.RawMessage{}, Position: float64(i + 1), CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
 	}
 	field.ID = m.id()
 	view.ID = m.id()
@@ -76,6 +79,7 @@ func (m *Memory) CreateInitializedBase(ctx context.Context, ws, creator int64, p
 		records[i].Position = float64(records[i].ID)
 	}
 	m.d.docs = append(m.d.docs, d)
+	m.b.tables = append(m.b.tables, tbl)
 	m.b.fields = append(m.b.fields, field)
 	m.b.views = append(m.b.views, view)
 	m.b.records = append(m.b.records, records...)
@@ -100,9 +104,14 @@ func (m *Memory) Fields(_ context.Context, base int64) ([]Field, error) {
 func (m *Memory) AddField(_ context.Context, f Field) (Field, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tid, err := m.resolveTableIDLocked(f.BaseID, f.TableID)
+	if err != nil {
+		return Field{}, err
+	}
+	f.TableID = tid
 	f.IsPrimary = true
 	for _, existing := range m.b.fields {
-		if existing.BaseID == f.BaseID {
+		if existing.BaseID == f.BaseID && existing.TableID == f.TableID {
 			f.IsPrimary = false
 			if existing.IsPrimary && f.Position != 0 && f.Position <= existing.Position {
 				return Field{}, ErrPrimaryField
@@ -125,10 +134,11 @@ func (m *Memory) UpdateField(_ context.Context, f Field) (Field, error) {
 			if x.IsPrimary && f.Position != x.Position {
 				return Field{}, ErrPrimaryField
 			}
+			f.TableID = x.TableID
 			f.IsPrimary = x.IsPrimary
 			if !f.IsPrimary && f.Position != x.Position {
 				for _, primary := range m.b.fields {
-					if primary.BaseID == f.BaseID && primary.IsPrimary && fieldBefore(x, primary) != fieldBefore(f, primary) {
+					if primary.BaseID == f.BaseID && primary.TableID == x.TableID && primary.IsPrimary && fieldBefore(x, primary) != fieldBefore(f, primary) {
 						return Field{}, ErrPrimaryField
 					}
 				}
@@ -180,6 +190,11 @@ func (m *Memory) Records(_ context.Context, base int64) ([]Record, error) {
 func (m *Memory) AddRecord(_ context.Context, r Record) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tid, err := m.resolveTableIDLocked(r.BaseID, r.TableID)
+	if err != nil {
+		return Record{}, err
+	}
+	r.TableID = tid
 	r.ID = m.id()
 	if r.Position == 0 {
 		r.Position = float64(r.ID)
@@ -233,7 +248,11 @@ func (m *Memory) MoveRecord(_ context.Context, base, id int64, position float64)
 func (m *Memory) AddRecordsBulk(_ context.Context, base int64, records []Record) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defaultTID := m.defaultTableIDLocked(base)
 	for _, r := range records {
+		if r.TableID <= 0 {
+			r.TableID = defaultTID
+		}
 		r.ID = m.id()
 		if r.Position == 0 {
 			r.Position = float64(r.ID)

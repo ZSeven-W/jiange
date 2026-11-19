@@ -92,7 +92,7 @@ func notFound(err error) error {
 func scanField(r pgx.Row) (f Field, err error) {
 	var opts, colors []byte
 	var def []byte
-	err = r.Scan(&f.ID, &f.BaseID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Formula, &f.Position, &f.IsPrimary, &def, &f.Multiple)
+	err = r.Scan(&f.ID, &f.BaseID, &f.TableID, &f.Name, &f.Type, &opts, &colors, &f.Description, &f.Formula, &f.Position, &f.IsPrimary, &def, &f.Multiple, &f.TargetTableID)
 	if len(def) > 0 && string(def) != "null" {
 		f.DefaultValue = def
 	}
@@ -105,8 +105,8 @@ func scanField(r pgx.Row) (f Field, err error) {
 	return f, notFound(err)
 }
 
-const fieldCols = `id, base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple`
-const recordCols = `id, base_id, cells, position, creator_id, created_at, updated_at`
+const fieldCols = `id, base_id, table_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple, target_table_id`
+const recordCols = `id, base_id, table_id, cells, position, creator_id, created_at, updated_at`
 
 func (p *Postgres) Fields(ctx context.Context, base int64) ([]Field, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT `+fieldCols+` FROM base_fields WHERE base_id=$1 ORDER BY position, id`, base)
@@ -151,32 +151,42 @@ func (p *Postgres) AddField(ctx context.Context, f Field) (out Field, err error)
 		if err := tx.QueryRow(ctx, `SELECT id FROM nodes WHERE id=$1 FOR UPDATE`, f.BaseID).Scan(&id); err != nil {
 			return notFound(err)
 		}
+		var tid int64
+		if f.TableID > 0 {
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE id=$1 AND base_id=$2`, f.TableID, f.BaseID).Scan(&tid); err != nil {
+				return notFound(err)
+			}
+		} else {
+			if err := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, f.BaseID).Scan(&tid); err != nil {
+				return notFound(err)
+			}
+		}
 		if f.Position != 0 {
 			var precedes bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM base_fields WHERE base_id=$1 AND is_primary AND position >= $2)`, f.BaseID, f.Position).Scan(&precedes); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM base_fields WHERE table_id=$1 AND is_primary AND position >= $2)`, tid, f.Position).Scan(&precedes); err != nil {
 				return err
 			}
 			if precedes {
 				return ErrPrimaryField
 			}
 		}
-		out, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple)
-			VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE base_id=$1), 0) + 1 ELSE $8 END,
-			NOT EXISTS (SELECT 1 FROM base_fields WHERE base_id=$1), $9, $10)
-			RETURNING `+fieldCols, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)))
+		out, err = scanField(tx.QueryRow(ctx, `INSERT INTO base_fields (base_id, table_id, name, type, options, option_colors, description, formula, position, is_primary, default_value, multiple, target_table_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_fields WHERE table_id=$2), 0) + 1 ELSE $9 END,
+			NOT EXISTS (SELECT 1 FROM base_fields WHERE table_id=$2), $10, $11, $12)
+			RETURNING `+fieldCols, f.BaseID, tid, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f), f.TargetTableID))
 		return err
 	})
 	return out, err
 }
 
 func (p *Postgres) UpdateField(ctx context.Context, f Field) (Field, error) {
-	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields AS field SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, formula=$8, position=$9, default_value=$10, multiple=$11 WHERE field.id=$1 AND field.base_id=$2
+	return scanField(p.Pool.QueryRow(ctx, `UPDATE base_fields AS field SET name=$3, type=$4, options=$5, option_colors=$6, description=$7, formula=$8, position=$9, default_value=$10, multiple=$11, target_table_id=$12 WHERE field.id=$1 AND field.base_id=$2
 		AND (NOT field.is_primary OR field.position=$9)
 		AND (field.is_primary OR field.position=$9 OR NOT EXISTS (
-			SELECT 1 FROM base_fields AS primary_field WHERE primary_field.base_id=$2 AND primary_field.is_primary
+			SELECT 1 FROM base_fields AS primary_field WHERE primary_field.table_id=field.table_id AND primary_field.is_primary
 			AND ((field.position,field.id) < (primary_field.position,primary_field.id)) <>
 			    (($9::float8,field.id) < (primary_field.position,primary_field.id)))) RETURNING `+fieldCols,
-		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f)))
+		f.ID, f.BaseID, f.Name, f.Type, opts(f), colors(f), f.Description, f.Formula, f.Position, defaultJSON(f), multipleFlag(f), f.TargetTableID))
 }
 
 func (p *Postgres) DeleteField(ctx context.Context, base, id int64) error {
@@ -202,7 +212,7 @@ func (p *Postgres) DeleteField(ctx context.Context, base, id int64) error {
 func jsonKey(id int64) string { b, _ := json.Marshal(id); return string(b) }
 
 func scanRecord(r pgx.Row) (rec Record, err error) {
-	err = r.Scan(&rec.ID, &rec.BaseID, &rec.Cells, &rec.Position, &rec.CreatorID, &rec.CreatedAt, &rec.UpdatedAt)
+	err = r.Scan(&rec.ID, &rec.BaseID, &rec.TableID, &rec.Cells, &rec.Position, &rec.CreatorID, &rec.CreatedAt, &rec.UpdatedAt)
 	return rec, notFound(err)
 }
 
@@ -225,9 +235,9 @@ func (p *Postgres) AddRecord(ctx context.Context, r Record) (Record, error) {
 	if r.CreatorID != nil {
 		creator = *r.CreatorID
 	}
-	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, cells, position, creator_id)
-		VALUES ($1,$2, CASE WHEN $3::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $3 END, $4)
-		RETURNING `+recordCols, r.BaseID, r.Cells, r.Position, creator))
+	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, table_id, cells, position, creator_id)
+		VALUES ($1,$2,$3, CASE WHEN $4::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $4 END, $5)
+		RETURNING `+recordCols, r.BaseID, nullableID(r.TableID), r.Cells, r.Position, creator))
 }
 
 // SetCells merges cells; jsonb_strip_nulls drops cells set to null.
@@ -344,7 +354,7 @@ func (p *Postgres) AddRecordsBulk(ctx context.Context, base int64, records []Rec
 		if r.CreatorID != nil {
 			creator = *r.CreatorID
 		}
-		b.Queue(`INSERT INTO base_records (base_id, cells, position, creator_id) VALUES ($1, $2, $3, $4)`, base, r.Cells, pos, creator)
+		b.Queue(`INSERT INTO base_records (base_id, table_id, cells, position, creator_id) VALUES ($1, $2, $3, $4, $5)`, base, nullableID(r.TableID), r.Cells, pos, creator)
 	}
 	return p.Pool.SendBatch(ctx, b).Close()
 }
@@ -385,7 +395,7 @@ func (p *Postgres) LinksForRecords(ctx context.Context, fieldID int64, fromRecor
 }
 
 func (p *Postgres) LinkFieldsTargeting(ctx context.Context, targetBase int64) ([]LinkFieldRef, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT id, base_id FROM base_fields WHERE type='link' AND options->>0 = $1`, strconv.FormatInt(targetBase, 10))
+	rows, err := p.Pool.Query(ctx, `SELECT id, base_id, table_id, target_table_id FROM base_fields WHERE type='link' AND options->>0 = $1`, strconv.FormatInt(targetBase, 10))
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +403,7 @@ func (p *Postgres) LinkFieldsTargeting(ctx context.Context, targetBase int64) ([
 	out := []LinkFieldRef{}
 	for rows.Next() {
 		var r LinkFieldRef
-		if err := rows.Scan(&r.FieldID, &r.BaseID); err != nil {
+		if err := rows.Scan(&r.FieldID, &r.BaseID, &r.TableID, &r.TargetTableID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
