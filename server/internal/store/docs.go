@@ -103,6 +103,7 @@ type TitleSnapshot struct {
 type DocCopy struct {
 	SourceID, UserID, WorkspaceID int64
 	ParentID                      *int64
+	Personal                      *bool
 	Title                         string
 	FileIDs                       []int64
 	// Guard is required by authenticated request handlers. A nil guard is

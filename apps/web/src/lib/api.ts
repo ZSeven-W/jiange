@@ -810,6 +810,24 @@ export interface DriveEntry {
   createdAt?: string;
   updatedAt: string;
 }
+export interface DriveShortcut {
+  id: number;
+  workspaceId: number;
+  parentId: number | null;
+  personal: boolean;
+  targetNodeId: number;
+  title: string;
+  creatorId: number;
+  creatorName: string;
+  createdAt: string;
+  updatedAt: string;
+  targetAccessible: boolean;
+  targetKind?: string;
+  targetDocType?: string;
+  targetTitle?: string;
+  targetIcon?: string;
+  targetWikiSpaceId?: number | null;
+}
 export const driveApi = {
   uploadFile: async (file: File, parentId: number | null, personal: boolean, signal?: AbortSignal, expectedUserId?: number): Promise<DriveEntry> => {
     const body = new FormData(); body.append("file", file); if (parentId !== null) body.append("parentId", String(parentId)); body.append("scope", personal ? "personal" : "shared");
@@ -833,6 +851,18 @@ export const driveApi = {
     const query = params.toString();
     return request<{ entries: DriveEntry[] }>("GET", `/api/drive/children${query ? `?${query}` : ""}`).then((r) => r.entries);
   },
+  shortcuts: (parentId: number | null = null, personal = false, workspaceId?: number) => {
+    const params = new URLSearchParams();
+    if (parentId !== null) params.set("parent", String(parentId));
+    if (personal) params.set("scope", "personal");
+    if (workspaceId !== undefined) params.set("workspaceId", String(workspaceId));
+    const query = params.toString();
+    return request<{ shortcuts: DriveShortcut[] }>("GET", `/api/drive/shortcuts${query ? `?${query}` : ""}`).then((r) => r.shortcuts);
+  },
+  createShortcut: (targetNodeId: number, parentId: number | null, personal: boolean, userId: number, title = "") =>
+    request<DriveShortcut>("POST", "/api/drive/shortcuts", { targetNodeId, parentId, scope: personal ? "personal" : "shared", ...(title ? { title } : {}) }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteShortcut: (shortcutId: number, userId: number) =>
+    request<void>("DELETE", `/api/drive/shortcuts/${shortcutId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   move: (id: number, parentId: number | null, expected: number) =>
     request<void>("POST", `/api/drive/move/${id}`, { parentId, expected }),
   moveForAccount: (id: number, parentId: number | null, expected: number, userId: number) =>
@@ -1182,7 +1212,8 @@ export const docsApi = {
   setCopyProtected: (id: number, on: boolean, expectedCopyProtected?: boolean) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { copyProtected: on, ...(expectedCopyProtected === undefined ? {} : { expectedCopyProtected }) }),
   setContentPermissions: (id: number, change: { copyMinRole?: Role; downloadMinRole?: Role; commentMinRole?: "view" | "edit" }, expectedPermissionsRevision: number) => request<DocMeta | undefined>("PATCH", `/api/docs/${id}`, { ...change, expectedPermissionsRevision }),
   duplicate: (id: number) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`),
-  duplicateForAccount: (id: number, userId: number) => request<DocMeta>("POST", `/api/docs/${id}/account-duplicate`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  duplicateForAccount: (id: number, userId: number, options?: { parentId?: number | null; personal?: boolean; workspaceId?: number; title?: string }) =>
+    request<DocMeta>("POST", `/api/docs/${id}/account-duplicate`, options, undefined, { "X-Jiange-User-Id": String(userId) }),
   getForAccount: (id: number, userId: number) => request<DocMeta>("GET", `/api/docs/${id}/account-metadata`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 

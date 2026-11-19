@@ -38,11 +38,23 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 	if c.UserID < 1 || c.UserID > int64(len(m.users)) || !m.member(c.UserID, c.WorkspaceID) {
 		return DocMeta{}, ErrForbidden
 	}
+	personal := source.personal
+	if c.Personal != nil {
+		personal = *c.Personal
+	}
 	if c.ParentID != nil {
 		parent := m.doc(*c.ParentID)
-		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WikiSpaceID != nil || parent.meta.WorkspaceID != c.WorkspaceID || RoleRank(m.roleLocked(c.UserID, parent)) < RoleRank(RoleView) {
+		if parent == nil || parent.deleted || parent.meta.Kind == "file" || parent.meta.WikiSpaceID != nil || parent.meta.WorkspaceID != c.WorkspaceID {
 			return DocMeta{}, ErrNotFound
 		}
+		if parent.meta.Kind == "folder" {
+			if err := m.driveDestinationLocked(c.UserID, c.WorkspaceID, c.ParentID, RoleEdit); err != nil {
+				return DocMeta{}, err
+			}
+		} else if RoleRank(m.roleLocked(c.UserID, parent)) < RoleRank(RoleView) {
+			return DocMeta{}, ErrNotFound
+		}
+		personal = parent.personal
 	}
 	if build == nil {
 		return DocMeta{}, ErrConflict
@@ -86,8 +98,10 @@ func (m *Memory) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder) (
 		parentID = &id
 	}
 	d := &memDoc{
-		meta: DocMeta{ID: newID, Kind: "doc", DocType: source.meta.DocType, WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView, InheritParentACL: true},
-		ids:  map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
+		meta:          DocMeta{ID: newID, Kind: "doc", DocType: source.meta.DocType, WorkspaceID: c.WorkspaceID, ParentID: parentID, Title: c.Title, CreatorID: c.UserID, CreatorName: m.users[c.UserID-1].Name, CreatedAt: now, UpdatedAt: now, CopyMinRole: RoleView, DownloadMinRole: RoleView, CommentMinRole: RoleView, InheritParentACL: true},
+		driveRevision: 1,
+		personal:      personal,
+		ids:           map[[2]int64]bool{}, snaps: map[int64][]byte{}, versions: map[int64]memVersion{},
 	}
 	if source.referencesHidden {
 		d.referencesHidden = true

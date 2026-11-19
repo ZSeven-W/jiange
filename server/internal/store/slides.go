@@ -122,6 +122,7 @@ func HasModernSlideShapes(raw json.RawMessage) bool {
 type SlidesDeckCopy struct {
 	SourceID, UserID, WorkspaceID int64
 	ParentID                      *int64
+	Personal                      *bool
 	Title                         string
 	Guard                         *RestoreGuard
 	// Non-nil binds the copy to the image ids whose blobs were verified by the caller.

@@ -42,7 +42,8 @@ import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { canDuplicateHomeDocument } from "./home-file-actions";
 
 export { view } from "./base/view";
 
@@ -98,6 +99,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
   const [gridDetailOpen, setGridDetailOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
+  const [duplicatingBase, setDuplicatingBase] = useState(false);
   const [aiPasteOpen, setAiPasteOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [baseSidebarOpen, setBaseSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1200);
@@ -350,6 +352,19 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           <p className="pt-0.5 text-[11px] text-subtle">{t("最近修改：{time}", { time: formatBaseChange(lastBaseChange(base.updatedAt, q.data.records)) })}{!canEdit && t(" · 只读")}</p>
         </div>
         <button ref={shareAnchor} onClick={() => setSharing(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Share2 size={14} />{t("分享")}</button>
+        {!q.data.writeRestricted && canDuplicateHomeDocument(base) && <button type="button" disabled={duplicatingBase} data-base-duplicate onClick={async () => {
+          setDuplicatingBase(true);
+          try {
+            const copy = await docsApi.duplicateForAccount(id, userId);
+            void qc.invalidateQueries({ queryKey: ["docs"] });
+            void qc.invalidateQueries({ queryKey: ["drive"] });
+            go(`#/base/${copy.id}`);
+          } catch (err) {
+            setUndoNotice(err instanceof Error ? err.message : t("创建副本失败，请检查网络后重试。"));
+          } finally {
+            setDuplicatingBase(false);
+          }
+        }} className="hidden h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50 sm:flex"><Copy size={14} />{t("创建副本")}</button>}
         {base.role === "manage" && <button onClick={() => setAutoOpen(true)} className="hidden h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] text-muted-foreground hover:bg-hover sm:flex"><Zap size={15} />{t("自动化")}</button>}
       </header>
       {!directDetailOpen && !gridDetailOpen && <WriteIssues ledger={ledger} issues={issues} />}

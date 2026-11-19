@@ -259,6 +259,27 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 	}
 	var result DocMeta
 	err := pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		srcWS, e := drivePGNodeWorkspace(ctx, tx, c.SourceID)
+		if e != nil {
+			return e
+		}
+		if srcWS <= c.WorkspaceID {
+			if e = drivePGLockWorkspace(ctx, tx, srcWS); e != nil {
+				return e
+			}
+			if c.WorkspaceID != srcWS {
+				if e = drivePGLockWorkspace(ctx, tx, c.WorkspaceID); e != nil {
+					return e
+				}
+			}
+		} else {
+			if e = drivePGLockWorkspace(ctx, tx, c.WorkspaceID); e != nil {
+				return e
+			}
+			if e = drivePGLockWorkspace(ctx, tx, srcWS); e != nil {
+				return e
+			}
+		}
 		sourceRole, protected, kind, err := lockCopySource(ctx, tx, c.SourceID, c.UserID)
 		if err != nil {
 			return err
@@ -293,7 +314,8 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 		// lockCopySource holds the source node through commit, so the download
 		// threshold cannot change between this read and publishing the copy.
 		var downloadMinRole, sourceDocType string
-		if err := tx.QueryRow(ctx, `SELECT download_min_role, doc_type FROM nodes WHERE id=$1`, c.SourceID).Scan(&downloadMinRole, &sourceDocType); err != nil {
+		var sourcePersonal bool
+		if err := tx.QueryRow(ctx, `SELECT download_min_role, doc_type, personal FROM nodes WHERE id=$1`, c.SourceID).Scan(&downloadMinRole, &sourceDocType, &sourcePersonal); err != nil {
 			return err
 		}
 		if !DocumentDownloadAllowed(DocMeta{Kind: kind, CopyProtected: protected, DownloadMinRole: downloadMinRole}, sourceRole) {
@@ -306,11 +328,16 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 			}
 			return err
 		}
+		personal := sourcePersonal
+		if c.Personal != nil {
+			personal = *c.Personal
+		}
 		if c.ParentID != nil {
 			var workspace int64
 			var parentKind string
 			var parentWikiSpace *int64
-			if err := tx.QueryRow(ctx, `SELECT workspace_id,kind,wiki_space_id FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind, &parentWikiSpace); err != nil {
+			var parentPersonal bool
+			if err := tx.QueryRow(ctx, `SELECT workspace_id,kind,wiki_space_id,personal FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, *c.ParentID).Scan(&workspace, &parentKind, &parentWikiSpace, &parentPersonal); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrNotFound
 				}
@@ -319,9 +346,17 @@ func (p *Postgres) CopyDoc(ctx context.Context, c DocCopy, build DocCopyBuilder)
 			if workspace != c.WorkspaceID || parentKind == "file" || parentWikiSpace != nil {
 				return ErrNotFound
 			}
+			if parentKind == "folder" {
+				personal, err = drivePGDestination(ctx, tx, RestoreGuard{UserID: c.UserID}, c.WorkspaceID, c.ParentID, RoleEdit)
+				if err != nil {
+					return err
+				}
+			} else {
+				personal = parentPersonal
+			}
 		}
-		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id)
-			VALUES ($1,$2,'doc',$3,'V',$4,$5) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, sourceDocType, c.Title, c.UserID))
+		result, err = scanDocWithPermissions(tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id, drive_revision, personal)
+			VALUES ($1,$2,'doc',$3,'V',$4,$5,1,$6) RETURNING `+docCols+creatorName+`, copy_protected, copy_min_role, download_min_role, comment_min_role, permissions_revision`, c.WorkspaceID, c.ParentID, sourceDocType, c.Title, c.UserID, personal))
 		if err != nil {
 			return err
 		}

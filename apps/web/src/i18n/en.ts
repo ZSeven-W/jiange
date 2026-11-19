@@ -1260,4 +1260,8 @@ export const en: Record<string, string> = {
   "更新结束日期": "Updated to date",
   "按筛选条件搜索": "Searching with active filters",
   "重置筛选": "Reset filters",
+  "删除选中的 {n} 项？": "Delete {n} selected items?",
+  "取消全选": "Deselect all",
+  "全选": "Select all",
+  "选择「{title}」": "Select \"{title}\"",
 };

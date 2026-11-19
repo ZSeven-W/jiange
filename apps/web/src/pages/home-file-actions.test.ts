@@ -9,7 +9,10 @@ describe("home file actions", () => {
     expect(canDuplicateHomeDocument({ ...doc, kind: "slides", permissionsRevision: 0 })).toBe(true);
     expect(canDuplicateHomeDocument({ ...doc, kind: "slides", permissionsRevision: 1 })).toBe(false);
     expect(canDuplicateHomeDocument({ ...doc, kind: "slides", role: "view", permissionsRevision: 0, copyProtected: true })).toBe(false);
-    expect(canDuplicateHomeDocument({ ...doc, kind: "base" })).toBe(false);
+    expect(canDuplicateHomeDocument({ ...doc, kind: "base" })).toBe(true);
+    expect(canDuplicateHomeDocument({ ...doc, kind: "survey" })).toBe(true);
+    expect(canDuplicateHomeDocument({ ...doc, kind: "folder" })).toBe(false);
+    expect(canDuplicateHomeDocument({ ...doc, kind: "file" })).toBe(false);
     expect(canDuplicateHomeDocument({ ...doc, role: "view", copyProtected: true })).toBe(false);
   });
   it("rejects stale or incomplete deletion confirmations", () => {

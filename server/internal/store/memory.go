@@ -37,6 +37,8 @@ type Memory struct {
 	surveyResponses  []SurveyResponse
 	surveyRespSeq    int64
 	searchIndex      map[int64]SearchIndexEntry
+	driveShortcuts   []DriveShortcut
+	driveShortcutSeq int64
 	reactions        map[reactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate

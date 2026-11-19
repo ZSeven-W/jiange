@@ -1174,6 +1174,9 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 		if c.WorkspaceID != sourceWorkspace {
 			personal = true
 		}
+		if c.Personal != nil {
+			personal = *c.Personal
+		}
 		if c.ParentID != nil {
 			personal, e = drivePGDestination(ctx, tx, RestoreGuard{UserID: c.UserID}, c.WorkspaceID, c.ParentID, RoleEdit)
 			if e != nil {

@@ -27,6 +27,7 @@ type duplicateInput struct {
 	Title       string          `json:"title"`
 	WorkspaceID int64           `json:"workspaceId"`
 	ParentID    json.RawMessage `json:"parentId"`
+	Personal    *bool           `json:"personal,omitempty"`
 }
 
 // duplicateDoc creates a complete snapshot copy in a workspace where the
@@ -37,8 +38,8 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if d.Kind == "base" {
-		httpx.Error(w, http.StatusBadRequest, "unsupported", "多维表格暂不支持复制")
+	if d.Kind != "doc" && d.Kind != "slides" && d.Kind != "sheet" && d.Kind != "base" && d.Kind != "survey" {
+		httpx.Error(w, http.StatusBadRequest, "unsupported", "暂不支持复制该类型条目")
 		return
 	}
 	if !store.DocumentDownloadAllowed(d, d.Role) {
@@ -122,11 +123,19 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if d.Kind == "slides" {
-		s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, title)
+		s.duplicateSlidesDeck(w, r, d, u.ID, workspaceID, parentID, in.Personal, title)
 		return
 	}
 	if d.Kind == "sheet" {
-		s.duplicateSheetWorkbook(w, r, d, u.ID, workspaceID, parentID, title)
+		s.duplicateSheetWorkbook(w, r, d, u.ID, workspaceID, parentID, in.Personal, title)
+		return
+	}
+	if d.Kind == "base" {
+		s.duplicateBase(w, r, d, u.ID, workspaceID, parentID, in.Personal, title)
+		return
+	}
+	if d.Kind == "survey" {
+		s.duplicateSurvey(w, r, d, u.ID, workspaceID, parentID, in.Personal, title)
 		return
 	}
 
@@ -197,7 +206,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, FileIDs: fileIDs, Guard: &guard, Cover: &cover}, func(ids map[int64]int64) ([]store.RawOp, error) {
+	nd, err := s.Store.CopyDoc(r.Context(), store.DocCopy{SourceID: d.ID, UserID: u.ID, WorkspaceID: workspaceID, ParentID: parentID, Personal: in.Personal, Title: title, FileIDs: fileIDs, Guard: &guard, Cover: &cover}, func(ids map[int64]int64) ([]store.RawOp, error) {
 		ops, err := buildCopyOps(src, title, ids)
 		if err != nil {
 			return nil, errors.Join(errCopyProjection, err)
@@ -229,7 +238,7 @@ func (s *Server) duplicateDoc(w http.ResponseWriter, r *http.Request) {
 
 // duplicateSlidesDeck copies a whole presentation. Pages and image references
 // are remapped inside the store transaction; the source deck stays untouched.
-func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, title string) {
+func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, personal *bool, title string) {
 	if !driveExpectedUser(w, r, userID) {
 		return
 	}
@@ -288,7 +297,7 @@ func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d s
 	if !ok {
 		return
 	}
-	nd, _, err := s.Store.CopySlidesDeck(r.Context(), store.SlidesDeckCopy{SourceID: d.ID, UserID: userID, WorkspaceID: workspaceID, ParentID: parentID, Title: title, Guard: &guard, VerifiedImageIDs: append([]int64{}, fileIDs...)})
+	nd, _, err := s.Store.CopySlidesDeck(r.Context(), store.SlidesDeckCopy{SourceID: d.ID, UserID: userID, WorkspaceID: workspaceID, ParentID: parentID, Personal: personal, Title: title, Guard: &guard, VerifiedImageIDs: append([]int64{}, fileIDs...)})
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
@@ -308,7 +317,7 @@ func (s *Server) duplicateSlidesDeck(w http.ResponseWriter, r *http.Request, d s
 	}
 }
 
-func (s *Server) duplicateSheetWorkbook(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, title string) {
+func (s *Server) duplicateSheetWorkbook(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, personal *bool, title string) {
 	if !driveExpectedUser(w, r, userID) {
 		return
 	}
@@ -332,6 +341,7 @@ func (s *Server) duplicateSheetWorkbook(w http.ResponseWriter, r *http.Request, 
 		UserID:      userID,
 		WorkspaceID: workspaceID,
 		ParentID:    parentID,
+		Personal:    personal,
 		Title:       title,
 		Guard:       &guard,
 	})
@@ -346,6 +356,149 @@ func (s *Server) duplicateSheetWorkbook(w http.ResponseWriter, r *http.Request, 
 		httpx.Error(w, http.StatusNotFound, "not_found", "表格不存在或已无权访问")
 	case errors.Is(err, store.ErrConflict):
 		httpx.Error(w, http.StatusConflict, "copy_conflict", "表格状态已改变，未创建副本，请重试")
+	case err != nil:
+		s.fail(w, r, err)
+	default:
+		nd = s.sanitizeWrittenDocMeta(r.Context(), userID, nd)
+		httpx.JSON(w, http.StatusCreated, nd)
+	}
+}
+
+func (s *Server) duplicateBase(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, personal *bool, title string) {
+	if !driveExpectedUser(w, r, userID) {
+		return
+	}
+	bcs, ok := s.Store.(store.BaseCopyStore)
+	if !ok {
+		httpx.Error(w, http.StatusNotImplemented, "unsupported", "多维表格暂不支持复制")
+		return
+	}
+	restricted, err := s.baseRestricted(r.Context(), d)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if restricted {
+		httpx.Error(w, http.StatusForbidden, "copy_protected", "多维表格启用了权限视图限制，仅管理员可创建副本")
+		return
+	}
+	if title == "" {
+		base := strings.TrimSpace(d.Title)
+		if base == "" {
+			base = "未命名多维表格"
+		}
+		runes := []rune(base)
+		if len(runes) > 96 {
+			base = strings.TrimSpace(string(runes[:96]))
+		}
+		title = base + " 副本"
+	}
+	fields, err := s.Store.Fields(r.Context(), d.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	records, err := s.Store.Records(r.Context(), d.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	fileIDs := store.CollectBaseAttachmentIDs(fields, records)
+	if len(fileIDs) > maxCopyAttachments {
+		httpx.Error(w, http.StatusUnprocessableEntity, "copy_attachment_limit", "多维表格中的不同附件超过 1000 个，暂无法一次创建副本")
+		return
+	}
+	if len(fileIDs) > 0 && s.Blobs == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "no_storage", "附件存储未配置，无法创建完整副本")
+		return
+	}
+	if err := s.verifyCopyFiles(r.Context(), d.ID, fileIDs); err != nil {
+		if errors.Is(err, errCopyAttachment) {
+			httpx.Error(w, http.StatusConflict, "invalid_attachment", "多维表格中的附件不可用，未创建副本")
+		} else if errors.Is(err, errCopyStorage) {
+			httpx.Error(w, http.StatusServiceUnavailable, "storage_unavailable", "附件存储暂不可用，未创建副本，请稍后重试")
+		} else {
+			s.fail(w, r, err)
+		}
+		return
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	nd, err := bcs.CopyBase(r.Context(), store.BaseCopy{
+		SourceID:        d.ID,
+		UserID:          userID,
+		WorkspaceID:     workspaceID,
+		ParentID:        parentID,
+		Personal:        personal,
+		Title:           title,
+		Guard:           &guard,
+		VerifiedFileIDs: append([]int64{}, fileIDs...),
+	})
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrCopyProtected):
+		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制或启用了权限视图限制")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "无权在目标空间创建文档")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "多维表格不存在或已无权访问")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "copy_conflict", "多维表格状态已改变，未创建副本，请重试")
+	case err != nil:
+		s.fail(w, r, err)
+	default:
+		nd = s.sanitizeWrittenDocMeta(r.Context(), userID, nd)
+		httpx.JSON(w, http.StatusCreated, nd)
+	}
+}
+
+func (s *Server) duplicateSurvey(w http.ResponseWriter, r *http.Request, d store.DocMeta, userID, workspaceID int64, parentID *int64, personal *bool, title string) {
+	if !driveExpectedUser(w, r, userID) {
+		return
+	}
+	scs, ok := s.Store.(store.SurveyCopyStore)
+	if !ok {
+		httpx.Error(w, http.StatusNotImplemented, "unsupported", "问卷暂不支持复制")
+		return
+	}
+	if title == "" {
+		base := strings.TrimSpace(d.Title)
+		if base == "" {
+			base = "未命名问卷"
+		}
+		runes := []rune(base)
+		if len(runes) > 96 {
+			base = strings.TrimSpace(string(runes[:96]))
+		}
+		title = base + " 副本"
+	}
+	guard, ok := s.viewGuard(w, r)
+	if !ok {
+		return
+	}
+	nd, err := scs.CopySurvey(r.Context(), store.SurveyCopy{
+		SourceID:    d.ID,
+		UserID:      userID,
+		WorkspaceID: workspaceID,
+		ParentID:    parentID,
+		Personal:    personal,
+		Title:       title,
+		Guard:       &guard,
+	})
+	switch {
+	case errors.Is(err, store.ErrUnauthenticated):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
+	case errors.Is(err, store.ErrCopyProtected):
+		httpx.Error(w, http.StatusForbidden, "copy_protected", "文档所有者已关闭复制")
+	case errors.Is(err, store.ErrForbidden):
+		httpx.Error(w, http.StatusForbidden, "forbidden", "无权在目标空间创建文档")
+	case errors.Is(err, store.ErrNotFound):
+		httpx.Error(w, http.StatusNotFound, "not_found", "问卷不存在或已无权访问")
+	case errors.Is(err, store.ErrConflict):
+		httpx.Error(w, http.StatusConflict, "copy_conflict", "问卷状态已改变，未创建副本，请重试")
 	case err != nil:
 		s.fail(w, r, err)
 	default:

@@ -457,6 +457,9 @@ func (p *Postgres) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMet
 		if c.WorkspaceID != sourceWorkspace {
 			personal = true
 		}
+		if c.Personal != nil {
+			personal = *c.Personal
+		}
 		if c.ParentID != nil {
 			personal, err = drivePGDestination(ctx, tx, RestoreGuard{UserID: c.UserID}, c.WorkspaceID, c.ParentID, RoleEdit)
 			if err != nil {

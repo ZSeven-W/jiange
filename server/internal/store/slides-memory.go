@@ -355,6 +355,9 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 	if c.WorkspaceID != source.meta.WorkspaceID {
 		personal = true
 	}
+	if c.Personal != nil {
+		personal = *c.Personal
+	}
 	var parentID *int64
 	if c.ParentID != nil {
 		if err := m.driveDestinationLocked(c.UserID, c.WorkspaceID, c.ParentID, RoleEdit); err != nil {

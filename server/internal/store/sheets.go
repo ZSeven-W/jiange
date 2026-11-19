@@ -194,6 +194,7 @@ type ImportedWorksheet struct {
 type SheetWorkbookCopy struct {
 	SourceID, UserID, WorkspaceID int64
 	ParentID                      *int64
+	Personal                      *bool
 	Title                         string
 	Guard                         *RestoreGuard
 }

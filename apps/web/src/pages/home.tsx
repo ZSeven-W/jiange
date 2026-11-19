@@ -22,9 +22,10 @@ import { stageStarter } from "./pending-starter";
 import { BOARD_TITLE, MINDMAP_TITLE, stageBoard, type BoardStarterKind } from "./board-starter";
 import { hasUnsupportedImportBlocks } from "./starter-template-ops";
 import { ask, askText } from "@/components/ui/ask";
-import { ChevronDown, ClipboardList, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Plus, Star } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ClipboardList, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Pin, PinOff, Plus, Star, Trash2 } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { formatDriveTime } from "./drive-sort";
+import { batchMessage, pruneSelection, runDriveBatch, toggleId } from "./drive-batch";
 import { browserHomeViewStorage, homeViewKey, matchesHomeTypeFilter, readHomeView, writeHomeView, type HomeView } from "./home-view";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
@@ -55,6 +56,9 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const [uncertainCopies, setUncertainCopies] = useState<Set<number>>(() => new Set());
   const [uncertainTrash, setUncertainTrash] = useState<Set<number>>(() => new Set());
   const [actionBusy, setActionBusy] = useState(false);
+  const [pinsCollapsed, setPinsCollapsed] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [batchPending, setBatchPending] = useState(false);
   useEffect(() => { if (!actionNotice) return; const timer = window.setTimeout(() => setActionNotice(""), 4000); return () => window.clearTimeout(timer); }, [actionNotice]);
   const actionLock = useRef(false);
   const actionGeneration = useRef(0);
@@ -89,7 +93,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["docs"] }); go(hrefOf(d)); },
   });
   const currentUser = useRef(me.user.id); currentUser.current = me.user.id;
-  useEffect(() => { setSharingDoc(null); setActionNotice(""); setActionBusy(false); setActionError(""); setCopyResult(null); setUncertainCopies(new Set()); setUncertainTrash(new Set()); }, [me.user.id]);
+  useEffect(() => { setSharingDoc(null); setActionNotice(""); setActionBusy(false); setActionError(""); setCopyResult(null); setUncertainCopies(new Set()); setUncertainTrash(new Set()); setSelectedIds(new Set()); }, [me.user.id]);
   const toggleShortcut = async (doc: DocMeta, type: "favorite" | "pin") => {
     if (actionLock.current || favs.isFetching || pins.isFetching || favs.isError || pins.isError || !favs.data || !pins.data) return;
     const owner = me.user.id;
@@ -169,7 +173,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
       refreshHome();
     } finally { actionLock.current = false; if (stillHere()) setActionBusy(false); }
   };
-  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)} onDuplicate={() => void duplicateHomeDocument(doc)} onTrash={() => void trashHomeDocument(doc)} copyEnabled={(doc.kind === "doc" || doc.kind === "slides" || doc.kind === "sheet") && !uncertainCopies.has(doc.id)} trashEnabled={doc.role === "manage" && ["doc", "base", "slides", "sheet", "survey", "file"].includes(doc.kind ?? "") && !uncertainTrash.has(doc.id)}/>;
+  const documentActions = (doc: DocMeta) => <HomeDocumentActions doc={doc} starred={!!favs.data?.some((item) => item.id === doc.id)} pinned={!!pins.data?.some((item) => item.id === doc.id)} ready={!!favs.data && !!pins.data && !favs.isFetching && !pins.isFetching && !favs.isError && !pins.isError} busy={actionBusy} onFavorite={() => void toggleShortcut(doc, "favorite")} onPin={() => void toggleShortcut(doc, "pin")} onCopy={() => void copyDocumentLink(doc)} onShare={() => setSharingDoc(doc)} onDuplicate={() => void duplicateHomeDocument(doc)} onTrash={() => void trashHomeDocument(doc)} copyEnabled={["doc", "slides", "sheet", "base", "survey"].includes(doc.kind ?? "") && !uncertainCopies.has(doc.id)} trashEnabled={doc.role === "manage" && ["doc", "base", "slides", "sheet", "survey", "file"].includes(doc.kind ?? "") && !uncertainTrash.has(doc.id)}/>;
   const createBoard = useMutation({
     mutationFn: async (kind: BoardStarterKind) => {
       const owner = me.user.id;
@@ -245,6 +249,54 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const items = [...(query.data ?? [])]
     .filter((d) => matchesHomeTypeFilter(d, kind) && (selected !== "mine" || d.creatorId === me.user.id))
     .sort((a, b) => selected === "recent" ? 0 : Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const itemIdsKey = items.map((item) => item.id).join(",");
+  useEffect(() => {
+    setSelectedIds((prev) => pruneSelection(prev, items.map((item) => item.id)));
+  }, [itemIdsKey]);
+  const chosenDocs = items.filter((item) => selectedIds.has(item.id));
+  const finishHomeBatch = (verb: string, result: { done: number[]; failed: number[] }) => {
+    const { notice: n, error: e } = batchMessage(verb, result);
+    if (n) setActionNotice(n);
+    if (e) setActionError(e);
+    setSelectedIds(new Set(result.failed));
+    refreshHome();
+  };
+  const batchHomeFavorite = async () => {
+    if (!chosenDocs.length || batchPending) return;
+    const owner = me.user.id;
+    const starredIds = new Set((favs.data ?? []).map((item) => item.id));
+    setBatchPending(true); setActionError(""); setActionNotice("");
+    try {
+      const result = await runDriveBatch(chosenDocs, (doc) => starredIds.has(doc.id) ? Promise.resolve() : extrasApi.favoriteForAccount(doc.id, owner, true));
+      if (currentUser.current === owner) finishHomeBatch("收藏", result);
+    } finally { if (currentUser.current === owner) setBatchPending(false); }
+  };
+  const batchHomePin = async () => {
+    if (!chosenDocs.length || batchPending) return;
+    const owner = me.user.id;
+    const pinnedIds = new Set((pins.data ?? []).map((item) => item.id));
+    setBatchPending(true); setActionError(""); setActionNotice("");
+    try {
+      const result = await runDriveBatch(chosenDocs, (doc) => pinnedIds.has(doc.id) ? Promise.resolve() : extrasApi.pinForAccount(doc.id, owner, true));
+      if (currentUser.current === owner) finishHomeBatch("置顶", result);
+    } finally { if (currentUser.current === owner) setBatchPending(false); }
+  };
+  const batchHomeTrash = async () => {
+    if (!chosenDocs.length || batchPending) return;
+    const owner = me.user.id;
+    if (!await ask(t("删除选中的 {n} 项？", { n: chosenDocs.length }), t("可在回收站还原。"))) return;
+    if (currentUser.current !== owner) return;
+    setBatchPending(true); setActionError(""); setActionNotice("");
+    try {
+      const result = await runDriveBatch(chosenDocs, async (doc) => {
+        const latest = await docsApi.getForAccount(doc.id, owner);
+        if (!sameTrashSnapshot(latest, latest)) throw new Error("cannot trash");
+        await driveApi.trashForAccount(doc.id, owner, latest.driveRevision as number);
+      });
+      if (currentUser.current === owner) finishHomeBatch("删除", result);
+    } finally { if (currentUser.current === owner) setBatchPending(false); }
+  };
+  const pinnedDocs = !recent && !favorites ? (pins.data ?? []) : [];
   const pageTitle = favorites ? t("收藏") : recent ? t("最近访问") : t("主页");
   const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
@@ -286,16 +338,49 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           {copyResult && <div role="status" className="fixed bottom-5 left-1/2 z-[110] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg"><span>{t("副本已创建")}</span><button type="button" className="whitespace-nowrap text-[#9ab8ff] underline" onClick={() => go(hrefOf(copyResult))}>{t("打开副本")}</button><button type="button" aria-label={t("关闭")} onClick={() => setCopyResult(null)} className="text-white/70 hover:text-white">×</button></div>}
           {actionNotice && <p role="status" className="fixed bottom-5 left-1/2 z-[110] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg">{actionNotice}</p>}
           {(createWithContent.isPending || importing) && <p role="status" className="mt-3 text-[13px] text-subtle">{t("正在创建文档…")}</p>}
+          {pinnedDocs.length > 0 && <section aria-label={t("置顶文档")} className="mt-5" data-home-pins>
+            <div className="flex items-center gap-1.5">
+              <button type="button" onClick={() => setPinsCollapsed((v) => !v)} aria-expanded={!pinsCollapsed} className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-[13px] font-medium text-muted-foreground hover:bg-hover hover:text-foreground">
+                {pinsCollapsed ? <ChevronRight size={14}/> : <ChevronDown size={14}/>}
+                <Pin size={13} className="text-[#3370ff]"/>
+                <span>{t("置顶文档")}</span>
+                <span className="rounded-full bg-sidebar px-1.5 py-0.2 text-[11px] font-normal text-subtle">{pinnedDocs.length}</span>
+              </button>
+            </div>
+            {!pinsCollapsed && <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {pinnedDocs.map((pin) => <div key={pin.id} data-home-pin-card={pin.id} className="group relative flex items-center gap-3 rounded-lg border border-[#dee0e3] bg-surface px-3.5 py-2.5 transition-all hover:border-[#3370ff]/40 hover:shadow-[0_2px_10px_rgba(31,35,41,0.08)]">
+                <button type="button" onClick={() => go(hrefOf(pin))} className="flex min-w-0 flex-1 items-center gap-3 pr-7 text-left focus-visible:outline-2 focus-visible:outline-primary">
+                  <FileBadge kind={pin.kind ?? "doc"} docType={pin.docType} icon={pin.icon}/>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium text-foreground group-hover:text-primary">{docTitle(pin)}</span>
+                    <span className="mt-0.5 block truncate text-[11px] text-subtle">{pin.workspaceName || me.workspaces.find((w) => w.id === pin.workspaceId)?.name || "—"} · {dateLabel(pin.updatedAt)}</span>
+                  </span>
+                </button>
+                <button type="button" disabled={actionBusy} title={t("取消置顶")} aria-label={`${docTitle(pin)} ${t("取消置顶")}`} onClick={() => void toggleShortcut(pin, "pin")} className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded text-subtle opacity-100 hover:bg-hover hover:text-foreground disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"><PinOff size={14}/></button>
+              </div>)}
+            </div>}
+          </section>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
             <nav aria-label={t("文档分类")} className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
               {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{t(label)}</button>)}
             </nav>
             <div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div>
           </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div></div>}
-          {view === "list" && <div className={`${LIST_GRID} h-10 items-center gap-3 border-b px-2 pr-10 text-[12px] text-subtle`}>
-            <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="truncate">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
+          {chosenDocs.length > 0 && <div role="toolbar" aria-label={t("批量操作")} data-home-batch className="mt-2 flex flex-wrap items-center gap-1.5 rounded-md border border-[#3370ff]/25 bg-[#f0f4ff] px-3 py-1.5 text-[13px] text-foreground">
+            <HomeSelectBox checked={chosenDocs.length === items.length ? true : "mixed"} label={chosenDocs.length === items.length ? t("取消全选") : t("全选")} onToggle={() => setSelectedIds(chosenDocs.length === items.length ? new Set() : new Set(items.map((item) => item.id)))}/>
+            <span className="ml-1 mr-2 font-medium">{t("已选择 {n} 项", { n: chosenDocs.length })}</span>
+            <button type="button" disabled={batchPending} onClick={() => void batchHomeFavorite()} className="inline-flex h-7 items-center gap-1 rounded px-2 hover:bg-white/80 disabled:opacity-40"><Star size={14}/>{t("收藏")}</button>
+            <button type="button" disabled={batchPending} onClick={() => void batchHomePin()} className="inline-flex h-7 items-center gap-1 rounded px-2 hover:bg-white/80 disabled:opacity-40"><Pin size={14}/>{t("置顶")}</button>
+            <button type="button" disabled={batchPending} onClick={() => void batchHomeTrash()} className="inline-flex h-7 items-center gap-1 rounded px-2 text-destructive hover:bg-white/80 disabled:opacity-40"><Trash2 size={14}/>{t("删除")}</button>
+            <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto h-7 rounded px-2 text-muted-foreground hover:bg-white/80">{t("取消选择")}</button>
           </div>}
-          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d} actions={documentActions(d)}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} actions={documentActions(d)} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
+          {view === "list" && chosenDocs.length === 0 && <div className="group/homelist flex h-10 items-center border-b px-2 pr-10 text-[12px] text-subtle">
+            <span className="mr-2 shrink-0 opacity-0 focus-within:opacity-100 group-hover/homelist:opacity-100">{items.length > 0 && <HomeSelectBox checked={false} label={t("全选")} onToggle={() => setSelectedIds(new Set(items.map((item) => item.id)))}/>}</span>
+            <div className={`${LIST_GRID} min-w-0 flex-1 items-center gap-3`}>
+              <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="truncate">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
+            </div>
+          </div>}
+          {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} actions={documentActions(d)}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} actions={documentActions(d)} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
             <span className="grid size-14 place-items-center rounded-full bg-sidebar text-subtle">{selected === "favorites" ? <Star size={23} strokeWidth={1.4} /> : <FolderOpen size={24} strokeWidth={1.4} />}</span>
             <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? t("没有此类型的文档") : selected === "favorites" ? t("还没有收藏的文档") : selected === "shared" ? t("还没有与我共享的文档") : selected === "mine" ? t("暂无我创建的文档") : selected === "recent" ? t("还没有最近访问的文档") : t("暂无文档")}</p>
             {selected === "recent" && kind === "all" && <button onClick={() => create.mutate("doc")} disabled={create.isPending} className="mt-3 text-[13px] text-primary hover:underline">{t("新建文档")}</button>}
@@ -333,19 +418,32 @@ function ActionCard({ icon, title, subtitle, disabled, onClick }: { icon: React.
 function dateLabel(value: string) {
   return formatDriveTime(value) || "—";
 }
-function DocumentRow({ doc, viewedAt, workspaceName, actions }: { doc: DocMeta; viewedAt?: string; workspaceName?: string; actions: React.ReactNode }) {
-  return <div className="group relative border-b" data-home-row><button type="button" onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} h-14 w-full items-center gap-3 px-2 pr-10 text-left transition-colors hover:bg-hover/60 focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
-    <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
-    <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
-    <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
-    <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
-    <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
-  </button><span className="absolute right-1 top-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">{actions}</span></div>;
+function HomeSelectBox({ checked, label, onToggle }: { checked: boolean | "mixed"; label: string; onToggle: () => void }) {
+  return <button type="button" role="checkbox" aria-checked={checked} aria-label={label} title={label} onClick={(event) => { event.stopPropagation(); onToggle(); }} className="grid size-5 shrink-0 place-items-center" data-home-select>
+    <span className={`grid size-4 place-items-center rounded-[3px] border ${checked ? "border-[#3370ff] bg-[#3370ff] text-white" : "border-[#bbbfc4] bg-white hover:border-[#3370ff]"}`}>{checked === "mixed" ? <span className="h-0.5 w-2 rounded bg-white"/> : checked ? <Check size={12} strokeWidth={3}/> : null}</span>
+  </button>;
+}
+function DocumentRow({ doc, selected, selecting, onSelect, viewedAt, workspaceName, actions }: { doc: DocMeta; selected: boolean; selecting: boolean; onSelect: () => void; viewedAt?: string; workspaceName?: string; actions: React.ReactNode }) {
+  return <div className={`group relative flex items-center border-b px-2 pr-10 transition-colors ${selected ? "bg-[#f0f4ff]" : "hover:bg-hover/60"}`} data-home-row={doc.id} aria-selected={selected}>
+    <span className={`mr-2 shrink-0 ${!selected && !selecting ? "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" : ""}`}><HomeSelectBox checked={selected} label={t("选择「{title}」", { title: docTitle(doc) })} onToggle={onSelect}/></span>
+    <button type="button" onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} h-14 min-w-0 flex-1 items-center gap-3 text-left focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
+      <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
+      <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
+      <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
+      <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
+      <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
+    </button>
+    <span className="absolute right-1 top-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">{actions}</span>
+  </div>;
 }
 
-function DocumentCard({ doc, actions }: { doc: DocMeta; actions: React.ReactNode }) {
-  return <div className="group relative min-w-0 overflow-hidden rounded-md border border-[#dee0e3] bg-white transition-shadow hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)]" data-home-card><button type="button" onClick={() => go(hrefOf(doc))} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-primary">
-    <span className="grid h-36 place-items-center bg-[#f5f6f7]"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} large/></span>
-    <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] pl-3 pr-10"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
-  </button><span className="absolute bottom-[11px] right-1">{actions}</span></div>;
+function DocumentCard({ doc, selected, selecting, onSelect, actions }: { doc: DocMeta; selected: boolean; selecting: boolean; onSelect: () => void; actions: React.ReactNode }) {
+  return <div className={`group relative min-w-0 overflow-hidden rounded-md border bg-white transition-all hover:shadow-[0_3px_12px_rgba(31,35,41,0.12)] ${selected ? "border-[#3370ff] ring-1 ring-[#3370ff]/30" : "border-[#dee0e3]"}`} data-home-card={doc.id} aria-selected={selected}>
+    <span className={`absolute left-2.5 top-2.5 z-10 ${!selected && !selecting ? "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" : ""}`}><HomeSelectBox checked={selected} label={t("选择「{title}」", { title: docTitle(doc) })} onToggle={onSelect}/></span>
+    <button type="button" onClick={() => go(hrefOf(doc))} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-primary">
+      <span className={`grid h-36 place-items-center ${selected ? "bg-[#f0f4ff]" : "bg-[#f5f6f7]"}`}><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} large/></span>
+      <span className="flex h-[54px] items-center gap-3 border-t border-[#e5e6eb] pl-3 pr-10"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon}/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] text-foreground group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle">{doc.creatorName || "—"} {t("最近修改于")} {dateLabel(doc.updatedAt)}</span></span></span>
+    </button>
+    <span className="absolute bottom-[11px] right-1">{actions}</span>
+  </div>;
 }
