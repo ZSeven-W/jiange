@@ -15,7 +15,7 @@ export const LIST_TYPES = new Set(["bullet", "ordered", "todo"]);
 export const SOURCE_BLOCK_TYPES = new Set(["math", "diagram"]);
 /** 无文字、可整块复制/剪切/粘贴的块。 */
 export const CLIPPABLE_BLOCKS = new Set(["image", "file", "table", "divider", "bookmark", "video", "flowchart"]);
-export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns", "flowchart", ...SOURCE_BLOCK_TYPES]);
+export const TEXTLESS = new Set(["divider", "image", "file", "table", "video", "bookmark", "columns", "flowchart", "synced", "subpages", ...SOURCE_BLOCK_TYPES]);
 export const isSourceBlock = (doc: Doc, b: OpId) => doc.hasBlock(b) && SOURCE_BLOCK_TYPES.has(doc.blockInfo(b).type);
 /** Legacy column contents are paragraph children of the columns block. */
 export const isColumnText = (doc: Doc, b: OpId) => {

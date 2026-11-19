@@ -113,6 +113,8 @@ import { editorClipboardRoute, isNativeControl } from "./native-control";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";
 import { applyTableWrites, cellTableWrites, isCellTable, setTableCellAlignments, setTableCellFills, setTableCellRich, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableDataOf, tableRepairWrites, tableRowsOf, toggleTableCellRichMark, writeTable, type TableAlign, type TableAlignAxis, type TableCellMarkKey, type TableRichSpan } from "./table-cells";
+import { SyncedBlockView } from "./synced-block";
+import { SubpagesBlockView } from "./subpages-block";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -2110,6 +2112,17 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         const nb = tx.create("paragraph", dv, info.parent);
         return { b: nb, o: 0 };
       }
+      if (it.id === "synced" || it.id === "subpages") {
+        const info = tx.doc.blockInfo(b);
+        if (len(tx.doc, b) === 0 && !TEXTLESS.has(info.type)) {
+          tx.setProp(b, "type", it.id);
+          const nb = tx.create("paragraph", b, info.parent);
+          return { b: nb, o: 0 };
+        }
+        const sb = tx.create(it.id, b, info.parent);
+        const nb = tx.create("paragraph", sb, info.parent);
+        return { b: nb, o: 0 };
+      }
       if (it.id === "flowchart") {
         const info = tx.doc.blockInfo(b);
         const props = { "fc.v": "1", "fc.theme": "feishu" };
@@ -2997,6 +3010,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
             return (
               <Block
                 key={k + ":" + (remount[k] ?? 0)}
+                docId={sync.client.docId}
                 id={k}
                 type={info.type}
                 props={info.props}
@@ -3624,6 +3638,7 @@ const BLOCK_CLASS: Record<string, string> = {
 };
 
 interface BlockProps {
+  docId?: number;
   /** 流程图块：写回图（逐对象属性）；未提供表示只读。 */
   onFlowChange?: (graph: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
   flowAI?: (messages: AIMessage[]) => Promise<string>;
@@ -3703,7 +3718,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ docId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -4065,6 +4080,10 @@ function Block({ onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, 
         <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
       ) : type === "bookmark" ? (
         <BookmarkBlock url={props.url} name={props.name} title={props.title} description={props.description} icon={props.icon} preview={props.preview} onProps={onSetProp} />
+      ) : type === "synced" ? (
+        <SyncedBlockView syncId={props.syncId} docId={docId} readOnly={!onSetProp} onBindSyncId={onSetProp ? (nextId) => onSetProp("syncId", nextId) : undefined} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
+      ) : type === "subpages" ? (
+        <SubpagesBlockView docId={docId} readOnly={!onSetProp} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
       ) : type === "file" ? (
         <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (

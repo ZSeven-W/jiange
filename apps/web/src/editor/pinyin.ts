@@ -55,6 +55,8 @@ export const SLASH_ITEMS: MenuItem[] = [
   { id: "video", label: "视频", group: "常用", icon: "视", py: ["shi", "pin"], en: ["video", "wj"] },
   { id: "table", label: "表格", group: "常用", icon: "表", py: ["biao", "ge"], en: ["table", "grid"] },
   { id: "columns", label: "分栏", group: "常用", icon: "栏", py: ["fen", "lan"], en: ["columns", "cols"] },
+  { id: "synced", label: "同步块", group: "常用", icon: "同", py: ["tong", "bu", "kuai"], en: ["synced", "sync block"] },
+  { id: "subpages", label: "子页面列表", group: "常用", icon: "子", py: ["zi", "ye", "mian", "lie", "biao"], en: ["subpages", "child pages"] },
   { id: "bookmark", label: "网页卡片", group: "其他", icon: "链", py: ["wang", "ye", "ka", "pian"], en: ["bookmark", "web"] },
   { id: "callout", label: "高亮块", group: "其他", icon: "亮", py: ["gao", "liang", "kuai"], en: ["callout", "highlight"] },
   { id: "math", label: "公式", group: "其他", icon: "∑", py: ["gong", "shi"], en: ["math", "latex", "formula", "eq"] },

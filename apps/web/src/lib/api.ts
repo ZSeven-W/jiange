@@ -438,6 +438,47 @@ export const suggestionsApi = {
   rejectAll: (id: number) =>
     request<{ suggestions: DocSuggestion[] }>("POST", `/api/docs/${id}/suggestions/reject-all`).then((r) => r.suggestions),
 };
+
+export interface SyncedBlock {
+  id: string;
+  workspaceId: number;
+  sourceDocId: number;
+  sourceDocTitle?: string;
+  content: string;
+  revision: number;
+  updatedBy?: number;
+  updatedByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SyncedBlockResponse {
+  syncedBlock: SyncedBlock;
+  canEdit: boolean;
+}
+
+export interface DocSubpage {
+  id: number;
+  title: string;
+  kind: string;
+  docType?: string;
+  icon?: string;
+  updatedAt: string;
+}
+
+export const syncedBlocksApi = {
+  create: (docId: number, content = "") =>
+    request<SyncedBlockResponse>("POST", `/api/docs/${docId}/synced-blocks`, { content }),
+  get: (sid: string) =>
+    request<SyncedBlockResponse>("GET", `/api/synced-blocks/${encodeURIComponent(sid)}`),
+  update: (sid: string, content: string, expectedRevision = 0) =>
+    request<SyncedBlockResponse>("PUT", `/api/synced-blocks/${encodeURIComponent(sid)}`, { content, expectedRevision }),
+};
+
+export const subpagesApi = {
+  list: (docId: number) =>
+    request<{ subpages: DocSubpage[] }>("GET", `/api/docs/${docId}/subpages`).then((r) => r.subpages),
+};
 export const notificationsApi = {
   list: () => request<{ notifications: AppNotification[]; unread: number }>("GET", "/api/notifications"),
   markRead: (ids: number[] = []) => request<void>("POST", "/api/notifications/read", { ids }),
