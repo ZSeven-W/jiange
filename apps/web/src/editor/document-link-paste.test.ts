@@ -21,6 +21,12 @@ describe("pasted document links", () => {
     expect(documentLinkClip(target, "共享文档")?.[0].chars[0].marks.link).toBe("#/s/aBc_123");
     expect(parse("https://example.test/#/p/aBc_123")).toEqual({ token: "aBc_123", href: "#/p/aBc_123" });
   });
+  it("recognizes pasted sheet, base, slides, and survey resource URLs", () => {
+    expect(parse("https://example.test/#/sheet/18")).toEqual({ id: 18, kind: "sheet", href: "#/sheet/18" });
+    expect(parse("https://example.test/#/base/22")).toEqual({ id: 22, kind: "base", href: "#/base/22" });
+    expect(parse("https://example.test/#/slides/31")).toEqual({ id: 31, kind: "slides", href: "#/slides/31" });
+    expect(parse("https://example.test/#/survey/9")).toEqual({ id: 9, kind: "survey", href: "#/survey/9" });
+  });
   it.each([
     "https://evil.test/#/doc/12", "https://example.test/other/#/doc/12",
     "https://example.test/?extra=1#/doc/12", "https://example.test/#/doc/12?block=1%3A2&x=1",

@@ -26,6 +26,7 @@ import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH
 import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
 import { playableSlides, presentationStart, presentationKeyTarget } from "./slides-visibility";
 import { ResourceTypeNotice } from "./resource-type-notice";
+import { ResourceReferencesButton } from "./resource-references-button";
 import { SlideFormatPanel } from "./slide-format-panel";
 import { SlideNotesPanel } from "./slide-notes-panel";
 import { SlideDeckTitle, type SlideTitleDraft } from "./slide-deck-title";
@@ -1097,6 +1098,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             <input ref={pptxInputRef} type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" aria-label="选择要导入的 PPTX 文件" data-slides-pptx-input className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void handlePptxFile(file); }}/>
           </div>
           <button type="button" aria-label="创建整份幻灯片副本" title={backgroundBatchUnknown || deletePageUnknown ? "请先重新打开并核对页面" : queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={backgroundBatchUnknown || deletePageUnknown || copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="grid size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
+          <ResourceReferencesButton id={deckId} userId={userId} title={meta.data?.title || "未命名幻灯片"} kind="slides" />
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">
             <button type="button" disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-2 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40 sm:px-3"><Play size={13}/>{checkingPlayback ? "检查中…" : "演示"}</button>

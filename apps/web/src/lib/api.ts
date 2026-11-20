@@ -1293,7 +1293,7 @@ export const docsApi = {
     if (result.visible !== visible || (result.revision !== expectedRevision && result.revision !== expectedRevision + 1)) throw new TypeError("无法确认显示设置");
     return result;
   }),
-  pasteTarget: (id: number, userId: number, signal: AbortSignal) => request<{ id?: unknown; title?: unknown }>("GET", `/api/docs/${id}/paste-target`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then((result) => {
+  pasteTarget: (id: number, userId: number, signal: AbortSignal, kind?: string) => request<{ id?: unknown; title?: unknown }>("GET", `/api/docs/${id}/paste-target${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`, undefined, signal, { "X-Jiange-User-Id": String(userId) }).then((result) => {
     if (!result || result.id !== id || typeof result.title !== "string") throw new TypeError("无法确认文档名称");
     return result.title;
   }),

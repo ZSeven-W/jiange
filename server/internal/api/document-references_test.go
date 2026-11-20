@@ -298,7 +298,7 @@ func TestDocumentReferencesReportScanLimitInsteadOfPartialResults(t *testing.T) 
 		t.Fatal(err)
 	}
 	var target int64
-	for i := 0; i < 201; i++ {
+	for i := 0; i < 205; i++ {
 		doc, e := st.CreateDoc(ctx, ws.ID, user.ID, nil, fmt.Sprintf("文档 %d", i), syncsrv.InitialOps("文档"))
 		if e != nil {
 			t.Fatal(e)
@@ -308,8 +308,17 @@ func TestDocumentReferencesReportScanLimitInsteadOfPartialResults(t *testing.T) 
 		}
 	}
 	server := &Server{Store: st, Now: time.Now}
+	// With the persistent index, workspaces exceeding the legacy 200-doc cap succeed cleanly.
+	res, err := server.scanDocumentReferences(ctx, guard, target)
+	if err != nil || !res.Indexed {
+		t.Fatalf("expected indexed query over 205 docs to succeed, got %+v %v", res, err)
+	}
+	// Exceeding the configured safety cap still fails closed rather than returning silent partial results.
+	prevCap := maxIndexedReferenceCandidates
+	maxIndexedReferenceCandidates = 200
+	defer func() { maxIndexedReferenceCandidates = prevCap }()
 	if _, err = server.scanDocumentReferences(ctx, guard, target); !errors.Is(err, errReferenceIncomplete) {
-		t.Fatalf("expected incomplete error, got %v", err)
+		t.Fatalf("expected incomplete error over cap, got %v", err)
 	}
 }
 

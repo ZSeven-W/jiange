@@ -19,11 +19,16 @@ func (s *Server) pasteDocumentTarget(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	wantKind := r.URL.Query().Get("kind")
+	if wantKind != "" && !store.IsReferenceableKind(wantKind) {
+		httpx.Error(w, http.StatusNotFound, "not_found", "文档不存在或无权访问")
+		return
+	}
 	doc, ok := s.need(w, r, store.RoleView)
 	if !ok {
 		return
 	}
-	if doc.Kind != "doc" {
+	if !store.IsReferenceableKind(doc.Kind) || (wantKind != "" && doc.Kind != wantKind) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "文档不存在或无权访问")
 		return
 	}
@@ -36,9 +41,9 @@ func (s *Server) pasteDocumentTarget(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if doc.Kind != "doc" {
+	if !store.IsReferenceableKind(doc.Kind) || (wantKind != "" && doc.Kind != wantKind) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "文档不存在或无权访问")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"id": doc.ID, "title": doc.Title})
+	httpx.JSON(w, http.StatusOK, map[string]any{"id": doc.ID, "title": doc.Title, "kind": doc.Kind, "docType": doc.DocType})
 }

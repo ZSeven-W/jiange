@@ -37,6 +37,7 @@ import { BaseAuthorizationEpoch, BaseAuthorizationFence, isBaseAuthorizationErro
 import { refreshWrites, useWriteLedger, WriteIssues } from "./base/write-safety";
 import { ask, askText } from "@/components/ui/ask";
 import { ShareDialog } from "@/components/share-dialog";
+import { ResourceReferencesButton } from "./resource-references-button";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
@@ -357,6 +358,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           </div>
           <p className="pt-0.5 text-[11px] text-subtle">{t("最近修改：{time}", { time: formatBaseChange(lastBaseChange(base.updatedAt, q.data.records)) })}{!canEdit && t(" · 只读")}</p>
         </div>
+        <ResourceReferencesButton id={id} userId={userId} title={base.title || t("未命名多维表格")} kind="base" />
         <button ref={shareAnchor} onClick={() => setSharing(true)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Share2 size={14} />{t("分享")}</button>
         {!q.data.writeRestricted && canDuplicateHomeDocument(base) && <button type="button" disabled={duplicatingBase} data-base-duplicate onClick={async () => {
           setDuplicatingBase(true);

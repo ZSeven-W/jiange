@@ -649,7 +649,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   };
   const importFile = (file: File) => { void (isDocxFile(file) ? importWord(file) : importMd(file)); };
   const allDocs = useQuery({ queryKey: ["docs"], queryFn: docsApi.list });
-  const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id).map((d) => ({ id: d.id, title: d.title })), [allDocs.data, id]);
+  const mentionDocs = useMemo(() => (allDocs.data ?? []).filter((d) => d.id !== id && (!d.kind || d.kind === "doc" || d.kind === "sheet" || d.kind === "base" || d.kind === "slides" || d.kind === "survey")).map((d) => ({ id: d.id, title: d.title, kind: d.kind, docType: d.docType })), [allDocs.data, id]);
   // Commenting and editing are separate capabilities: a viewer may comment
   // without ever gaining permission to modify the document.
   const canEditRole = metadataVerified && (meta.data?.role === "edit" || meta.data?.role === "manage");
@@ -1439,7 +1439,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
-                resolveDocumentLink={(target, signal) => "id" in target ? docsApi.pasteTarget(target.id, me.user.id, signal) : docsApi.pasteShareTarget(target.token, me.user.id, signal, target.href.startsWith("#/p/"))}
+                resolveDocumentLink={(target, signal) => "id" in target ? docsApi.pasteTarget(target.id, me.user.id, signal, target.kind) : docsApi.pasteShareTarget(target.token, me.user.id, signal, target.href.startsWith("#/p/"))}
                 upload={canEditContent ? (f, progress) => docsApi.upload(id, f, progress) : undefined}
                 copyClipboardAssets={canEditContent ? (source, ids, request, signal) => docsApi.copyClipboardAssets(id, source, ids, request, me.user.id, signal) : undefined}
                 comments={commentsAvailable && comments.isSuccess ? comments.data : []}
@@ -1499,7 +1499,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             {outlineVisible && <div aria-hidden="true" className={cn("hidden xl:block xl:shrink-0", outlinePinned ? "xl:w-[248px]" : "xl:w-14", ((commentsAvailable && commentsOpen) || history) && "xl:hidden min-[1680px]:block")} />}
             <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
               <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-7 pb-40 sm:px-16", docWidthClass(width))}>
-                <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />
+                <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} docType={meta.data?.docType} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />
               </div>
             </div>
           </div>}

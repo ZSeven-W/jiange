@@ -185,6 +185,9 @@ func publicSafeLink(value string) bool {
 	if strings.HasPrefix(value, "#/doc/") {
 		return true
 	}
+	if id, _ := resourceReferenceTarget(value); id > 0 {
+		return true
+	}
 	if publicShareLink.MatchString(value) {
 		return true
 	}

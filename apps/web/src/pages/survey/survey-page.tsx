@@ -20,12 +20,14 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  api,
   docsApi,
   surveysApi,
   type SurveyQuestion,
   type SurveyQuestionType,
   type SurveySkipRule,
 } from "@/lib/api";
+import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { buildSurveyCsv } from "./skip-logic";
@@ -86,6 +88,11 @@ export function SurveyPage({ surveyId }: { surveyId: number }) {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: api.me,
+  });
 
   const detailQuery = useQuery({
     queryKey: ["survey", surveyId],
@@ -287,6 +294,9 @@ export function SurveyPage({ surveyId }: { surveyId: number }) {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
+          {meQuery.data?.user?.id && (
+            <ResourceReferencesButton id={surveyId} userId={meQuery.data.user.id} title={title || "未命名问卷"} kind="survey" />
+          )}
           {canEdit && (
             <Button
               type="button"

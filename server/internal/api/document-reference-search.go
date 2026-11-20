@@ -53,13 +53,15 @@ func (s *Server) searchAccountDocuments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	type item struct {
-		ID    int64  `json:"id"`
-		Title string `json:"title"`
+		ID      int64  `json:"id"`
+		Title   string `json:"title"`
+		Kind    string `json:"kind,omitempty"`
+		DocType string `json:"docType,omitempty"`
 	}
 	out := make([]item, 0, 30)
 	truncated := false
 	for _, candidate := range docs {
-		if candidate.Kind != "doc" {
+		if !store.IsReferenceableKind(candidate.Kind) {
 			continue
 		}
 		current, e := s.Store.GetDoc(ctx, guard.UserID, candidate.ID)
@@ -70,14 +72,14 @@ func (s *Server) searchAccountDocuments(w http.ResponseWriter, r *http.Request) 
 			s.fail(w, r, e)
 			return
 		}
-		if current.Kind != "doc" {
+		if !store.IsReferenceableKind(current.Kind) {
 			continue
 		}
 		if len(out) == 30 {
 			truncated = true
 			break
 		}
-		out = append(out, item{ID: current.ID, Title: current.Title})
+		out = append(out, item{ID: current.ID, Title: current.Title, Kind: current.Kind, DocType: current.DocType})
 	}
 	if err = ctx.Err(); err != nil {
 		httpx.Error(w, http.StatusServiceUnavailable, "search_incomplete", "搜索未完成，请稍后重试")

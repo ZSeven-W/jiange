@@ -1,6 +1,10 @@
-/** Internal document references include canonical share and public links. */
+/** Internal resource references include docs, sheets, bases, slides, surveys, and canonical share/public links. */
 export function isDocumentReferenceURL(url?: string): url is string {
-  return !!url && (url.startsWith("#/doc/") || /^#\/(s|p)\/[A-Za-z0-9_-]{1,256}$/.test(url));
+  return !!url && (
+    url.startsWith("#/doc/") ||
+    /^#\/(?:sheet|base|slides|survey)\/[1-9]\d*$/.test(url) ||
+    /^#\/(s|p)\/[A-Za-z0-9_-]{1,256}$/.test(url)
+  );
 }
 
 /** Explicit text hyperlinks remain ordinary links, even to an internal doc. */

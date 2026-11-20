@@ -22,18 +22,23 @@ var referenceBlock = regexp.MustCompile(`^(0|[1-9][0-9]*):(0|[1-9][0-9]*)$`)
 var errReferenceIncomplete = errors.New("document reference scan incomplete")
 
 type referenceContext struct {
-	Block string `json:"block"`
-	Text  string `json:"text,omitempty"`
+	Block        string `json:"block"`
+	Text         string `json:"text,omitempty"`
+	RelationKind string `json:"relationKind,omitempty"`
 }
 type referenceItem struct {
-	ID       int64              `json:"id"`
-	Title    string             `json:"title"`
-	Href     string             `json:"href,omitempty"`
-	Contexts []referenceContext `json:"contexts,omitempty"`
+	ID           int64              `json:"id"`
+	Title        string             `json:"title"`
+	Kind         string             `json:"kind,omitempty"`
+	DocType      string             `json:"docType,omitempty"`
+	Href         string             `json:"href,omitempty"`
+	RelationKind string             `json:"relationKind,omitempty"`
+	Contexts     []referenceContext `json:"contexts,omitempty"`
 }
 type referenceResult struct {
 	Incoming []referenceItem `json:"incoming"`
 	Outgoing []referenceItem `json:"outgoing"`
+	Indexed  bool            `json:"indexed,omitempty"`
 }
 type scannedReference struct {
 	id, head int64
@@ -41,9 +46,11 @@ type scannedReference struct {
 	links    map[int64]string
 }
 type resolvedReferenceToken struct {
-	id    int64
-	role  string
-	title string
+	id      int64
+	role    string
+	title   string
+	kind    string
+	docType string
 }
 
 func (s *Server) resolveReferenceToken(ctx context.Context, guard store.RestoreGuard, token string) (resolvedReferenceToken, error) {
@@ -58,12 +65,12 @@ func (s *Server) resolveReferenceToken(ctx context.Context, guard store.RestoreG
 	if err != nil {
 		return resolvedReferenceToken{}, err
 	}
-	return resolvedReferenceToken{id: value.ID, role: value.Role, title: value.Title}, nil
+	return resolvedReferenceToken{id: value.ID, role: value.Role, title: value.Title, kind: value.Kind, docType: value.DocType}, nil
 }
 
-// A bounded, read-only scan until the persisted reference index is available.
-// Only complete results are returned; limits and failures never masquerade as
-// an empty graph. Each source is observed at one head, not a global snapshot.
+// documentReferences returns bidirectional links (incoming backlinks and
+// outgoing links/embeds) using the persistent incremental reference index when
+// supported by the store, falling back to a bounded read-only scan otherwise.
 func (s *Server) documentReferences(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	if !requireActionAccount(w, r) {
@@ -77,7 +84,7 @@ func (s *Server) documentReferences(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if target.Kind != "doc" {
+	if !store.IsReferenceableKind(target.Kind) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "文档不存在或无权访问")
 		return
 	}
@@ -110,6 +117,13 @@ func (s *Server) documentReferences(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scanDocumentReferences(ctx context.Context, guard store.RestoreGuard, target int64) (referenceResult, error) {
+	if idxStore, ok := s.Store.(store.ReferenceIndexStore); ok {
+		return s.queryIndexedDocumentReferences(ctx, guard, target, idxStore)
+	}
+	return s.scanDocumentReferencesFallback(ctx, guard, target)
+}
+
+func (s *Server) scanDocumentReferencesFallback(ctx context.Context, guard store.RestoreGuard, target int64) (referenceResult, error) {
 	result := referenceResult{Incoming: []referenceItem{}, Outgoing: []referenceItem{}}
 	const pageSize = 50
 	const maxDocs = 200

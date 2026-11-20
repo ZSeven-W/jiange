@@ -125,6 +125,8 @@ const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 export interface MentionDoc {
   id: number;
   title: string;
+  kind?: string;
+  docType?: string;
 }
 export interface Uploaded {
   id: number;
@@ -1871,14 +1873,18 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       const docItems = docs
         .filter((x) => (x.title || "未命名文档").toLowerCase().includes(ql))
         .slice(0, 8)
-        .map((x): MenuItem => ({
-          id: `doc:${x.id}`,
-          label: x.title || "未命名文档",
-          group: "提及文档",
-          icon: "▤",
-          py: [],
-          en: [],
-        }));
+        .map((x): MenuItem => {
+          const kind = x.kind && x.kind !== "doc" ? x.kind : "doc";
+          const icon = kind === "sheet" ? "▦" : kind === "base" ? "⊞" : kind === "slides" ? "▣" : kind === "survey" ? "☑" : x.docType === "board" ? "◫" : "▤";
+          return {
+            id: kind === "doc" ? `doc:${x.id}` : `ref:${kind}:${x.id}`,
+            label: x.title || "未命名文档",
+            group: "提及文档",
+            icon,
+            py: [],
+            en: [],
+          };
+        });
       const peopleItems = people
         .filter((m) => m.name !== me.name && m.name.toLowerCase().includes(ql))
         .slice(0, 5)
@@ -2012,13 +2018,19 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       setSlashLink({ captured: result.captured, client: sync.client, x: caret?.left ?? window.innerWidth / 2, y: caret?.bottom ?? 80 });
       return;
     }
-    if (it.id.startsWith("doc:")) {
+    if (it.id.startsWith("doc:") || it.id.startsWith("ref:")) {
+      const targetHref = it.id.startsWith("doc:")
+        ? `#/doc/${it.id.slice(4)}`
+        : (() => {
+            const [, kind, rid] = it.id.split(":");
+            return `#/${kind}/${rid}`;
+          })();
       let applied = false;
       run((tx) => {
         const start = m.query ? consumeSlashQuery(tx, m.query) : null;
         if (start === null) return;
         const n = tx.insert(m.at.b, start, it.label);
-        tx.format(m.at.b, start, start + n, "link", `#/doc/${it.id.slice(4)}`);
+        tx.format(m.at.b, start, start + n, "link", targetHref);
         tx.format(m.at.b, start, start + n, "linkKind", "reference");
         tx.insert(m.at.b, start + n, " ");
         tx.format(m.at.b, start + n, start + n + 1, "link", null);

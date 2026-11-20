@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { DocumentReferencesPanel, fetchDocumentReferences } from "./document-references";
+import { DocumentReferencesPanel, fetchDocumentReferenceGraph, fetchDocumentReferences, referenceNodeHref } from "./document-references";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("document reference list", () => {
@@ -27,5 +27,43 @@ describe("document reference list", () => {
     const render = (onHide?: () => Promise<boolean>) => renderToStaticMarkup(<QueryClientProvider client={client}><DocumentReferencesPanel id={1} userId={2} enabled synced allowCopy onHide={onHide}/></QueryClientProvider>);
     expect(render()).not.toContain('aria-label="隐藏文档引用"');
     expect(render(async () => true)).toContain('aria-label="隐藏文档引用"');
+  });
+  it("validates multi-resource anchors, embed relations, and multi-hop graph payloads", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        indexed: true,
+        incoming: [
+          { id: 10, title: "季度PPT", kind: "slides", contexts: [{ block: "slide:7", text: "参考 #/doc/5" }] },
+          { id: 11, title: "需求库", kind: "base", contexts: [{ block: "rec:9", text: "关联" }] },
+        ],
+        outgoing: [
+          { id: 12, title: "排期表", kind: "sheet", relationKind: "embed" },
+        ],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        centerId: 5,
+        depth: 2,
+        truncated: false,
+        indexed: true,
+        nodes: [
+          { id: 5, title: "主文档", kind: "doc", depth: 0 },
+          { id: 12, title: "排期表", kind: "sheet", depth: 1 },
+          { id: 15, title: "二跳问卷", kind: "survey", depth: 2 },
+        ],
+        edges: [
+          { sourceId: 5, targetId: 12, relationKind: "embed" },
+          { sourceId: 12, targetId: 15, relationKind: "link" },
+        ],
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const signal = new AbortController().signal;
+    const refs = await fetchDocumentReferences(5, 7, signal);
+    expect(refs.incoming[0].kind).toBe("slides");
+    expect(refs.outgoing[0].relationKind).toBe("embed");
+    expect(referenceNodeHref(refs.outgoing[0])).toBe("#/sheet/12");
+    const graph = await fetchDocumentReferenceGraph(5, 7, 2, signal);
+    expect(graph.nodes).toHaveLength(3);
+    expect(graph.edges[0].relationKind).toBe("embed");
+    expect(fetcher.mock.calls[1][0]).toBe("/api/docs/5/reference-graph?depth=2");
   });
 });

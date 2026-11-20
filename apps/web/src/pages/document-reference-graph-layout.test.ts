@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { layoutDocumentReferenceGraph, referenceGraphBounds, referenceGraphPath } from "./document-reference-graph-layout";
+import {
+  layoutDocumentReferenceGraph,
+  layoutMultiHopReferenceGraph,
+  multiHopGraphBounds,
+  referenceGraphBounds,
+  referenceGraphPath,
+} from "./document-reference-graph-layout";
 
 describe("document reference graph layout", () => {
   it("merges reciprocal relations and keeps both directions", () => {
@@ -31,5 +37,42 @@ describe("document reference graph layout", () => {
     expect(bounds.height).toBe(265);
     expect(bounds.width).toBeLessThan(graph.width);
     expect(bounds.top).toBeLessThan(graph.centerY);
+  });
+  it("lays out multi-hop concentric clusters, bidirectional offsets, and embed edges", () => {
+    const layout = layoutMultiHopReferenceGraph({
+      centerId: 1,
+      depth: 3,
+      truncated: false,
+      nodes: [
+        { id: 1, title: "总纲", kind: "doc", depth: 0 },
+        { id: 2, title: "架构", kind: "doc", depth: 1 },
+        { id: 3, title: "预算表", kind: "sheet", depth: 1 },
+        { id: 4, title: "二跳多维表", kind: "base", depth: 2 },
+        { id: 5, title: "三跳幻灯片", kind: "slides", depth: 3 },
+      ],
+      edges: [
+        { sourceId: 1, targetId: 2, relationKind: "link" },
+        { sourceId: 2, targetId: 1, relationKind: "link" },
+        { sourceId: 1, targetId: 3, relationKind: "embed" },
+        { sourceId: 2, targetId: 4, relationKind: "link" },
+        { sourceId: 4, targetId: 5, relationKind: "link" },
+      ],
+    });
+    expect(layout.centerNode?.id).toBe(1);
+    expect(layout.nodes).toHaveLength(4);
+    const byId = new Map(layout.nodes.map((n) => [n.id, n]));
+    const dist = (id: number) => Math.hypot(byId.get(id)!.x - layout.centerX, byId.get(id)!.y - layout.centerY);
+    expect(dist(4)).toBeGreaterThan(dist(2));
+    expect(dist(5)).toBeGreaterThan(dist(4));
+    const embedEdge = layout.edges.find((e) => e.targetId === 3);
+    expect(embedEdge).toMatchObject({ category: "embed", dashed: true });
+    const indirectEdge = layout.edges.find((e) => e.sourceId === 4 && e.targetId === 5);
+    expect(indirectEdge?.category).toBe("indirect");
+    const biA = layout.edges.find((e) => e.sourceId === 1 && e.targetId === 2)!;
+    const biB = layout.edges.find((e) => e.sourceId === 2 && e.targetId === 1)!;
+    expect(biA.path).not.toBe(biB.path);
+    const bounds = multiHopGraphBounds(layout);
+    expect(bounds.width).toBeGreaterThan(400);
+    expect(bounds.height).toBeGreaterThan(200);
   });
 });

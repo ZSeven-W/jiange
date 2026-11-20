@@ -8,9 +8,11 @@ import (
 )
 
 type PasteShareTarget struct {
-	ID    int64  `json:"id"`
-	Title string `json:"title"`
-	Role  string `json:"-"`
+	ID      int64  `json:"id"`
+	Title   string `json:"title"`
+	Kind    string `json:"kind,omitempty"`
+	DocType string `json:"docType,omitempty"`
+	Role    string `json:"-"`
 }
 
 type PasteShareTargetReader interface {
@@ -54,13 +56,13 @@ func (m *Memory) ResolvePasteShareTarget(ctx context.Context, guard RestoreGuard
 			continue
 		}
 		d := m.doc(id)
-		if d == nil || d.deleted || d.purged || d.meta.Kind != "doc" || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || isWorkspaceLink(link.Role) && !m.member(guard.UserID, d.meta.WorkspaceID) {
+		if d == nil || d.deleted || d.purged || !IsReferenceableKind(d.meta.Kind) || !m.driveValidChainLocked(d, d.meta.WorkspaceID, false) || isWorkspaceLink(link.Role) && !m.member(guard.UserID, d.meta.WorkspaceID) {
 			return PasteShareTarget{}, ErrNotFound
 		}
 		if err := driveMemoryEnd(ctx, guard, expires); err != nil {
 			return PasteShareTarget{}, err
 		}
-		return PasteShareTarget{ID: id, Title: d.meta.Title, Role: link.Role}, nil
+		return PasteShareTarget{ID: id, Title: d.meta.Title, Kind: d.meta.Kind, DocType: d.meta.DocType, Role: link.Role}, nil
 	}
 	return PasteShareTarget{}, ErrNotFound
 }
@@ -70,9 +72,9 @@ func (p *Postgres) ResolvePasteShareTarget(ctx context.Context, guard RestoreGua
 		return PasteShareTarget{}, ErrNotFound
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
-		var role, kind string
+		var role, kind, docType string
 		var ws int64
-		e := tx.QueryRow(ctx, `SELECT id,link_role,workspace_id,kind,title FROM nodes WHERE link_token=$1 AND deleted_at IS NULL FOR UPDATE`, token).Scan(&out.ID, &role, &ws, &kind, &out.Title)
+		e := tx.QueryRow(ctx, `SELECT id,link_role,workspace_id,kind,doc_type,title FROM nodes WHERE link_token=$1 AND deleted_at IS NULL FOR UPDATE`, token).Scan(&out.ID, &role, &ws, &kind, &docType, &out.Title)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -83,9 +85,11 @@ func (p *Postgres) ResolvePasteShareTarget(ctx context.Context, guard RestoreGua
 		if e != nil {
 			return e
 		}
-		if kind != "doc" || !pasteShareRoleAllowed(role) {
+		if !IsReferenceableKind(kind) || !pasteShareRoleAllowed(role) {
 			return ErrNotFound
 		}
+		out.Kind = kind
+		out.DocType = docType
 		out.Role = role
 		if e = drivePGValidChain(ctx, tx, out.ID, ws); errors.Is(e, ErrConflict) || errors.Is(e, ErrNotFound) {
 			return ErrNotFound

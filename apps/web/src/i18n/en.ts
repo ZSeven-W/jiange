@@ -1437,4 +1437,5 @@ export const en: Record<string, string> = {
   "添加中…": "Adding…",
   "快捷方式": "Shortcut",
   "已失效": "Unavailable",
+  "未命名电子表格": "Untitled Spreadsheet",
 };

@@ -37,6 +37,8 @@ type Memory struct {
 	surveyResponses  []SurveyResponse
 	surveyRespSeq    int64
 	searchIndex      map[int64]SearchIndexEntry
+	refIndexState    map[int64]ReferenceIndexState
+	refIndexEdges    map[int64][]ReferenceEdge
 	driveShortcuts   []DriveShortcut
 	driveShortcutSeq int64
 	sheetComments    []SheetComment
@@ -67,6 +69,8 @@ func NewMemory() *Memory {
 		syncedBlocks:   map[string]SyncedBlock{},
 		surveys:        map[int64]Survey{},
 		searchIndex:    map[int64]SearchIndexEntry{},
+		refIndexState:  map[int64]ReferenceIndexState{},
+		refIndexEdges:  map[int64][]ReferenceEdge{},
 	}
 }
 

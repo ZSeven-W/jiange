@@ -25,4 +25,26 @@ describe("document reference graph", () => {
     expect(html).toContain("正在确认文档权限");
     expect(html).not.toContain("data-reference-graph-node");
   });
+  it("renders multi-hop depth selector when loadGraph is provided", () => {
+    const client = new QueryClient();
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <DocumentReferenceGraph
+          rootId={1}
+          rootTitle="需求"
+          rootKind="doc"
+          userId={7}
+          enabled={false}
+          loadReferences={async () => ({ incoming: [], outgoing: [] })}
+          loadGraph={async () => ({ centerId: 1, depth: 2, nodes: [], edges: [], truncated: false })}
+          onClose={() => {}}
+        />
+      </QueryClientProvider>
+    );
+    expect(html).toContain('data-graph-depth="1"');
+    expect(html).toContain('data-graph-depth="2"');
+    expect(html).toContain('data-graph-depth="3"');
+    expect(html).toContain("资源内嵌");
+    expect(html).toContain("多跳关联");
+  });
 });

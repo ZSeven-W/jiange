@@ -26,6 +26,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { SheetColorIcon } from "@/components/feishu-icons";
 import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
+import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
 import { ChevronRight, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
@@ -1266,6 +1267,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             {collaborators.slice(0, 4).map((c) => <Avatar key={c.userId} name={c.name} color={colorFor(c.userId - 1)} size={24} ring title={c.name} />)}
           </div>
         )}
+
+        <ResourceReferencesButton id={sheetId} userId={userId} title={titleText || t("未命名电子表格")} kind="sheet" />
 
         <button
           ref={shareBtnRef}
