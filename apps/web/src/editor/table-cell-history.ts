@@ -87,4 +87,54 @@ export class TableCellHistory {
     (redo ? history.redo : history.undo).pop();
     if (!history.undo.length && !history.redo.length) histories?.delete(key);
   }
+
+  exportState(doc: object, hasMarker?: (key: string) => boolean): { v: 1; entries: [string, History][] } {
+    const histories = this.sessions.get(doc);
+    const entries: [string, History][] = [];
+    if (!histories) return { v: 1, entries };
+    for (const [key, history] of histories) {
+      if (hasMarker && !hasMarker(key)) continue;
+      if (!history.undo.length && !history.redo.length) continue;
+      entries.push([
+        key,
+        {
+          undo: history.undo.slice(-50).map((e) => ({ ...e, kind: undefined })),
+          redo: history.redo.slice(-20).map((e) => ({ ...e, kind: undefined })),
+        },
+      ]);
+    }
+    return { v: 1, entries };
+  }
+
+  importState(doc: object, raw: unknown): Set<string> {
+    const restoredKeys = new Set<string>();
+    if (typeof raw !== "object" || raw === null) return restoredKeys;
+    const data = raw as { v?: unknown; entries?: unknown };
+    if (data.v !== 1 || !Array.isArray(data.entries)) return restoredKeys;
+    const isVer = (v: unknown): v is Version => v === null || typeof v === "string";
+    const isEntry = (e: unknown): e is Entry =>
+      typeof e === "object" &&
+      e !== null &&
+      typeof (e as Entry).before === "string" &&
+      typeof (e as Entry).after === "string" &&
+      isVer((e as Entry).beforeVersion) &&
+      isVer((e as Entry).afterVersion) &&
+      isVer((e as Entry).expected) &&
+      isVer((e as Entry).typeVersion) &&
+      typeof (e as Entry).time === "number";
+    const valid: [string, History][] = [];
+    for (const pair of data.entries) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") return restoredKeys;
+      const h = pair[1] as Partial<History>;
+      if (!h || !Array.isArray(h.undo) || !Array.isArray(h.redo) || !h.undo.every(isEntry) || !h.redo.every(isEntry)) return restoredKeys;
+      valid.push([pair[0], { undo: h.undo.map((e) => ({ ...e, kind: undefined })), redo: h.redo.map((e) => ({ ...e, kind: undefined })) }]);
+    }
+    const histories = new Map<string, History>();
+    for (const [key, history] of valid) {
+      histories.set(key, history);
+      restoredKeys.add(key);
+    }
+    this.sessions.set(doc, histories);
+    return restoredKeys;
+  }
 }

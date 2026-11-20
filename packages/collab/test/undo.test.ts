@@ -193,4 +193,58 @@ describe("UndoManager", () => {
     expect(a.view()).toEqual(b.view());
     expect(a.text(p)).toContain("01");
   });
+
+  it("persists and restores local undo/redo stacks across reload while preserving remote edits", () => {
+    const doc = new Doc(1);
+    const um = new UndoManager();
+    const t1 = new Tx(doc);
+    const p = t1.create("paragraph", null);
+    t1.insert(p, 0, "hello world");
+    um.record(t1, null, null);
+    const t2 = new Tx(doc);
+    t2.delete(p, 6, 11);
+    t2.insert(p, 6, "jiange");
+    um.record(t2, null, null);
+    // Record a transient marker that should be filtered out, and an allowed marker
+    um.recordMarker("atomic-find:1");
+    um.recordMarker("table:1:1:0:0");
+
+    const exported = JSON.parse(JSON.stringify(um.exportState({ allowMarker: (m) => m.startsWith("table:") })));
+    expect(exported.undos).toHaveLength(3);
+    expect(exported.undos.at(-1)?.marker).toBe("table:1:1:0:0");
+
+    // Simulate reload: fresh Doc restored from state + remote peer edit arrives before local undo
+    const reloaded = Doc.fromState(9, doc.encodeState());
+    const peer = Doc.fromState(2, doc.encodeState());
+    const remoteOp = peer.insertText(p, 0, "[peer] ")!;
+    reloaded.apply(remoteOp);
+
+    const restoredUm = new UndoManager();
+    expect(restoredUm.importState(exported, { allowMarker: () => false })).toBe(true);
+    expect(restoredUm.canUndo).toBe(true);
+    // Undoing t2 replaces "jiange" back to "world" without clobbering "[peer] "
+    const u1 = restoredUm.undo(reloaded)!;
+    expect(u1.ops.length).toBeGreaterThan(0);
+    expect(reloaded.text(p)).toBe("[peer] hello world");
+    // Redo restores "jiange" while keeping "[peer] "
+    const r1 = restoredUm.redo(reloaded)!;
+    expect(r1.ops.length).toBeGreaterThan(0);
+    expect(reloaded.text(p)).toBe("[peer] hello jiange");
+  });
+
+  it("rejects malformed snapshots without mutating an active UndoManager", () => {
+    const doc = new Doc(1);
+    const um = new UndoManager();
+    const tx = new Tx(doc);
+    const p = tx.create("paragraph", null);
+    tx.insert(p, 0, "keep");
+    um.record(tx, null, null);
+
+    expect(um.importState(null)).toBe(false);
+    expect(um.importState({ v: 2, undos: [], redos: [], remap: [] })).toBe(false);
+    expect(um.importState({ v: 1, undos: [{ items: [{ k: "ins", block: { client: -1, clock: 0 }, chars: [] }] }], redos: [], remap: [] })).toBe(false);
+    expect(um.canUndo).toBe(true);
+    um.undo(doc);
+    expect(doc.hasBlock(p)).toBe(false);
+  });
 });

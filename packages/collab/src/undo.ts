@@ -1,7 +1,104 @@
 import { idKey, ROOT, type OpId } from "./id.js";
 import type { Op } from "./ops.js";
 import type { Doc } from "./doc.js";
-import { applyMarks, indexAfter, reconcileMarks, snapshotBlock, Tx, type UndoItem } from "./tx.js";
+import { applyMarks, indexAfter, reconcileMarks, snapshotBlock, Tx, type BlockSnap, type UndoItem } from "./tx.js";
+
+export interface SerializedUndoEntry {
+  items: UndoItem[];
+  marker?: string;
+}
+
+export interface UndoManagerSnapshot {
+  v: 1;
+  undos: SerializedUndoEntry[];
+  redos: SerializedUndoEntry[];
+  remap: [string, OpId][];
+}
+
+function isOpId(value: unknown): value is OpId {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Number.isSafeInteger((value as OpId).client) &&
+    (value as OpId).client >= 0 &&
+    Number.isSafeInteger((value as OpId).clock) &&
+    (value as OpId).clock >= 0
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  for (const v of Object.values(value)) {
+    if (typeof v !== "string") return false;
+  }
+  return true;
+}
+
+function isBlockSnap(value: unknown): value is BlockSnap {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as BlockSnap;
+  return (
+    isOpId(s.id) &&
+    typeof s.type === "string" &&
+    isStringRecord(s.props) &&
+    Array.isArray(s.chars) &&
+    s.chars.every(isOpId) &&
+    Array.isArray(s.text) &&
+    s.text.every((ch) => typeof ch === "string") &&
+    Array.isArray(s.marks) &&
+    s.marks.every(isStringRecord) &&
+    s.chars.length === s.text.length &&
+    s.chars.length === s.marks.length &&
+    isOpId(s.parent) &&
+    (s.after === null || isOpId(s.after))
+  );
+}
+
+function isUndoItem(value: unknown): value is UndoItem {
+  if (typeof value !== "object" || value === null) return false;
+  const it = value as UndoItem;
+  switch (it.k) {
+    case "ins":
+      return isOpId(it.block) && Array.isArray(it.chars) && it.chars.every(isOpId);
+    case "del":
+      return (
+        isOpId(it.block) &&
+        (it.after === null || isOpId(it.after)) &&
+        Array.isArray(it.chars) &&
+        it.chars.every(isOpId) &&
+        Array.isArray(it.text) &&
+        it.text.every((ch) => typeof ch === "string") &&
+        Array.isArray(it.marks) &&
+        it.marks.every(isStringRecord) &&
+        it.chars.length === it.text.length &&
+        it.chars.length === it.marks.length
+      );
+    case "mark":
+      return (
+        isOpId(it.block) &&
+        Array.isArray(it.chars) &&
+        it.chars.every(isOpId) &&
+        typeof it.key === "string" &&
+        Array.isArray(it.prev) &&
+        it.prev.every((v) => v === null || typeof v === "string") &&
+        it.chars.length === it.prev.length
+      );
+    case "prop":
+      return isOpId(it.block) && typeof it.key === "string" && typeof it.prev === "string";
+    case "create":
+      return isOpId(it.block);
+    case "bdel":
+      return isBlockSnap(it.snap);
+    case "move":
+      return isOpId(it.block) && isOpId(it.parent) && (it.after === null || isOpId(it.after));
+    default:
+      return false;
+  }
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 interface Entry<S> {
   items: UndoItem[];
@@ -151,6 +248,73 @@ export class UndoManager<S = unknown> {
   seal() {
     const last = this.undos[this.undos.length - 1];
     if (last?.tag !== undefined) { last.tag = undefined; this.revisionValue++; }
+  }
+
+  /**
+   * Serializes local undo/redo entries and OpId remappings for per-tab reload
+   * recovery. External markers are excluded unless explicitly permitted.
+   */
+  exportState(options: { allowMarker?: (marker: string) => boolean; maxUndos?: number; maxRedos?: number } = {}): UndoManagerSnapshot {
+    const maxUndos = Math.max(0, options.maxUndos ?? 50);
+    const maxRedos = Math.max(0, options.maxRedos ?? 20);
+    const pick = (list: Entry<S>[], cap: number): SerializedUndoEntry[] => {
+      const kept: SerializedUndoEntry[] = [];
+      for (const entry of list) {
+        if (entry.marker) {
+          if (options.allowMarker?.(entry.marker)) kept.push({ items: [], marker: entry.marker });
+        } else if (entry.items.length > 0) {
+          kept.push({ items: cloneJson(entry.items) });
+        }
+      }
+      return cap > 0 ? kept.slice(-cap) : [];
+    };
+    return {
+      v: 1,
+      undos: pick(this.undos, maxUndos),
+      redos: pick(this.redos, maxRedos),
+      remap: [...this.remap.entries()].map(([k, v]) => [k, { client: v.client, clock: v.clock }]),
+    };
+  }
+
+  /**
+   * Restores a validated snapshot after reload. Mutates `remap` in place so
+   * any sub-history linked via `shareRemappings` stays synchronized.
+   */
+  importState(snapshot: unknown, options: { allowMarker?: (marker: string) => boolean } = {}): boolean {
+    if (typeof snapshot !== "object" || snapshot === null) return false;
+    const raw = snapshot as Partial<UndoManagerSnapshot>;
+    if (raw.v !== 1 || !Array.isArray(raw.undos) || !Array.isArray(raw.redos) || !Array.isArray(raw.remap)) return false;
+    const parseStack = (entries: unknown[]): Entry<S>[] | null => {
+      const out: Entry<S>[] = [];
+      for (const item of entries) {
+        if (typeof item !== "object" || item === null) return null;
+        const entry = item as Partial<SerializedUndoEntry>;
+        if (entry.marker !== undefined) {
+          if (typeof entry.marker !== "string" || !entry.marker) return null;
+          if (!options.allowMarker?.(entry.marker)) continue;
+          out.push({ items: [], before: null, after: null, marker: entry.marker, time: 0 });
+        } else {
+          if (!Array.isArray(entry.items) || !entry.items.length || !entry.items.every(isUndoItem)) return null;
+          out.push({ items: cloneJson(entry.items), before: null, after: null, time: 0 });
+        }
+      }
+      return out.slice(-this.limit);
+    };
+    const undos = parseStack(raw.undos);
+    const redos = parseStack(raw.redos);
+    if (!undos || !redos) return false;
+    const remaps: [string, OpId][] = [];
+    for (const pair of raw.remap) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || !isOpId(pair[1])) return false;
+      remaps.push([pair[0], { client: pair[1].client, clock: pair[1].clock }]);
+    }
+    this.undos = undos;
+    this.redos = redos;
+    this.remap.clear();
+    for (const [k, v] of remaps) this.remap.set(k, v);
+    this.revisionValue++;
+    this.navigationRevision++;
+    return true;
   }
 
   undo(doc: Doc): { ops: Op[]; selection: S | null } | null {

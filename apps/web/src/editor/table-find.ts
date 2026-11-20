@@ -1,5 +1,5 @@
 import { Doc, Tx, encodeClientMsg, encodeOps, eqId, idKey, ROOT, type OpId } from "@jiange/collab";
-import { findMatches, type FindMatch } from "./find-replace";
+import { findMatches, type FindMatch, type FindOptions } from "./find-replace";
 import { cellKey, isCellTable, tableRowsOf, writeTable, TBL_ROWS, TBL_COLS, TBL_BASE, TBL_MIRROR, TBL_VERSION } from "./table-cells";
 import { coverMap, parseMerges } from "./table-ops";
 
@@ -23,11 +23,11 @@ export function readTableFindState(doc: Doc, block: OpId): TableState | null {
   return { rows, hidden, snapshot, props, cellVersion: (row, col) => rowIds[row] && colIds[col] ? version(doc, block, cellKey(rowIds[row], colIds[col])) : null };
 }
 
-/** Find visible table cells as well as ordinary body text, in document order. */
-export function findDocumentMatches(doc: Doc, query: string): FindMatch[] {
-  const text = findMatches(doc, query);
+/** Find visible table cells as well as ordinary body text (and optional formulas), in document order. */
+export function findDocumentMatches(doc: Doc, query: string, options: FindOptions = {}): FindMatch[] {
+  const text = findMatches(doc, query, options);
   if (!query) return text;
-  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), options.caseSensitive ? "gu" : "giu");
   const blocks = doc.view().blocks, order = new Map(blocks.map((item, index) => [item.id, index]));
   const tables: FindMatch[] = [];
   for (const item of blocks) {

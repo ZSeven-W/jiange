@@ -101,7 +101,8 @@ import { copyClipboardAssetsWithRetry, planClipboardAssets } from "./clipboard-a
 import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink, type PastedDocumentURL, type PastedLinkAnchor } from "./document-link-paste";
 import type { SlashInsertion, SlashQuery } from "./slash-insert";
 import { blockCommentAnchor, COMMENTABLE_BLOCKS, commentSelection, projectCommentAnchors } from "./comment-anchor";
-import { searchableLocations, type FindMatch } from "./find-replace";
+import { resolveFindMatch, searchableLocations, type FindMatch } from "./find-replace";
+import { clearPersistedUndoHistory, defaultUndoStorage, restorePersistedUndoHistory, savePersistedUndoHistory } from "./undo-persistence";
 import { readTableFindState, resolveTableFindMatch } from "./table-find";
 import { applyTableFindReplace, type TableFindResult } from "./table-find-apply";
 import { applyFindBatch, canStepFindBatch, FindBatchHistory, type BatchStatus, type FindBatchAlias } from "./find-batch";
@@ -278,7 +279,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     | { kind: "table-resize"; plan: ConditionalAlignmentPlan; doc: Doc; structureBefore: string | null }
     | null
   >(null);
-  const pendingAtomicFind = useRef<{ kind: "initial"; plan: AtomicFindPlan; doc: Doc; anchor: object; atomicAliases: AtomicFindAlias[]; batchAliases: FindBatchAlias[] } | { kind: "step"; plan: AtomicFindStep; doc: Doc; key: string; redo: boolean; batchAliases: FindBatchAlias[] } | null>(null);
+  const pendingAtomicFind = useRef<{ kind: "initial"; plan: AtomicFindPlan; doc: Doc; anchor: object; atomicAliases: AtomicFindAlias[]; batchAliases: FindBatchAlias[]; structureBefore: Map<string, string | null> } | { kind: "step"; plan: AtomicFindStep; doc: Doc; key: string; redo: boolean; batchAliases: FindBatchAlias[] } | null>(null);
   const pendingColumnArchive = useRef<{ kind: "initial"; plan: PreparedColumnArchive; doc: Doc; anchor: object } | { kind: "step"; plan: PreparedColumnArchive; doc: Doc; key: string; redo: boolean; historyLost?: boolean } | null>(null);
   const atomicTableBusy = (block: OpId) => { const pending = pendingAtomicFind.current; return !!pending && (pending.kind === "initial" ? pending.plan.tables.map((table) => table.block) : atomicFindHistory.tableBlocks(pending.key)).some((item) => eqId(item, block)); };
   const alignmentOwner = useRef<{ lease: AlignmentOwnerLease; client: SyncDoc["client"]; userId: number } | null>(null);
@@ -377,6 +378,73 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     return () => onAtomicFindHistoryRegistrar?.(null);
   }, [onAtomicFindHistoryRegistrar, atomicFindControl]);
   const [, force] = useState(0);
+  const restoredUndoClient = useRef<SyncDoc["client"] | null>(null);
+  const lastPersistedUndoRev = useRef(-1);
+  const persistUndoNow = useCallback(() => {
+    const d = sync.client.doc;
+    if (!d || !userId || !sync.client.caughtUp || sync.client.blocked) return;
+    savePersistedUndoHistory({
+      storage: defaultUndoStorage(),
+      userId,
+      docId: sync.client.docId,
+      epoch: sync.client.epoch,
+      doc: d,
+      session: sync.client,
+      undo: um,
+      tableHistory,
+      tableStructureHistory,
+      findBatchHistory,
+      readOnly: readOnlyRef.current,
+      copyBlocked: copyBlockedRef.current,
+    });
+    lastPersistedUndoRev.current = um.revision;
+  }, [sync.client, userId, um, tableHistory, tableStructureHistory, findBatchHistory]);
+  useEffect(() => {
+    if (!userId || !onCopyBlock) return;
+    clearPersistedUndoHistory(defaultUndoStorage(), userId, sync.client.docId);
+  }, [userId, sync.client.docId, onCopyBlock]);
+  useEffect(() => {
+    const d = sync.client.doc;
+    if (!d || !userId || !sync.caughtUp || sync.status !== "synced" || sync.blocked || sync.client.epoch === null) return;
+    if (restoredUndoClient.current === sync.client) return;
+    restoredUndoClient.current = sync.client;
+    lastPersistedUndoRev.current = um.revision;
+    if (readOnly || onCopyBlock || sync.client.droppedOnResync > 0 || um.revision !== 0) return;
+    const restored = restorePersistedUndoHistory({
+      storage: defaultUndoStorage(),
+      userId,
+      docId: sync.client.docId,
+      epoch: sync.client.epoch,
+      doc: d,
+      session: sync.client,
+      undo: um,
+      tableHistory,
+      tableStructureHistory,
+      findBatchHistory,
+      readOnly: !!readOnly,
+      copyBlocked: !!onCopyBlock,
+    });
+    if (restored) {
+      lastPersistedUndoRev.current = um.revision;
+      force((x) => x + 1);
+    }
+  }, [sync.client, sync.caughtUp, sync.status, sync.blocked, userId, readOnly, onCopyBlock, um, tableHistory, tableStructureHistory, findBatchHistory]);
+  useEffect(() => {
+    if (restoredUndoClient.current !== sync.client || um.revision === lastPersistedUndoRev.current) return;
+    const timer = window.setTimeout(() => persistUndoNow(), 180);
+    return () => window.clearTimeout(timer);
+  }, [sync.client, sync.version, um.revision, persistUndoNow]);
+  useEffect(() => {
+    const flush = () => {
+      if (restoredUndoClient.current === sync.client && um.revision !== lastPersistedUndoRev.current) persistUndoNow();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [sync.client, um, persistUndoNow]);
   const releaseAlignmentOwner = useCallback(() => { const owner = alignmentOwner.current; alignmentOwner.current = null; if (owner) alignmentOwnerRelease.current = owner.lease.release(); }, []);
   const ensureAlignmentOwner = useCallback(async () => {
     if (!conditionalAlignment || !userId) return false;
@@ -495,13 +563,23 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
           if (pending.kind === "initial") {
             const record = await atomicFindHistory.install(pending.plan, d, um, pending.anchor, proof, pending.atomicAliases);
             if (record.status === "unobserved" || record.status === "conflict") return false;
-            if (record.status === "recorded" && !atomicFindBatchAliases.has(record.key)) { for (const key of atomicFindBatchAliases.keys()) if (!um.hasMarker(key)) atomicFindBatchAliases.delete(key); atomicFindBatchAliases.set(record.key, { before: pending.batchAliases, after: [] }); }
+            if (record.status === "recorded") {
+              for (const table of pending.plan.tables) {
+                tableStructureHistory.recordEdit(d, table.block, record.key, pending.structureBefore.get(idKey(table.block)) ?? null, false, um);
+              }
+              if (!atomicFindBatchAliases.has(record.key)) { for (const key of atomicFindBatchAliases.keys()) if (!um.hasMarker(key)) atomicFindBatchAliases.delete(key); atomicFindBatchAliases.set(record.key, { before: pending.batchAliases, after: [] }); }
+            }
             lostHistory = record.status === "no-history"; pendingAtomicFind.current = null; return true;
           }
           const finished = await atomicFindHistory.finish(d, um, pending.plan, proof);
           if (finished === "ready") {
             const rebases = atomicFindHistory.rebases(pending.plan), aliases = atomicFindBatchAliases.get(pending.key);
-            for (const rebase of rebases) tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+            for (const rebase of rebases) {
+              tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+              const blockOps = pending.plan.ops.filter((op) => op.t === "bset" && idKey(op.block) === idKey(rebase.block));
+              tableStructureHistory.afterEditStep(d, rebase.block, pending.key, pending.redo, blockOps);
+              tableWidthHistory.rebaseData(d, rebase.block, rebase.logical, rebase.actual, blockOps);
+            }
             if (aliases) { findBatchHistory.rebaseCaptured(d, pending.redo ? aliases.after : aliases.before, new Set(rebases.map((item) => idKey(item.block)))); if (pending.redo) aliases.before = pending.batchAliases; else aliases.after = pending.batchAliases; }
             pendingAtomicFind.current = null; return true;
           }
@@ -679,7 +757,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (prepared.status !== "ready") { releaseAlignmentOwner(); return { status: prepared.status, count: prepared.status === "unchanged" ? matches.length : 0 }; }
       const anchor = um.markInsertionPoint(), head = client.lastSeq, epoch = client.epoch;
       const tableBlocks = prepared.plan.tables.map((table) => table.block);
-      pendingAtomicFind.current = { kind: "initial", plan: prepared.plan, doc: d, anchor, atomicAliases: atomicFindHistory.capture(d, tableBlocks), batchAliases: findBatchHistory.capture(d, tableBlocks) };
+      const structureBefore = new Map(tableBlocks.map((block) => [idKey(block), tableStructureHistory.capture(d, block, um)]));
+      pendingAtomicFind.current = { kind: "initial", plan: prepared.plan, doc: d, anchor, atomicAliases: atomicFindHistory.capture(d, tableBlocks), batchAliases: findBatchHistory.capture(d, tableBlocks), structureBefore };
       setPendingAlignment(true); setCanCancelFind(true); setAlignmentMessage("正在安全提交替换…");
       const persist = !copyBlockedRef.current;
       const result = await conditionalFind.start(prepared.plan.ops, epoch, head, controller.signal, () => client.doc === d && !readOnlyRef.current && (!persist || !copyBlockedRef.current) && atomicFindPlanIsCurrent(prepared.plan, d), () => { sensitiveFindTransport.current = persist; }, persist);
@@ -718,6 +797,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (!response.ok) throw new Error("title check failed");
       const snapshot = parseTitleConsistency(await response.json());
       if (!mounted.current || currentClient.current !== client || currentUserId.current !== userId || readOnlyRef.current || client.doc !== d || !canStepFindBatch(client) || client.epoch !== replica.epoch || snapshot.historyEpoch !== client.epoch || snapshot.head !== client.lastSeq || controller.signal.aborted) { releaseAlignmentOwner(); setColumnNotice("文档状态已变化，请重新操作。"); failed(); return; }
+      if (atomicFindHistory.tableBlocks(key).some((block) => tableStructureHistory.beforeEditStep(d, block, key, redo) === "conflict")) { releaseAlignmentOwner(); if (um.peekMarker(redo) === key) setTableHistoryConflict({ client, key, redo, revision: um.revision }); failed(); return; }
       const prepared = atomicFindHistory.prepare(d, um, key, redo, replica.author, snapshot.directoryTitle);
       if (prepared.status !== "ready") { releaseAlignmentOwner(); if (um.peekMarker(redo) === key) setTableHistoryConflict({ client, key, redo, revision: um.revision, ...(prepared.status === "size" ? { reason: "size" } : {}) }); failed(); return; }
       pendingAtomicFind.current = { kind: "step", plan: prepared.plan, doc: d, key, redo, batchAliases: findBatchHistory.capture(d, atomicFindHistory.tableBlocks(key)) };
@@ -970,12 +1050,20 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const findRanges = useMemo(() => {
     const ranges = new Map<string, { start: number; end: number; active: boolean }[]>();
     if (!doc) return ranges;
-    const locations = new Map(searchableLocations(doc).map(({ block, parent }) => [idKey(block), parent]));
+    const locations = new Map(searchableLocations(doc, { includeMath: true }).map(({ block, parent }) => [idKey(block), parent]));
     const cached = new Map<string, { ids: OpId[]; positions: Map<string, number>; chars: ReturnType<Doc["richChars"]> }>();
     for (const match of findMatches) {
       const key = idKey(match.block);
       const parent = locations.get(key);
       if (match.doc !== doc || !match.ids.length || !parent || !eqId(parent, match.parent)) continue;
+      if (match.math) {
+        const resolved = resolveFindMatch(doc, match);
+        if (!resolved) continue;
+        const list = ranges.get(key) ?? [];
+        list.push({ start: resolved.start, end: resolved.end, active: match === activeFindMatch });
+        ranges.set(key, list);
+        continue;
+      }
       let state = cached.get(key);
       if (!state) {
         const ids = doc.visibleIds(match.block);
@@ -2509,18 +2597,31 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !match.table) return "unavailable";
     const aliases = findBatchHistory.capture(d, [match.block]);
     const atomicAliases = atomicFindHistory.capture(d, [match.block]);
+    const structureBefore = tableStructureHistory.capture(d, match.block, um);
     const result = applyTableFindReplace(d, sync.client, um, tableHistory, match, replacement);
-    if (result.status === "replaced") { const key = `table:${idKey(match.block)}:${match.table.row}:${match.table.col}`; findBatchHistory.recordTableChange(key, aliases, false); atomicFindHistory.recordTableChange(key, atomicAliases, false); }
+    if (result.status === "replaced") {
+      const key = `table:${idKey(match.block)}:${match.table.row}:${match.table.col}`;
+      findBatchHistory.recordTableChange(key, aliases, false);
+      atomicFindHistory.recordTableChange(key, atomicAliases, false);
+      tableStructureHistory.recordEdit(d, match.block, key, structureBefore, false, um);
+    }
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return result.status;
   };
   findBatchActionRef.current = (matches, replacement) => {
     const d = sync.client.doc;
     if (!d || readOnlyRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0) return { status: "unavailable", count: 0 };
-    const atomicAliases = atomicFindHistory.capture(d, matches.filter((match) => !!match.table).map((match) => match.block));
+    const tableBlocks = [...new Map(matches.filter((match) => !!match.table).map((match) => [idKey(match.block), match.block])).values()];
+    const atomicAliases = atomicFindHistory.capture(d, tableBlocks);
+    const structureBefore = new Map(tableBlocks.map((block) => [idKey(block), tableStructureHistory.capture(d, block, um)]));
     const result = applyFindBatch(d, um, findBatchHistory, matches, replacement);
     const marker = um.peekMarker(false);
-    if (result.status === "replaced" && marker?.startsWith("find-batch:")) atomicFindHistory.recordTableChange(marker, atomicAliases, false);
+    if (result.status === "replaced" && marker?.startsWith("find-batch:")) {
+      atomicFindHistory.recordTableChange(marker, atomicAliases, false);
+      for (const block of findBatchHistory.tableBlocks(marker)) {
+        tableStructureHistory.recordEdit(d, block, marker, structureBefore.get(idKey(block)) ?? null, false, um);
+      }
+    }
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return { status: result.status, count: result.count };
   };
@@ -2590,16 +2691,21 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     const position = focused?.dataset.tableCell?.match(/^(\d+):(\d+)$/);
     const focusedBlock = focused?.closest<HTMLElement>("[data-block]")?.dataset.block;
     const remembered = redo ? tableStructureFocus.get(key) : undefined;
+    const location = /^table-structure:(\d+):(\d+):/.exec(key);
+    const structBlock = location ? { client: Number(location[1]), clock: Number(location[2]) } : null;
+    const batchAliases = structBlock ? findBatchHistory.capture(d, [structBlock]) : [];
+    const atomicAliases = structBlock ? atomicFindHistory.capture(d, [structBlock]) : [];
     const result = tableStructureHistory.step(d, um, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
       return;
     }
-    const location = /^table-structure:(\d+):(\d+):/.exec(key);
     if (location && result.rebase) {
       tableHistory.rebaseStructure(sync.client, `table:${location[1]}:${location[2]}:`, result.rebase.logical.data, result.rebase.actual.data, result.rebase.logical.guard, result.rebase.actual.guard);
       tableWidthHistory.rebaseStructure(d, { client: Number(location[1]), clock: Number(location[2]) }, result.rebase.logicalSnapshot, result.rebase.actualSnapshot);
     }
+    findBatchHistory.finishTableChange(d, key, redo, batchAliases);
+    atomicFindHistory.finishTableChange(d, key, redo, atomicAliases);
     setTableHistoryConflict(null); sync.client.push(result.ops); force((x) => x + 1); publish();
     if (!redo) tableStructureFocus.delete(key);
     if (redo && remembered && focused !== remembered.fallback) tableStructureFocus.delete(key);
@@ -2632,14 +2738,24 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!d || readOnlyRef.current) return;
     if (!canStepFindBatch(sync.client)) { setBatchSyncNotice(redo ? "redo" : "undo"); return; }
     setBatchSyncNotice(null);
-    const atomicAliases = atomicFindHistory.capture(d, findBatchHistory.tableBlocks(key));
+    const batchBlocks = findBatchHistory.tableBlocks(key);
+    if (batchBlocks.some((block) => tableStructureHistory.beforeEditStep(d, block, key, redo) === "conflict")) {
+      if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision });
+      return;
+    }
+    const atomicAliases = atomicFindHistory.capture(d, batchBlocks);
     const result = findBatchHistory.step(d, um, key, redo);
     if (result.status !== "ready") {
       if (um.peekMarker(redo) === key) setTableHistoryConflict({ client: sync.client, key, redo, revision: um.revision, reason: result.status === "size" ? "size" : undefined });
       return;
     }
     setTableHistoryConflict(null);
-    for (const rebase of result.rebases) tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+    for (const rebase of result.rebases) {
+      tableHistory.rebase(sync.client, `table:${idKey(rebase.block)}:`, rebase.logical, rebase.actual, rebase.guard);
+      const blockOps = result.ops.filter((op) => op.t === "bset" && idKey(op.block) === idKey(rebase.block));
+      tableStructureHistory.afterEditStep(d, rebase.block, key, redo, blockOps);
+      tableWidthHistory.rebaseData(d, rebase.block, rebase.logical, rebase.actual, blockOps);
+    }
     atomicFindHistory.finishTableChange(d, key, redo, atomicAliases);
     sync.client.push(result.ops); force((x) => x + 1); publish();
   };
@@ -2812,6 +2928,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         role="textbox"
         aria-multiline
         data-editor
+        data-undo-ready={um.canUndo ? "true" : "false"}
+        data-redo-ready={um.canRedo ? "true" : "false"}
         className={cn("outline-none", (columnNotice || mentionNavigationNotice || alignmentPending || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}
         onKeyDown={onKeyDown}
         onCopy={(e) => { const route = editorClipboardRoute(e.target, !!onCopyBlock); if (route === "block") e.preventDefault(); else if (route === "editor") onCopy(e); }}
@@ -2859,6 +2977,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
                 const migration = new Tx(doc);
                 if (!isCellTable(current.props)) applyTableWrites(migration, b, current.props, cellTableWrites(current.props, beforeRows, doc.client));
+                const batchAliases = findBatchHistory.capture(doc, [b]), atomicAliases = atomicFindHistory.capture(doc, [b]);
                 const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
                 writeTable(tx, b, doc.blockInfo(b).props, result.rows, doc.client);
                 const covered = coverMap(merges), fills: { row: number; col: number; fill: string }[] = [], alignments: { row: number; col: number; axis: TableAlignAxis; align: TableAlign }[] = [], richCells: { row: number; col: number; spans: TableRichSpan[] }[] = [];
@@ -2871,7 +2990,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }));
                 setTableCellFills(tx, b, fills); setTableCellAlignments(tx, b, alignments); setTableCellRich(tx, b, richCells);
                 if (richPlan?.ok && richPlan.merges.length !== merges.length) tx.setProp(b, "tableMerges", JSON.stringify(richPlan.merges));
-                if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
+                if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) { um.recordMarker(marker); findBatchHistory.recordTableChange(marker, batchAliases, false); atomicFindHistory.recordTableChange(marker, atomicAliases, false); } sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
                 else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
                 return null;
               }
@@ -2911,6 +3030,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               if (!isCellTable(current.props) && Object.entries(current.props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) return "表格数据状态不完整，请等待同步后重试。";
               const migration = new Tx(doc);
               if (!isCellTable(current.props)) applyTableWrites(migration, b, current.props, cellTableWrites(current.props, rows, doc.client));
+              const batchAliases = findBatchHistory.capture(doc, [b]), atomicAliases = atomicFindHistory.capture(doc, [b]);
               const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
               if (format.kind === "fill") setTableCellFills(tx, b, cells.map(cell => ({ ...cell, fill: format.value })));
               else if (format.kind === "align") setTableCellAlignments(tx, b, cells.map(cell => ({ ...cell, axis: format.axis, align: format.value })));
@@ -2923,7 +3043,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   spans: toggleTableCellRichMark(liveProps, cell.row, cell.col, rows[cell.row]?.[cell.col] ?? "", format.mark, format.value, useRange),
                 })));
               }
-              if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) um.recordMarker(marker); sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
+              if (tx.ops.length) { um.seal(); const marker = tableStructureHistory.record(doc, b, tx, um, before); if (marker) { um.recordMarker(marker); findBatchHistory.recordTableChange(marker, batchAliases, false); atomicFindHistory.recordTableChange(marker, atomicAliases, false); } sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force(x => x + 1); publish(); }
               else if (migration.ops.length) { sync.client.push(migration.ops); force(x => x + 1); }
               return null;
             };
@@ -2983,6 +3103,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               }
               const migration = new Tx(doc);
               if (migrationWrites) applyTableWrites(migration, b, current, migrationWrites);
+              const batchAliases = findBatchHistory.capture(doc, [b]), atomicAliases = atomicFindHistory.capture(doc, [b]);
               const before = tableStructureHistory.snapshot(doc, b), tx = new Tx(doc);
               if (structuralWrites) {
                 applyTableWrites(tx, b, doc.blockInfo(b).props, structuralWrites);
@@ -3002,7 +3123,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
               }
               um.seal();
               const marker = tableStructureHistory.record(doc, b, tx, um, before);
-              if (marker) um.recordMarker(marker);
+              if (marker) { um.recordMarker(marker); findBatchHistory.recordTableChange(marker, batchAliases, false); atomicFindHistory.recordTableChange(marker, atomicAliases, false); }
               sync.client.push([...migration.ops, ...tx.ops]);
               um.seal(); force((x) => x + 1); publish();
               return null;
@@ -3314,13 +3435,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   const props = doc.blockInfo(b).props, migration = new Tx(doc);
                   if (!isCellTable(props) && Object.entries(props).some(([key, value]) => key.startsWith("tbl.") && value !== "")) { setColumnNotice("表格数据状态不完整，未更改标题，请等待同步后重试。"); return; }
                   if (!isCellTable(props)) applyTableWrites(migration, b, props, cellTableWrites(props, tableRowsOf(props), doc.client));
+                  const batchAliases = findBatchHistory.capture(doc, [b]), atomicAliases = atomicFindHistory.capture(doc, [b]);
                   const before = tableStructureHistory.snapshot(doc, b);
                   const tx = new Tx(doc);
                   tx.setProp(b, axis === "row" ? "tableHeader" : "tableHeaderColumn", enabled ? (axis === "row" ? "row" : "column") : "none");
                   if (!tx.ops.length) { if (migration.ops.length) { sync.client.push(migration.ops); force((x) => x + 1); } return; }
                   um.seal();
                   const marker = tableStructureHistory.record(doc, b, tx, um, before);
-                  if (marker) um.recordMarker(marker);
+                  if (marker) { um.recordMarker(marker); findBatchHistory.recordTableChange(marker, batchAliases, false); atomicFindHistory.recordTableChange(marker, atomicAliases, false); }
                   sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force((x) => x + 1); publish();
                 }}
                 onTableFill={readOnly || atomicTableLocked ? undefined : (range, value) => tableFormat(range, { kind: "fill", value })}
@@ -3353,6 +3475,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   }
                   const migration = new Tx(doc);
                   if (migrationWrites) applyTableWrites(migration, b, current.props, migrationWrites);
+                  const batchAliases = findBatchHistory.capture(doc, [b]), atomicAliases = atomicFindHistory.capture(doc, [b]);
                   const before = tableStructureHistory.snapshot(doc, b);
                   const tx = new Tx(doc);
                   if (plan.kind === "table") tx.setProp(b, "type", "paragraph");
@@ -3364,7 +3487,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   if (tx.ops.length) {
                     um.seal();
                     const marker = tableStructureHistory.record(doc, b, tx, um, before);
-                    if (marker) um.recordMarker(marker);
+                    if (marker) { um.recordMarker(marker); findBatchHistory.recordTableChange(marker, batchAliases, false); atomicFindHistory.recordTableChange(marker, atomicAliases, false); }
                     sync.client.push([...migration.ops, ...tx.ops]); um.seal(); force((x) => x + 1); publish();
                     if (plan.kind === "table" && hadEditorFocus) requestAnimationFrame(() => {
                       if (sync.client.doc === doc && doc.hasBlock(b) && doc.blockInfo(b).type === "paragraph" && document.activeElement === document.body) root.current?.focus();
@@ -3824,7 +3947,9 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
       if (atom) {
         const covered = (commentFlags ?? []).slice(atom.start, atom.end).filter((value): value is number => value != null);
         const anchor = activeThread != null && covered.includes(activeThread) ? activeThread : (covered[0] ?? null);
-        result.push({ text: chars.slice(atom.start, atom.end).map((char) => char.ch).join(""), marks: c.marks, anchor, highlight: 0 });
+        let atomHighlight: 0 | 1 | 2 = 0;
+        for (let k = atom.start; k < atom.end; k++) if (flags[k] > atomHighlight) atomHighlight = flags[k];
+        result.push({ text: chars.slice(atom.start, atom.end).map((char) => char.ch).join(""), marks: c.marks, anchor, highlight: atomHighlight });
         i = atom.end - 1;
         continue;
       }
@@ -3953,7 +4078,7 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
           {spans.length ? <DiagramView src={spans.map((c) => c.ch).join("")} /> : <span className="text-[13px] text-subtle">{onDiagramSource ? "空流程图——双击输入 Mermaid" : "空流程图"}</span>}
         </div>
       ) : type === "math" ? (
-        <MathBlock src={spans.map((c) => c.ch).join("")} onSource={onMathSource ? () => onMathSource(id) : undefined} />
+        <MathBlock src={spans.map((c) => c.ch).join("")} findRanges={findRanges} onSource={onMathSource ? () => onMathSource(id) : undefined} />
       ) : type === "columns" ? (
         <div contentEditable={false} className="group/cols relative my-2" data-columns>
           <div className="-ml-6 overflow-x-auto pl-6" data-column-scroll><div className="flex w-full">
@@ -4283,17 +4408,53 @@ function BookmarkBlock({ url, name, title, description, icon, preview, onProps }
 
 
 
-/** 公式块：LaTeX 源码渲染视图，点击编辑源码。 */
-function MathBlock({ src, onSource }: { src: string; onSource?: () => void }) {
+/** 公式块：LaTeX 源码渲染视图，点击编辑源码；查找命中时高亮并展示源码定位条。 */
+function MathBlock({ src, findRanges, onSource }: { src: string; findRanges?: { start: number; end: number; active: boolean }[]; onSource?: () => void }) {
+  const hasMatch = !!findRanges?.length;
+  const hasActive = !!findRanges?.some((r) => r.active);
+  const highlightedSource = useMemo(() => {
+    if (!hasMatch || !src) return null;
+    const chars = [...src];
+    const flags: (0 | 1 | 2)[] = chars.map(() => 0);
+    for (const r of findRanges!) {
+      for (let i = Math.max(0, r.start); i < Math.min(chars.length, r.end); i++) {
+        flags[i] = r.active ? 2 : Math.max(flags[i], 1) as 0 | 1 | 2;
+      }
+    }
+    const segs: { text: string; flag: 0 | 1 | 2 }[] = [];
+    for (let i = 0; i < chars.length; i++) {
+      const last = segs.at(-1);
+      if (last && last.flag === flags[i]) last.text += chars[i];
+      else segs.push({ text: chars[i], flag: flags[i] });
+    }
+    return segs;
+  }, [hasMatch, src, findRanges]);
   return (
     <div
       contentEditable={false}
-      className={cn("my-2 select-none overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed", onSource && "cursor-pointer hover:bg-hover")}
+      className={cn(
+        "my-2 select-none overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed",
+        onSource && "cursor-pointer hover:bg-hover",
+        hasActive ? "bg-[#fff8e6] ring-2 ring-[#ffb74d] dark:bg-amber-950/25" : hasMatch && "bg-[#fffbe6] ring-1 ring-[#ffe69b] dark:bg-amber-950/15",
+      )}
       onDoubleClick={onSource}
       data-math
+      data-find-match={hasMatch ? "true" : undefined}
+      data-find-active={hasActive ? "true" : undefined}
       title={onSource ? "双击编辑公式" : undefined}
     >
       {src ? <MathView src={src} /> : <span className="not-italic text-subtle">{onSource ? "空公式——双击输入 LaTeX" : "空公式"}</span>}
+      {highlightedSource && (
+        <div data-math-find-source className="mt-2 border-t border-amber-200/70 pt-1.5 font-mono text-[12px] not-italic text-muted-foreground dark:border-amber-800/40">
+          {highlightedSource.map((seg, idx) =>
+            seg.flag ? (
+              <mark key={idx} className={cn("rounded-[2px] px-0.5 text-foreground", seg.flag === 2 ? "bg-[#ffb74d]" : "bg-[#ffe69b]")}>{seg.text}</mark>
+            ) : (
+              <span key={idx}>{seg.text}</span>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }

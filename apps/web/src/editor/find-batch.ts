@@ -1,4 +1,4 @@
-import { Doc, Tx, UndoManager, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId } from "@jiange/collab";
+import { Doc, Tx, UndoManager, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, type UndoManagerSnapshot } from "@jiange/collab";
 import { FIND_CHANGED_CODEPOINT_LIMIT, FIND_FRAME_LIMIT, FIND_REPLACEMENT_BYTES_LIMIT, FIND_WORK_LIMIT, preflightFindReplace } from "./find-replace-safety";
 import { replaceMatches, searchableLocations, type FindMatch } from "./find-replace";
 import { readTableFindState, resolveTableFindMatch } from "./table-find";
@@ -155,8 +155,25 @@ export class FindBatchHistory {
     if (this.tableActions.size > 500) this.tableActions.delete(this.tableActions.keys().next().value!);
   }
   finishTableChange(doc: Doc, key: string, redo: boolean, current: Alias[]) {
-    const history = this.tableActions.get(key), from = redo ? history?.redo : history?.undo, to = redo ? history?.undo : history?.redo;
-    const item = from?.pop(); if (!item || !to) return;
+    let history = this.tableActions.get(key);
+    // The table action may predate the mixed find-batch replacement. Capture
+    // currently matching batch history as its inverse crosses that older
+    // action, so redoing it can rebase the newer find-batch marker safely.
+    if (!history && current.length) {
+      history = { undo: [], redo: [] };
+      this.tableActions.set(key, history);
+      if (this.tableActions.size > 500) this.tableActions.delete(this.tableActions.keys().next().value!);
+    }
+    if (!history) return;
+    const from = redo ? history.redo : history.undo, to = redo ? history.undo : history.redo;
+    const item = from.pop();
+    if (!item) {
+      if (current.length) {
+        to.push(redo ? { before: current, after: [] } : { before: [], after: current });
+        if (to.length > 500) to.shift();
+      }
+      return;
+    }
     this.rebase(doc, redo ? item.after : item.before);
     if (redo) item.before = current; else item.after = current;
     to.push(item);
@@ -177,7 +194,7 @@ export class FindBatchHistory {
     const entry = this.entries.get(key);
     if (!entry || undo.peekMarker(redo) !== key) return { status: "empty" };
     if (entry.doc !== doc) return { status: "conflict" };
-    const locations = new Map(searchableLocations(doc).map((item) => [idKey(item.block), item.parent]));
+    const locations = new Map(searchableLocations(doc, { includeMath: true }).map((item) => [idKey(item.block), item.parent]));
     if (entry.textBlocks.some((item) => !locations.has(idKey(undo.map(item.block))) || !eqId(locations.get(idKey(undo.map(item.block)))!, undo.map(item.parent)))) return { status: "conflict" };
     for (const table of entry.tables) {
       const state = readTableFindState(doc, table.block);
@@ -200,5 +217,92 @@ export class FindBatchHistory {
     if (redo) entry.beforeAliases = aliases; else entry.afterAliases = aliases;
     undo.moveMarker(redo, key);
     return { status: "ready", ops: [...text, ...tables], rebases: entry.tables.map((table) => { const version = doc.propVersion(table.block, "tableData"); return { block: table.block, logical: redo ? table.afterData : table.beforeData, actual: version ? idKey(version) : null, guard: table.guard }; }) };
+  }
+
+  exportState<S>(doc: Doc, undo: UndoManager<S>): {
+    v: 1;
+    entries: [string, { text: UndoManagerSnapshot; textBlocks: TextBlock[]; tables: TableHistory[]; beforeAliases: Alias[]; afterAliases: Alias[] }][];
+    tableActions: [string, { undo: { before: Alias[]; after: Alias[] }[]; redo: { before: Alias[]; after: Alias[] }[] }][];
+  } {
+    const entries: [string, { text: UndoManagerSnapshot; textBlocks: TextBlock[]; tables: TableHistory[]; beforeAliases: Alias[]; afterAliases: Alias[] }][] = [];
+    for (const [key, entry] of this.entries) {
+      if (entry.doc !== doc || !undo.hasMarker(key)) continue;
+      entries.push([
+        key,
+        {
+          text: entry.text.exportState(),
+          textBlocks: JSON.parse(JSON.stringify(entry.textBlocks)) as TextBlock[],
+          tables: JSON.parse(JSON.stringify(entry.tables)) as TableHistory[],
+          beforeAliases: JSON.parse(JSON.stringify(entry.beforeAliases)) as Alias[],
+          afterAliases: JSON.parse(JSON.stringify(entry.afterAliases)) as Alias[],
+        },
+      ]);
+    }
+    const tableActions: [string, { undo: { before: Alias[]; after: Alias[] }[]; redo: { before: Alias[]; after: Alias[] }[] }][] = [];
+    for (const [key, act] of this.tableActions) {
+      if (!undo.hasMarker(key)) continue;
+      tableActions.push([key, JSON.parse(JSON.stringify(act)) as { undo: { before: Alias[]; after: Alias[] }[]; redo: { before: Alias[]; after: Alias[] }[] }]);
+    }
+    return { v: 1, entries, tableActions };
+  }
+
+  importState<S>(doc: Doc, undo: UndoManager<S>, raw: unknown): Set<string> {
+    const restoredKeys = new Set<string>();
+    if (typeof raw !== "object" || raw === null) return restoredKeys;
+    const data = raw as { v?: unknown; entries?: unknown; tableActions?: unknown };
+    if (data.v !== 1 || !Array.isArray(data.entries) || !Array.isArray(data.tableActions)) return restoredKeys;
+    const isOp = (v: unknown): v is OpId => typeof v === "object" && v !== null && Number.isSafeInteger((v as OpId).client) && (v as OpId).client >= 0 && Number.isSafeInteger((v as OpId).clock) && (v as OpId).clock >= 0;
+    const isAlias = (a: unknown): a is Alias => typeof a === "object" && a !== null && typeof (a as Alias).key === "string" && typeof (a as Alias).block === "string" && typeof (a as Alias).expected === "string" && Array.isArray((a as Alias).versions);
+    const isTableHist = (t: unknown): t is TableHistory =>
+      typeof t === "object" &&
+      t !== null &&
+      isOp((t as TableHistory).block) &&
+      Array.isArray((t as TableHistory).before) &&
+      Array.isArray((t as TableHistory).after) &&
+      Array.isArray((t as TableHistory).cells) &&
+      typeof (t as TableHistory).expected === "string" &&
+      Array.isArray((t as TableHistory).versions) &&
+      typeof (t as TableHistory).guard === "string";
+    const parsedEntries: [string, Entry][] = [];
+    for (const pair of data.entries) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") return restoredKeys;
+      const item = pair[1] as { text?: unknown; textBlocks?: unknown; tables?: unknown; beforeAliases?: unknown; afterAliases?: unknown };
+      if (!item || !Array.isArray(item.textBlocks) || !Array.isArray(item.tables) || !Array.isArray(item.beforeAliases) || !Array.isArray(item.afterAliases)) return restoredKeys;
+      if (!item.textBlocks.every((tb: unknown) => typeof tb === "object" && tb !== null && isOp((tb as TextBlock).block) && isOp((tb as TextBlock).parent))) return restoredKeys;
+      if (!item.tables.every(isTableHist) || !item.beforeAliases.every(isAlias) || !item.afterAliases.every(isAlias)) return restoredKeys;
+      const text = new UndoManager<null>();
+      text.shareRemappings(undo);
+      if (!text.importState(item.text)) return restoredKeys;
+      parsedEntries.push([
+        pair[0],
+        {
+          doc,
+          text,
+          textBlocks: JSON.parse(JSON.stringify(item.textBlocks)) as TextBlock[],
+          tables: JSON.parse(JSON.stringify(item.tables)) as TableHistory[],
+          beforeAliases: JSON.parse(JSON.stringify(item.beforeAliases)) as Alias[],
+          afterAliases: JSON.parse(JSON.stringify(item.afterAliases)) as Alias[],
+        },
+      ]);
+    }
+    const parsedActions: [string, { undo: { before: Alias[]; after: Alias[] }[]; redo: { before: Alias[]; after: Alias[] }[] }][] = [];
+    for (const pair of data.tableActions) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") return restoredKeys;
+      const act = pair[1] as { undo?: unknown; redo?: unknown };
+      const okList = (list: unknown): list is { before: Alias[]; after: Alias[] }[] =>
+        Array.isArray(list) && list.every((i) => typeof i === "object" && i !== null && Array.isArray((i as { before: Alias[] }).before) && Array.isArray((i as { after: Alias[] }).after) && (i as { before: Alias[] }).before.every(isAlias) && (i as { after: Alias[] }).after.every(isAlias));
+      if (!act || !okList(act.undo) || !okList(act.redo)) return restoredKeys;
+      parsedActions.push([pair[0], JSON.parse(JSON.stringify(act)) as { undo: { before: Alias[]; after: Alias[] }[]; redo: { before: Alias[]; after: Alias[] }[] }]);
+    }
+    this.entries.clear();
+    this.tableActions.clear();
+    for (const [key, entry] of parsedEntries) {
+      this.entries.set(key, entry);
+      restoredKeys.add(key);
+      const seq = Number(key.split(":").at(-1));
+      if (Number.isSafeInteger(seq) && seq > serial) serial = seq;
+    }
+    for (const [key, act] of parsedActions) this.tableActions.set(key, act);
+    return restoredKeys;
   }
 }

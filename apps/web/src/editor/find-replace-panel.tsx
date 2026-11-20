@@ -13,6 +13,8 @@ export interface FindReplacePanelProps {
   activeIndex: number;
   canReplace: boolean;
   canReplaceAll?: boolean;
+  caseSensitive?: boolean;
+  includeMath?: boolean;
   scopeNotice?: string;
   /** Constraints that affect the current results and should remain visible. */
   warningMessage?: string;
@@ -24,6 +26,8 @@ export interface FindReplacePanelProps {
   onModeChange: (mode: FindReplaceMode) => void;
   onQueryChange: (value: string) => void;
   onReplacementChange: (value: string) => void;
+  onCaseSensitiveChange?: (value: boolean) => void;
+  onIncludeMathChange?: (value: boolean) => void;
   onNavigate: (direction: -1 | 1) => void;
   onReplace: () => void;
   onReplaceAll: () => void;
@@ -32,8 +36,8 @@ export interface FindReplacePanelProps {
 
 /** Controlled document find/replace panel. The caller owns matching and edits. */
 export function FindReplacePanel({
-  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, scopeNotice, warningMessage, statusMessage, historyAction, className,
-  onModeChange, onQueryChange, onReplacementChange, onNavigate, onReplace, onReplaceAll, onClose,
+  mode, query, replacement, matchCount, activeIndex, canReplace, canReplaceAll = canReplace, caseSensitive = false, includeMath = false, scopeNotice, warningMessage, statusMessage, historyAction, className,
+  onModeChange, onQueryChange, onReplacementChange, onCaseSensitiveChange, onIncludeMathChange, onNavigate, onReplace, onReplaceAll, onClose,
 }: FindReplacePanelProps) {
   const id = useId();
   const queryRef = useRef<HTMLInputElement>(null);
@@ -112,6 +116,44 @@ export function FindReplacePanel({
           <label htmlFor={`${id}-replacement`} className="mb-2 block text-[14px] text-foreground">替换为</label>
           <input id={`${id}-replacement`} value={replacement} onChange={(event) => onReplacementChange(event.target.value)} autoComplete="off" placeholder="请输入文字" className="h-8 w-full rounded-[5px] border bg-surface px-2.5 text-base outline-none placeholder:text-subtle focus:border-[#1456f0] sm:text-[14px]" />
         </div>}
+        {(onCaseSensitiveChange || onIncludeMathChange) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {onCaseSensitiveChange && (
+              <button
+                type="button"
+                aria-pressed={caseSensitive}
+                data-find-case-sensitive
+                onClick={() => onCaseSensitiveChange(!caseSensitive)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1 rounded-[5px] border px-2 text-[12px]",
+                  caseSensitive
+                    ? "border-[#1456f0] bg-[#1456f0]/10 font-medium text-[#1456f0]"
+                    : "border-border text-muted-foreground hover:bg-hover hover:text-foreground",
+                )}
+              >
+                <span className="font-mono text-[11px] font-semibold">Aa</span>
+                <span>区分大小写</span>
+              </button>
+            )}
+            {onIncludeMathChange && (
+              <button
+                type="button"
+                aria-pressed={includeMath}
+                data-find-include-math
+                onClick={() => onIncludeMathChange(!includeMath)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1 rounded-[5px] border px-2 text-[12px]",
+                  includeMath
+                    ? "border-[#1456f0] bg-[#1456f0]/10 font-medium text-[#1456f0]"
+                    : "border-border text-muted-foreground hover:bg-hover hover:text-foreground",
+                )}
+              >
+                <span className="font-serif text-[13px] font-semibold leading-none">Σ</span>
+                <span>包含公式</span>
+              </button>
+            )}
+          </div>
+        )}
         {scopeNotice && <p id={`${id}-scope`} className={scopeOpen ? "mt-3 text-[12px] leading-5 text-subtle" : "sr-only"}>{scopeNotice}</p>}
         {warningMessage && <p role="status" className="mt-3 text-[12px] leading-5 text-muted-foreground">{warningMessage}</p>}
         {statusMessage && <p role="status" aria-live="polite" className="mt-2 text-[12px] leading-5 text-muted-foreground">{statusMessage}</p>}

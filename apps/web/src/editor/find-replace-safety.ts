@@ -31,7 +31,7 @@ export function preflightFindReplace(doc: Doc, matches: readonly FindMatch[], re
   let work = 0;
   const blockLengths = new Map<string, number>();
   for (const match of matches) {
-    changedPoints += match.ids.length;
+    changedPoints += match.math?.kind === "inline" ? [...(match.math.formula ?? "")].length : match.ids.length;
     if (changedPoints > FIND_CHANGED_CODEPOINT_LIMIT) return { ok: false, reason: "size" };
     const key = idKey(match.block);
     let length = blockLengths.get(key);

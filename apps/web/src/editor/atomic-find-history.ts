@@ -131,7 +131,7 @@ export class AtomicFindHistory {
     const entry = this.entries.get(key);
     if (!entry || undo.peekMarker(redo) !== key) return { status: "empty" };
     if (entry.doc !== doc || entry.undo !== undo || !Number.isSafeInteger(author) || author <= 0 || author === doc.client || !doc.hasBlock(TITLE) || doc.text(TITLE) !== directoryTitle) return { status: "conflict" };
-    const locations = new Map(searchableLocations(doc).map((item) => [idKey(item.block), item.parent]));
+    const locations = new Map(searchableLocations(doc, { includeMath: true }).map((item) => [idKey(item.block), item.parent]));
     if (entry.blocks.some((item) => !locations.has(idKey(undo.map(item.block))) || !eqId(locations.get(idKey(undo.map(item.block)))!, undo.map(item.parent)))) return { status: "conflict" };
     for (const table of entry.tables) {
       const state = readTableFindState(doc, table.change.block);

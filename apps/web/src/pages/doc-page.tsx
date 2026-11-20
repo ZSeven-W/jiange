@@ -306,6 +306,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const [findMode, setFindMode] = useState<FindReplaceMode>("find");
   const [findQuery, setFindQuery] = useState("");
   const [findReplacement, setFindReplacement] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findIncludeMath, setFindIncludeMath] = useState(false);
   const [findIndex, setFindIndex] = useState(0);
   const [findMessage, setFindMessage] = useState("");
   const [atomicFindBusy, setAtomicFindBusy] = useState(false);
@@ -988,15 +990,28 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     } finally { clearTimeout(timeout); }
   };
   const findDoc = sync.client.doc;
-  const currentFindResult = findOpen && findDoc && findQuery && findResult?.doc === findDoc && findResult.query === findQuery && findResult.version === sync.version ? findResult : null;
+  const currentFindResult =
+    findOpen &&
+    findDoc &&
+    findQuery &&
+    findResult?.doc === findDoc &&
+    findResult.query === findQuery &&
+    findResult.version === sync.version &&
+    !!findResult.caseSensitive === findCaseSensitive &&
+    !!findResult.includeMath === findIncludeMath
+      ? findResult
+      : null;
   const findUpdating = !!(findOpen && findDoc && findQuery && !currentFindResult);
   const matches = currentFindResult?.matches ?? [];
   useEffect(() => {
     if (!findOpen || !findDoc || !findQuery || currentFindResult) return;
     // Coalesce bursts of local and remote edits. Stale results are not shown or
     // available for replacement while this snapshot is being recomputed.
-    return scheduleFindSnapshot(findDoc, findQuery, sync.version, setFindResult);
-  }, [findOpen, findDoc, findQuery, sync.version, currentFindResult]);
+    return scheduleFindSnapshot(findDoc, findQuery, sync.version, setFindResult, {
+      caseSensitive: findCaseSensitive,
+      includeMath: findIncludeMath,
+    });
+  }, [findOpen, findDoc, findQuery, sync.version, findCaseSensitive, findIncludeMath, currentFindResult]);
   const activeFindIndex = matches.length ? Math.max(0, Math.min(findIndex, matches.length - 1)) : -1;
   const activeMatch = activeFindIndex >= 0 ? matches[activeFindIndex] : null;
   // Large result sets remain fully navigable without creating tens of thousands
@@ -1032,6 +1047,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     atomicFindMessage.current = null; findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setAtomicFindBusy(false);
     setFindQuery("");
     setFindReplacement("");
+    setFindCaseSensitive(false);
+    setFindIncludeMath(false);
     setFindIndex(0);
     setFindMessage("");
     setFindPending(null);
@@ -1737,13 +1754,17 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             activeIndex={activeFindIndex}
             canReplace={findCanReplace && !activeMatch?.mention && (!activeIsTitle || !titleSync.hasPending)}
             canReplaceAll={findCanReplace && replacementPlan.selected.length > 0 && (!replacementPlan.selected.some((match) => idKey(match.block) === idKey(TITLE)) || !titleSync.hasPending)}
-            scopeNotice="搜索标题、正文、分栏和表格；公式不在范围内。"
+            caseSensitive={findCaseSensitive}
+            includeMath={findIncludeMath}
+            scopeNotice={findIncludeMath ? "搜索标题、正文、分栏、表格与公式源码。" : "搜索标题、正文、分栏和表格；勾选「包含公式」可查找替换公式源码。"}
             warningMessage={`${replacementPlan.skippedTitles && findMode === "replace" ? `标题中的 ${replacementPlan.skippedTitles} 处结果暂不支持替换，全部替换时将跳过。` : ""}${replacementPlan.skippedMentions && findMode === "replace" ? `提及成员或文档的 ${replacementPlan.skippedMentions} 处结果不可替换，全部替换时将跳过。` : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
             statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
             historyAction={findAtomicHistory ? { label: findAtomicHistory === "undo" ? "撤销本次替换" : "重做本次替换", disabled: atomicFindBusy, onClick: () => { const redo = findAtomicHistory === "redo"; setAtomicFindBusy(true); setFindMessage(redo ? "正在重做…" : "正在撤销…"); if (!atomicFindHistoryControl.current?.step(redo)) { setAtomicFindBusy(false); setFindMessage("最近操作已变化，请先处理较新的文档操作。"); } } } : undefined}
             onModeChange={setFindMode}
             onQueryChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
             onReplacementChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindReplacement(value); setFindMessage(""); setFindPending(null); }}
+            onCaseSensitiveChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindCaseSensitive(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
+            onIncludeMathChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindIncludeMath(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
             onNavigate={(direction) => { if (matches.length) { setFindIndex((current) => (Math.max(0, Math.min(current, matches.length - 1)) + direction + matches.length) % matches.length); requestFindScroll(); } }}
             onReplace={() => void replaceFound(false)}
             onReplaceAll={() => void replaceFound(true)}
