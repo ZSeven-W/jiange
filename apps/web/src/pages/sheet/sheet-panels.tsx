@@ -2,16 +2,18 @@ import { useState } from "react";
 import type {
   Role,
   Share,
+  SheetChart,
   SheetComment,
   SheetCondFormatOp,
   SheetConditionalFormat,
   SheetDataValidation,
+  SheetPivotTable,
   SheetProtectedRange,
   SheetWorksheet,
 } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
-import { Check, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, Trash2, X, ListChecks } from "lucide-react";
+import { BarChart3, Check, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Trash2, X, ListChecks } from "lucide-react";
 import {
   COND_FMT_OPS,
   COND_FMT_PRESETS,
@@ -19,14 +21,18 @@ import {
   makeRuleId,
   type SheetRect,
 } from "./sheet-rules";
+import type { EvaluatedSheetMap } from "./workbook-engine";
+import { SheetChartsPanel, SheetPivotPanel } from "./sheet-analytics-panels";
 
-export type SheetPanelMode = "validation" | "condfmt" | "protect" | "comments";
+export type SheetPanelMode = "validation" | "condfmt" | "protect" | "comments" | "charts" | "pivot";
 
 export interface SheetSidePanelProps {
   mode: SheetPanelMode;
   onChangeMode: (mode: SheetPanelMode) => void;
   onClose: () => void;
+  sheets: SheetWorksheet[];
   activeSheet: SheetWorksheet;
+  evaluatedWorkbook: Map<number, EvaluatedSheetMap>;
   selectionBoundsRect: SheetRect;
   focusedPoint: SheetPoint;
   userId: number;
@@ -37,10 +43,15 @@ export interface SheetSidePanelProps {
   rowPosById: Map<number, number>;
   colPosById: Map<number, number>;
   shareMembers: Share[];
+  editingChartId: string | null;
+  onSelectEditingChart: (id: string | null) => void;
   onSelectRange: (rect: SheetRect) => void;
   onUpdateValidations: (next: SheetDataValidation[]) => Promise<void>;
   onUpdateCondFormats: (next: SheetConditionalFormat[]) => Promise<void>;
   onUpdateProtectedRanges: (next: SheetProtectedRange[]) => Promise<void>;
+  onUpdateCharts: (next: SheetChart[]) => Promise<void>;
+  onUpdatePivotTables: (next: SheetPivotTable[]) => Promise<void>;
+  onMaterializePivot: (pivot: SheetPivotTable, sourceSheet: SheetWorksheet, sourceEvalMap: EvaluatedSheetMap) => Promise<void>;
   onCreateComment: (body: string) => Promise<boolean>;
   onToggleResolveComment: (comment: SheetComment) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -78,7 +89,9 @@ export function SheetSidePanel({
   mode,
   onChangeMode,
   onClose,
+  sheets,
   activeSheet,
+  evaluatedWorkbook,
   selectionBoundsRect,
   focusedPoint,
   userId,
@@ -89,10 +102,15 @@ export function SheetSidePanel({
   rowPosById,
   colPosById,
   shareMembers,
+  editingChartId,
+  onSelectEditingChart,
   onSelectRange,
   onUpdateValidations,
   onUpdateCondFormats,
   onUpdateProtectedRanges,
+  onUpdateCharts,
+  onUpdatePivotTables,
+  onMaterializePivot,
   onCreateComment,
   onToggleResolveComment,
   onDeleteComment,
@@ -283,17 +301,23 @@ export function SheetSidePanel({
 
   const opMeta = COND_FMT_OPS.find((item) => item.op === cfOp);
 
+  const activeEvalMap = evaluatedWorkbook.get(activeSheet.id) ?? {};
+
   return (
     <aside
       data-sheet-panel={mode}
       aria-label={t("表格侧边栏")}
-      className="fixed inset-y-0 right-0 z-40 flex w-[min(100vw,340px)] flex-col border-l border-[#e5e6eb] bg-white shadow-xl sm:static sm:z-auto sm:w-80 sm:shrink-0 sm:shadow-none"
+      className={`fixed inset-y-0 right-0 z-40 flex w-[min(100vw,360px)] flex-col border-l border-[#e5e6eb] bg-white shadow-xl sm:static sm:z-auto sm:shrink-0 sm:shadow-none ${
+        mode === "pivot" ? "sm:w-[400px]" : "sm:w-80"
+      }`}
     >
-      {/* Header + 4-mode switcher */}
-      <div className="flex items-center justify-between border-b border-[#e5e6eb] px-3 py-2.5">
-        <div className="flex items-center gap-1">
+      {/* Header + 6-mode switcher */}
+      <div className="flex items-center justify-between gap-1 border-b border-[#e5e6eb] px-2.5 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto no-scrollbar">
           {(
             [
+              { id: "charts", label: t("图表"), icon: <BarChart3 size={13} /> },
+              { id: "pivot", label: t("透视"), icon: <TableProperties size={13} /> },
               { id: "validation", label: t("验证"), icon: <ListChecks size={13} /> },
               { id: "condfmt", label: t("条件"), icon: <Sparkles size={13} /> },
               { id: "protect", label: t("保护"), icon: <Lock size={13} /> },
@@ -305,7 +329,7 @@ export function SheetSidePanel({
               type="button"
               data-sheet-panel-tab={tab.id}
               onClick={() => onChangeMode(tab.id)}
-              className={`inline-flex h-7 items-center gap-1 rounded px-2 text-[12px] transition-colors ${
+              className={`inline-flex h-7 shrink-0 items-center gap-1 rounded px-2 text-[12px] transition-colors ${
                 mode === tab.id
                   ? "bg-[#e8efff] font-medium text-[#3370ff]"
                   : "text-[#646a73] hover:bg-[#f2f3f5]"
@@ -321,7 +345,7 @@ export function SheetSidePanel({
           aria-label={t("关闭侧边栏")}
           data-sheet-panel-close
           onClick={onClose}
-          className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"
+          className="grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"
         >
           <X size={15} />
         </button>
@@ -329,6 +353,30 @@ export function SheetSidePanel({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3 text-[12px]">
+        {mode === "charts" && (
+          <SheetChartsPanel
+            activeSheet={activeSheet}
+            evalMap={activeEvalMap}
+            selectionBoundsRect={selectionBoundsRect}
+            canEdit={canEdit}
+            editingChartId={editingChartId}
+            onSelectEditingChart={onSelectEditingChart}
+            onSelectRange={onSelectRange}
+            onUpdateCharts={onUpdateCharts}
+          />
+        )}
+
+        {mode === "pivot" && (
+          <SheetPivotPanel
+            sheets={sheets}
+            activeSheet={activeSheet}
+            evaluatedWorkbook={evaluatedWorkbook}
+            selectionBoundsRect={selectionBoundsRect}
+            canEdit={canEdit}
+            onUpdatePivotTables={onUpdatePivotTables}
+            onMaterializePivot={onMaterializePivot}
+          />
+        )}
         {mode === "validation" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">

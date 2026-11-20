@@ -13,10 +13,12 @@ import {
   type SheetCellRevision,
   type SheetCellStyle,
   type SheetCellWrite,
+  type SheetChart,
   type SheetComment,
   type SheetConditionalFormat,
   type SheetDataValidation,
   type SheetMerge,
+  type SheetPivotTable,
   type SheetProtectedRange,
   type SheetSnapshot,
   type SheetStylePatch,
@@ -47,11 +49,14 @@ import {
   normalizePointForMerge,
   parseRangeInput,
   translateWorkbookFormula,
+  type EvaluatedSheetMap,
 } from "./workbook-engine";
 import { exportWorkbookToXlsx, parseXlsxForWorkbook } from "./workbook-xlsx";
 import { FORMULA_QUICK_LIST, formatSheetRefPrefix, SHEET_STARTER_TEMPLATES, type SheetStarterTemplate } from "./workbook-templates";
 import { SheetTabsBar, SheetToolbar } from "./sheet-toolbar";
 import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
+import { computePivotTable, pivotResultToCellMatrix } from "./sheet-analytics";
+import { SheetChartOverlay } from "./sheet-chart-overlay";
 import {
   evaluateSheetConditionalFormat,
   evaluateSheetValidation,
@@ -181,9 +186,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [collaborators, setCollaborators] = useState<RemoteCollaborator[]>([]);
   const [cellConflicts, setCellConflicts] = useState<SheetCellConflict[]>([]);
   const [mergeConflict, setMergeConflict] = useState<PendingMergeConflict | null>(null);
+  const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
   useEffect(() => {
     setCellConflicts([]);
     setMergeConflict(null);
+    setSelectedChartId(null);
   }, [sheetId, activeSheetId]);
   const [pendingImport, setPendingImport] = useState<{ filename: string; sheets: ReturnType<typeof parseXlsxForWorkbook> extends Promise<infer R> ? R : never } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -855,6 +862,139 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const handleUpdateProtectedRanges = async (next: SheetProtectedRange[]) => {
     if (!activeSheet) return;
     await handleWorksheetPatch(activeSheet.id, { protectedRanges: next });
+  };
+
+  const handleUpdateCharts = async (next: SheetChart[]) => {
+    if (!activeSheet) return;
+    await handleWorksheetPatch(activeSheet.id, { charts: next });
+  };
+
+  const handleUpdatePivotTables = async (next: SheetPivotTable[]) => {
+    if (!activeSheet) return;
+    await handleWorksheetPatch(activeSheet.id, { pivotTables: next });
+  };
+
+  const handleMaterializePivot = async (
+    pivot: SheetPivotTable,
+    sourceSheet: SheetWorksheet,
+    sourceEvalMap: EvaluatedSheetMap,
+  ) => {
+    if (!canEdit) return;
+    const computed = computePivotTable(sourceSheet, sourceEvalMap, pivot);
+    const matrix = pivotResultToCellMatrix(pivot, computed);
+    if (matrix.length === 0) return;
+
+    const rawBase = `透视-${(pivot.title || "").trim() || t("汇总")}`.replace(/[\[\]:*?/\\']/g, "").trim() || t("透视表");
+    const base = rawBase.slice(0, 26);
+    const existingNames = new Set(sheets.map((s) => s.title.toLowerCase()));
+    let candidateTitle = base;
+    for (let suffix = 2; existingNames.has(candidateTitle.toLowerCase()) && suffix < 100; suffix++) {
+      candidateTitle = `${base.slice(0, 26 - String(suffix).length - 1)} ${suffix}`;
+    }
+
+    setSavingCount((n) => n + 1);
+    setErrorMessage("");
+    try {
+      const created = await sheetsApi.createWorksheet(sheetId, userId, candidateTitle);
+      let targetWs = created.worksheet;
+      let latestWbRev = created.workbookRevision;
+
+      const maxRow = matrix.reduce((m, e) => Math.max(m, e.row), 0);
+      const maxCol = matrix.reduce((m, e) => Math.max(m, e.col), 0);
+      if (maxRow >= targetWs.rows.length) {
+        const extra = maxRow - targetWs.rows.length + 5;
+        const expanded = await sheetsApi.mutateAxis(sheetId, targetWs.id, userId, {
+          op: "insert_row",
+          index: targetWs.rows.length,
+          count: extra,
+        });
+        targetWs = expanded.worksheet;
+        latestWbRev = Math.max(latestWbRev, expanded.workbookRevision);
+      }
+      if (maxCol >= targetWs.columns.length) {
+        const extra = maxCol - targetWs.columns.length + 2;
+        const expanded = await sheetsApi.mutateAxis(sheetId, targetWs.id, userId, {
+          op: "insert_col",
+          index: targetWs.columns.length,
+          count: extra,
+        });
+        targetWs = expanded.worksheet;
+        latestWbRev = Math.max(latestWbRev, expanded.workbookRevision);
+      }
+
+      const cells: SheetCellWrite[] = [];
+      for (const item of matrix) {
+        const rowAxis = targetWs.rows[item.row];
+        const colAxis = targetWs.columns[item.col];
+        if (!rowAxis || !colAxis) continue;
+        cells.push({
+          rowId: rowAxis.id,
+          columnId: colAxis.id,
+          expectedRevision: 0,
+          raw: item.raw,
+          style: item.style,
+        });
+      }
+
+      if (cells.length > 0) {
+        const writeRes = await sheetsApi.writeCells(sheetId, userId, {
+          mutationId: makeMutationId(),
+          worksheetId: targetWs.id,
+          mergeMode: "auto",
+          cells,
+        });
+        latestWbRev = Math.max(latestWbRev, writeRes.workbookRevision);
+        const writtenCells: SheetCell[] = writeRes.cells.map((c) => ({
+          rowId: c.rowId,
+          columnId: c.columnId,
+          raw: c.raw ?? "",
+          style: c.style ?? {},
+          revision: c.revision,
+        }));
+        targetWs = { ...targetWs, cells: writtenCells };
+      }
+
+      // Auto-fit materialized columns so long cross-tab headers (e.g. "总计 · 利润(求和)") stay unclipped.
+      const colWidthsNeeded = new Map<number, number>();
+      for (const item of matrix) {
+        let approx = 28;
+        for (const ch of item.raw) {
+          approx += ch.charCodeAt(0) > 127 ? 13 : 7.5;
+        }
+        const desired = Math.min(240, Math.max(DEFAULT_COL_WIDTH, Math.ceil(approx)));
+        if (desired > (colWidthsNeeded.get(item.col) ?? DEFAULT_COL_WIDTH)) {
+          colWidthsNeeded.set(item.col, desired);
+        }
+      }
+      for (const [colIdx, size] of colWidthsNeeded) {
+        if (size <= DEFAULT_COL_WIDTH) continue;
+        const resized = await sheetsApi.mutateAxis(sheetId, targetWs.id, userId, {
+          op: "resize_col",
+          index: colIdx,
+          size,
+        });
+        targetWs = { ...resized.worksheet, cells: targetWs.cells };
+        latestWbRev = Math.max(latestWbRev, resized.workbookRevision);
+      }
+
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        const withoutDup = old.sheets.filter((s) => s.id !== targetWs.id);
+        return {
+          ...old,
+          workbookRevision: Math.max(old.workbookRevision, latestWbRev),
+          sheets: [...withoutDup, targetWs].sort((a, b) => a.pos - b.pos || a.id - b.id),
+        };
+      });
+      setActiveSheetId(targetWs.id);
+      setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+      setStatusMessage(t("已将透视表生成到新工作表「{title}」", { title: targetWs.title }));
+      void qc.invalidateQueries({ queryKey: workbookQueryKey });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : t("生成透视工作表失败"));
+    } finally {
+      setSavingCount((n) => Math.max(0, n - 1));
+    }
   };
 
   const handleCreateComment = async (body: string): Promise<boolean> => {
@@ -2021,6 +2161,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                         onPointerDown={(e) => {
                           if (e.button !== 0 || isEditingCell) return;
                           setDropdownCell(null);
+                          setSelectedChartId(null);
                           if (insertFormulaRefAtClick(point)) {
                             e.preventDefault();
                             return;
@@ -2203,6 +2344,26 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               </div>
             );
           })}
+          <SheetChartOverlay
+            sheet={activeSheet}
+            evalMap={activeEvalMap}
+            canEdit={canEdit}
+            selectedChartId={selectedChartId}
+            onSelectChart={(chart) => setSelectedChartId(chart.id)}
+            onEditChart={(chart) => {
+              setSelectedChartId(chart.id);
+              setActivePanel("charts");
+            }}
+            onUpdateChart={(updated) => {
+              const cur = activeSheet.charts ?? [];
+              void handleUpdateCharts(cur.map((c) => (c.id === updated.id ? updated : c)));
+            }}
+            onDeleteChart={(chartId) => {
+              const cur = activeSheet.charts ?? [];
+              if (selectedChartId === chartId) setSelectedChartId(null);
+              void handleUpdateCharts(cur.filter((c) => c.id !== chartId));
+            }}
+          />
         </div>
       </div>
 
@@ -2211,7 +2372,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           mode={activePanel}
           onChangeMode={setActivePanel}
           onClose={() => setActivePanel(null)}
+          sheets={sheets}
           activeSheet={activeSheet}
+          evaluatedWorkbook={evaluatedWorkbook}
           selectionBoundsRect={selectionBounds(selection)}
           focusedPoint={selection.focus}
           userId={userId}
@@ -2222,12 +2385,17 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           rowPosById={gridMap.rowPosById}
           colPosById={gridMap.colPosById}
           shareMembers={sharesQuery.data?.members ?? []}
+          editingChartId={selectedChartId}
+          onSelectEditingChart={setSelectedChartId}
           onSelectRange={(rect) => {
             setSelection({ anchor: { row: rect.top, col: rect.left }, focus: { row: rect.bottom, col: rect.right } });
           }}
           onUpdateValidations={handleUpdateValidations}
           onUpdateCondFormats={handleUpdateCondFormats}
           onUpdateProtectedRanges={handleUpdateProtectedRanges}
+          onUpdateCharts={handleUpdateCharts}
+          onUpdatePivotTables={handleUpdatePivotTables}
+          onMaterializePivot={handleMaterializePivot}
           onCreateComment={handleCreateComment}
           onToggleResolveComment={handleToggleResolveComment}
           onDeleteComment={handleDeleteComment}

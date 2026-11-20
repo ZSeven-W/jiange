@@ -7,6 +7,7 @@ import {
   AlignRight,
   ArrowDownAZ,
   ArrowUpAZ,
+  BarChart3,
   Bold,
   Brush,
   ChevronDown,
@@ -35,6 +36,7 @@ import {
   Search,
   Sparkles,
   Strikethrough,
+  TableProperties,
   Trash2,
   Underline,
   Undo2,
@@ -495,6 +497,8 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
       <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
+      {labeledBtn(t("图表"), activePanel === "charts", false, () => onTogglePanel("charts"), <BarChart3 size={15} />, "charts")}
+      {labeledBtn(t("透视表"), activePanel === "pivot", false, () => onTogglePanel("pivot"), <TableProperties size={15} />, "pivot")}
       {labeledBtn(t("数据验证"), activePanel === "validation", false, () => onTogglePanel("validation"), <ListChecks size={15} />, "validation")}
       {labeledBtn(t("条件格式"), activePanel === "condfmt", false, () => onTogglePanel("condfmt"), <Sparkles size={15} />, "cond-fmt")}
       {labeledBtn(t("保护区域"), activePanel === "protect", false, () => onTogglePanel("protect"), <Lock size={15} />, "protect")}

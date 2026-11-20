@@ -1214,6 +1214,51 @@ export interface SheetComment {
   updatedAt: string;
 }
 
+export type SheetChartType = "column" | "bar" | "line" | "area" | "pie";
+
+export interface SheetChart {
+  id: string;
+  title: string;
+  type: SheetChartType;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  headerRow: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  showLegend: boolean;
+  showValues?: boolean;
+}
+
+export type SheetPivotAgg = "sum" | "count" | "avg" | "min" | "max";
+export type SheetPivotSort = "" | "label_asc" | "label_desc" | "value_desc" | "value_asc";
+
+export interface SheetPivotValue {
+  col: number;
+  agg: SheetPivotAgg;
+}
+
+export interface SheetPivotTable {
+  id: string;
+  title: string;
+  sourceSheetId?: number;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  rowFields: number[];
+  colField?: number;
+  values: SheetPivotValue[];
+  showRowTotals: boolean;
+  showColTotals: boolean;
+  sortBy?: SheetPivotSort;
+  destRow?: number;
+  destCol?: number;
+}
+
 export interface SheetWorksheet {
   id: number;
   nodeId: number;
@@ -1226,6 +1271,8 @@ export interface SheetWorksheet {
   validations?: SheetDataValidation[];
   conditionalFormats?: SheetConditionalFormat[];
   protectedRanges?: SheetProtectedRange[];
+  charts?: SheetChart[];
+  pivotTables?: SheetPivotTable[];
   revision: number;
   rows: SheetAxis[];
   columns: SheetAxis[];
@@ -1339,6 +1386,8 @@ export interface WorksheetPatch {
   validations?: SheetDataValidation[];
   conditionalFormats?: SheetConditionalFormat[];
   protectedRanges?: SheetProtectedRange[];
+  charts?: SheetChart[];
+  pivotTables?: SheetPivotTable[];
   expectedRevision?: number;
 }
 

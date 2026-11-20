@@ -42,6 +42,8 @@ type memWorksheet struct {
 	validations        []SheetDataValidation
 	conditionalFormats []SheetConditionalFormat
 	protectedRanges    []SheetProtectedRange
+	charts             []SheetChart
+	pivotTables        []SheetPivotTable
 	revision           int64
 	rows               []SheetAxis
 	columns            []SheetAxis
@@ -140,6 +142,8 @@ func (w *memWorksheet) toModel() SheetWorksheet {
 		Validations:        w.validations,
 		ConditionalFormats: w.conditionalFormats,
 		ProtectedRanges:    w.protectedRanges,
+		Charts:             w.charts,
+		PivotTables:        w.pivotTables,
 		Revision:           w.revision,
 		Rows:               w.rows,
 		Columns:            w.columns,
@@ -550,7 +554,7 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 			}
 		}
 		nextMerges = applied
-		mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil
+		mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil && patch.Charts == nil && patch.PivotTables == nil
 	}
 	nextFilter := cloneSheetFilter(ws.filter)
 	if patch.Filter != nil {
@@ -587,6 +591,26 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 			return SheetWorksheet{}, 0, ErrConflict
 		}
 	}
+	nextCharts := cloneSheetCharts(ws.charts)
+	if patch.Charts != nil {
+		var ok bool
+		nextCharts, ok = validateAndNormalizeSheetCharts(*patch.Charts, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
+	nextPivots := cloneSheetPivotTables(ws.pivotTables)
+	if patch.PivotTables != nil {
+		dims := make(map[int64][2]int, len(wb.sheets))
+		for id, s := range wb.sheets {
+			dims[id] = [2]int{len(s.rows), len(s.columns)}
+		}
+		var ok bool
+		nextPivots, ok = validateAndNormalizeSheetPivotTables(*patch.PivotTables, ws.id, dims)
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
 	if err := driveMemoryEnd(ctx, g, expires); err != nil {
 		return SheetWorksheet{}, 0, err
 	}
@@ -611,6 +635,8 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 	ws.validations = nextValidations
 	ws.conditionalFormats = nextCondFormats
 	ws.protectedRanges = nextProtected
+	ws.charts = nextCharts
+	ws.pivotTables = nextPivots
 	ws.revision++
 	wb.revision++
 	d.meta.UpdatedAt = time.Now()
@@ -696,6 +722,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.validations = adjustSheetValidationsInsert(ws.validations, "row", op.Index, count)
 		ws.conditionalFormats = adjustSheetCondFormatsInsert(ws.conditionalFormats, "row", op.Index, count)
 		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "row", op.Index, count)
+		ws.charts = adjustSheetChartsInsert(ws.charts, "row", op.Index, count)
+		ws.pivotTables = adjustSheetPivotsInsert(ws.pivotTables, ws.id, "row", op.Index, count)
 	case "delete_row":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.rows) || len(ws.rows)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
@@ -730,6 +758,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.validations = adjustSheetValidationsDelete(ws.validations, "row", op.Index, count)
 		ws.conditionalFormats = adjustSheetCondFormatsDelete(ws.conditionalFormats, "row", op.Index, count)
 		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "row", op.Index, count)
+		ws.charts = adjustSheetChartsDelete(ws.charts, "row", op.Index, count)
+		ws.pivotTables = adjustSheetPivotsDelete(ws.pivotTables, ws.id, "row", op.Index, count)
 		if ws.frozenRows > len(ws.rows)-1 {
 			ws.frozenRows = max(0, len(ws.rows)-1)
 		}
@@ -766,6 +796,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.validations = adjustSheetValidationsInsert(ws.validations, "col", op.Index, count)
 		ws.conditionalFormats = adjustSheetCondFormatsInsert(ws.conditionalFormats, "col", op.Index, count)
 		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "col", op.Index, count)
+		ws.charts = adjustSheetChartsInsert(ws.charts, "col", op.Index, count)
+		ws.pivotTables = adjustSheetPivotsInsert(ws.pivotTables, ws.id, "col", op.Index, count)
 	case "delete_col":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.columns) || len(ws.columns)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
@@ -800,6 +832,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.validations = adjustSheetValidationsDelete(ws.validations, "col", op.Index, count)
 		ws.conditionalFormats = adjustSheetCondFormatsDelete(ws.conditionalFormats, "col", op.Index, count)
 		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "col", op.Index, count)
+		ws.charts = adjustSheetChartsDelete(ws.charts, "col", op.Index, count)
+		ws.pivotTables = adjustSheetPivotsDelete(ws.pivotTables, ws.id, "col", op.Index, count)
 		if ws.frozenCols > len(ws.columns)-1 {
 			ws.frozenCols = max(0, len(ws.columns)-1)
 		}
@@ -970,12 +1004,14 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		sheets:   make(map[int64]*memWorksheet, len(srcBook.order)),
 		receipts: map[memSheetReceiptKey]memSheetReceipt{},
 	}
+	wsIDMap := make(map[int64]int64, len(srcBook.order))
 	for pos, wid := range srcBook.order {
 		srcWS := srcBook.sheets[wid]
 		if srcWS == nil {
 			continue
 		}
 		dstWS := m.createMemWorksheetLocked(newID, srcWS.title, pos, len(srcWS.rows), len(srcWS.columns))
+		wsIDMap[srcWS.id] = dstWS.id
 		rowMap := make(map[int64]int64, len(srcWS.rows))
 		colMap := make(map[int64]int64, len(srcWS.columns))
 		for i, r := range srcWS.rows {
@@ -993,6 +1029,8 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		dstWS.validations = cloneSheetValidations(srcWS.validations)
 		dstWS.conditionalFormats = cloneSheetCondFormats(srcWS.conditionalFormats)
 		dstWS.protectedRanges = cloneSheetProtectedRanges(srcWS.protectedRanges)
+		dstWS.charts = cloneSheetCharts(srcWS.charts)
+		dstWS.pivotTables = cloneSheetPivotTables(srcWS.pivotTables)
 		for k, cell := range srcWS.cells {
 			if cell.Raw == "" && cell.Style == (SheetCellStyle{}) {
 				continue
@@ -1012,6 +1050,9 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		}
 		dstBook.sheets[dstWS.id] = dstWS
 		dstBook.order = append(dstBook.order, dstWS.id)
+	}
+	for _, dstWS := range dstBook.sheets {
+		dstWS.pivotTables = remapSheetPivotSourceIDs(dstWS.pivotTables, wsIDMap)
 	}
 	m.d.docs = append(m.d.docs, d)
 	m.sheets.books[newID] = dstBook

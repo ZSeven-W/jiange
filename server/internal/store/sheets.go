@@ -111,6 +111,8 @@ type SheetWorksheet struct {
 	Validations        []SheetDataValidation    `json:"validations"`
 	ConditionalFormats []SheetConditionalFormat `json:"conditionalFormats"`
 	ProtectedRanges    []SheetProtectedRange    `json:"protectedRanges"`
+	Charts             []SheetChart             `json:"charts"`
+	PivotTables        []SheetPivotTable        `json:"pivotTables"`
 	Revision           int64                    `json:"revision"`
 	Rows               []SheetAxis              `json:"rows"`
 	Columns            []SheetAxis              `json:"columns"`
@@ -177,6 +179,8 @@ type WorksheetPatch struct {
 	Validations        *[]SheetDataValidation    `json:"validations,omitempty"`
 	ConditionalFormats *[]SheetConditionalFormat `json:"conditionalFormats,omitempty"`
 	ProtectedRanges    *[]SheetProtectedRange    `json:"protectedRanges,omitempty"`
+	Charts             *[]SheetChart             `json:"charts,omitempty"`
+	PivotTables        *[]SheetPivotTable        `json:"pivotTables,omitempty"`
 	ExpectedRevision   *int64                    `json:"expectedRevision,omitempty"`
 }
 
@@ -632,6 +636,8 @@ func cloneSheetWorksheet(w SheetWorksheet) SheetWorksheet {
 	w.Validations = cloneSheetValidations(w.Validations)
 	w.ConditionalFormats = cloneSheetCondFormats(w.ConditionalFormats)
 	w.ProtectedRanges = cloneSheetProtectedRanges(w.ProtectedRanges)
+	w.Charts = cloneSheetCharts(w.Charts)
+	w.PivotTables = cloneSheetPivotTables(w.PivotTables)
 	cells := make([]SheetCell, len(w.Cells))
 	for i, c := range w.Cells {
 		c.Style = cloneSheetStyle(c.Style)

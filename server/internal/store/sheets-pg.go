@@ -110,14 +110,14 @@ func lockSheetPG(ctx context.Context, tx pgx.Tx, g RestoreGuard, nodeID int64, m
 	return info, expires, nil
 }
 
-const worksheetMetaCols = "id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, revision"
+const worksheetMetaCols = "id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, revision"
 
 func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	var ws SheetWorksheet
-	var mergesRaw, filterRaw, validationsRaw, condFormatsRaw, protectedRaw []byte
+	var mergesRaw, filterRaw, validationsRaw, condFormatsRaw, protectedRaw, chartsRaw, pivotsRaw []byte
 	err := row.Scan(
 		&ws.ID, &ws.NodeID, &ws.Title, &ws.Pos, &ws.FrozenRows, &ws.FrozenCols,
-		&mergesRaw, &filterRaw, &validationsRaw, &condFormatsRaw, &protectedRaw, &ws.Revision,
+		&mergesRaw, &filterRaw, &validationsRaw, &condFormatsRaw, &protectedRaw, &chartsRaw, &pivotsRaw, &ws.Revision,
 	)
 	if err != nil {
 		return SheetWorksheet{}, err
@@ -148,6 +148,18 @@ func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	ws.ProtectedRanges = []SheetProtectedRange{}
 	if len(protectedRaw) > 0 {
 		if err := json.Unmarshal(protectedRaw, &ws.ProtectedRanges); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.Charts = []SheetChart{}
+	if len(chartsRaw) > 0 {
+		if err := json.Unmarshal(chartsRaw, &ws.Charts); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.PivotTables = []SheetPivotTable{}
+	if len(pivotsRaw) > 0 {
+		if err := json.Unmarshal(pivotsRaw, &ws.PivotTables); err != nil {
 			return SheetWorksheet{}, err
 		}
 	}
@@ -895,7 +907,7 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 				}
 			}
 			nextMerges = applied
-			mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil
+			mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil && patch.Charts == nil && patch.PivotTables == nil
 		}
 		nextFilter := ws.Filter
 		if patch.Filter != nil {
@@ -928,6 +940,37 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 			}
 			var ok bool
 			nextProtected, ok = validateAndNormalizeSheetProtectedRanges(*patch.ProtectedRanges, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
+		nextCharts := ws.Charts
+		if patch.Charts != nil {
+			var ok bool
+			nextCharts, ok = validateAndNormalizeSheetCharts(*patch.Charts, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
+		nextPivots := ws.PivotTables
+		if patch.PivotTables != nil {
+			dims := make(map[int64][2]int, len(all))
+			for _, item := range all {
+				if item.ID == worksheetID {
+					dims[item.ID] = [2]int{rowCount, colCount}
+					continue
+				}
+				var rc, cc int
+				if e = tx.QueryRow(ctx, `SELECT count(*) FROM sheet_rows WHERE worksheet_id=$1`, item.ID).Scan(&rc); e != nil {
+					return e
+				}
+				if e = tx.QueryRow(ctx, `SELECT count(*) FROM sheet_columns WHERE worksheet_id=$1`, item.ID).Scan(&cc); e != nil {
+					return e
+				}
+				dims[item.ID] = [2]int{rc, cc}
+			}
+			var ok bool
+			nextPivots, ok = validateAndNormalizeSheetPivotTables(*patch.PivotTables, worksheetID, dims)
 			if !ok {
 				return ErrConflict
 			}
@@ -982,8 +1025,16 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, validations=$7::jsonb, conditional_formats=$8::jsonb, protected_ranges=$9::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
-			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)))
+		chartsJSON, e := json.Marshal(nextCharts)
+		if e != nil {
+			return e
+		}
+		pivotsJSON, e := json.Marshal(nextPivots)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, validations=$7::jsonb, conditional_formats=$8::jsonb, protected_ranges=$9::jsonb, charts=$10::jsonb, pivot_tables=$11::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON)))
 		if e != nil {
 			return e
 		}
@@ -1097,6 +1148,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		nextValidations := ws.Validations
 		nextCondFormats := ws.ConditionalFormats
 		nextProtected := ws.ProtectedRanges
+		nextCharts := ws.Charts
+		nextPivots := ws.PivotTables
 
 		switch op.Op {
 		case "insert_row":
@@ -1116,6 +1169,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextValidations = adjustSheetValidationsInsert(nextValidations, "row", op.Index, count)
 			nextCondFormats = adjustSheetCondFormatsInsert(nextCondFormats, "row", op.Index, count)
 			nextProtected = adjustSheetProtectedInsert(nextProtected, "row", op.Index, count)
+			nextCharts = adjustSheetChartsInsert(nextCharts, "row", op.Index, count)
+			nextPivots = adjustSheetPivotsInsert(nextPivots, worksheetID, "row", op.Index, count)
 		case "delete_row":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > rowCount || rowCount-count < 1 {
 				return ErrConflict
@@ -1136,6 +1191,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextValidations = adjustSheetValidationsDelete(nextValidations, "row", op.Index, count)
 			nextCondFormats = adjustSheetCondFormatsDelete(nextCondFormats, "row", op.Index, count)
 			nextProtected = adjustSheetProtectedDelete(nextProtected, "row", op.Index, count)
+			nextCharts = adjustSheetChartsDelete(nextCharts, "row", op.Index, count)
+			nextPivots = adjustSheetPivotsDelete(nextPivots, worksheetID, "row", op.Index, count)
 			newRows := rowCount - count
 			if nextFrozenRows > newRows-1 {
 				nextFrozenRows = max(0, newRows-1)
@@ -1170,6 +1227,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextValidations = adjustSheetValidationsInsert(nextValidations, "col", op.Index, count)
 			nextCondFormats = adjustSheetCondFormatsInsert(nextCondFormats, "col", op.Index, count)
 			nextProtected = adjustSheetProtectedInsert(nextProtected, "col", op.Index, count)
+			nextCharts = adjustSheetChartsInsert(nextCharts, "col", op.Index, count)
+			nextPivots = adjustSheetPivotsInsert(nextPivots, worksheetID, "col", op.Index, count)
 		case "delete_col":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > colCount || colCount-count < 1 {
 				return ErrConflict
@@ -1190,6 +1249,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextValidations = adjustSheetValidationsDelete(nextValidations, "col", op.Index, count)
 			nextCondFormats = adjustSheetCondFormatsDelete(nextCondFormats, "col", op.Index, count)
 			nextProtected = adjustSheetProtectedDelete(nextProtected, "col", op.Index, count)
+			nextCharts = adjustSheetChartsDelete(nextCharts, "col", op.Index, count)
+			nextPivots = adjustSheetPivotsDelete(nextPivots, worksheetID, "col", op.Index, count)
 			newCols := colCount - count
 			if nextFrozenCols > newCols-1 {
 				nextFrozenCols = max(0, newCols-1)
@@ -1231,8 +1292,16 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, validations=$6::jsonb, conditional_formats=$7::jsonb, protected_ranges=$8::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
-			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)))
+		chartsJSON, e := json.Marshal(nextCharts)
+		if e != nil {
+			return e
+		}
+		pivotsJSON, e := json.Marshal(nextPivots)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, validations=$6::jsonb, conditional_formats=$7::jsonb, protected_ranges=$8::jsonb, charts=$9::jsonb, pivot_tables=$10::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON)))
 		if e != nil {
 			return e
 		}
@@ -1503,6 +1572,8 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 			return e
 		}
 
+		wsIDMap := make(map[int64]int64, len(sourceSheets))
+		copiedPivots := make(map[int64][]SheetPivotTable, len(sourceSheets))
 		for pos, src := range sourceSheets {
 			mergesJSON, e := json.Marshal(src.Merges)
 			if e != nil {
@@ -1524,10 +1595,18 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 			if e != nil {
 				return e
 			}
-			var wid int64
-			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,1) RETURNING id`,
-				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON)).Scan(&wid); e != nil {
+			chartsJSON, e := json.Marshal(src.Charts)
+			if e != nil {
 				return e
+			}
+			var wid int64
+			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,'[]'::jsonb,1) RETURNING id`,
+				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON)).Scan(&wid); e != nil {
+				return e
+			}
+			wsIDMap[src.ID] = wid
+			if len(src.PivotTables) > 0 {
+				copiedPivots[wid] = src.PivotTables
 			}
 			rPos := make([]int, len(src.Rows))
 			rSize := make([]int, len(src.Rows))
@@ -1614,6 +1693,17 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 						return e
 					}
 				}
+			}
+		}
+
+		for newWID, pivots := range copiedPivots {
+			remapped := remapSheetPivotSourceIDs(pivots, wsIDMap)
+			pivotsJSON, e := json.Marshal(remapped)
+			if e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `UPDATE sheet_worksheets SET pivot_tables=$2::jsonb WHERE id=$1`, newWID, string(pivotsJSON)); e != nil {
+				return e
 			}
 		}
 

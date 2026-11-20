@@ -8,6 +8,8 @@ export type EvalValue =
   | { kind: "boolean"; value: boolean; error?: undefined }
   | { kind: "error"; value: string; error: string };
 
+export type EvaluatedSheetMap = Record<string, EvalValue>;
+
 export interface FormulaRefHighlight {
   sheetId: number;
   top: number;
