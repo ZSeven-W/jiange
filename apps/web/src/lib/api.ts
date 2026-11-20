@@ -667,6 +667,8 @@ export interface OrgDepartment {
   parentId: number | null;
   name: string;
   sortOrder: number;
+  syncSourceId?: number | null;
+  externalId?: string;
   members: OrgDepartmentMember[];
   createdAt: string;
   updatedAt: string;
@@ -681,6 +683,8 @@ export interface OrgGroup {
   workspaceId: number;
   name: string;
   description: string;
+  syncSourceId?: number | null;
+  externalId?: string;
   members: OrgGroupMember[];
   createdAt: string;
   updatedAt: string;
@@ -739,6 +743,101 @@ export const orgApi = {
     request<void>("DELETE", `/api/workspaces/${wsId}/groups/${groupId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
   setGroupMember: (wsId: number, groupId: number, userId: number, memberUserId: number, present: boolean) =>
     request<void>("PUT", `/api/workspaces/${wsId}/groups/${groupId}/members`, { userId: memberUserId, present }, undefined, { "X-Jiange-User-Id": String(userId) }),
+};
+
+export type OrgSyncProvider = "scim" | "ldap" | "wecom" | "dingtalk" | "custom";
+
+export interface OrgSyncSource {
+  id: number;
+  workspaceId: number;
+  name: string;
+  provider: OrgSyncProvider;
+  enabled: boolean;
+  tokenPrefix: string;
+  autoInviteMissing: boolean;
+  pruneMissing: boolean;
+  lastSyncAt?: string;
+  lastStatus: string;
+  lastSummary: string;
+  createdBy: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrgSyncSourceCreated {
+  source: OrgSyncSource;
+  token?: string;
+}
+
+export interface OrgSyncDeptInput {
+  externalId: string;
+  parentExternalId?: string;
+  name: string;
+  sortOrder?: number;
+}
+
+export interface OrgSyncGroupInput {
+  externalId: string;
+  name: string;
+  description?: string;
+}
+
+export interface OrgSyncMemberInput {
+  email: string;
+  name?: string;
+  role?: "" | "member" | "admin";
+  departmentExternalIds?: string[];
+  leaderDepartmentExternalIds?: string[];
+  groupExternalIds?: string[];
+}
+
+export interface OrgDirectorySyncPayload {
+  departments: OrgSyncDeptInput[];
+  groups: OrgSyncGroupInput[];
+  members: OrgSyncMemberInput[];
+  dryRun?: boolean;
+  pruneMissing?: boolean;
+}
+
+export interface OrgSyncRun {
+  id: number;
+  workspaceId: number;
+  sourceId: number;
+  sourceName?: string;
+  actorUserId?: number;
+  triggerMode: "manual" | "push" | "scim";
+  dryRun: boolean;
+  status: "ok" | "failed";
+  departmentsCreated: number;
+  departmentsUpdated: number;
+  departmentsRemoved: number;
+  groupsCreated: number;
+  groupsUpdated: number;
+  groupsRemoved: number;
+  membersLinked: number;
+  membersInvited: number;
+  membershipsUpdated: number;
+  errorMessage?: string;
+  warnings?: string[];
+  createdAt: string;
+}
+
+export interface OrgSyncState {
+  sources: OrgSyncSource[];
+  runs: OrgSyncRun[];
+}
+
+export const orgSyncApi = {
+  state: (wsId: number, userId: number) =>
+    request<OrgSyncState>("GET", `/api/workspaces/${wsId}/org/sync-sources`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createSource: (wsId: number, userId: number, body: { name: string; provider: OrgSyncProvider; autoInviteMissing: boolean; pruneMissing: boolean }) =>
+    request<OrgSyncSourceCreated>("POST", `/api/workspaces/${wsId}/org/sync-sources`, body, undefined, { "X-Jiange-User-Id": String(userId) }),
+  updateSource: (wsId: number, sourceId: number, userId: number, patch: { name?: string; enabled?: boolean; autoInviteMissing?: boolean; pruneMissing?: boolean; rotateToken?: boolean }) =>
+    request<OrgSyncSourceCreated>("PATCH", `/api/workspaces/${wsId}/org/sync-sources/${sourceId}`, patch, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteSource: (wsId: number, sourceId: number, userId: number) =>
+    request<void>("DELETE", `/api/workspaces/${wsId}/org/sync-sources/${sourceId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  run: (wsId: number, sourceId: number, userId: number, payload: OrgDirectorySyncPayload) =>
+    request<OrgSyncRun>("POST", `/api/workspaces/${wsId}/org/sync-sources/${sourceId}/run`, payload, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 
 export type WikiVisibility = "workspace" | "private";

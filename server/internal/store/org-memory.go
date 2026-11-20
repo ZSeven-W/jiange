@@ -13,15 +13,20 @@ type subjectShareKey struct {
 }
 
 type memOrg struct {
-	nextDeptID    int64
-	depts         map[int64]OrgDepartment
-	deptMembers   map[int64]map[int64]bool // deptID -> userID -> isLeader
-	nextGroupID   int64
-	groups        map[int64]OrgGroup
-	groupMembers  map[int64]map[int64]bool // groupID -> userID -> true
-	subjectShares map[int64]map[subjectShareKey]string
-	nextInviteID  int64
-	invitations   map[int64]WorkspaceInvitation
+	nextDeptID       int64
+	depts            map[int64]OrgDepartment
+	deptMembers      map[int64]map[int64]bool // deptID -> userID -> isLeader
+	nextGroupID      int64
+	groups           map[int64]OrgGroup
+	groupMembers     map[int64]map[int64]bool // groupID -> userID -> true
+	subjectShares    map[int64]map[subjectShareKey]string
+	nextInviteID     int64
+	invitations      map[int64]WorkspaceInvitation
+	nextSyncSourceID int64
+	syncSources      map[int64]OrgSyncSource
+	syncTokenHashes  map[int64]string // sourceID -> sha256 hex
+	nextSyncRunID    int64
+	syncRuns         []OrgSyncRun
 }
 
 func (m *Memory) workspaceRoleLocked(ws, uid int64) string {

@@ -34,14 +34,16 @@ type OrgDepartmentMember struct {
 
 // OrgDepartment is a hierarchical enterprise department inside a workspace.
 type OrgDepartment struct {
-	ID          int64                 `json:"id"`
-	WorkspaceID int64                 `json:"workspaceId"`
-	ParentID    *int64                `json:"parentId"`
-	Name        string                `json:"name"`
-	SortOrder   int                   `json:"sortOrder"`
-	Members     []OrgDepartmentMember `json:"members"`
-	CreatedAt   time.Time             `json:"createdAt"`
-	UpdatedAt   time.Time             `json:"updatedAt"`
+	ID           int64                 `json:"id"`
+	WorkspaceID  int64                 `json:"workspaceId"`
+	ParentID     *int64                `json:"parentId"`
+	Name         string                `json:"name"`
+	SortOrder    int                   `json:"sortOrder"`
+	SyncSourceID *int64                `json:"syncSourceId,omitempty"`
+	ExternalID   string                `json:"externalId,omitempty"`
+	Members      []OrgDepartmentMember `json:"members"`
+	CreatedAt    time.Time             `json:"createdAt"`
+	UpdatedAt    time.Time             `json:"updatedAt"`
 }
 
 // OrgGroupMember describes a user inside an enterprise user group.
@@ -53,13 +55,15 @@ type OrgGroupMember struct {
 
 // OrgGroup is an explicit user group inside a workspace for batch sharing.
 type OrgGroup struct {
-	ID          int64            `json:"id"`
-	WorkspaceID int64            `json:"workspaceId"`
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Members     []OrgGroupMember `json:"members"`
-	CreatedAt   time.Time        `json:"createdAt"`
-	UpdatedAt   time.Time        `json:"updatedAt"`
+	ID           int64            `json:"id"`
+	WorkspaceID  int64            `json:"workspaceId"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	SyncSourceID *int64           `json:"syncSourceId,omitempty"`
+	ExternalID   string           `json:"externalId,omitempty"`
+	Members      []OrgGroupMember `json:"members"`
+	CreatedAt    time.Time        `json:"createdAt"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
 }
 
 // WorkspaceOrgSnapshot is the full organization directory of a workspace.

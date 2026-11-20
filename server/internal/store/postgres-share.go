@@ -30,59 +30,69 @@ const roleSQL = `CASE
 	WHEN sh.r = 1 THEN 'view' ELSE '' END`
 
 const roleJoins = ` LEFT JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
+	LEFT JOIN node_acl_state nas ON nas.node_id = n.id
 	LEFT JOIN LATERAL (
-		WITH RECURSIVE a AS (
-			SELECT n.id, n.parent_id, n.inherit_parent_acl, ARRAY[n.id] AS visited
-			UNION ALL
-			SELECT x.id, x.parent_id, x.inherit_parent_acl, a.visited || x.id FROM nodes x JOIN a ON a.inherit_parent_acl AND x.id = a.parent_id
-			WHERE NOT x.id = ANY(a.visited)
-		),
-		ud AS (
-			SELECT d0.id, d0.parent_id, ARRAY[d0.id] AS seen
-			FROM org_department_members dm
-			JOIN org_departments d0 ON d0.id = dm.department_id AND d0.workspace_id = n.workspace_id
-			WHERE dm.user_id = $1 AND m.user_id IS NOT NULL
-			UNION ALL
-			SELECT p.id, p.parent_id, ud.seen || p.id
-			FROM org_departments p
-			JOIN ud ON p.id = ud.parent_id
-			WHERE p.workspace_id = n.workspace_id AND NOT p.id = ANY(ud.seen)
-		)
-		SELECT (SELECT max(grants.rank) FROM (
-			SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
-			FROM doc_shares s JOIN a ON s.doc_id = a.id WHERE s.user_id = $1
-			UNION ALL
-			SELECT CASE ss.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
-			FROM node_subject_shares ss JOIN a ON ss.doc_id = a.id
-			WHERE m.user_id IS NOT NULL AND (
-				(ss.subject_type = 'department' AND EXISTS (SELECT 1 FROM ud WHERE ud.id = ss.subject_id))
-				OR (ss.subject_type = 'group' AND EXISTS (SELECT 1 FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.group_id = ss.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id))
-			)
-			UNION ALL
-			SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'workspace_view' THEN 1 WHEN 'workspace_edit' THEN 2 ELSE 0 END AS rank
-			FROM doc_link_joins j JOIN a ON j.doc_id = a.id JOIN nodes ln ON ln.id = j.doc_id
-			WHERE j.user_id = $1 AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
-			  AND (ln.link_role NOT IN ('workspace_view','workspace_edit') OR EXISTS (SELECT 1 FROM workspace_members lm WHERE lm.workspace_id=ln.workspace_id AND lm.user_id=$1))
-		) grants) AS r,
-		COALESCE((SELECT bool_and(a.inherit_parent_acl) FROM a), true) AS inherits_ws,
-		CASE WHEN n.wiki_space_id IS NULL OR m.user_id IS NULL THEN 0 ELSE COALESCE((
-			SELECT GREATEST(
-				CASE WHEN m.role IN ('owner','admin') OR wsp.creator_id = $1 THEN 3
-				     WHEN wsp.visibility = 'workspace' THEN 1
-				     ELSE 0 END,
-				COALESCE((
-					SELECT max(CASE wg.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 ELSE 0 END)
-					FROM wiki_space_grants wg
-					WHERE wg.space_id = wsp.id AND (
-						(wg.subject_type = 'user' AND wg.subject_id = $1)
-						OR (wg.subject_type = 'department' AND EXISTS (SELECT 1 FROM ud WHERE ud.id = wg.subject_id))
-						OR (wg.subject_type = 'group' AND EXISTS (SELECT 1 FROM org_group_members gm JOIN org_groups g ON g.id = gm.group_id WHERE gm.group_id = wg.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id))
+		SELECT
+			CASE
+				WHEN NOT n.personal AND n.wiki_space_id IS NULL AND (m.role IN ('owner','admin') OR (m.user_id IS NOT NULL AND n.creator_id = $1)) THEN 3
+				WHEN n.personal AND n.creator_id = $1 THEN 3
+				ELSE (SELECT max(grants.rank) FROM (
+					SELECT CASE s.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
+					FROM node_acl_ancestors a
+					JOIN doc_shares s ON s.doc_id = a.ancestor_id AND s.user_id = $1
+					WHERE a.node_id = n.id
+					UNION ALL
+					SELECT CASE ss.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 ELSE 3 END AS rank
+					FROM node_acl_ancestors a
+					JOIN node_subject_shares ss ON ss.doc_id = a.ancestor_id
+					WHERE a.node_id = n.id AND m.user_id IS NOT NULL AND (
+						(ss.subject_type = 'department' AND EXISTS (
+							SELECT 1 FROM org_department_members dm
+							JOIN org_department_closure dc ON dc.descendant_id = dm.department_id AND dc.workspace_id = n.workspace_id
+							WHERE dm.user_id = $1 AND dc.ancestor_id = ss.subject_id
+						))
+						OR (ss.subject_type = 'group' AND EXISTS (
+							SELECT 1 FROM org_group_members gm
+							JOIN org_groups g ON g.id = gm.group_id
+							WHERE gm.group_id = ss.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id
+						))
 					)
-				), 0)
-			)
-			FROM wiki_spaces wsp
-			WHERE wsp.id = n.wiki_space_id AND wsp.workspace_id = n.workspace_id
-		), 0) END AS wiki_rank
+					UNION ALL
+					SELECT CASE ln.link_role WHEN 'anon' THEN 1 WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'workspace_view' THEN 1 WHEN 'workspace_edit' THEN 2 ELSE 0 END AS rank
+					FROM node_acl_ancestors a
+					JOIN doc_link_joins j ON j.doc_id = a.ancestor_id AND j.user_id = $1
+					JOIN nodes ln ON ln.id = j.doc_id
+					WHERE a.node_id = n.id AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
+					  AND (ln.link_role NOT IN ('workspace_view','workspace_edit') OR EXISTS (SELECT 1 FROM workspace_members lm WHERE lm.workspace_id=ln.workspace_id AND lm.user_id=$1))
+				) grants)
+			END AS r,
+			COALESCE(nas.inherits_ws, n.inherit_parent_acl) AS inherits_ws,
+			CASE WHEN n.wiki_space_id IS NULL OR m.user_id IS NULL THEN 0 ELSE COALESCE((
+				SELECT GREATEST(
+					CASE WHEN m.role IN ('owner','admin') OR wsp.creator_id = $1 THEN 3
+					     WHEN wsp.visibility = 'workspace' THEN 1
+					     ELSE 0 END,
+					COALESCE((
+						SELECT max(CASE wg.role WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 ELSE 0 END)
+						FROM wiki_space_grants wg
+						WHERE wg.space_id = wsp.id AND (
+							(wg.subject_type = 'user' AND wg.subject_id = $1)
+							OR (wg.subject_type = 'department' AND EXISTS (
+								SELECT 1 FROM org_department_members dm
+								JOIN org_department_closure dc ON dc.descendant_id = dm.department_id AND dc.workspace_id = n.workspace_id
+								WHERE dm.user_id = $1 AND dc.ancestor_id = wg.subject_id
+							))
+							OR (wg.subject_type = 'group' AND EXISTS (
+								SELECT 1 FROM org_group_members gm
+								JOIN org_groups g ON g.id = gm.group_id
+								WHERE gm.group_id = wg.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id
+							))
+						)
+					), 0)
+				)
+				FROM wiki_spaces wsp
+				WHERE wsp.id = n.wiki_space_id AND wsp.workspace_id = n.workspace_id
+			), 0) END AS wiki_rank
 	) sh ON true`
 
 func (p *Postgres) ListShares(ctx context.Context, doc int64) ([]Share, error) {

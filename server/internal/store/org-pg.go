@@ -84,7 +84,7 @@ func (p *Postgres) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID
 			return e
 		}
 
-		dRows, e := tx.Query(ctx, `SELECT id, workspace_id, parent_id, name, sort_order, created_at, updated_at
+		dRows, e := tx.Query(ctx, `SELECT id, workspace_id, parent_id, name, sort_order, sync_source_id, COALESCE(external_id, ''), created_at, updated_at
 			FROM org_departments
 			WHERE workspace_id=$1
 			ORDER BY sort_order, id`, wsID)
@@ -93,7 +93,7 @@ func (p *Postgres) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID
 		}
 		depts, e := pgx.CollectRows(dRows, func(r pgx.CollectableRow) (d OrgDepartment, err error) {
 			d.Members = []OrgDepartmentMember{}
-			err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Name, &d.SortOrder, &d.CreatedAt, &d.UpdatedAt)
+			err = r.Scan(&d.ID, &d.WorkspaceID, &d.ParentID, &d.Name, &d.SortOrder, &d.SyncSourceID, &d.ExternalID, &d.CreatedAt, &d.UpdatedAt)
 			return
 		})
 		if e != nil {
@@ -130,7 +130,7 @@ func (p *Postgres) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID
 		dmRows.Close()
 		out.Departments = depts
 
-		gRows, e := tx.Query(ctx, `SELECT id, workspace_id, name, description, created_at, updated_at
+		gRows, e := tx.Query(ctx, `SELECT id, workspace_id, name, description, sync_source_id, COALESCE(external_id, ''), created_at, updated_at
 			FROM org_groups
 			WHERE workspace_id=$1
 			ORDER BY id`, wsID)
@@ -139,7 +139,7 @@ func (p *Postgres) GetWorkspaceOrg(ctx context.Context, guard RestoreGuard, wsID
 		}
 		groups, e := pgx.CollectRows(gRows, func(r pgx.CollectableRow) (g OrgGroup, err error) {
 			g.Members = []OrgGroupMember{}
-			err = r.Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt)
+			err = r.Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.Description, &g.SyncSourceID, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt)
 			return
 		})
 		if e != nil {

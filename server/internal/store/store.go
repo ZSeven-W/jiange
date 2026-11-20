@@ -51,6 +51,7 @@ type Store interface {
 	TemplateStore
 	DocTypeStore
 	OrgStore
+	OrgSyncStore
 	WikiStore
 	// CreateUser creates the user and a personal workspace atomically.
 	CreateUser(ctx context.Context, email, name, passwordHash string) (User, Workspace, error)

@@ -107,8 +107,74 @@ func (p *Postgres) CreateDocWithType(ctx context.Context, ws, creator int64, par
 }
 
 func (p *Postgres) ListDocs(ctx context.Context, uid int64) ([]DocMeta, error) {
-	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '') FROM nodes n`+roleJoins+`
-		WHERE m.user_id IS NOT NULL AND n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1) AND (`+roleSQL+`) <> '' ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
+	// Fast-path visibility: skip per-row grant aggregation when a workspace member
+	// already has access via ownership, admin role, creation, or unbroken workspace
+	// inheritance. Only restricted / wiki nodes probe node_acl_ancestors & grants.
+	rows, err := p.Pool.Query(ctx, `SELECT `+prefixed("n.", docCols)+`, (SELECT name FROM users u WHERE u.id = n.creator_id), n.copy_protected, n.copy_min_role, n.download_min_role, n.comment_min_role, n.permissions_revision, n.drive_revision, COALESCE(n.trash_batch_id,0), n.inherit_parent_acl, n.wiki_space_id, COALESCE((SELECT ws.name FROM wiki_spaces ws WHERE ws.id = n.wiki_space_id), '')
+		FROM nodes n
+		JOIN workspace_members m ON m.workspace_id = n.workspace_id AND m.user_id = $1
+		LEFT JOIN node_acl_state nas ON nas.node_id = n.id
+		WHERE n.deleted_at IS NULL AND n.kind <> 'file' AND (NOT n.personal OR n.creator_id = $1)
+		  AND (
+		    (n.personal AND n.creator_id = $1)
+		    OR (NOT n.personal AND (m.role IN ('owner','admin') OR n.creator_id = $1))
+		    OR (NOT n.personal AND n.wiki_space_id IS NULL AND COALESCE(nas.inherits_ws, n.inherit_parent_acl))
+		    OR EXISTS (
+		      SELECT 1 FROM node_acl_ancestors a
+		      JOIN doc_shares s ON s.doc_id = a.ancestor_id AND s.user_id = $1
+		      WHERE a.node_id = n.id
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM node_acl_ancestors a
+		      JOIN node_subject_shares ss ON ss.doc_id = a.ancestor_id
+		      WHERE a.node_id = n.id AND (
+		        (ss.subject_type = 'department' AND EXISTS (
+		          SELECT 1 FROM org_department_members dm
+		          JOIN org_department_closure dc ON dc.descendant_id = dm.department_id AND dc.workspace_id = n.workspace_id
+		          WHERE dm.user_id = $1 AND dc.ancestor_id = ss.subject_id
+		        ))
+		        OR (ss.subject_type = 'group' AND EXISTS (
+		          SELECT 1 FROM org_group_members gm
+		          JOIN org_groups g ON g.id = gm.group_id
+		          WHERE gm.group_id = ss.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id
+		        ))
+		      )
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM node_acl_ancestors a
+		      JOIN doc_link_joins j ON j.doc_id = a.ancestor_id AND j.user_id = $1
+		      JOIN nodes ln ON ln.id = j.doc_id
+		      WHERE a.node_id = n.id AND ln.deleted_at IS NULL AND ln.link_role <> 'none'
+		    )
+		    OR (
+		      n.wiki_space_id IS NOT NULL AND EXISTS (
+		        SELECT 1 FROM wiki_spaces wsp
+		        WHERE wsp.id = n.wiki_space_id AND wsp.workspace_id = n.workspace_id AND (
+		          wsp.creator_id = $1
+		          OR (COALESCE(nas.inherits_ws, n.inherit_parent_acl) AND wsp.visibility = 'workspace')
+		          OR EXISTS (
+		            SELECT 1 FROM wiki_space_grants wg
+		            WHERE wg.space_id = wsp.id
+		              AND (wg.role = 'manage' OR COALESCE(nas.inherits_ws, n.inherit_parent_acl))
+		              AND (
+		                (wg.subject_type = 'user' AND wg.subject_id = $1)
+		                OR (wg.subject_type = 'department' AND EXISTS (
+		                  SELECT 1 FROM org_department_members dm
+		                  JOIN org_department_closure dc ON dc.descendant_id = dm.department_id AND dc.workspace_id = n.workspace_id
+		                  WHERE dm.user_id = $1 AND dc.ancestor_id = wg.subject_id
+		                ))
+		                OR (wg.subject_type = 'group' AND EXISTS (
+		                  SELECT 1 FROM org_group_members gm
+		                  JOIN org_groups g ON g.id = gm.group_id
+		                  WHERE gm.group_id = wg.subject_id AND gm.user_id = $1 AND g.workspace_id = n.workspace_id
+		                ))
+		              )
+		          )
+		        )
+		      )
+		    )
+		  )
+		ORDER BY n.updated_at DESC, n.id DESC LIMIT 500`, uid)
 	if err != nil {
 		return nil, err
 	}

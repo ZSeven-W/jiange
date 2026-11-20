@@ -292,6 +292,11 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/workspaces/{wsId}/groups/{groupId}":           s.updateUserGroup,
 		"DELETE /api/workspaces/{wsId}/groups/{groupId}":          s.deleteUserGroup,
 		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":     s.setUserGroupMember,
+		"GET /api/workspaces/{wsId}/org/sync-sources":                  s.listOrgSyncState,
+		"POST /api/workspaces/{wsId}/org/sync-sources":                 s.createOrgSyncSource,
+		"PATCH /api/workspaces/{wsId}/org/sync-sources/{sourceId}":     s.updateOrgSyncSource,
+		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":    s.deleteOrgSyncSource,
+		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run":  s.runOrgDirectorySync,
 
 		// 独立知识库空间（Wiki）
 		"GET /api/workspaces/{wsId}/wiki-spaces":       s.listWikiSpaces,
@@ -324,6 +329,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/forms/{id}/{vid}", http.HandlerFunc(s.legacyPublicForm))
 	mux.Handle("GET /api/forms/{token}", http.HandlerFunc(s.getForm))
 	mux.Handle("POST /api/forms/{token}", http.HandlerFunc(s.submitForm))
+	// External directory sync webhook / SCIM push (authenticated by connector Bearer token).
+	mux.Handle("POST /api/org/sync/push", http.HandlerFunc(s.pushOrgDirectorySync))
 	mux.Handle("GET /api/trash", s.requireUser(http.HandlerFunc(s.listTrash)))
 	mux.Handle("POST /api/trash/{id}/restore", s.requireUser(http.HandlerFunc(s.restoreDoc)))
 	if s.BtHub != nil {

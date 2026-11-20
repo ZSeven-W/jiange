@@ -830,7 +830,13 @@ func (p *Postgres) ListDriveChildren(ctx context.Context, g RestoreGuard, ws int
 		if parent != nil {
 			personal = parentPersonal // 目录内空间由父目录决定
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),`+roleSQL+`,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n`+roleJoins+` WHERE n.workspace_id=$2 AND n.parent_id IS NOT DISTINCT FROM $3 AND n.personal = $4 AND n.wiki_space_id IS NULL AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, parent, personal)
+		const listDriveSelect = `SELECT n.id,n.workspace_id,n.parent_id,n.kind,n.doc_type,n.title,n.icon,n.creator_id,COALESCE((SELECT u.name FROM users u WHERE u.id=n.creator_id),''),COALESCE((SELECT u.name FROM document_last_modifier lm JOIN users u ON u.id=lm.user_id WHERE lm.doc_id=n.id AND lm.modification_revision=n.modification_revision AND n.kind='doc'),''),` + roleSQL + `,n.drive_revision,n.personal,n.created_at,n.updated_at FROM nodes n` + roleJoins
+		var rows pgx.Rows
+		if parent == nil {
+			rows, e = tx.Query(ctx, listDriveSelect+` WHERE n.workspace_id=$2 AND n.parent_id IS NULL AND n.personal = $3 AND n.wiki_space_id IS NULL AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, personal)
+		} else {
+			rows, e = tx.Query(ctx, listDriveSelect+` WHERE n.workspace_id=$2 AND n.parent_id = $3 AND n.personal = $4 AND n.wiki_space_id IS NULL AND n.deleted_at IS NULL AND (`+roleSQL+`)<>'' ORDER BY (n.kind='folder') DESC,n.sort_key,n.id`, g.UserID, ws, *parent, personal)
+		}
 		if e != nil {
 			return e
 		}

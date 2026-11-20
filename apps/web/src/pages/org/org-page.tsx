@@ -7,8 +7,9 @@ import { colorFor } from "@/lib/presence";
 import { ask, askText } from "@/components/ui/ask";
 import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { OrgSyncPanel } from "./org-sync-panel";
 
-type OrgTab = "departments" | "groups" | "members";
+type OrgTab = "departments" | "groups" | "members" | "sync";
 
 const WS_ROLE_LABELS: Record<string, string> = {
   owner: "空间所有者",
@@ -196,6 +197,9 @@ export function OrgPage({ me }: { me: Me }) {
             >
               <FolderTree size={14} className="shrink-0 text-primary" />
               <span className="min-w-0 flex-1 truncate">{dept.name}</span>
+              {dept.syncSourceId ? (
+                <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">{t("同步")}</span>
+              ) : null}
               <span className="shrink-0 text-[11px] text-subtle">{dept.members.length}</span>
             </button>
             {canAdmin && (
@@ -248,11 +252,12 @@ export function OrgPage({ me }: { me: Me }) {
           </div>
         </header>
 
-        <div className="flex items-center gap-1 border-b bg-surface px-4 md:px-7">
+        <div className="flex items-center gap-1 overflow-x-auto border-b bg-surface px-4 md:px-7">
           {([
             ["departments", t("部门架构")],
             ["groups", t("用户组")],
             ["members", t("空间成员")],
+            ["sync", t("目录同步")],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -261,7 +266,7 @@ export function OrgPage({ me }: { me: Me }) {
               aria-selected={tab === key}
               onClick={() => setTab(key)}
               className={cn(
-                "border-b-2 px-3 py-2.5 text-[14px] font-medium transition-colors",
+                "shrink-0 border-b-2 px-3 py-2.5 text-[14px] font-medium transition-colors",
                 tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
@@ -620,6 +625,10 @@ export function OrgPage({ me }: { me: Me }) {
                 </div>
               )}
             </section>
+          )}
+
+          {data && tab === "sync" && (
+            <OrgSyncPanel workspaceId={effectiveWsId} userId={me.user.id} canAdmin={canAdmin} />
           )}
         </div>
       </div>
