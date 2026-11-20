@@ -396,9 +396,9 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 
 		var wsRev int64
-		var validationsRaw, protectedRaw []byte
-		e = tx.QueryRow(ctx, `SELECT revision, validations, protected_ranges FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, prepared.WorksheetID, nodeID).
-			Scan(&wsRev, &validationsRaw, &protectedRaw)
+		var mergesRaw, validationsRaw, protectedRaw []byte
+		e = tx.QueryRow(ctx, `SELECT revision, merges, validations, protected_ranges FROM sheet_worksheets WHERE id=$1 AND node_id=$2 FOR UPDATE`, prepared.WorksheetID, nodeID).
+			Scan(&wsRev, &mergesRaw, &validationsRaw, &protectedRaw)
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -407,6 +407,12 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 		if info.workbookRevision >= sheetMaxRevision || wsRev >= sheetMaxRevision {
 			return ErrConflict
+		}
+		var merges []SheetMerge
+		if len(mergesRaw) > 0 {
+			if e = json.Unmarshal(mergesRaw, &merges); e != nil {
+				return e
+			}
 		}
 		var validations []SheetDataValidation
 		if len(validationsRaw) > 0 {
@@ -499,25 +505,41 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 			}
 		}
 
-		existing := make(map[memSheetCellKey]SheetCell, len(prepared.Cells))
-		cellRows, e := tx.Query(ctx, `SELECT row_id, column_id, raw, style, revision FROM sheet_cells WHERE worksheet_id=$1 AND row_id=ANY($2) AND column_id=ANY($3) FOR UPDATE`, prepared.WorksheetID, rowIDs, colIDs)
+		type pgExistingCell struct {
+			cell          SheetCell
+			fieldRevs     map[string]int64
+			updatedBy     int64
+			updatedByName string
+		}
+		existing := make(map[memSheetCellKey]pgExistingCell, len(prepared.Cells))
+		cellRows, e := tx.Query(ctx, `SELECT sc.row_id, sc.column_id, sc.raw, sc.style, sc.revision, sc.field_revs, COALESCE(sc.updated_by, 0), COALESCE(u.name, '')
+			FROM sheet_cells sc
+			LEFT JOIN users u ON u.id = sc.updated_by
+			WHERE sc.worksheet_id=$1 AND sc.row_id=ANY($2) AND sc.column_id=ANY($3)
+			FOR UPDATE OF sc`, prepared.WorksheetID, rowIDs, colIDs)
 		if e != nil {
 			return e
 		}
 		for cellRows.Next() {
-			var c SheetCell
-			var styleRaw []byte
-			if e = cellRows.Scan(&c.RowID, &c.ColumnID, &c.Raw, &styleRaw, &c.Revision); e != nil {
+			var ec pgExistingCell
+			var styleRaw, fieldRevsRaw []byte
+			if e = cellRows.Scan(&ec.cell.RowID, &ec.cell.ColumnID, &ec.cell.Raw, &styleRaw, &ec.cell.Revision, &fieldRevsRaw, &ec.updatedBy, &ec.updatedByName); e != nil {
 				cellRows.Close()
 				return e
 			}
 			if len(styleRaw) > 0 {
-				if e = json.Unmarshal(styleRaw, &c.Style); e != nil {
+				if e = json.Unmarshal(styleRaw, &ec.cell.Style); e != nil {
 					cellRows.Close()
 					return e
 				}
 			}
-			existing[memSheetCellKey{rowID: c.RowID, colID: c.ColumnID}] = c
+			if len(fieldRevsRaw) > 0 {
+				if e = json.Unmarshal(fieldRevsRaw, &ec.fieldRevs); e != nil {
+					cellRows.Close()
+					return e
+				}
+			}
+			existing[memSheetCellKey{rowID: ec.cell.RowID, colID: ec.cell.ColumnID}] = ec
 		}
 		if e = cellRows.Err(); e != nil {
 			cellRows.Close()
@@ -525,69 +547,131 @@ func (p *Postgres) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID i
 		}
 		cellRows.Close()
 
+		autoMerge := prepared.MergeMode == SheetMergeModeAuto
 		uRowIDs := make([]int64, 0, len(prepared.Cells))
 		uColIDs := make([]int64, 0, len(prepared.Cells))
 		uRaws := make([]string, 0, len(prepared.Cells))
 		uStyles := make([]string, 0, len(prepared.Cells))
 		uRevs := make([]int64, 0, len(prepared.Cells))
+		uFieldRevs := make([]string, 0, len(prepared.Cells))
 		resCells := make([]SheetCellRevision, 0, len(prepared.Cells))
+		conflicts := make([]SheetCellConflict, 0)
+		mergedCount := 0
 
 		for _, w := range prepared.Cells {
-			cur := existing[memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}]
-			if cur.Revision != w.ExpectedRevision || cur.Revision >= sheetMaxRevision {
+			rPos := rowPosMap[w.RowID]
+			cPos := colPosMap[w.ColumnID]
+			ec := existing[memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}]
+			cur := ec.cell
+
+			if autoMerge && len(merges) > 0 && w.Raw != nil && *w.Raw != "" {
+				if mRect, covered := findMergeCovering(merges, rPos, cPos); covered && !(rPos == mRect.Top && cPos == mRect.Left) {
+					var anchorRowID, anchorColID int64
+					if e = tx.QueryRow(ctx, `SELECT id FROM sheet_rows WHERE worksheet_id=$1 AND pos=$2`, prepared.WorksheetID, mRect.Top).Scan(&anchorRowID); e != nil {
+						return e
+					}
+					if e = tx.QueryRow(ctx, `SELECT id FROM sheet_columns WHERE worksheet_id=$1 AND pos=$2`, prepared.WorksheetID, mRect.Left).Scan(&anchorColID); e != nil {
+						return e
+					}
+					var anchorRaw string
+					var anchorRev int64
+					_ = tx.QueryRow(ctx, `SELECT raw, revision FROM sheet_cells WHERE worksheet_id=$1 AND row_id=$2 AND column_id=$3`, prepared.WorksheetID, anchorRowID, anchorColID).Scan(&anchorRaw, &anchorRev)
+					rawCopy := *w.Raw
+					mc := mRect
+					conflicts = append(conflicts, SheetCellConflict{
+						RowID:               w.RowID,
+						ColumnID:            w.ColumnID,
+						Row:                 rPos,
+						Col:                 cPos,
+						ExpectedRevision:    w.ExpectedRevision,
+						CurrentRevision:     cur.Revision,
+						CurrentRaw:          cur.Raw,
+						CurrentStyle:        cloneSheetStyle(cur.Style),
+						AttemptedRaw:        &rawCopy,
+						AttemptedStylePatch: cloneSheetStylePatch(w.StylePatch),
+						ConflictingFields:   []string{"raw"},
+						Reason:              "merge_slave_conflict",
+						MergeRect:           &mc,
+						AnchorRowID:         anchorRowID,
+						AnchorColumnID:      anchorColID,
+						AnchorRaw:           anchorRaw,
+						AnchorRevision:      anchorRev,
+					})
+					continue
+				}
+			}
+
+			resolved, ok := resolveSheetCellWrite(cur, ec.fieldRevs, ec.updatedBy, ec.updatedByName, rPos, cPos, w, autoMerge)
+			if !ok {
 				return ErrConflict
 			}
-			nextRaw := cur.Raw
-			if w.Raw != nil {
-				nextRaw = *w.Raw
+			if resolved.conflict != nil {
+				conflicts = append(conflicts, *resolved.conflict)
+				continue
 			}
-			nextStyle := cur.Style
-			if w.Style != nil {
-				nextStyle = *w.Style
+			if resolved.merged {
+				mergedCount++
 			}
-			styleBytes, e := json.Marshal(nextStyle)
+			styleBytes, e := json.Marshal(resolved.nextStyle)
 			if e != nil {
 				return e
 			}
-			nextRev := cur.Revision + 1
+			fieldRevsBytes, e := json.Marshal(resolved.nextFieldRevs)
+			if e != nil {
+				return e
+			}
 			uRowIDs = append(uRowIDs, w.RowID)
 			uColIDs = append(uColIDs, w.ColumnID)
-			uRaws = append(uRaws, nextRaw)
+			uRaws = append(uRaws, resolved.nextRaw)
 			uStyles = append(uStyles, string(styleBytes))
-			uRevs = append(uRevs, nextRev)
-			resCells = append(resCells, SheetCellRevision{RowID: w.RowID, ColumnID: w.ColumnID, Revision: nextRev})
+			uRevs = append(uRevs, resolved.nextRev)
+			uFieldRevs = append(uFieldRevs, string(fieldRevsBytes))
+			resCells = append(resCells, SheetCellRevision{
+				RowID:    w.RowID,
+				ColumnID: w.ColumnID,
+				Revision: resolved.nextRev,
+				Raw:      resolved.nextRaw,
+				Style:    cloneSheetStyle(resolved.nextStyle),
+				Merged:   resolved.merged,
+			})
 		}
 
 		if e = drivePGEnd(ctx, g, expires); e != nil {
 			return e
 		}
 
-		if _, e = tx.Exec(ctx, `
-			INSERT INTO sheet_cells (worksheet_id, row_id, column_id, raw, style, revision, updated_by, updated_at)
-			SELECT $1, r, c, raw, st::jsonb, rev, $7, now()
-			FROM unnest($2::bigint[], $3::bigint[], $4::text[], $5::text[], $6::bigint[]) AS t(r, c, raw, st, rev)
-			ON CONFLICT (worksheet_id, row_id, column_id) DO UPDATE SET
-				raw = EXCLUDED.raw,
-				style = EXCLUDED.style,
-				revision = EXCLUDED.revision,
-				updated_by = EXCLUDED.updated_by,
-				updated_at = EXCLUDED.updated_at`,
-			prepared.WorksheetID, uRowIDs, uColIDs, uRaws, uStyles, uRevs, g.UserID); e != nil {
-			return e
-		}
+		nextWBRev := info.workbookRevision
+		if len(uRowIDs) > 0 {
+			if _, e = tx.Exec(ctx, `
+				INSERT INTO sheet_cells (worksheet_id, row_id, column_id, raw, style, revision, field_revs, updated_by, updated_at)
+				SELECT $1, r, c, raw, st::jsonb, rev, fr::jsonb, $8, now()
+				FROM unnest($2::bigint[], $3::bigint[], $4::text[], $5::text[], $6::bigint[], $7::text[]) AS t(r, c, raw, st, rev, fr)
+				ON CONFLICT (worksheet_id, row_id, column_id) DO UPDATE SET
+					raw = EXCLUDED.raw,
+					style = EXCLUDED.style,
+					revision = EXCLUDED.revision,
+					field_revs = EXCLUDED.field_revs,
+					updated_by = EXCLUDED.updated_by,
+					updated_at = EXCLUDED.updated_at`,
+				prepared.WorksheetID, uRowIDs, uColIDs, uRaws, uStyles, uRevs, uFieldRevs, g.UserID); e != nil {
+				return e
+			}
 
-		if _, e = tx.Exec(ctx, `UPDATE sheet_worksheets SET revision=revision+1, updated_at=now() WHERE id=$1`, prepared.WorksheetID); e != nil {
-			return e
-		}
-		nextWBRev, e := touchSheetWorkbookPG(ctx, tx, nodeID, g.UserID)
-		if e != nil {
-			return e
+			if _, e = tx.Exec(ctx, `UPDATE sheet_worksheets SET revision=revision+1, updated_at=now() WHERE id=$1`, prepared.WorksheetID); e != nil {
+				return e
+			}
+			nextWBRev, e = touchSheetWorkbookPG(ctx, tx, nodeID, g.UserID)
+			if e != nil {
+				return e
+			}
 		}
 		out = SheetBatchResult{
 			MutationID:       prepared.MutationID,
 			WorksheetID:      prepared.WorksheetID,
 			WorkbookRevision: nextWBRev,
 			Cells:            resCells,
+			Conflicts:        conflicts,
+			MergedCount:      mergedCount,
 		}
 		rawOut, e := json.Marshal(out)
 		if e != nil {
@@ -779,12 +863,39 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 			nextFrozenCols = *patch.FrozenCols
 		}
 		nextMerges := ws.Merges
+		mergeOpNoop := false
+		if patch.Merges != nil && patch.MergeOp != nil {
+			return ErrConflict
+		}
 		if patch.Merges != nil {
 			var ok bool
 			nextMerges, ok = validateAndNormalizeSheetMerges(*patch.Merges, rowCount, colCount)
 			if !ok {
 				return ErrConflict
 			}
+		} else if patch.MergeOp != nil {
+			if e = checkProtectedRectWrite(info.role, g.UserID, patch.MergeOp.Rect, ws.ProtectedRanges); e != nil {
+				return e
+			}
+			applied, overlaps, changed, ok := applySheetMergeOp(ws.Merges, *patch.MergeOp, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+			if len(overlaps) > 0 {
+				latest := ws
+				if loadErr := loadWorksheetChildrenPG(ctx, tx, &latest); loadErr != nil {
+					return loadErr
+				}
+				return &SheetRegionConflictError{
+					Code:              "merge_overlap_conflict",
+					Message:           "所选区域与其他协作者新合并的单元格存在重叠",
+					ConflictingMerges: overlaps,
+					Worksheet:         latest,
+					WorkbookRevision:  info.workbookRevision,
+				}
+			}
+			nextMerges = applied
+			mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil
 		}
 		nextFilter := ws.Filter
 		if patch.Filter != nil {
@@ -824,6 +935,14 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 
 		if e = drivePGEnd(ctx, g, expires); e != nil {
 			return e
+		}
+		if mergeOpNoop {
+			out = ws
+			if e = loadWorksheetChildrenPG(ctx, tx, &out); e != nil {
+				return e
+			}
+			workbookRev = info.workbookRevision
+			return nil
 		}
 
 		if nextPos != targetIdx {

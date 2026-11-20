@@ -27,6 +27,9 @@ type Collaborator struct {
 	WorksheetID int64  `json:"worksheetId,omitempty"`
 	Row         int    `json:"row"`
 	Col         int    `json:"col"`
+	AnchorRow   int    `json:"anchorRow"`
+	AnchorCol   int    `json:"anchorCol"`
+	Editing     bool   `json:"editing,omitempty"`
 }
 
 type Hub struct {
@@ -130,17 +133,29 @@ func (h *Hub) Rooms() int {
 
 // Notify broadcasts a workbook revision update to all connected clients in a sheet room.
 func (h *Hub) Notify(sheetID, workbookRevision, actorID int64) {
+	h.NotifyCells(sheetID, workbookRevision, actorID, 0, nil)
+}
+
+// NotifyCells broadcasts a workbook revision update along with an optional
+// incremental cell delta (up to 200 cells) so connected collaborators apply
+// cell edits in place without refetching the full workbook snapshot.
+func (h *Hub) NotifyCells(sheetID, workbookRevision, actorID, worksheetID int64, cells []store.SheetCellRevision) {
 	h.mu.Lock()
 	r := h.rooms[sheetID]
 	h.mu.Unlock()
 	if r == nil {
 		return
 	}
-	frame := mustJSON(map[string]any{
+	payload := map[string]any{
 		"type":             "revision",
 		"workbookRevision": workbookRevision,
 		"actorId":          actorID,
-	})
+	}
+	if worksheetID > 0 && len(cells) > 0 && len(cells) <= 200 {
+		payload["worksheetId"] = worksheetID
+		payload["cellDelta"] = cells
+	}
+	frame := mustJSON(payload)
 	r.mu.Lock()
 	if workbookRevision > r.head {
 		r.head = workbookRevision
@@ -175,7 +190,7 @@ func (r *room) removeConn(c *conn) {
 	r.mu.Unlock()
 }
 
-func (r *room) updateCursor(c *conn, worksheetID int64, row, col int) {
+func (r *room) updateCursor(c *conn, worksheetID int64, row, col, anchorRow, anchorCol int, editing bool) {
 	r.mu.Lock()
 	if _, ok := r.conns[c]; !ok {
 		r.mu.Unlock()
@@ -187,6 +202,9 @@ func (r *room) updateCursor(c *conn, worksheetID int64, row, col int) {
 		WorksheetID: worksheetID,
 		Row:         row,
 		Col:         col,
+		AnchorRow:   anchorRow,
+		AnchorCol:   anchorCol,
+		Editing:     editing,
 	}
 	frame := r.presenceLocked()
 	for existing := range r.conns {
@@ -341,6 +359,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 				WorksheetID int64  `json:"worksheetId"`
 				Row         int    `json:"row"`
 				Col         int    `json:"col"`
+				AnchorRow   *int   `json:"anchorRow"`
+				AnchorCol   *int   `json:"anchorCol"`
+				Editing     bool   `json:"editing"`
 			}
 			if json.Unmarshal(data, &msg) != nil {
 				continue
@@ -352,8 +373,16 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sheetID int64, user 
 			// Throttle presence fan-out: each accepted cursor frame is
 			// broadcast to every connection in the room.
 			if msg.Type == "cursor" && msg.WorksheetID > 0 && msg.Row >= 0 && msg.Row < 10000 && msg.Col >= 0 && msg.Col < 256 && time.Since(lastCursor) >= cursorMinInterval {
+				anchorRow := msg.Row
+				if msg.AnchorRow != nil && *msg.AnchorRow >= 0 && *msg.AnchorRow < 10000 {
+					anchorRow = *msg.AnchorRow
+				}
+				anchorCol := msg.Col
+				if msg.AnchorCol != nil && *msg.AnchorCol >= 0 && *msg.AnchorCol < 256 {
+					anchorCol = *msg.AnchorCol
+				}
 				lastCursor = time.Now()
-				room.updateCursor(c, msg.WorksheetID, msg.Row, msg.Col)
+				room.updateCursor(c, msg.WorksheetID, msg.Row, msg.Col, anchorRow, anchorCol, msg.Editing)
 			}
 		}
 	}()

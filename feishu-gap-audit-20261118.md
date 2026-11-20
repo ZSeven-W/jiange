@@ -60,7 +60,7 @@
 
 | 能力项 | 状态 | 具体差距与代码依据 | 优先级 |
 | --- | --- | --- | --- |
-| 正式工作簿、多工作表、公式与协同基座 | **部分（P0 已闭环）** | 已落地 `kind='sheet'` 持久化工作簿（`0065_sheets.sql`、`server/internal/store/sheets*.go`、`internal/sheetsync/`、`#/sheet/{id}`），打通多工作表增删改排、跨表公式计算与 `#ff8800` 高亮、单元格基础格式/合并/冻结/筛选排序、WebSocket 光标与修订同步、多表 `.xlsx` 读写及全站检索副本闭环（见 [普通电子表格验证报告](sheet-workbook-report-20261118.md)）；高并发同格合并与区域级精细协同冲突消解仍待继续深化。 | **P1** |
+| 正式工作簿、多工作表、公式与协同基座 | **已落地高并发同格合并与区域级协同冲突消解（P1 Slice 16，2026-11-20）** | 已落地 `kind='sheet'` 持久化工作簿（`0065_sheets.sql`、`server/internal/store/sheets*.go`、`internal/sheetsync/`、`#/sheet/{id}`），打通多工作表增删改排、跨表公式计算与 `#ff8800` 高亮、单元格基础格式/合并/冻结/筛选排序、WebSocket 光标与修订同步、多表 `.xlsx` 读写及全站检索副本闭环（见 [普通电子表格验证报告](sheet-workbook-report-20261118.md)），并完成高并发同格合并与区域级精细协同冲突消解（`0081_sheet_collab_merge.sql` 按字段记录 `field_revs`、`WriteSheetCells` `mergeMode: "auto"` 与稀疏 `stylePatch` 支持同格值/样式正交自动合并、多格部分提交 + 结构化冲突明细与合并从格 `merge_slave_conflict` 保护、`UpdateWorksheetMeta` 原子 `mergeOp` 保留并发不重叠合并并检测重叠合并 `409 merge_overlap_conflict`、WebSocket 区域选区与「编辑中」在线态 + 增量 `cellDelta` 推送，以及前端 `baseRevision` 捕获与 `SheetConflictBar` 逐条/批量冲突消解，详见 [sheet-collab-merge-report-20261120.md](sheet-collab-merge-report-20261120.md)）。 | **已完成（P1）** |
 | 高级表格分析与 `.xlsx` 样式保真 | **已落地核心分析与管控（P1 Slice 6，2026-11-19）** | 已落地单元格数据验证（下拉选项行内选择器/数字范围/日期范围，支持严格拦截 `422` 与警告模式）、动态条件格式（10 类运算符 + 5 套预设样式，基于公式求值结果实时变色）、管理员专属受保护单元格区域（含协作者白名单及服务端写格/删行列 `403` 强制校验）、绑定持久化行列 ID 的单元格锚点评论（`0076_sheet_rules_and_comments.sql`，抗插行位移/删行级联清理、橘色角标、解决/重开、`commentMinRole` 权限联动与 WebSocket 实时刷新）及工作簿副本规则克隆（详见 [sheet-advanced-report-20261119.md](sheet-advanced-report-20261119.md)）；嵌入式图表、数据透视表、`.xlsx` 列宽/行高/主题色/渐变/复杂边框与规则保真，以及 `pg_trgm` 单元格子串索引留作后续深化。 | **部分（P1 核心闭环）** |
 
 ### 4. 多维表格（Base）与独立问卷（Form / Questionnaire）

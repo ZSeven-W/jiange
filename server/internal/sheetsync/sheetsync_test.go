@@ -56,7 +56,7 @@ func TestSheetSyncPresenceAndRevision(t *testing.T) {
 	}
 	defer c2.CloseNow()
 
-	cursorPayload, _ := json.Marshal(map[string]any{"type": "cursor", "worksheetId": 1, "row": 2, "col": 3})
+	cursorPayload, _ := json.Marshal(map[string]any{"type": "cursor", "worksheetId": 1, "row": 4, "col": 5, "anchorRow": 2, "anchorCol": 3, "editing": true})
 	if err = c2.Write(ctx, websocket.MessageText, cursorPayload); err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +75,16 @@ func TestSheetSyncPresenceAndRevision(t *testing.T) {
 		}
 		if json.Unmarshal(raw, &frame) == nil && frame.Type == "presence" {
 			for _, col := range frame.Collaborators {
-				if col.UserID == u2.ID && col.WorksheetID == 1 && col.Row == 2 && col.Col == 3 {
+				if col.UserID == u2.ID && col.WorksheetID == 1 && col.Row == 4 && col.Col == 5 && col.AnchorRow == 2 && col.AnchorCol == 3 && col.Editing {
 					sawBobCursor = true
 				}
 			}
 		}
 	}
 
-	hub.Notify(entry.ID, 5, u2.ID)
+	hub.NotifyCells(entry.ID, 5, u2.ID, 1, []store.SheetCellRevision{
+		{RowID: 10, ColumnID: 20, Revision: 2, Raw: "SyncedDelta", Merged: true},
+	})
 	sawRevision := false
 	for !sawRevision {
 		_, raw, err := c1.Read(readCtx)
@@ -90,11 +92,13 @@ func TestSheetSyncPresenceAndRevision(t *testing.T) {
 			t.Fatalf("read revision on c1: %v", err)
 		}
 		var frame struct {
-			Type             string `json:"type"`
-			WorkbookRevision int64  `json:"workbookRevision"`
-			ActorID          int64  `json:"actorId"`
+			Type             string                    `json:"type"`
+			WorkbookRevision int64                     `json:"workbookRevision"`
+			ActorID          int64                     `json:"actorId"`
+			WorksheetID      int64                     `json:"worksheetId"`
+			CellDelta        []store.SheetCellRevision `json:"cellDelta"`
 		}
-		if json.Unmarshal(raw, &frame) == nil && frame.Type == "revision" && frame.WorkbookRevision == 5 && frame.ActorID == u2.ID {
+		if json.Unmarshal(raw, &frame) == nil && frame.Type == "revision" && frame.WorkbookRevision == 5 && frame.ActorID == u2.ID && frame.WorksheetID == 1 && len(frame.CellDelta) == 1 && frame.CellDelta[0].Raw == "SyncedDelta" && frame.CellDelta[0].Merged {
 			sawRevision = true
 		}
 	}

@@ -22,6 +22,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -37,7 +38,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText);
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? res.statusText, data);
   return data as T;
 }
 
@@ -1245,17 +1246,36 @@ export interface SheetSnapshot {
   updatedAt: string;
 }
 
+export interface SheetStylePatch {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
+  bg?: string;
+  align?: "" | "left" | "center" | "right";
+  valign?: "" | "top" | "middle" | "bottom";
+  wrap?: boolean;
+  borders?: SheetBorders;
+  clearBorders?: boolean;
+  numFmt?: "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date";
+}
+
 export interface SheetCellWrite {
   rowId: number;
   columnId: number;
   expectedRevision: number;
   raw?: string;
   style?: SheetCellStyle;
+  stylePatch?: SheetStylePatch;
 }
 
 export interface SheetCellBatch {
   mutationId: string;
   worksheetId: number;
+  mergeMode?: "strict" | "auto";
   cells: SheetCellWrite[];
 }
 
@@ -1263,6 +1283,32 @@ export interface SheetCellRevision {
   rowId: number;
   columnId: number;
   revision: number;
+  raw?: string;
+  style?: SheetCellStyle;
+  merged?: boolean;
+}
+
+export interface SheetCellConflict {
+  rowId: number;
+  columnId: number;
+  row: number;
+  col: number;
+  expectedRevision: number;
+  currentRevision: number;
+  currentRaw: string;
+  currentStyle?: SheetCellStyle;
+  attemptedRaw?: string;
+  attemptedStyle?: SheetCellStyle;
+  attemptedStylePatch?: SheetStylePatch;
+  conflictingFields?: string[];
+  reason: "value_conflict" | "style_conflict" | "merge_slave_conflict";
+  updatedBy?: number;
+  updatedByName?: string;
+  mergeRect?: SheetMerge;
+  anchorRowId?: number;
+  anchorColumnId?: number;
+  anchorRaw?: string;
+  anchorRevision?: number;
 }
 
 export interface SheetBatchResult {
@@ -1270,7 +1316,16 @@ export interface SheetBatchResult {
   worksheetId: number;
   workbookRevision: number;
   cells: SheetCellRevision[];
+  conflicts?: SheetCellConflict[];
+  mergedCount?: number;
   replayed: boolean;
+}
+
+export interface SheetMergeOp {
+  op: "merge" | "unmerge";
+  rect: SheetMerge;
+  force?: boolean;
+  expectedMerges?: SheetMerge[];
 }
 
 export interface WorksheetPatch {
@@ -1279,6 +1334,7 @@ export interface WorksheetPatch {
   frozenRows?: number;
   frozenCols?: number;
   merges?: SheetMerge[];
+  mergeOp?: SheetMergeOp;
   filter?: SheetFilterConfig;
   validations?: SheetDataValidation[];
   conditionalFormats?: SheetConditionalFormat[];

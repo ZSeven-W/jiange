@@ -132,23 +132,28 @@ type SheetSnapshot struct {
 }
 
 type SheetCellWrite struct {
-	RowID            int64           `json:"rowId"`
-	ColumnID         int64           `json:"columnId"`
-	ExpectedRevision int64           `json:"expectedRevision"`
-	Raw              *string         `json:"raw,omitempty"`
-	Style            *SheetCellStyle `json:"style,omitempty"`
+	RowID            int64            `json:"rowId"`
+	ColumnID         int64            `json:"columnId"`
+	ExpectedRevision int64            `json:"expectedRevision"`
+	Raw              *string          `json:"raw,omitempty"`
+	Style            *SheetCellStyle  `json:"style,omitempty"`
+	StylePatch       *SheetStylePatch `json:"stylePatch,omitempty"`
 }
 
 type SheetCellBatch struct {
 	MutationID  string           `json:"mutationId"`
 	WorksheetID int64            `json:"worksheetId"`
+	MergeMode   string           `json:"mergeMode,omitempty"` // "" | "strict" | "auto"
 	Cells       []SheetCellWrite `json:"cells"`
 }
 
 type SheetCellRevision struct {
-	RowID    int64 `json:"rowId"`
-	ColumnID int64 `json:"columnId"`
-	Revision int64 `json:"revision"`
+	RowID    int64          `json:"rowId"`
+	ColumnID int64          `json:"columnId"`
+	Revision int64          `json:"revision"`
+	Raw      string         `json:"raw"`
+	Style    SheetCellStyle `json:"style,omitempty"`
+	Merged   bool           `json:"merged,omitempty"`
 }
 
 type SheetBatchResult struct {
@@ -156,6 +161,8 @@ type SheetBatchResult struct {
 	WorksheetID      int64               `json:"worksheetId"`
 	WorkbookRevision int64               `json:"workbookRevision"`
 	Cells            []SheetCellRevision `json:"cells"`
+	Conflicts        []SheetCellConflict `json:"conflicts,omitempty"`
+	MergedCount      int                 `json:"mergedCount,omitempty"`
 	Replayed         bool                `json:"replayed"`
 }
 
@@ -165,6 +172,7 @@ type WorksheetPatch struct {
 	FrozenRows         *int                      `json:"frozenRows,omitempty"`
 	FrozenCols         *int                      `json:"frozenCols,omitempty"`
 	Merges             *[]SheetMerge             `json:"merges,omitempty"`
+	MergeOp            *SheetMergeOp             `json:"mergeOp,omitempty"`
 	Filter             *SheetFilterConfig        `json:"filter,omitempty"`
 	Validations        *[]SheetDataValidation    `json:"validations,omitempty"`
 	ConditionalFormats *[]SheetConditionalFormat `json:"conditionalFormats,omitempty"`
@@ -386,6 +394,11 @@ func prepareSheetBatch(batch SheetCellBatch) (SheetCellBatch, []byte, error) {
 	if !validSheetMutationID(batch.MutationID) || !validSheetID(batch.WorksheetID) || len(batch.Cells) == 0 || len(batch.Cells) > sheetMaxBatchCells {
 		return SheetCellBatch{}, nil, ErrConflict
 	}
+	switch batch.MergeMode {
+	case "", SheetMergeModeStrict, SheetMergeModeAuto:
+	default:
+		return SheetCellBatch{}, nil, ErrConflict
+	}
 	cells := slices.Clone(batch.Cells)
 	sort.Slice(cells, func(i, j int) bool {
 		if cells[i].RowID != cells[j].RowID {
@@ -399,7 +412,10 @@ func prepareSheetBatch(batch SheetCellBatch) (SheetCellBatch, []byte, error) {
 		if !validSheetID(c.RowID) || !validSheetID(c.ColumnID) || c.ExpectedRevision < 0 || c.ExpectedRevision >= sheetMaxRevision {
 			return SheetCellBatch{}, nil, ErrConflict
 		}
-		if c.Raw == nil && c.Style == nil {
+		if c.Raw == nil && c.Style == nil && c.StylePatch == nil {
+			return SheetCellBatch{}, nil, ErrConflict
+		}
+		if c.Style != nil && c.StylePatch != nil {
 			return SheetCellBatch{}, nil, ErrConflict
 		}
 		if i > 0 && cells[i-1].RowID == c.RowID && cells[i-1].ColumnID == c.ColumnID {
@@ -423,13 +439,21 @@ func prepareSheetBatch(batch SheetCellBatch) (SheetCellBatch, []byte, error) {
 			}
 			c.Style = &norm
 		}
+		if c.StylePatch != nil {
+			norm, ok := normalizeSheetStylePatch(*c.StylePatch)
+			if !ok {
+				return SheetCellBatch{}, nil, ErrConflict
+			}
+			c.StylePatch = &norm
+		}
 	}
 	batch.Cells = cells
 	payload, err := json.Marshal(struct {
 		Version     int              `json:"version"`
 		WorksheetID int64            `json:"worksheetId"`
+		MergeMode   string           `json:"mergeMode,omitempty"`
 		Cells       []SheetCellWrite `json:"cells"`
-	}{1, batch.WorksheetID, batch.Cells})
+	}{1, batch.WorksheetID, batch.MergeMode, batch.Cells})
 	if err != nil {
 		return SheetCellBatch{}, nil, ErrConflict
 	}

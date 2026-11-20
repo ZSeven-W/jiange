@@ -100,8 +100,8 @@ func (s *Server) writeSheetCells(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "write sheet cells") {
 		return
 	}
-	if s.SheetHub != nil && !res.Replayed {
-		s.SheetHub.Notify(id, res.WorkbookRevision, u.ID)
+	if s.SheetHub != nil && !res.Replayed && len(res.Cells) > 0 {
+		s.SheetHub.NotifyCells(id, res.WorkbookRevision, u.ID, res.WorksheetID, res.Cells)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, res)
@@ -144,6 +144,12 @@ func (s *Server) updateWorksheetMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws, rev, err := s.Store.UpdateWorksheetMeta(r.Context(), g, id, wid, patch)
+	var regionErr *store.SheetRegionConflictError
+	if errors.As(err, &regionErr) {
+		w.Header().Set("Cache-Control", "no-store")
+		httpx.JSON(w, http.StatusConflict, regionErr)
+		return
+	}
 	if driveWriteErr(w, err, "update worksheet") {
 		return
 	}

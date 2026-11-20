@@ -48,6 +48,8 @@ type memWorksheet struct {
 	rowIndex           map[int64]bool
 	colIndex           map[int64]bool
 	cells              map[memSheetCellKey]SheetCell
+	cellFieldRevs      map[memSheetCellKey]map[string]int64
+	cellUpdatedBy      map[memSheetCellKey]int64
 }
 
 type memWorkbook struct {
@@ -82,9 +84,11 @@ func (m *Memory) createMemWorksheetLocked(nodeID int64, title string, pos, rows,
 		revision: 1,
 		rows:     make([]SheetAxis, 0, rows),
 		columns:  make([]SheetAxis, 0, cols),
-		rowIndex: make(map[int64]bool, rows),
-		colIndex: make(map[int64]bool, cols),
-		cells:    map[memSheetCellKey]SheetCell{},
+		rowIndex:      make(map[int64]bool, rows),
+		colIndex:      make(map[int64]bool, cols),
+		cells:         map[memSheetCellKey]SheetCell{},
+		cellFieldRevs: map[memSheetCellKey]map[string]int64{},
+		cellUpdatedBy: map[memSheetCellKey]int64{},
 	}
 	for i := 0; i < rows; i++ {
 		m.sheets.nextAxisID++
@@ -268,6 +272,7 @@ func (m *Memory) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID int
 		}
 		res := *receipt.result
 		res.Cells = slices.Clone(res.Cells)
+		res.Conflicts = slices.Clone(res.Conflicts)
 		res.Replayed = true
 		return res, driveMemoryEnd(ctx, g, expires)
 	}
@@ -278,73 +283,141 @@ func (m *Memory) WriteSheetCells(ctx context.Context, g RestoreGuard, nodeID int
 	if wb.revision >= sheetMaxRevision || ws.revision >= sheetMaxRevision {
 		return SheetBatchResult{}, ErrConflict
 	}
-	var rowPos map[int64]int
-	var colPos map[int64]int
-	if len(ws.protectedRanges) > 0 || len(ws.validations) > 0 {
-		rowPos = make(map[int64]int, len(ws.rows))
-		for _, r := range ws.rows {
-			rowPos[r.ID] = r.Pos
-		}
-		colPos = make(map[int64]int, len(ws.columns))
-		for _, c := range ws.columns {
-			colPos[c.ID] = c.Pos
-		}
+	autoMerge := prepared.MergeMode == SheetMergeModeAuto
+	rowPos := make(map[int64]int, len(ws.rows))
+	rowIDByPos := make(map[int]int64, len(ws.rows))
+	for _, r := range ws.rows {
+		rowPos[r.ID] = r.Pos
+		rowIDByPos[r.Pos] = r.ID
 	}
-	revisions := make([]SheetCellRevision, 0, len(prepared.Cells))
+	colPos := make(map[int64]int, len(ws.columns))
+	colIDByPos := make(map[int]int64, len(ws.columns))
+	for _, c := range ws.columns {
+		colPos[c.ID] = c.Pos
+		colIDByPos[c.Pos] = c.ID
+	}
+
+	type pendingCellWrite struct {
+		key      memSheetCellKey
+		resolved resolvedCellWrite
+	}
+	pending := make([]pendingCellWrite, 0, len(prepared.Cells))
+	conflicts := make([]SheetCellConflict, 0)
+	mergedCount := 0
+
 	for _, w := range prepared.Cells {
 		if !ws.rowIndex[w.RowID] || !ws.colIndex[w.ColumnID] {
 			return SheetBatchResult{}, ErrNotFound
 		}
+		rPos := rowPos[w.RowID]
+		cPos := colPos[w.ColumnID]
 		if len(ws.protectedRanges) > 0 {
-			if err := checkProtectedCellWrite(role, g.UserID, rowPos[w.RowID], colPos[w.ColumnID], ws.protectedRanges); err != nil {
+			if err := checkProtectedCellWrite(role, g.UserID, rPos, cPos, ws.protectedRanges); err != nil {
 				return SheetBatchResult{}, err
 			}
 		}
 		if w.Raw != nil && len(ws.validations) > 0 {
-			if err := checkCellValidationWrite(*w.Raw, rowPos[w.RowID], colPos[w.ColumnID], ws.validations); err != nil {
+			if err := checkCellValidationWrite(*w.Raw, rPos, cPos, ws.validations); err != nil {
 				return SheetBatchResult{}, err
 			}
 		}
-		cur := ws.cells[memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}]
-		if cur.Revision != w.ExpectedRevision || cur.Revision >= sheetMaxRevision {
+		k := memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}
+		cur := ws.cells[k]
+		if autoMerge && len(ws.merges) > 0 && w.Raw != nil && *w.Raw != "" {
+			if mRect, covered := findMergeCovering(ws.merges, rPos, cPos); covered && !(rPos == mRect.Top && cPos == mRect.Left) {
+				anchorRowID := rowIDByPos[mRect.Top]
+				anchorColID := colIDByPos[mRect.Left]
+				anchorCell := ws.cells[memSheetCellKey{rowID: anchorRowID, colID: anchorColID}]
+				rawCopy := *w.Raw
+				mc := mRect
+				conflicts = append(conflicts, SheetCellConflict{
+					RowID:               w.RowID,
+					ColumnID:            w.ColumnID,
+					Row:                 rPos,
+					Col:                 cPos,
+					ExpectedRevision:    w.ExpectedRevision,
+					CurrentRevision:     cur.Revision,
+					CurrentRaw:          cur.Raw,
+					CurrentStyle:        cloneSheetStyle(cur.Style),
+					AttemptedRaw:        &rawCopy,
+					AttemptedStylePatch: cloneSheetStylePatch(w.StylePatch),
+					ConflictingFields:   []string{"raw"},
+					Reason:              "merge_slave_conflict",
+					MergeRect:           &mc,
+					AnchorRowID:         anchorRowID,
+					AnchorColumnID:      anchorColID,
+					AnchorRaw:           anchorCell.Raw,
+					AnchorRevision:      anchorCell.Revision,
+				})
+				continue
+			}
+		}
+		updatedBy := ws.cellUpdatedBy[k]
+		updatedByName := ""
+		if updatedBy > 0 {
+			if u := m.userByID(updatedBy); u != nil {
+				updatedByName = u.Name
+			}
+		}
+		resolved, ok := resolveSheetCellWrite(cur, ws.cellFieldRevs[k], updatedBy, updatedByName, rPos, cPos, w, autoMerge)
+		if !ok {
 			return SheetBatchResult{}, ErrConflict
 		}
-		revisions = append(revisions, SheetCellRevision{RowID: w.RowID, ColumnID: w.ColumnID, Revision: cur.Revision + 1})
+		if resolved.conflict != nil {
+			conflicts = append(conflicts, *resolved.conflict)
+			continue
+		}
+		if resolved.merged {
+			mergedCount++
+		}
+		pending = append(pending, pendingCellWrite{key: k, resolved: resolved})
 	}
 	if err := driveMemoryEnd(ctx, g, expires); err != nil {
 		return SheetBatchResult{}, err
 	}
-	for i, w := range prepared.Cells {
-		k := memSheetCellKey{rowID: w.RowID, colID: w.ColumnID}
-		cur := ws.cells[k]
-		nextRaw := cur.Raw
-		if w.Raw != nil {
-			nextRaw = *w.Raw
-		}
-		nextStyle := cloneSheetStyle(cur.Style)
-		if w.Style != nil {
-			nextStyle = cloneSheetStyle(*w.Style)
-		}
-		ws.cells[k] = SheetCell{
-			RowID:    w.RowID,
-			ColumnID: w.ColumnID,
-			Raw:      nextRaw,
-			Style:    nextStyle,
-			Revision: revisions[i].Revision,
-		}
+	revisions := make([]SheetCellRevision, 0, len(pending))
+	if ws.cellFieldRevs == nil {
+		ws.cellFieldRevs = map[memSheetCellKey]map[string]int64{}
 	}
-	ws.revision++
-	wb.revision++
-	d.meta.UpdatedAt = time.Now()
-	m.setDocumentModifierLocked(d, g.UserID)
+	if ws.cellUpdatedBy == nil {
+		ws.cellUpdatedBy = map[memSheetCellKey]int64{}
+	}
+	for _, p := range pending {
+		ws.cells[p.key] = SheetCell{
+			RowID:    p.key.rowID,
+			ColumnID: p.key.colID,
+			Raw:      p.resolved.nextRaw,
+			Style:    cloneSheetStyle(p.resolved.nextStyle),
+			Revision: p.resolved.nextRev,
+		}
+		ws.cellFieldRevs[p.key] = p.resolved.nextFieldRevs
+		ws.cellUpdatedBy[p.key] = g.UserID
+		revisions = append(revisions, SheetCellRevision{
+			RowID:    p.key.rowID,
+			ColumnID: p.key.colID,
+			Revision: p.resolved.nextRev,
+			Raw:      p.resolved.nextRaw,
+			Style:    cloneSheetStyle(p.resolved.nextStyle),
+			Merged:   p.resolved.merged,
+		})
+	}
+	if len(pending) > 0 {
+		ws.revision++
+		wb.revision++
+		d.meta.UpdatedAt = time.Now()
+		m.setDocumentModifierLocked(d, g.UserID)
+	}
 	out := SheetBatchResult{
 		MutationID:       prepared.MutationID,
 		WorksheetID:      ws.id,
 		WorkbookRevision: wb.revision,
 		Cells:            revisions,
+		Conflicts:        conflicts,
+		MergedCount:      mergedCount,
 	}
 	saved := out
 	saved.Cells = slices.Clone(revisions)
+	saved.Conflicts = slices.Clone(conflicts)
 	pruneMemSheetReceipts(wb, time.Now())
 	wb.receipts[rKey] = memSheetReceipt{created: time.Now(), digest: digest, result: &saved}
 	return out, nil
@@ -449,12 +522,35 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 		nextFrozenCols = *patch.FrozenCols
 	}
 	nextMerges := slices.Clone(ws.merges)
+	mergeOpNoop := false
+	if patch.Merges != nil && patch.MergeOp != nil {
+		return SheetWorksheet{}, 0, ErrConflict
+	}
 	if patch.Merges != nil {
 		var ok bool
 		nextMerges, ok = validateAndNormalizeSheetMerges(*patch.Merges, len(ws.rows), len(ws.columns))
 		if !ok {
 			return SheetWorksheet{}, 0, ErrConflict
 		}
+	} else if patch.MergeOp != nil {
+		if err := checkProtectedRectWrite(role, g.UserID, patch.MergeOp.Rect, ws.protectedRanges); err != nil {
+			return SheetWorksheet{}, 0, err
+		}
+		applied, overlaps, changed, ok := applySheetMergeOp(ws.merges, *patch.MergeOp, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+		if len(overlaps) > 0 {
+			return SheetWorksheet{}, 0, &SheetRegionConflictError{
+				Code:              "merge_overlap_conflict",
+				Message:           "所选区域与其他协作者新合并的单元格存在重叠",
+				ConflictingMerges: overlaps,
+				Worksheet:         ws.toModel(),
+				WorkbookRevision:  wb.revision,
+			}
+		}
+		nextMerges = applied
+		mergeOpNoop = !changed && patch.Title == nil && patch.Pos == nil && patch.FrozenRows == nil && patch.FrozenCols == nil && patch.Filter == nil && patch.Validations == nil && patch.ConditionalFormats == nil && patch.ProtectedRanges == nil
 	}
 	nextFilter := cloneSheetFilter(ws.filter)
 	if patch.Filter != nil {
@@ -493,6 +589,9 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 	}
 	if err := driveMemoryEnd(ctx, g, expires); err != nil {
 		return SheetWorksheet{}, 0, err
+	}
+	if mergeOpNoop {
+		return ws.toModel(), wb.revision, nil
 	}
 	ws.title = nextTitle
 	if nextPos != ws.pos {
@@ -620,6 +719,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		for k := range ws.cells {
 			if removed[k.rowID] {
 				delete(ws.cells, k)
+				delete(ws.cellFieldRevs, k)
+				delete(ws.cellUpdatedBy, k)
 			}
 		}
 		m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {
@@ -688,6 +789,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		for k := range ws.cells {
 			if removed[k.colID] {
 				delete(ws.cells, k)
+				delete(ws.cellFieldRevs, k)
+				delete(ws.cellUpdatedBy, k)
 			}
 		}
 		m.sheetComments = slices.DeleteFunc(m.sheetComments, func(c SheetComment) bool {

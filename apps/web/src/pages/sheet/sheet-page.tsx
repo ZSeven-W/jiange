@@ -9,13 +9,17 @@ import {
   type DocMeta,
   type Me,
   type SheetCell,
+  type SheetCellConflict,
+  type SheetCellRevision,
   type SheetCellStyle,
   type SheetCellWrite,
   type SheetComment,
   type SheetConditionalFormat,
   type SheetDataValidation,
+  type SheetMerge,
   type SheetProtectedRange,
   type SheetSnapshot,
+  type SheetStylePatch,
   type SheetWorksheet,
 } from "@/lib/api";
 import { go } from "@/lib/route";
@@ -54,6 +58,15 @@ import {
   findSheetDropdown,
   isSheetCellProtected,
 } from "./sheet-rules";
+import {
+  applyRemoteCellDelta,
+  buildConflictResolutionWrite,
+  remoteCollaboratorBounds,
+  toSheetStylePatch,
+  type PendingMergeConflict,
+  type RemoteCollaborator,
+} from "./sheet-collab";
+import { SheetConflictBar } from "./sheet-conflict-bar";
 
 const DEFAULT_COL_WIDTH = 105;
 const DEFAULT_ROW_HEIGHT = 27;
@@ -65,20 +78,13 @@ type EditingState = {
   point: SheetPoint;
   value: string;
   source: "cell" | "formula";
+  baseRevision: number;
 };
 
 type UndoEntry = {
   worksheetId: number;
   forward: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[];
   backward: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[];
-};
-
-type RemoteCollaborator = {
-  userId: number;
-  name: string;
-  worksheetId?: number;
-  row: number;
-  col: number;
 };
 
 function makeMutationId(): string {
@@ -173,6 +179,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
   const [collaborators, setCollaborators] = useState<RemoteCollaborator[]>([]);
+  const [cellConflicts, setCellConflicts] = useState<SheetCellConflict[]>([]);
+  const [mergeConflict, setMergeConflict] = useState<PendingMergeConflict | null>(null);
+  useEffect(() => {
+    setCellConflicts([]);
+    setMergeConflict(null);
+  }, [sheetId, activeSheetId]);
   const [pendingImport, setPendingImport] = useState<{ filename: string; sheets: ReturnType<typeof parseXlsxForWorkbook> extends Promise<infer R> ? R : never } | null>(null);
   const [importing, setImporting] = useState(false);
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
@@ -232,18 +244,49 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     setNameBoxText(formatSelectionAddress(selection));
   }, [selection]);
 
-  // WebSocket live revision sync and cursor presence.
+  const activeSheetRef = useRef<SheetWorksheet | null>(null);
+  const selectionRef = useRef<SheetSelection>(selection);
+  const editingFlagRef = useRef(false);
+  activeSheetRef.current = activeSheet ?? null;
+  selectionRef.current = selection;
+  editingFlagRef.current = !!editing;
+
+  // WebSocket live revision sync (with incremental cell deltas) and region presence.
   useEffect(() => {
     if (!isSheetKind || !workbook.isSuccess || typeof WebSocket === "undefined") return;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${proto}//${location.host}/api/sheets/${sheetId}/ws`);
     wsRef.current = socket;
+    socket.onopen = () => {
+      const wsSheet = activeSheetRef.current;
+      const sel = selectionRef.current;
+      if (wsSheet) {
+        socket.send(
+          JSON.stringify({
+            type: "cursor",
+            worksheetId: wsSheet.id,
+            row: sel.focus.row,
+            col: sel.focus.col,
+            anchorRow: sel.anchor.row,
+            anchorCol: sel.anchor.col,
+            editing: editingFlagRef.current,
+          }),
+        );
+      }
+    };
     socket.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         if (msg?.type === "revision" && Number.isSafeInteger(msg.workbookRevision)) {
           const current = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
-          if (!current || msg.workbookRevision > current.workbookRevision) {
+          if (msg.worksheetId && Array.isArray(msg.cellDelta) && msg.cellDelta.length > 0) {
+            const patched = applyRemoteCellDelta(current, msg.worksheetId, msg.workbookRevision, msg.cellDelta as SheetCellRevision[]);
+            if (patched) {
+              qc.setQueryData<SheetSnapshot>(workbookQueryKey, patched);
+            } else {
+              void qc.invalidateQueries({ queryKey: workbookQueryKey });
+            }
+          } else if (!current || msg.workbookRevision > current.workbookRevision) {
             void qc.invalidateQueries({ queryKey: workbookQueryKey });
           }
           void qc.invalidateQueries({ queryKey: commentsQueryKey });
@@ -260,11 +303,23 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     };
   }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey, commentsQueryKey]);
 
+  const isEditingAny = !!editing;
   useEffect(() => {
+    activeSheetRef.current = activeSheet ?? null;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN || !activeSheet) return;
-    ws.send(JSON.stringify({ type: "cursor", worksheetId: activeSheet.id, row: selection.focus.row, col: selection.focus.col }));
-  }, [activeSheet?.id, selection.focus.row, selection.focus.col]);
+    ws.send(
+      JSON.stringify({
+        type: "cursor",
+        worksheetId: activeSheet.id,
+        row: selection.focus.row,
+        col: selection.focus.col,
+        anchorRow: selection.anchor.row,
+        anchorCol: selection.anchor.col,
+        editing: isEditingAny,
+      }),
+    );
+  }, [activeSheet, selection.focus.row, selection.focus.col, selection.anchor.row, selection.anchor.col, isEditingAny]);
 
   useEffect(() => {
     const stop = () => {
@@ -407,7 +462,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const commitCellEdits = useCallback(
     async (
-      edits: { row: number; col: number; raw?: string; style?: SheetCellStyle }[],
+      edits: { row: number; col: number; raw?: string; style?: SheetCellStyle; stylePatch?: SheetStylePatch; expectedRevision?: number }[],
       options: { targetSheet?: SheetWorksheet; recordUndo?: boolean } = {},
     ): Promise<boolean> => {
       const targetWS = options.targetSheet ?? activeSheet;
@@ -430,7 +485,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         const cur = cellByKey.get(k);
         const nextRaw = edit.raw !== undefined ? edit.raw : undefined;
         const nextStyle = edit.style !== undefined ? edit.style : undefined;
-        if ((nextRaw === undefined || nextRaw === (cur?.raw ?? "")) && (nextStyle === undefined || JSON.stringify(nextStyle) === JSON.stringify(cur?.style ?? {}))) {
+        const nextStylePatch = edit.stylePatch;
+        if (
+          (nextRaw === undefined || nextRaw === (cur?.raw ?? "")) &&
+          !nextStylePatch &&
+          (nextStyle === undefined || JSON.stringify(nextStyle) === JSON.stringify(cur?.style ?? {}))
+        ) {
           continue;
         }
         const prot = isSheetCellProtected(targetWS.protectedRanges, edit.row, edit.col, userId, role);
@@ -451,9 +511,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         writes.push({
           rowId,
           columnId,
-          expectedRevision: cur?.revision ?? 0,
+          expectedRevision: edit.expectedRevision ?? (cur?.revision ?? 0),
           ...(nextRaw !== undefined ? { raw: nextRaw } : {}),
-          ...(nextStyle !== undefined ? { style: nextStyle } : {}),
+          ...(nextStylePatch ? { stylePatch: nextStylePatch } : nextStyle !== undefined ? { style: nextStyle } : {}),
         });
         forwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: nextRaw } : {}), ...(nextStyle !== undefined ? { style: nextStyle } : {}) });
         backwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: cur?.raw ?? "" } : {}), ...(nextStyle !== undefined ? { style: cur?.style ?? {} } : {}) });
@@ -467,20 +527,67 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         const res = await sheetsApi.writeCells(sheetId, userId, {
           mutationId: makeMutationId(),
           worksheetId: targetWS.id,
+          mergeMode: "auto",
           cells: writes,
         });
         if (!mountedRef.current) return true;
-        const revByCell = new Map(res.cells.map((c) => [`${c.rowId}:${c.columnId}`, c.revision]));
-        applyLocalWriteResult(
-          targetWS.id,
-          res.workbookRevision,
-          localMap.map((m) => ({ ...m, revision: revByCell.get(`${m.rowId}:${m.columnId}`) ?? 1 })),
-        );
-        if (options.recordUndo !== false) {
-          setUndoStack((prev) => [...prev.slice(-49), { worksheetId: targetWS.id, forward: forwardUndo, backward: backwardUndo }]);
-          setRedoStack([]);
+
+        const appliedUpdates: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; revision: number }[] = [];
+        const localByCell = new Map(localMap.map((m) => [`${m.rowId}:${m.columnId}`, m]));
+        for (const c of res.cells) {
+          const fallback = localByCell.get(`${c.rowId}:${c.columnId}`);
+          appliedUpdates.push({
+            rowId: c.rowId,
+            columnId: c.columnId,
+            raw: c.raw !== undefined ? c.raw : fallback?.raw,
+            style: c.style !== undefined ? c.style : fallback?.style,
+            revision: c.revision,
+          });
         }
-        setStatusMessage(warningMsg ? `${t("校验警告")}：${warningMsg}` : "");
+        const conflicts = res.conflicts ?? [];
+        for (const cf of conflicts) {
+          if (cf.currentRevision > 0) {
+            appliedUpdates.push({
+              rowId: cf.rowId,
+              columnId: cf.columnId,
+              raw: cf.currentRaw,
+              style: cf.currentStyle ?? {},
+              revision: cf.currentRevision,
+            });
+          }
+        }
+        if (appliedUpdates.length > 0) {
+          applyLocalWriteResult(targetWS.id, res.workbookRevision, appliedUpdates);
+        }
+
+        const committedKeys = new Set(res.cells.map((c) => `${c.rowId}:${c.columnId}`));
+        if (options.recordUndo !== false && committedKeys.size > 0) {
+          const committedForward = forwardUndo.filter((f) => committedKeys.has(`${f.rowId}:${f.columnId}`));
+          const committedBackward = backwardUndo.filter((b) => committedKeys.has(`${b.rowId}:${b.columnId}`));
+          if (committedForward.length > 0) {
+            setUndoStack((prev) => [...prev.slice(-49), { worksheetId: targetWS.id, forward: committedForward, backward: committedBackward }]);
+            setRedoStack([]);
+          }
+        }
+
+        if (conflicts.length > 0) {
+          setCellConflicts((prev) => {
+            const byKey = new Map(prev.map((c) => [`${c.rowId}:${c.columnId}`, c]));
+            for (const cf of conflicts) byKey.set(`${cf.rowId}:${cf.columnId}`, cf);
+            return [...byKey.values()];
+          });
+          if (conflicts.some((c) => c.reason === "merge_slave_conflict")) {
+            void qc.invalidateQueries({ queryKey: workbookQueryKey });
+          }
+          setStatusMessage(t("检测到 {count} 处单元格协同冲突，请在上方选择保留或采用版本", { count: conflicts.length }));
+          return res.cells.length > 0;
+        }
+
+        if (res.mergedCount && res.mergedCount > 0) {
+          setStatusMessage(t("已与协作者修改自动合并 {count} 个单元格", { count: res.mergedCount }));
+        } else {
+          setStatusMessage(warningMsg ? `${t("校验警告")}：${warningMsg}` : "");
+        }
         return true;
       } catch (err) {
         if (!mountedRef.current) return false;
@@ -500,6 +607,81 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       }
     },
     [activeSheet, canEdit, role, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey],
+  );
+
+  const handleResolveCellConflicts = useCallback(
+    async (targets: SheetCellConflict[], choice: "mine" | "theirs" | "anchor") => {
+      if (!activeSheet || targets.length === 0) return;
+      const targetKeys = new Set(targets.map((c) => `${c.rowId}:${c.columnId}`));
+      if (choice === "theirs") {
+        setCellConflicts((prev) => prev.filter((c) => !targetKeys.has(`${c.rowId}:${c.columnId}`)));
+        setStatusMessage(t("已采用协作者最新版本"));
+        return;
+      }
+      const writes: SheetCellWrite[] = [];
+      for (const cf of targets) {
+        const w = buildConflictResolutionWrite(cf, choice === "anchor" ? "anchor" : "mine");
+        if (w) writes.push(w);
+      }
+      if (writes.length === 0) {
+        setCellConflicts((prev) => prev.filter((c) => !targetKeys.has(`${c.rowId}:${c.columnId}`)));
+        return;
+      }
+      setSavingCount((n) => n + 1);
+      setErrorMessage("");
+      try {
+        const res = await sheetsApi.writeCells(sheetId, userId, {
+          mutationId: makeMutationId(),
+          worksheetId: activeSheet.id,
+          mergeMode: "auto",
+          cells: writes,
+        });
+        if (!mountedRef.current) return;
+        const updates = res.cells.map((c) => ({
+          rowId: c.rowId,
+          columnId: c.columnId,
+          raw: c.raw,
+          style: c.style,
+          revision: c.revision,
+        }));
+        const nextConflicts = res.conflicts ?? [];
+        for (const cf of nextConflicts) {
+          if (cf.currentRevision > 0) {
+            updates.push({
+              rowId: cf.rowId,
+              columnId: cf.columnId,
+              raw: cf.currentRaw,
+              style: cf.currentStyle ?? {},
+              revision: cf.currentRevision,
+            });
+          }
+        }
+        if (updates.length > 0) {
+          applyLocalWriteResult(activeSheet.id, res.workbookRevision, updates);
+        }
+        setCellConflicts((prev) => {
+          const remaining = prev.filter((c) => !targetKeys.has(`${c.rowId}:${c.columnId}`));
+          if (nextConflicts.length === 0) return remaining;
+          const byKey = new Map(remaining.map((c) => [`${c.rowId}:${c.columnId}`, c]));
+          for (const cf of nextConflicts) byKey.set(`${cf.rowId}:${cf.columnId}`, cf);
+          return [...byKey.values()];
+        });
+        setStatusMessage(
+          nextConflicts.length > 0
+            ? t("仍有 {count} 处冲突需确认", { count: nextConflicts.length })
+            : choice === "anchor"
+              ? t("已写入合并区域主格")
+              : t("冲突已消解并保留我的修改"),
+        );
+      } catch (err) {
+        if (mountedRef.current) {
+          setErrorMessage(err instanceof Error ? err.message : t("冲突消解失败，请刷新后重试"));
+        }
+      } finally {
+        if (mountedRef.current) setSavingCount((n) => Math.max(0, n - 1));
+      }
+    },
+    [activeSheet, sheetId, userId, applyLocalWriteResult],
   );
 
   const runUndoRedo = async (direction: "undo" | "redo") => {
@@ -543,13 +725,14 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       return;
     }
     setDropdownCell(null);
-    const curRaw = gridMap.cellByKey.get(pointKey(snapped))?.raw ?? "";
+    const curCell = gridMap.cellByKey.get(pointKey(snapped));
     setSelection({ anchor: snapped, focus: snapped });
     setEditing({
       sheetId: activeSheet.id,
       point: snapped,
-      value: initialValue !== undefined ? initialValue : curRaw,
+      value: initialValue !== undefined ? initialValue : (curCell?.raw ?? ""),
       source,
+      baseRevision: curCell?.revision ?? 0,
     });
   };
 
@@ -558,9 +741,10 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     const targetWS = sheets.find((s) => s.id === editing.sheetId);
     const val = editing.value;
     const pt = editing.point;
+    const baseRev = editing.baseRevision;
     setEditing(null);
     if (!targetWS) return true;
-    return commitCellEdits([{ row: pt.row, col: pt.col, raw: val }], { targetSheet: targetWS });
+    return commitCellEdits([{ row: pt.row, col: pt.col, raw: val, expectedRevision: baseRev }], { targetSheet: targetWS });
   };
 
   const moveSelection = (dr: number, dc: number, extend: boolean) => {
@@ -574,7 +758,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const handleStylePatch = async (patch: Partial<SheetCellStyle>) => {
     if (!canEdit || !activeSheet) return;
     const b = selectionBounds(selection);
-    const edits: { row: number; col: number; style: SheetCellStyle }[] = [];
+    const wirePatch = toSheetStylePatch(patch);
+    const edits: { row: number; col: number; style: SheetCellStyle; stylePatch: SheetStylePatch }[] = [];
     for (let r = b.top; r <= b.bottom; r++) {
       for (let c = b.left; c <= b.right; c++) {
         const curStyle = gridMap.cellByKey.get(`${r}:${c}`)?.style ?? {};
@@ -583,7 +768,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         if (nextStyle.fontFamily === "") delete nextStyle.fontFamily;
         if (nextStyle.align === "") delete nextStyle.align;
         if (nextStyle.valign === "") delete nextStyle.valign;
-        edits.push({ row: r, col: c, style: nextStyle });
+        if ("borders" in patch && !patch.borders) delete nextStyle.borders;
+        edits.push({ row: r, col: c, style: nextStyle, stylePatch: wirePatch });
       }
     }
     await commitCellEdits(edits);
@@ -610,7 +796,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   };
 
   const handleWorksheetPatch = async (wid: number, patch: Parameters<typeof sheetsApi.updateWorksheet>[3]) => {
-    if (!canEdit) return;
+    if (!canEdit) return false;
     setSavingCount((n) => n + 1);
     setErrorMessage("");
     try {
@@ -620,9 +806,37 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         const nextSheets = old.sheets.map((s) => (s.id === wid ? res.worksheet : s)).sort((a, b) => a.pos - b.pos || a.id - b.id);
         return { ...old, workbookRevision: Math.max(old.workbookRevision, res.workbookRevision), sheets: nextSheets };
       });
+      return true;
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "merge_overlap_conflict" && patch.mergeOp) {
+        const latestWs = err.details?.worksheet as SheetWorksheet | undefined;
+        const latestWbRev = typeof err.details?.workbookRevision === "number" ? err.details.workbookRevision : undefined;
+        if (latestWs) {
+          qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              workbookRevision: latestWbRev ? Math.max(old.workbookRevision, latestWbRev) : old.workbookRevision,
+              sheets: old.sheets.map((s) => (s.id === wid ? latestWs : s)),
+            };
+          });
+        } else {
+          void qc.invalidateQueries({ queryKey: workbookQueryKey });
+        }
+        const conflictingMerges = Array.isArray(err.details?.conflictingMerges)
+          ? (err.details.conflictingMerges as SheetMerge[])
+          : [];
+        setMergeConflict({
+          worksheetId: wid,
+          attemptedRect: patch.mergeOp.rect,
+          conflictingMerges,
+          message: err.message,
+        });
+        return false;
+      }
       setErrorMessage(err instanceof Error ? err.message : t("更新工作表失败"));
       void qc.invalidateQueries({ queryKey: workbookQueryKey });
+      return false;
     } finally {
       setSavingCount((n) => Math.max(0, n - 1));
     }
@@ -708,8 +922,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const handleToggleMerge = async () => {
     if (!canEdit || !activeSheet) return;
     if (matchingMerge) {
-      const next = activeSheet.merges.filter((m) => !sameRect(m, matchingMerge));
-      await handleWorksheetPatch(activeSheet.id, { merges: next });
+      await handleWorksheetPatch(activeSheet.id, {
+        mergeOp: { op: "unmerge", rect: matchingMerge, expectedMerges: activeSheet.merges },
+      });
       return;
     }
     const b = selectionBounds(selection);
@@ -717,11 +932,34 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       setStatusMessage(t("请先框选两个及以上单元格再合并"));
       return;
     }
-    const filtered = activeSheet.merges.filter(
-      (m) => m.bottom < b.top || m.top > b.bottom || m.right < b.left || m.left > b.right,
-    );
-    await handleWorksheetPatch(activeSheet.id, { merges: [...filtered, b] });
-    setSelection({ anchor: { row: b.top, col: b.left }, focus: { row: b.top, col: b.left } });
+    const ok = await handleWorksheetPatch(activeSheet.id, {
+      mergeOp: { op: "merge", rect: b, expectedMerges: activeSheet.merges },
+    });
+    if (ok) {
+      setMergeConflict(null);
+      setSelection({ anchor: { row: b.top, col: b.left }, focus: { row: b.top, col: b.left } });
+    }
+  };
+
+  const handleResolveMergeConflict = async (force: boolean) => {
+    if (!mergeConflict) return;
+    if (!force) {
+      setMergeConflict(null);
+      setStatusMessage(t("已保留协作者的合并区域"));
+      return;
+    }
+    const target = mergeConflict;
+    const ok = await handleWorksheetPatch(target.worksheetId, {
+      mergeOp: { op: "merge", rect: target.attemptedRect, force: true },
+    });
+    if (ok) {
+      setMergeConflict(null);
+      setSelection({
+        anchor: { row: target.attemptedRect.top, col: target.attemptedRect.left },
+        focus: { row: target.attemptedRect.top, col: target.attemptedRect.left },
+      });
+      setStatusMessage(t("已覆盖合并所选区域"));
+    }
   };
 
   const handleAxisOp = async (op: Parameters<typeof sheetsApi.mutateAxis>[3]) => {
@@ -1476,6 +1714,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         />
       </div>
 
+      <SheetConflictBar
+        cellConflicts={cellConflicts}
+        mergeConflict={mergeConflict}
+        busy={savingCount > 0}
+        onResolveCell={(cf, choice) => void handleResolveCellConflicts([cf], choice)}
+        onResolveAllCells={(choice) => void handleResolveCellConflicts(cellConflicts, choice)}
+        onResolveMerge={(force) => void handleResolveMergeConflict(force)}
+      />
+
       {/* Main Grid Viewport + Optional Right Drawer */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
       <div
@@ -1692,7 +1939,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const isFocus = selection.focus.row === rowIdx && selection.focus.col === colIdx;
                   const isEditingCell = editing?.sheetId === activeSheet.id && editing.source === "cell" && editing.point.row === rowIdx && editing.point.col === colIdx;
                   const refHighlight = formulaHighlights.find((h) => rowIdx >= h.top && rowIdx <= h.bottom && colIdx >= h.left && colIdx <= h.right);
-                  const remoteCollab = collaborators.find((c) => c.worksheetId === activeSheet.id && c.row === rowIdx && c.col === colIdx);
+                  const remoteMatches = collaborators
+                    .filter((c) => c.worksheetId === activeSheet.id)
+                    .map((c) => ({ collab: c, bounds: remoteCollaboratorBounds(c) }))
+                    .filter(({ bounds: rb }) => rowIdx >= rb.top && rowIdx <= rb.bottom && colIdx >= rb.left && colIdx <= rb.right);
+                  const primaryRemote = remoteMatches[0] ?? null;
+                  const remoteBadgeOwner = remoteMatches.find(({ bounds: rb }) => rowIdx === rb.top && colIdx === rb.left) ?? null;
 
                   const refEdges: string[] = [];
                   if (refHighlight) {
@@ -1701,8 +1953,16 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     if (colIdx === refHighlight.left) refEdges.push(`inset 2px 0 ${refHighlight.color}`);
                     if (colIdx === refHighlight.right) refEdges.push(`inset -2px 0 ${refHighlight.color}`);
                   }
+                  const remoteEdges: string[] = [];
+                  for (const { collab: rc, bounds: rb } of remoteMatches) {
+                    const rcColor = colorFor(rc.userId - 1);
+                    if (rowIdx === rb.top) remoteEdges.push(`inset 0 2px ${rcColor}`);
+                    if (rowIdx === rb.bottom) remoteEdges.push(`inset 0 -2px ${rcColor}`);
+                    if (colIdx === rb.left) remoteEdges.push(`inset 2px 0 ${rcColor}`);
+                    if (colIdx === rb.right) remoteEdges.push(`inset -2px 0 ${rcColor}`);
+                  }
                   const selShadow = selectionOutline(selection, point);
-                  const combinedShadow = [selShadow, ...refEdges].filter(Boolean).join(", ") || undefined;
+                  const combinedShadow = [selShadow, ...refEdges, ...remoteEdges].filter(Boolean).join(", ") || undefined;
 
                   const displayValue = formatCellDisplay(cell?.raw ?? "", ev, style);
                   const alignClass = style.align === "center"
@@ -1720,7 +1980,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     ? `${refHighlight.color}18`
                     : isSel && !isFocus
                       ? "#edf3ff"
-                      : effectiveBg || (protState.blocked ? "#fafbfc" : "#ffffff");
+                      : primaryRemote && !effectiveBg
+                        ? `${colorFor(primaryRemote.collab.userId - 1)}14`
+                        : effectiveBg || (protState.blocked ? "#fafbfc" : "#ffffff");
 
                   return (
                     <div
@@ -1754,8 +2016,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                           borderRight: style.borders?.right ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
                           borderBottom: style.borders?.bottom ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
                           borderLeft: style.borders?.left ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
-                          outline: remoteCollab ? `2px solid ${colorFor(remoteCollab.userId - 1)}` : undefined,
-                          zIndex: isDropdownOpen ? 30 : mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight ? 1 : undefined,
+                          zIndex: isDropdownOpen ? 30 : mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight || primaryRemote ? 1 : undefined,
                         }}
                         onPointerDown={(e) => {
                           if (e.button !== 0 || isEditingCell) return;
@@ -1910,12 +2171,16 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             )}
                           </>
                         )}
-                        {remoteCollab && (
+                        {remoteBadgeOwner && (
                           <span
+                            data-remote-collab-badge={remoteBadgeOwner.collab.userId}
+                            data-remote-collab-editing={remoteBadgeOwner.collab.editing ? "true" : undefined}
                             className="pointer-events-none absolute -top-4 left-0 z-30 whitespace-nowrap rounded px-1 text-[10px] text-white"
-                            style={{ backgroundColor: colorFor(remoteCollab.userId - 1) }}
+                            style={{ backgroundColor: colorFor(remoteBadgeOwner.collab.userId - 1) }}
                           >
-                            {remoteCollab.name}
+                            {remoteBadgeOwner.collab.editing
+                              ? `${remoteBadgeOwner.collab.name} · ${t("编辑中")}`
+                              : remoteBadgeOwner.collab.name}
                           </span>
                         )}
                         {showFillHandle && (
