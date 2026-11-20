@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,6 +9,29 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
+
+func (s *Server) enrichWikiShortcut(ctx context.Context, userID int64, sc store.WikiShortcut) store.WikiShortcut {
+	doc, err := s.Store.GetDoc(ctx, userID, sc.TargetNodeID)
+	if err != nil {
+		sc.TargetAccessible = false
+		sc.Title = ""
+		sc.TargetKind = ""
+		sc.TargetDocType = ""
+		sc.TargetTitle = ""
+		sc.TargetIcon = ""
+		sc.TargetWikiSpaceID = nil
+		sc.TargetWikiSpaceName = ""
+		return sc
+	}
+	sc.TargetAccessible = true
+	sc.TargetKind = doc.Kind
+	sc.TargetDocType = doc.DocType
+	sc.TargetTitle = doc.Title
+	sc.TargetIcon = doc.Icon
+	sc.TargetWikiSpaceID = doc.WikiSpaceID
+	sc.TargetWikiSpaceName = doc.WikiSpaceName
+	return sc
+}
 
 func (s *Server) wikiError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
@@ -95,6 +119,9 @@ func (s *Server) getWikiSpace(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.wikiError(w, r, err)
 		return
+	}
+	for i := range detail.Shortcuts {
+		detail.Shortcuts[i] = s.enrichWikiShortcut(r.Context(), guard.UserID, detail.Shortcuts[i])
 	}
 	httpx.JSON(w, http.StatusOK, detail)
 }
@@ -301,4 +328,96 @@ func (s *Server) postWikiNodeMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, node)
+}
+
+func (s *Server) postWikiNodeReorder(w http.ResponseWriter, r *http.Request) {
+	spaceID, ok := s.parsePositivePathID(w, r, "spaceId")
+	if !ok {
+		return
+	}
+	nodeID, ok := s.parsePositivePathID(w, r, "id")
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	var in struct {
+		TargetParentID   *int64 `json:"targetParentId"`
+		Position         int    `json:"position"`
+		ExpectedRevision int64  `json:"expectedRevision"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Position < 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_position", "排序位置必须为非负整数")
+		return
+	}
+	node, err := s.Store.ReorderWikiNodeGuarded(r.Context(), guard, spaceID, nodeID, in.TargetParentID, in.Position, in.ExpectedRevision)
+	if err != nil {
+		s.wikiError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, node)
+}
+
+func (s *Server) postWikiShortcut(w http.ResponseWriter, r *http.Request) {
+	spaceID, ok := s.parsePositivePathID(w, r, "spaceId")
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	var in struct {
+		ParentID     *int64 `json:"parentId"`
+		TargetNodeID int64  `json:"targetNodeId"`
+		Title        string `json:"title"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.TargetNodeID <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_target", "请选择要引用的目标页面或文档")
+		return
+	}
+	sc, err := s.Store.CreateWikiShortcutGuarded(r.Context(), guard, spaceID, in.ParentID, in.TargetNodeID, in.Title)
+	if err != nil {
+		s.wikiError(w, r, err)
+		return
+	}
+	sc = s.enrichWikiShortcut(r.Context(), guard.UserID, sc)
+	httpx.JSON(w, http.StatusCreated, sc)
+}
+
+func (s *Server) deleteWikiShortcut(w http.ResponseWriter, r *http.Request) {
+	spaceID, ok := s.parsePositivePathID(w, r, "spaceId")
+	if !ok {
+		return
+	}
+	shortcutID, ok := s.parsePositivePathID(w, r, "sid")
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	if err := s.Store.DeleteWikiShortcutGuarded(r.Context(), guard, spaceID, shortcutID); err != nil {
+		s.wikiError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

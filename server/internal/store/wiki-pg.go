@@ -150,17 +150,17 @@ func (p *Postgres) GetWikiSpaceDetail(ctx context.Context, guard RestoreGuard, s
 		if e != nil {
 			return e
 		}
-		rows, e := tx.Query(ctx, `SELECT n.id, n.workspace_id, n.wiki_space_id, n.parent_id, n.kind, n.doc_type, n.title, n.icon,
+		rows, e := tx.Query(ctx, `SELECT n.id, n.workspace_id, n.wiki_space_id, n.parent_id, n.kind, n.doc_type, n.title, n.icon, n.sort_key,
 			n.creator_id, COALESCE((SELECT u.name FROM users u WHERE u.id = n.creator_id), ''),
 			`+roleSQL+`, n.drive_revision, n.inherit_parent_acl, n.created_at, n.updated_at
 			FROM nodes n`+roleJoins+`
 			WHERE n.wiki_space_id = $2 AND n.deleted_at IS NULL AND (`+roleSQL+`) <> ''
-			ORDER BY (n.kind = 'folder') DESC, n.sort_key, n.id`, guard.UserID, spaceID)
+			ORDER BY n.sort_key, n.id`, guard.UserID, spaceID)
 		if e != nil {
 			return e
 		}
 		nodes, e := pgx.CollectRows(rows, func(r pgx.CollectableRow) (item WikiNodeEntry, err error) {
-			err = r.Scan(&item.ID, &item.WorkspaceID, &item.WikiSpaceID, &item.ParentID, &item.Kind, &item.DocType, &item.Title, &item.Icon, &item.CreatorID, &item.CreatorName, &item.Role, &item.Revision, &item.InheritParentACL, &item.CreatedAt, &item.UpdatedAt)
+			err = r.Scan(&item.ID, &item.WorkspaceID, &item.WikiSpaceID, &item.ParentID, &item.Kind, &item.DocType, &item.Title, &item.Icon, &item.SortKey, &item.CreatorID, &item.CreatorName, &item.Role, &item.Revision, &item.InheritParentACL, &item.CreatedAt, &item.UpdatedAt)
 			return
 		})
 		if e != nil {
@@ -168,6 +168,14 @@ func (p *Postgres) GetWikiSpaceDetail(ctx context.Context, guard RestoreGuard, s
 		}
 		if rank == 0 && len(nodes) == 0 {
 			return ErrNotFound
+		}
+		visibleNodeIDs := make(map[int64]bool, len(nodes))
+		for _, n := range nodes {
+			visibleNodeIDs[n.ID] = true
+		}
+		shortcuts, e := wikiPGListShortcuts(ctx, tx, spaceID, rank > 0, visibleNodeIDs)
+		if e != nil {
+			return e
 		}
 		sp.NodeCount = len(nodes)
 		if rank == 0 {
@@ -182,7 +190,7 @@ func (p *Postgres) GetWikiSpaceDetail(ctx context.Context, guard RestoreGuard, s
 				return e
 			}
 		}
-		out = WikiSpaceDetail{Space: sp, Grants: grants, Nodes: nodes}
+		out = WikiSpaceDetail{Space: sp, Grants: grants, Nodes: nodes, Shortcuts: shortcuts}
 		return drivePGEnd(ctx, guard, expires)
 	})
 	return out, orgPGError(err)
@@ -489,13 +497,17 @@ func (p *Postgres) CreateWikiNodeGuarded(ctx context.Context, guard RestoreGuard
 		} else if rank < 2 {
 			return ErrForbidden
 		}
+		nextSortKey, e := wikiPGNextSiblingSortKey(ctx, tx, spaceID, parentID)
+		if e != nil {
+			return e
+		}
 		if e = tx.QueryRow(ctx, `INSERT INTO nodes (workspace_id, parent_id, kind, doc_type, sort_key, title, creator_id, drive_revision, personal, wiki_space_id)
-			VALUES ($1,$2,$3,$4,'V',$5,$6,1,false,$7)
-			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, creator_id,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,1,false,$8)
+			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, sort_key, creator_id,
 				COALESCE((SELECT u.name FROM users u WHERE u.id = nodes.creator_id), ''),
 				drive_revision, inherit_parent_acl, created_at, updated_at`,
-			sp.WorkspaceID, parentID, kind, docType, title, guard.UserID, spaceID).
-			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
+			sp.WorkspaceID, parentID, kind, docType, nextSortKey, title, guard.UserID, spaceID).
+			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.SortKey, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		out.Role = RoleManage
@@ -677,12 +689,16 @@ func (p *Postgres) MoveWikiNodeGuarded(ctx context.Context, guard RestoreGuard, 
 		if e = bumpPGSubtreePermissionsRevision(ctx, tx, nodeID, true); e != nil {
 			return e
 		}
-		if e = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2, wiki_space_id=$3, drive_revision=drive_revision+1, updated_at=now() WHERE id=$1
-			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, creator_id,
+		nextSortKey, e := wikiPGNextSiblingSortKey(ctx, tx, targetSpaceID, targetParentID)
+		if e != nil {
+			return e
+		}
+		if e = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2, wiki_space_id=$3, sort_key=$4, drive_revision=drive_revision+1, updated_at=now() WHERE id=$1
+			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, sort_key, creator_id,
 				COALESCE((SELECT u.name FROM users u WHERE u.id = nodes.creator_id), ''),
 				drive_revision, inherit_parent_acl, created_at, updated_at`,
-			nodeID, targetParentID, targetSpaceID).
-			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
+			nodeID, targetParentID, targetSpaceID, nextSortKey).
+			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.SortKey, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		if *sourceSpaceID != targetSpaceID {
@@ -785,12 +801,16 @@ func (p *Postgres) ImportDriveNodeToWikiGuarded(ctx context.Context, guard Resto
 		if e = bumpPGSubtreePermissionsRevision(ctx, tx, sourceNodeID, true); e != nil {
 			return e
 		}
-		if e = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2, wiki_space_id=$3, personal=false, drive_revision=drive_revision+1, updated_at=now() WHERE id=$1
-			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, creator_id,
+		nextSortKey, e := wikiPGNextSiblingSortKey(ctx, tx, targetSpaceID, targetParentID)
+		if e != nil {
+			return e
+		}
+		if e = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2, wiki_space_id=$3, sort_key=$4, personal=false, drive_revision=drive_revision+1, updated_at=now() WHERE id=$1
+			RETURNING id, workspace_id, wiki_space_id, parent_id, kind, doc_type, title, icon, sort_key, creator_id,
 				COALESCE((SELECT u.name FROM users u WHERE u.id = nodes.creator_id), ''),
 				drive_revision, inherit_parent_acl, created_at, updated_at`,
-			sourceNodeID, targetParentID, targetSpaceID).
-			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
+			sourceNodeID, targetParentID, targetSpaceID, nextSortKey).
+			Scan(&out.ID, &out.WorkspaceID, &out.WikiSpaceID, &out.ParentID, &out.Kind, &out.DocType, &out.Title, &out.Icon, &out.SortKey, &out.CreatorID, &out.CreatorName, &out.Revision, &out.InheritParentACL, &out.CreatedAt, &out.UpdatedAt); e != nil {
 			return e
 		}
 		if _, e = tx.Exec(ctx, `WITH RECURSIVE sub(id) AS (

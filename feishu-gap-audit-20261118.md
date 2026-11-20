@@ -50,7 +50,7 @@
 
 | 能力项 | 状态 | 具体差距与代码依据 | 优先级 |
 | --- | --- | --- | --- |
-| 独立知识库空间（Wiki） | **部分（P0 已闭环）** | 已落地独立知识库空间（`0069_wiki_spaces.sql`、`#/wiki`、`#/wiki/{spaceId}`）、空间级成员/部门/用户组授权、多级混合资源目录树、单页继承阻断、跨库子树迁移与云盘迁入（见 [知识库空间验证报告](wiki-spaces-report-20261119.md)）；目录树拖拽排序与跨库快捷方式引用仍待后续补充。 | **P1** |
+| 独立知识库空间（Wiki） | **已落地（P1 Slice 11，2026-11-20）** | 已落地独立知识库空间（`0069_wiki_spaces.sql`、`#/wiki`、`#/wiki/{spaceId}`）、空间级成员/部门/用户组授权、多级混合资源目录树、单页继承阻断、跨库子树迁移与云盘迁入（见 [知识库空间验证报告](wiki-spaces-report-20261119.md)），并完成目录树三区拖拽排序与「上移/下移」（`POST /api/wiki/spaces/{spaceId}/nodes/{id}/reorder`，含乐观锁、跨父权限校验、循环拦截与 `sort_key` 自动重平衡）以及跨库/云盘快捷方式引用闭环（`0078_wiki_shortcuts.sql`、`POST/DELETE /api/wiki/spaces/{spaceId}/shortcuts`，含弹窗选择、来源徽章、平滑跨库跳转及无权限目标的零元数据泄露实时锁定脱敏，详见 [wiki-tree-shortcuts-report-20261120.md](wiki-tree-shortcuts-report-20261120.md)）；移动端真机触控拖拽手势与快捷方式和普通页面混排拖拽留作后续深化。 | **已完成（P1）** |
 | 企业组织、部门与群组权限 | **部分（P0 已闭环）** | 已落地多级部门、用户组、成员角色与邀请同意机制（`0067`–`0068`、`#/org`）、按部门/用户组授权及「继承上级权限」开关（见 [组织架构与权限继承报告](org-permissions-report-20261118.md)）；大空间列表权限计算性能优化与外部组织目录同步仍待后续深化。 | **P1** |
 | 主页视图与交互细节 | **已落地核心闭环（P1 Slice 5，2026-11-19）** | 已落地主页独立可折叠「置顶文档」卡片区（`data-home-pins`）、列表与卡片视图批量勾选及账号绑定批量收藏/置顶/删除工具栏（`data-home-batch`），并打通多维表格（多表/关联/附件/共享视图完整克隆 + 权限视图 403 保护）与问卷在主页、云盘及多维表格页内创建副本（详见 [home-drive-closure-report-20261119.md](home-drive-closure-report-20261119.md)）；卡片正文内容实时缩略图留作后续视觉增强。 | **已完成（P1）** |
 | 云盘操作闭环 | **已落地核心闭环（P1 Slice 5，2026-11-19）** | 已落地持久化快捷方式（`0075_drive_shortcuts.sql`、`GET/POST/DELETE /api/drive/shortcuts` 实时权限复验 + 顶部「添加」弹窗与目录卡片）、全类型文档「复制到指定目录」（`CopyToDialog` + `CopyDoc`/`CopyBase`/`CopySurvey` 目录门禁修复）、文件/文件夹拖拽移入文件夹卡片与面包屑，以及网格视图卡片批量勾选与共用批量操作栏（详见 [home-drive-closure-report-20261119.md](home-drive-closure-report-20261119.md)）；孤儿附件定时巡检 GC 留作后续运维增强。 | **已完成（P1）** |

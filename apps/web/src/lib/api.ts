@@ -776,6 +776,7 @@ export interface WikiNodeEntry {
   docType?: string;
   title: string;
   icon?: string;
+  sortKey?: string;
   creatorId: number;
   creatorName: string;
   role: Role;
@@ -784,10 +785,31 @@ export interface WikiNodeEntry {
   createdAt: string;
   updatedAt: string;
 }
+export interface WikiShortcut {
+  id: number;
+  workspaceId: number;
+  wikiSpaceId: number;
+  parentId: number | null;
+  targetNodeId: number;
+  title: string;
+  sortKey?: string;
+  creatorId: number;
+  creatorName: string;
+  createdAt: string;
+  updatedAt: string;
+  targetAccessible: boolean;
+  targetKind?: string;
+  targetDocType?: string;
+  targetTitle?: string;
+  targetIcon?: string;
+  targetWikiSpaceId?: number | null;
+  targetWikiSpaceName?: string;
+}
 export interface WikiSpaceDetail {
   space: WikiSpace;
   grants: WikiSpaceGrant[];
   nodes: WikiNodeEntry[];
+  shortcuts?: WikiShortcut[];
 }
 export const wikiApi = {
   listSpaces: (wsId: number, userId: number) =>
@@ -804,10 +826,16 @@ export const wikiApi = {
     request<{ grants: WikiSpaceGrant[] }>("PUT", `/api/wiki/spaces/${spaceId}/grants`, { subjectType, subjectId, role }, undefined, { "X-Jiange-User-Id": String(userId) }).then((r) => r.grants ?? []),
   createNode: (spaceId: number, userId: number, input: { parentId?: number | null; kind: WikiNodeKind | "board"; docType?: string; title?: string }) =>
     request<WikiNodeEntry>("POST", `/api/wiki/spaces/${spaceId}/nodes`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  reorderNode: (spaceId: number, nodeId: number, userId: number, input: { targetParentId: number | null; position: number; expectedRevision: number }) =>
+    request<WikiNodeEntry>("POST", `/api/wiki/spaces/${spaceId}/nodes/${nodeId}/reorder`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
   importFromDrive: (spaceId: number, userId: number, input: { nodeId: number; targetParentId?: number | null; expectedRevision: number }) =>
     request<WikiNodeEntry>("POST", `/api/wiki/spaces/${spaceId}/import-drive`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
   moveNode: (nodeId: number, userId: number, input: { targetSpaceId: number; targetParentId?: number | null; expectedRevision: number }) =>
     request<WikiNodeEntry>("POST", `/api/wiki/nodes/${nodeId}/move`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  createShortcut: (spaceId: number, userId: number, input: { parentId?: number | null; targetNodeId: number; title?: string }) =>
+    request<WikiShortcut>("POST", `/api/wiki/spaces/${spaceId}/shortcuts`, input, undefined, { "X-Jiange-User-Id": String(userId) }),
+  deleteShortcut: (spaceId: number, shortcutId: number, userId: number) =>
+    request<void>("DELETE", `/api/wiki/spaces/${spaceId}/shortcuts/${shortcutId}`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
 };
 export interface FileMeta {
   id: number;

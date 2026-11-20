@@ -14,6 +14,7 @@ type memClient struct {
 
 type memDoc struct {
 	meta               DocMeta
+	sortKey            string
 	lastModifierID     int64
 	lastModifier       string
 	driveFileID        int64

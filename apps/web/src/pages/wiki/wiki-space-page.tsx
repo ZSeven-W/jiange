@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ChevronRight,
+  CornerUpRight,
   FilePlus,
   Folder,
   FolderInput,
   Globe,
+  GripVertical,
   Import,
+  Link2,
   Lock,
   Menu,
   MoreHorizontal,
@@ -28,8 +33,9 @@ import {
   type Me,
   type WikiNodeEntry,
   type WikiNodeKind,
+  type WikiShortcut,
 } from "@/lib/api";
-import { go } from "@/lib/route";
+import { go, nodeHref } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ask, askText } from "@/components/ui/ask";
@@ -40,11 +46,14 @@ import { DocPage } from "@/pages/doc-page";
 import { SheetPage } from "@/pages/sheet/sheet-page";
 import { BasePage } from "@/pages/base-page";
 import { SlidesDeck } from "@/pages/slides-page";
+import { SurveyPage } from "@/pages/survey/survey-page";
 import { stageBoard } from "@/pages/board-starter";
 import { WikiSpaceSettingsDialog } from "./wiki-space-settings-dialog";
 import { WikiImportDriveDialog, WikiMoveNodeDialog } from "./wiki-move-import-dialogs";
+import { WikiShortcutDialog } from "./wiki-shortcut-dialog";
+import { canDropWikiNode, computeStepReorder, computeWikiDropPlan, resolveRowDropZone, type WikiDropZone } from "./wiki-tree-dnd";
 
-function WikiNodeGlyph({ kind, docType }: { kind: WikiNodeKind; docType?: string }) {
+function WikiNodeGlyph({ kind, docType }: { kind: string; docType?: string }) {
   if (kind === "folder") return <Folder size={16} fill="#ffcc4d" stroke="#f5a623" className="shrink-0" />;
   if (kind === "sheet") return <SheetColorIcon className="size-4 shrink-0" />;
   if (kind === "base") return <BaseColorIcon className="size-4 shrink-0" />;
@@ -96,8 +105,11 @@ export function WikiSpacePage({
   const [rowMenuId, setRowMenuId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [shortcutParentId, setShortcutParentId] = useState<number | null | undefined>(undefined);
   const [movingNode, setMovingNode] = useState<WikiNodeEntry | null>(null);
   const [sharingNode, setSharingNode] = useState<WikiNodeEntry | null>(null);
+  const [dragNodeId, setDragNodeId] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ targetId: number; zone: WikiDropZone } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const createMenuRef = useRef<HTMLDivElement>(null);
@@ -113,6 +125,7 @@ export function WikiSpacePage({
   const detail = spaceQuery.data;
   const space = detail?.space;
   const nodes = detail?.nodes ?? [];
+  const shortcuts = detail?.shortcuts ?? [];
 
   useEffect(() => {
     document.title = space ? `${space.name} - ${t("知识库")} - Jiange` : `${t("知识库")} - Jiange`;
@@ -152,6 +165,15 @@ export function WikiSpacePage({
     }
     return map;
   }, [nodes, byId]);
+
+  const shortcutsMap = useMemo(() => {
+    const map = new Map<number | null, WikiShortcut[]>();
+    for (const sc of shortcuts) {
+      const parent = sc.parentId && byId.has(sc.parentId) ? sc.parentId : null;
+      map.set(parent, [...(map.get(parent) ?? []), sc]);
+    }
+    return map;
+  }, [shortcuts, byId]);
 
   const activeNode = nodeId ? byId.get(nodeId) ?? null : null;
 
@@ -234,112 +256,336 @@ export function WikiSpacePage({
     }
   };
 
-  const renderTree = (parentId: number | null, depth: number): React.ReactNode =>
-    (childrenMap.get(parentId) ?? []).map((node) => {
-      const kids = childrenMap.get(node.id) ?? [];
-      const active = nodeId === node.id;
-      const isOpen = expanded[node.id] ?? (activeAncestors.has(node.id) || active);
-      const canEditNode = node.role === "edit" || node.role === "manage";
-      const canManageNode = node.role === "manage";
+  const handleReorderNode = async (node: WikiNodeEntry, targetParentId: number | null, position: number) => {
+    if (busy || !space) return;
+    setRowMenuId(null);
+    setBusy(true);
+    setError("");
+    try {
+      await wikiApi.reorderNode(space.id, node.id, me.user.id, {
+        targetParentId,
+        position,
+        expectedRevision: node.revision,
+      });
+      if (targetParentId !== null) setExpanded((prev) => ({ ...prev, [targetParentId]: true }));
+      await refreshSpace();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("调整目录顺序失败，请刷新后重试"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteShortcut = async (sc: WikiShortcut) => {
+    if (busy || !space) return;
+    const label = sc.targetAccessible ? (sc.title || sc.targetTitle || t("快捷方式")) : t("失效快捷方式");
+    const ok = await ask(t("移除快捷方式「{title}」？", { title: label }), t("不会删除原文档内容。"));
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    try {
+      await wikiApi.deleteShortcut(space.id, sc.id, me.user.id);
+      await refreshSpace();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t("移除快捷方式失败，请稍后重试"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canDeleteShortcut = (sc: WikiShortcut) => {
+    if (sc.creatorId === me.user.id || canManageSpace) return true;
+    if (sc.parentId === null) return canEditSpace;
+    const parent = byId.get(sc.parentId);
+    return parent?.role === "edit" || parent?.role === "manage";
+  };
+
+  const openShortcutTarget = (sc: WikiShortcut) => {
+    if (!sc.targetAccessible) {
+      setError(t("该快捷方式目标已删除或当前无权访问。"));
+      return;
+    }
+    setError("");
+    go(nodeHref({
+      id: sc.targetNodeId,
+      kind: sc.targetKind ?? "doc",
+      wikiSpaceId: sc.targetWikiSpaceId ?? null,
+    }));
+  };
+
+  const renderShortcuts = (parentId: number | null, depth: number): React.ReactNode =>
+    (shortcutsMap.get(parentId) ?? []).map((sc) => {
+      const displayTitle = sc.targetAccessible ? (sc.title || sc.targetTitle || t("快捷方式")) : t("无权访问或已删除");
+      const sourceBadge = sc.targetAccessible
+        ? sc.targetWikiSpaceId && sc.targetWikiSpaceId !== space?.id
+          ? (sc.targetWikiSpaceName || t("跨库"))
+          : sc.targetWikiSpaceId === space?.id
+            ? t("本库")
+            : t("云盘")
+        : "";
       return (
-        <div key={node.id}>
-          <div
-            data-wiki-tree-row={node.id}
+        <div
+          key={`sc-${sc.id}`}
+          data-wiki-shortcut-row={sc.id}
+          data-wiki-shortcut-locked={!sc.targetAccessible ? sc.id : undefined}
+          className="group relative flex h-8 items-center rounded-md pr-1 text-[13px] text-foreground transition-colors hover:bg-hover"
+          style={{ paddingLeft: 6 + depth * 14 }}
+        >
+          <span aria-hidden className="size-5 shrink-0" />
+          <button
+            type="button"
+            onClick={() => openShortcutTarget(sc)}
+            title={sc.targetAccessible ? `${displayTitle}${sourceBadge ? ` · ${sourceBadge}` : ""}` : t("无权访问或已删除")}
             className={cn(
-              "group relative flex h-8 items-center rounded-md pr-1 text-[13px] transition-colors",
-              active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
+              "flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left",
+              !sc.targetAccessible && "text-subtle",
             )}
-            style={{ paddingLeft: 6 + depth * 14 }}
           >
-            {kids.length > 0 ? (
-              <button
-                type="button"
-                aria-label={isOpen ? t("收起") : t("展开")}
-                aria-expanded={isOpen}
-                onClick={() => setExpanded((prev) => ({ ...prev, [node.id]: !isOpen }))}
-                className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5"
-              >
-                <ChevronRight size={12} className={cn("transition-transform", isOpen && "rotate-90")} />
-              </button>
-            ) : (
-              <span aria-hidden className="size-5 shrink-0" />
+            <span className="relative grid size-4 shrink-0 place-items-center">
+              {sc.targetAccessible ? (
+                <>
+                  <WikiNodeGlyph kind={sc.targetKind ?? "doc"} docType={sc.targetDocType} />
+                  <CornerUpRight size={9} strokeWidth={2.5} className="absolute -bottom-0.5 -right-0.5 rounded-xs bg-surface text-primary" />
+                </>
+              ) : (
+                <Lock size={13} className="text-subtle" />
+              )}
+            </span>
+            <span className="min-w-0 truncate">{displayTitle}</span>
+            {sourceBadge && (
+              <span className="shrink-0 rounded bg-muted px-1 py-0 text-[10px] text-subtle">{sourceBadge}</span>
             )}
+          </button>
+          {canDeleteShortcut(sc) && (
             <button
               type="button"
-              onClick={() => go(`#/wiki/${spaceId}/node/${node.id}`)}
-              className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left"
+              title={t("移除快捷方式")}
+              aria-label={t("移除快捷方式")}
+              onClick={() => void handleDeleteShortcut(sc)}
+              data-wiki-delete-shortcut={sc.id}
+              className="grid size-5 shrink-0 place-items-center rounded text-subtle opacity-0 transition-opacity hover:bg-black/5 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
             >
-              <WikiNodeGlyph kind={node.kind} docType={node.docType} />
-              <span className="min-w-0 truncate">{node.title || t("未命名文档")}</span>
-              {!node.inheritParentAcl && (
-                <Lock size={11} className="shrink-0 text-amber-600" aria-label={t("独立权限")} />
-              )}
+              <Trash2 size={12} />
             </button>
-            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
-              {canEditNode && (
-                <button
-                  type="button"
-                  title={t("新建子页面")}
-                  aria-label={t("在{title}下新建子页面", { title: node.title })}
-                  onClick={() => void handleCreateNode("doc", node.id)}
-                  className="grid size-5 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
-                  data-wiki-add-child={node.id}
-                >
-                  <Plus size={12} />
-                </button>
-              )}
-              {canManageNode && (
-                <div className="relative" data-wiki-row-menu>
-                  <button
-                    type="button"
-                    title={t("更多操作")}
-                    aria-label={t("更多操作")}
-                    onClick={() => setRowMenuId((cur) => (cur === node.id ? null : node.id))}
-                    className="grid size-5 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
-                    data-wiki-node-more={node.id}
-                  >
-                    <MoreHorizontal size={13} />
-                  </button>
-                  {rowMenuId === node.id && (
-                    <div className="absolute right-0 top-6 z-40 w-40 rounded-lg border bg-surface py-1 text-[13px] shadow-lg">
-                      <button
-                        type="button"
-                        onClick={() => { setRowMenuId(null); setSharingNode(node); }}
-                        className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
-                      >
-                        <Share2 size={13} />{t("权限与分享")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleRenameNode(node)}
-                        className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
-                      >
-                        <Pencil size={13} />{t("重命名")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setRowMenuId(null); setMovingNode(node); }}
-                        className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
-                      >
-                        <FolderInput size={13} />{t("移动 / 跨库迁移")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleTrashNode(node)}
-                        className="flex h-8 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-hover"
-                      >
-                        <Trash2 size={13} />{t("移至回收站")}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          {kids.length > 0 && isOpen && renderTree(node.id, depth + 1)}
+          )}
         </div>
       );
     });
+
+  const renderTree = (parentId: number | null, depth: number): React.ReactNode => {
+    const siblings = childrenMap.get(parentId) ?? [];
+    return (
+      <>
+        {siblings.map((node) => {
+          const kids = childrenMap.get(node.id) ?? [];
+          const kidShortcuts = shortcutsMap.get(node.id) ?? [];
+          const hasChildren = kids.length > 0 || kidShortcuts.length > 0;
+          const active = nodeId === node.id;
+          const isOpen = expanded[node.id] ?? (activeAncestors.has(node.id) || active);
+          const canEditNode = node.role === "edit" || node.role === "manage";
+          const canManageNode = node.role === "manage";
+          const canDrag = canEditNode && !busy;
+          const stepUp = canEditNode ? computeStepReorder(siblings, node.id, -1) : null;
+          const stepDown = canEditNode ? computeStepReorder(siblings, node.id, 1) : null;
+          const showMenu = canManageNode || canEditNode;
+          const activeDrop = dropTarget?.targetId === node.id ? dropTarget.zone : null;
+          const isDragging = dragNodeId === node.id;
+
+          return (
+            <div key={node.id}>
+              <div
+                data-wiki-tree-row={node.id}
+                data-wiki-drop-indicator={activeDrop ?? undefined}
+                draggable={canDrag}
+                onDragStart={(e) => {
+                  if (!canDrag) { e.preventDefault(); return; }
+                  e.stopPropagation();
+                  setDragNodeId(node.id);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", String(node.id));
+                }}
+                onDragOver={(e) => {
+                  if (dragNodeId === null || dragNodeId === node.id) return;
+                  const dragged = byId.get(dragNodeId);
+                  if (!dragged) return;
+                  const zone = resolveRowDropZone(e.clientY, e.currentTarget.getBoundingClientRect());
+                  if (!canDropWikiNode(byId, dragged, node, zone, space?.callerRole)) {
+                    if (dropTarget?.targetId === node.id) setDropTarget(null);
+                    return;
+                  }
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dropTarget?.targetId !== node.id || dropTarget.zone !== zone) {
+                    setDropTarget({ targetId: node.id, zone });
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && dropTarget?.targetId === node.id) {
+                    setDropTarget(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const sourceId = dragNodeId ?? Number(e.dataTransfer.getData("text/plain"));
+                  const dragged = Number.isSafeInteger(sourceId) ? byId.get(sourceId) : undefined;
+                  const zone = dropTarget?.targetId === node.id ? dropTarget.zone : resolveRowDropZone(e.clientY, e.currentTarget.getBoundingClientRect());
+                  setDragNodeId(null);
+                  setDropTarget(null);
+                  if (!dragged) return;
+                  const plan = computeWikiDropPlan(childrenMap, byId, dragged, node, zone, space?.callerRole);
+                  if (!plan) return;
+                  void handleReorderNode(dragged, plan.targetParentId, plan.position);
+                }}
+                onDragEnd={() => {
+                  setDragNodeId(null);
+                  setDropTarget(null);
+                }}
+                className={cn(
+                  "group relative flex h-8 items-center rounded-md pr-1 text-[13px] transition-colors",
+                  active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
+                  isDragging && "opacity-45",
+                  activeDrop === "inside" && "bg-primary/10 ring-1 ring-primary",
+                )}
+                style={{ paddingLeft: 6 + depth * 14 }}
+              >
+                {activeDrop === "before" && (
+                  <span aria-hidden className="pointer-events-none absolute inset-x-2 top-0 z-20 h-[2px] rounded-full bg-primary" />
+                )}
+                {activeDrop === "after" && (
+                  <span aria-hidden className="pointer-events-none absolute inset-x-2 bottom-0 z-20 h-[2px] rounded-full bg-primary" />
+                )}
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    aria-label={isOpen ? t("收起") : t("展开")}
+                    aria-expanded={isOpen}
+                    onClick={() => setExpanded((prev) => ({ ...prev, [node.id]: !isOpen }))}
+                    className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-black/5"
+                  >
+                    <ChevronRight size={12} className={cn("transition-transform", isOpen && "rotate-90")} />
+                  </button>
+                ) : (
+                  <span aria-hidden className="grid size-5 shrink-0 place-items-center text-subtle/50">
+                    {canDrag && <GripVertical size={11} className="opacity-0 transition-opacity group-hover:opacity-100" />}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => go(`#/wiki/${spaceId}/node/${node.id}`)}
+                  className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left"
+                >
+                  <WikiNodeGlyph kind={node.kind} docType={node.docType} />
+                  <span className="min-w-0 truncate">{node.title || t("未命名文档")}</span>
+                  {!node.inheritParentAcl && (
+                    <Lock size={11} className="shrink-0 text-amber-600" aria-label={t("独立权限")} />
+                  )}
+                </button>
+                <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                  {canEditNode && (
+                    <button
+                      type="button"
+                      title={t("新建子页面")}
+                      aria-label={t("在{title}下新建子页面", { title: node.title })}
+                      onClick={() => void handleCreateNode("doc", node.id)}
+                      className="grid size-5 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
+                      data-wiki-add-child={node.id}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  )}
+                  {showMenu && (
+                    <div className="relative" data-wiki-row-menu>
+                      <button
+                        type="button"
+                        title={t("更多操作")}
+                        aria-label={t("更多操作")}
+                        onClick={() => setRowMenuId((cur) => (cur === node.id ? null : node.id))}
+                        className="grid size-5 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground"
+                        data-wiki-node-more={node.id}
+                      >
+                        <MoreHorizontal size={13} />
+                      </button>
+                      {rowMenuId === node.id && (
+                        <div className="absolute right-0 top-6 z-40 w-44 rounded-lg border bg-surface py-1 text-[13px] shadow-lg">
+                          {stepUp !== null && (
+                            <button
+                              type="button"
+                              onClick={() => void handleReorderNode(node, parentId, stepUp)}
+                              data-wiki-move-up={node.id}
+                              className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                            >
+                              <ArrowUp size={13} />{t("上移")}
+                            </button>
+                          )}
+                          {stepDown !== null && (
+                            <button
+                              type="button"
+                              onClick={() => void handleReorderNode(node, parentId, stepDown)}
+                              data-wiki-move-down={node.id}
+                              className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                            >
+                              <ArrowDown size={13} />{t("下移")}
+                            </button>
+                          )}
+                          {canEditNode && (
+                            <button
+                              type="button"
+                              onClick={() => { setRowMenuId(null); setShortcutParentId(node.id); }}
+                              data-wiki-add-child-shortcut={node.id}
+                              className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                            >
+                              <Link2 size={13} />{t("添加快捷方式")}
+                            </button>
+                          )}
+                          {canManageNode && (
+                            <>
+                              {(stepUp !== null || stepDown !== null || canEditNode) && <div className="my-1 border-t" />}
+                              <button
+                                type="button"
+                                onClick={() => { setRowMenuId(null); setSharingNode(node); }}
+                                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                              >
+                                <Share2 size={13} />{t("权限与分享")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleRenameNode(node)}
+                                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                              >
+                                <Pencil size={13} />{t("重命名")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setRowMenuId(null); setMovingNode(node); }}
+                                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-hover"
+                              >
+                                <FolderInput size={13} />{t("移动 / 跨库迁移")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleTrashNode(node)}
+                                className="flex h-8 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-hover"
+                              >
+                                <Trash2 size={13} />{t("移至回收站")}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {hasChildren && isOpen && renderTree(node.id, depth + 1)}
+            </div>
+          );
+        })}
+        {renderShortcuts(parentId, depth)}
+      </>
+    );
+  };
 
   if (spaceQuery.isPending) {
     return <div className="grid flex-1 place-items-center text-[14px] text-subtle">{t("正在加载知识库…")}</div>;
@@ -462,6 +708,14 @@ export function WikiSpacePage({
                 <div className="my-1 border-t" />
                 <button
                   type="button"
+                  onClick={() => { setCreateMenuOpen(false); setShortcutParentId(null); }}
+                  className="flex h-8 w-full items-center gap-2 px-3 hover:bg-hover"
+                  data-wiki-add-shortcut
+                >
+                  <Link2 size={14} className="text-primary" />{t("添加快捷方式")}
+                </button>
+                <button
+                  type="button"
                   onClick={() => { setCreateMenuOpen(false); setImportOpen(true); }}
                   className="flex h-8 w-full items-center gap-2 px-3 text-primary hover:bg-hover"
                   data-wiki-import-drive
@@ -476,7 +730,7 @@ export function WikiSpacePage({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {error && <p role="alert" className="mb-2 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[12px] text-destructive">{error}</p>}
-        {nodes.length === 0 ? (
+        {nodes.length === 0 && shortcuts.length === 0 ? (
           <p className="px-2 py-4 text-center text-[12px] text-subtle">{t("暂无页面，点击上方「新建」开始沉淀知识")}</p>
         ) : (
           renderTree(null, 0)
@@ -501,6 +755,7 @@ export function WikiSpacePage({
 
     if (!activeNode) {
       const topLevel = childrenMap.get(null) ?? [];
+      const topShortcuts = shortcutsMap.get(null) ?? [];
       return (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 md:px-10" data-wiki-overview>
           <div className="mx-auto max-w-3xl">
@@ -527,6 +782,16 @@ export function WikiSpacePage({
                 {canEditSpace && (
                   <button
                     type="button"
+                    onClick={() => setShortcutParentId(null)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-[13px] hover:bg-hover"
+                    data-wiki-overview-add-shortcut
+                  >
+                    <Link2 size={14} />{t("添加快捷方式")}
+                  </button>
+                )}
+                {canEditSpace && (
+                  <button
+                    type="button"
                     onClick={() => setImportOpen(true)}
                     className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-[13px] hover:bg-hover"
                   >
@@ -546,8 +811,8 @@ export function WikiSpacePage({
             </div>
 
             <div className="mt-6">
-              <h2 className="mb-3 text-[13px] font-medium text-subtle">{t("目录总览")}（{topLevel.length}）</h2>
-              {topLevel.length === 0 ? (
+              <h2 className="mb-3 text-[13px] font-medium text-subtle">{t("目录总览")}（{topLevel.length + topShortcuts.length}）</h2>
+              {topLevel.length === 0 && topShortcuts.length === 0 ? (
                 <p className="rounded-xl border border-dashed bg-surface py-12 text-center text-[13px] text-subtle">
                   {t("该知识库暂无页面")}
                 </p>
@@ -568,6 +833,36 @@ export function WikiSpacePage({
                       <span className="shrink-0 text-[12px] text-subtle">{item.creatorName}</span>
                     </button>
                   ))}
+                  {topShortcuts.map((sc) => (
+                    <button
+                      key={`ov-sc-${sc.id}`}
+                      type="button"
+                      onClick={() => openShortcutTarget(sc)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-hover"
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        {sc.targetAccessible ? (
+                          <span className="relative grid size-4 shrink-0 place-items-center">
+                            <WikiNodeGlyph kind={sc.targetKind ?? "doc"} docType={sc.targetDocType} />
+                            <CornerUpRight size={9} strokeWidth={2.5} className="absolute -bottom-0.5 -right-0.5 rounded-xs bg-surface text-primary" />
+                          </span>
+                        ) : (
+                          <Lock size={14} className="shrink-0 text-subtle" />
+                        )}
+                        <span className={cn("truncate text-[14px] font-medium", sc.targetAccessible ? "text-foreground" : "text-subtle")}>
+                          {sc.targetAccessible ? (sc.title || sc.targetTitle || t("快捷方式")) : t("无权访问或已删除")}
+                        </span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-subtle">
+                          {sc.targetAccessible
+                            ? sc.targetWikiSpaceId && sc.targetWikiSpaceId !== space.id
+                              ? (sc.targetWikiSpaceName || t("跨库"))
+                              : t("快捷方式")
+                            : t("已失效")}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[12px] text-subtle">{sc.creatorName}</span>
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
@@ -578,6 +873,7 @@ export function WikiSpacePage({
 
     if (activeNode.kind === "folder") {
       const kids = childrenMap.get(activeNode.id) ?? [];
+      const kidShortcuts = shortcutsMap.get(activeNode.id) ?? [];
       const canEditFolder = activeNode.role === "edit" || activeNode.role === "manage";
       return (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 md:px-10" data-wiki-folder-view>
@@ -602,6 +898,15 @@ export function WikiSpacePage({
                     <Plus size={14} />{t("新建子文档")}
                   </button>
                 )}
+                {canEditFolder && (
+                  <button
+                    type="button"
+                    onClick={() => setShortcutParentId(activeNode.id)}
+                    className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-[13px] hover:bg-hover"
+                  >
+                    <Link2 size={14} />{t("添加快捷方式")}
+                  </button>
+                )}
                 {activeNode.role === "manage" && (
                   <button
                     type="button"
@@ -614,7 +919,7 @@ export function WikiSpacePage({
               </div>
             </div>
             <div className="mt-5">
-              {kids.length === 0 ? (
+              {kids.length === 0 && kidShortcuts.length === 0 ? (
                 <p className="rounded-xl border border-dashed bg-surface py-12 text-center text-[13px] text-subtle">{t("该目录下暂无子页面")}</p>
               ) : (
                 <div className="divide-y rounded-xl border bg-surface">
@@ -630,6 +935,36 @@ export function WikiSpacePage({
                         <span className="truncate text-[14px]">{child.title}</span>
                       </span>
                       <span className="shrink-0 text-[12px] text-subtle">{child.creatorName}</span>
+                    </button>
+                  ))}
+                  {kidShortcuts.map((sc) => (
+                    <button
+                      key={`f-sc-${sc.id}`}
+                      type="button"
+                      onClick={() => openShortcutTarget(sc)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-hover"
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        {sc.targetAccessible ? (
+                          <span className="relative grid size-4 shrink-0 place-items-center">
+                            <WikiNodeGlyph kind={sc.targetKind ?? "doc"} docType={sc.targetDocType} />
+                            <CornerUpRight size={9} strokeWidth={2.5} className="absolute -bottom-0.5 -right-0.5 rounded-xs bg-surface text-primary" />
+                          </span>
+                        ) : (
+                          <Lock size={14} className="shrink-0 text-subtle" />
+                        )}
+                        <span className={cn("truncate text-[14px]", !sc.targetAccessible && "text-subtle")}>
+                          {sc.targetAccessible ? (sc.title || sc.targetTitle || t("快捷方式")) : t("无权访问或已删除")}
+                        </span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-subtle">
+                          {sc.targetAccessible
+                            ? sc.targetWikiSpaceId && sc.targetWikiSpaceId !== space.id
+                              ? (sc.targetWikiSpaceName || t("跨库"))
+                              : t("快捷方式")
+                            : t("已失效")}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[12px] text-subtle">{sc.creatorName}</span>
                     </button>
                   ))}
                 </div>
@@ -648,6 +983,9 @@ export function WikiSpacePage({
     }
     if (activeNode.kind === "slides") {
       return <SlidesDeck key={`${me.user.id}:${activeNode.id}`} deckId={activeNode.id} userId={me.user.id} />;
+    }
+    if (activeNode.kind === "survey") {
+      return <SurveyPage key={`${me.user.id}:${activeNode.id}`} surveyId={activeNode.id} />;
     }
     return (
       <DocPage
@@ -720,6 +1058,22 @@ export function WikiSpacePage({
           onImported={(imported) => {
             setImportOpen(false);
             go(`#/wiki/${space.id}/node/${imported.id}`);
+          }}
+        />
+      )}
+
+      {shortcutParentId !== undefined && canEditSpace && (
+        <WikiShortcutDialog
+          spaceId={space.id}
+          workspaceId={space.workspaceId}
+          userId={me.user.id}
+          nodes={nodes}
+          initialParentId={shortcutParentId}
+          onClose={() => setShortcutParentId(undefined)}
+          onCreated={() => {
+            if (shortcutParentId !== null) setExpanded((prev) => ({ ...prev, [shortcutParentId]: true }));
+            setShortcutParentId(undefined);
+            void refreshSpace();
           }}
         />
       )}

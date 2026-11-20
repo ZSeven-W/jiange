@@ -299,9 +299,12 @@ func (s *Server) Handler() http.Handler {
 		"PATCH /api/wiki/spaces/{spaceId}":             s.patchWikiSpace,
 		"DELETE /api/wiki/spaces/{spaceId}":            s.deleteWikiSpace,
 		"PUT /api/wiki/spaces/{spaceId}/grants":        s.putWikiSpaceGrant,
-		"POST /api/wiki/spaces/{spaceId}/nodes":        s.postWikiNode,
-		"POST /api/wiki/spaces/{spaceId}/import-drive": s.postWikiImportDrive,
-		"POST /api/wiki/nodes/{id}/move":               s.postWikiNodeMove,
+		"POST /api/wiki/spaces/{spaceId}/nodes":               s.postWikiNode,
+		"POST /api/wiki/spaces/{spaceId}/nodes/{id}/reorder":  s.postWikiNodeReorder,
+		"POST /api/wiki/spaces/{spaceId}/import-drive":        s.postWikiImportDrive,
+		"POST /api/wiki/spaces/{spaceId}/shortcuts":           s.postWikiShortcut,
+		"DELETE /api/wiki/spaces/{spaceId}/shortcuts/{sid}":   s.deleteWikiShortcut,
+		"POST /api/wiki/nodes/{id}/move":                      s.postWikiNodeMove,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

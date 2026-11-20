@@ -85,6 +85,38 @@ describe("Wiki routes and pages", () => {
           updatedAt: "2026-11-19T00:00:00Z",
         },
       ],
+      shortcuts: [
+        {
+          id: 501,
+          workspaceId: 10,
+          wikiSpaceId: 7,
+          parentId: null,
+          targetNodeId: 201,
+          title: "设计系统规范",
+          creatorId: 2,
+          creatorName: "Admin",
+          createdAt: "2026-11-20T00:00:00Z",
+          updatedAt: "2026-11-20T00:00:00Z",
+          targetAccessible: true,
+          targetKind: "doc",
+          targetTitle: "设计系统规范",
+          targetWikiSpaceId: 8,
+          targetWikiSpaceName: "设计中心",
+        },
+        {
+          id: 502,
+          workspaceId: 10,
+          wikiSpaceId: 7,
+          parentId: null,
+          targetNodeId: 202,
+          title: "",
+          creatorId: 2,
+          creatorName: "Admin",
+          createdAt: "2026-11-20T00:00:00Z",
+          updatedAt: "2026-11-20T00:00:00Z",
+          targetAccessible: false,
+        },
+      ],
     };
     qc.setQueryData(["wiki-space", 7, 1], detail);
     const html = renderToStaticMarkup(
@@ -94,6 +126,11 @@ describe("Wiki routes and pages", () => {
     );
     expect(html).toContain("只读知识库");
     expect(html).toContain("入职指南");
+    expect(html).toContain('data-wiki-shortcut-row="501"');
+    expect(html).toContain("设计系统规范");
+    expect(html).toContain("设计中心");
+    expect(html).toContain('data-wiki-shortcut-locked="502"');
+    expect(html).toContain("无权访问或已删除");
     expect(html).not.toContain("data-wiki-create-menu");
     expect(html).not.toContain("data-wiki-space-settings");
   });

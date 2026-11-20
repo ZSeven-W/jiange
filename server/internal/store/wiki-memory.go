@@ -13,9 +13,11 @@ type wikiGrantKey struct {
 }
 
 type memWiki struct {
-	nextSpaceID int64
-	spaces      map[int64]WikiSpace
-	grants      map[int64]map[wikiGrantKey]string // spaceID -> (type, id) -> role
+	nextSpaceID    int64
+	spaces         map[int64]WikiSpace
+	grants         map[int64]map[wikiGrantKey]string // spaceID -> (type, id) -> role
+	nextShortcutID int64
+	shortcuts      []WikiShortcut
 }
 
 func (m *Memory) wikiSpaceRankLocked(ws, spaceID, uid int64, wsRole string, depts, groups map[int64]bool) int {
@@ -149,6 +151,7 @@ func wikiMemoryNodeEntry(m *Memory, d *memDoc, role string) WikiNodeEntry {
 		DocType:          d.meta.DocType,
 		Title:            d.meta.Title,
 		Icon:             d.meta.Icon,
+		SortKey:          docSortKey(d.sortKey),
 		CreatorID:        d.meta.CreatorID,
 		CreatorName:      d.meta.CreatorName,
 		Role:             role,
@@ -227,11 +230,16 @@ func (m *Memory) GetWikiSpaceDetail(ctx context.Context, guard RestoreGuard, spa
 		return WikiSpaceDetail{}, ErrNotFound
 	}
 	sort.Slice(nodes, func(i, j int) bool {
-		if (nodes[i].Kind == "folder") != (nodes[j].Kind == "folder") {
-			return nodes[i].Kind == "folder"
+		if nodes[i].SortKey != nodes[j].SortKey {
+			return nodes[i].SortKey < nodes[j].SortKey
 		}
 		return nodes[i].ID < nodes[j].ID
 	})
+	visibleNodeIDs := make(map[int64]bool, len(nodes))
+	for _, n := range nodes {
+		visibleNodeIDs[n.ID] = true
+	}
+	shortcuts := m.wikiMemoryListShortcutsLocked(spaceID, rank > 0, visibleNodeIDs)
 	sp.NodeCount = len(nodes)
 	if rank == 0 {
 		sp.CallerRole = RoleView
@@ -245,7 +253,7 @@ func (m *Memory) GetWikiSpaceDetail(ctx context.Context, guard RestoreGuard, spa
 	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
 		return WikiSpaceDetail{}, err
 	}
-	return WikiSpaceDetail{Space: sp, Grants: grants, Nodes: nodes}, nil
+	return WikiSpaceDetail{Space: sp, Grants: grants, Nodes: nodes, Shortcuts: shortcuts}, nil
 }
 
 func (m *Memory) CreateWikiSpaceGuarded(ctx context.Context, guard RestoreGuard, wsID int64, rawName, rawDesc, rawIcon, visibility string) (WikiSpace, error) {
@@ -443,6 +451,13 @@ func (m *Memory) DeleteWikiSpaceGuarded(ctx context.Context, guard RestoreGuard,
 	sort.Strings(freed)
 	delete(m.wiki.spaces, spaceID)
 	delete(m.wiki.grants, spaceID)
+	keptShortcuts := m.wiki.shortcuts[:0]
+	for _, sc := range m.wiki.shortcuts {
+		if sc.WikiSpaceID != spaceID {
+			keptShortcuts = append(keptShortcuts, sc)
+		}
+	}
+	m.wiki.shortcuts = keptShortcuts
 	return freed, nil
 }
 
@@ -562,6 +577,7 @@ func (m *Memory) CreateWikiNodeGuarded(ctx context.Context, guard RestoreGuard, 
 	}
 	d := &memDoc{
 		meta:          meta,
+		sortKey:       m.wikiMemoryNextSiblingSortKeyLocked(spaceID, parentID),
 		driveRevision: 1,
 		personal:      false,
 		ids:           map[[2]int64]bool{},
@@ -674,6 +690,7 @@ func (m *Memory) MoveWikiNodeGuarded(ctx context.Context, guard RestoreGuard, no
 		return WikiNodeEntry{}, err
 	}
 	d.meta.ParentID = cloneDriveParent(targetParentID)
+	d.sortKey = m.wikiMemoryNextSiblingSortKeyLocked(targetSpaceID, targetParentID)
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
@@ -754,6 +771,7 @@ func (m *Memory) ImportDriveNodeToWikiGuarded(ctx context.Context, guard Restore
 		return WikiNodeEntry{}, err
 	}
 	d.meta.ParentID = cloneDriveParent(targetParentID)
+	d.sortKey = m.wikiMemoryNextSiblingSortKeyLocked(targetSpaceID, targetParentID)
 	d.driveRevision++
 	d.meta.DriveRevision = d.driveRevision
 	d.meta.UpdatedAt = time.Now()
