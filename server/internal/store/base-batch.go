@@ -34,6 +34,7 @@ type BaseBatchStore interface {
 	BatchDeleteRecordsGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, ids []int64) ([]Record, []int64, error)
 	BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, items []BatchRestoreRecordInput, validate func([]Field, map[string]json.RawMessage) error) ([]Record, []int64, error)
 	BatchUpdateCellsGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, updates []BatchCellUpdateInput, validate func([]Field, map[string]json.RawMessage) error) ([]Record, []int64, error)
+	RestoreFieldGuarded(ctx context.Context, guard BaseWriteGuard, baseID int64, input RestoreFieldInput, validateCell func(Field, json.RawMessage) error) (Field, int, error)
 }
 
 func dedupePositiveIDs(ids []int64, limit int) ([]int64, bool) {

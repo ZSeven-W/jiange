@@ -27,6 +27,8 @@ func (s *Server) writeBaseBatchErr(w http.ResponseWriter, r *http.Request, err e
 		httpx.Error(w, http.StatusConflict, "conflict", "记录或表结构已变化，请刷新后重试")
 	case errors.As(err, &invalid):
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", invalid.message)
+	case errors.Is(err, store.ErrPrimaryField):
+		httpx.Error(w, http.StatusConflict, "primary_field", "不能修改主字段位置或以主字段身份恢复")
 	case errors.Is(err, store.ErrInvalidBaseRecord):
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "批量操作参数无效")
 	default:
@@ -127,4 +129,33 @@ func (s *Server) batchUpdateBaseRecords(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"records": updated})
+}
+
+func (s *Server) restoreBaseField(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.needBase(w, r, store.RoleEdit)
+	if !ok {
+		return
+	}
+	guard, ok := s.baseGuardFromCookie(w, r)
+	if !ok {
+		return
+	}
+	var in store.RestoreFieldInput
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	field, restored, err := s.Store.RestoreFieldGuarded(r.Context(), guard, b.ID, in, func(f store.Field, val json.RawMessage) error {
+		if !validCell(f, val) {
+			return invalidRecordCells{message: "恢复的单元格值与字段类型不匹配"}
+		}
+		return nil
+	})
+	if s.writeBaseBatchErr(w, r, err) {
+		return
+	}
+	if s.BtHub != nil {
+		s.BtHub.Notify(b.ID)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	httpx.JSON(w, http.StatusCreated, map[string]any{"field": field, "restoredCells": restored})
 }

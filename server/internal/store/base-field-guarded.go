@@ -188,6 +188,9 @@ func fieldReferenced(cfg btquery.Config, id int64) bool {
 	if cfg.Group != nil && *cfg.Group == id {
 		return true
 	}
+	if cfg.EndField != nil && *cfg.EndField == id {
+		return true
+	}
 	for _, hidden := range cfg.Hidden {
 		if hidden == id {
 			return true

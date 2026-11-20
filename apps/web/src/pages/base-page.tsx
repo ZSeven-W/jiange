@@ -40,7 +40,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { ResourceReferencesButton } from "./resource-references-button";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { BaseUndoStack, definedCells, type UndoApi } from "./base/undo";
+import { BaseUndoStack, definedCells, viewToUndoSnapshot, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
 import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
@@ -93,9 +93,26 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const [viewId, setViewId] = useState<number | null>(null);
   const viewSelectionRevision = useRef(0);
   const [createdViewSelection, setCreatedViewSelection] = useState<CreatedViewSelection | null>(null);
-  // 撤销/重做：本人在本页的单元格编辑与新增记录（条件写入，不覆盖他人更新）。
+  // 撤销/重做：本人在本页的单元格、记录、字段与视图结构操作（条件写入，不覆盖他人更新）。
   const [undoStack] = useState(() => new BaseUndoStack());
   useSyncExternalStore(undoStack.subscribe, undoStack.snapshot, undoStack.snapshot);
+  const runUndoRef = useRef<(redo: boolean) => Promise<void> | void>(() => undefined);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.altKey || e.isComposing) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.closest("input, textarea, select, [contenteditable='true']") || target.closest("[data-grid]"))) return;
+      if (k === "z" && !e.shiftKey && !undoStack.canUndo) return;
+      if ((k === "y" || (k === "z" && e.shiftKey)) && !undoStack.canRedo) return;
+      e.preventDefault();
+      void runUndoRef.current(k === "y" || e.shiftKey);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undoStack]);
   const [undoNotice, setUndoNotice] = useState<string | null>(null);
   const [detailRecord, setDetailRecord] = useState<number | null>(null);
   const [gridDetailOpen, setGridDetailOpen] = useState(false);
@@ -235,7 +252,19 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         const timeout = window.setTimeout(() => request.abort(), 15_000);
         try { await saveFormConfig(id, current.id, current.config ?? EMPTY_CONFIG, fields, cfg, request.signal); }
         finally { window.clearTimeout(timeout); }
-      } else await baseApi.patchView(id, current.id, { config: cfg });
+      } else {
+        const beforeConfig = JSON.parse(JSON.stringify(current.config ?? EMPTY_CONFIG)) as ViewConfig;
+        const afterConfig = JSON.parse(JSON.stringify(cfg)) as ViewConfig;
+        await baseApi.patchView(id, current.id, { config: cfg });
+        if (JSON.stringify(beforeConfig) !== JSON.stringify(afterConfig)) {
+          undoStack.record({
+            label: t("保存视图配置「{name}」", { name: current.name }),
+            cells: [],
+            created: [],
+            structural: { kind: "view_config", viewId: current.id, beforeConfig, afterConfig },
+          });
+        }
+      }
       if (configDrafts.current.get(draftKey) === cfg) configDrafts.current.delete(draftKey);
       await refresh();
     }
@@ -278,6 +307,12 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     }
     ledger.complete(op);
     if (!currentScope()) return;
+    undoStack.record({
+      label: t("新建视图「{name}」", { name: v.name }),
+      cells: [],
+      created: [],
+      structural: { kind: "view_create", view: viewToUndoSnapshot(v) },
+    });
     setCreatedViewSelection({ baseId: id, userId, viewId: v.id, revision: selectionRevision, baseline: qc.getQueryData(key) });
     try { await refresh(); }
     catch { if (currentScope()) setViewError(t("视图已创建，但列表刷新失败，请重新加载。")); }
@@ -327,6 +362,20 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     batchUpdateCells: (updates) => baseApi.batchUpdateRecords(id, updates),
     batchDeleteRecords: (ids) => baseApi.batchDeleteRecords(id, ids),
     batchRestoreRecords: (recs) => baseApi.batchRestoreRecords(id, recs),
+    addField: (f) => baseApi.addField(id, activeTableId ? { ...f, tableId: f.tableId ?? activeTableId } : f),
+    patchField: (fid, f) => baseApi.patchField(id, fid, f),
+    deleteField: (fid) => baseApi.deleteField(id, fid),
+    restoreField: (input) => baseApi.restoreField(id, {
+      field: activeTableId ? { ...input.field, tableId: input.field.tableId ?? activeTableId } : input.field,
+      cells: input.cells as { recordId: number; value: import("@/lib/api").Cell | number[] | null }[] | undefined,
+    }),
+    reorderFields: (expected, desired) => baseApi.reorderFields(id, expected, desired),
+    addView: (v) => baseApi.addViewForAccount(id, userId, activeTableId ? { ...v, tableId: v.tableId ?? activeTableId } : v),
+    renameView: (vid, expectedName, name) => baseApi.renameView(id, vid, expectedName, name),
+    patchView: (vid, patch) => baseApi.patchView(id, vid, patch),
+    reorderViews: (expected, desired) => baseApi.reorderViews(id, expected, desired),
+    deleteView: (vid) => baseApi.deleteView(id, vid),
+    onSelectView: (vid) => { viewSelectionRevision.current++; setViewId(vid); },
   };
   const runUndo = async (redo: boolean) => {
     if (!canEdit || ledger.blocked("batch") || ledger.hasCellWrites()) return;
@@ -335,6 +384,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     if (!outcome) return;
     setUndoNotice(outcome.ok ? t(redo ? "已重做：{label}" : "已撤销：{label}", { label: outcome.label }) : outcome.conflict ? t("内容已被他人修改，无法{action}「{label}」。", { action: t(redo ? "重做" : "撤销"), label: outcome.label }) : t("{action}未完成，请刷新后核对。", { action: t(redo ? "重做" : "撤销") }));
   };
+  runUndoRef.current = runUndo;
   const addRecord = async () => {
     if (ledger.blocked("batch")) return;
     const op = ledger.begin(t("新增记录"), "", "record:create");
@@ -427,7 +477,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {/* 视图导航 */}
       <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 whitespace-nowrap border-b bg-[#f7f8fa] px-3 text-[13px] dark:bg-sidebar" data-base-view-bar>
         {pane === "table" && !baseSidebarOpen && <button ref={expandBaseSidebar} type="button" aria-label={t("展开数据表侧栏")} aria-expanded={false} title={t("展开数据表侧栏")} onClick={() => { setBaseSidebarOpen(true); requestAnimationFrame(() => collapseBaseSidebar.current?.focus({ preventScroll: true })); }} className="mr-1 hidden h-8 shrink-0 items-center gap-1.5 rounded px-1.5 text-muted-foreground hover:bg-hover md:flex"><ChevronsRight size={15}/><span className="text-foreground">{t("数据表")}</span></button>}
-        <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewGlyph type={type} />} onSelect={(view) => { viewSelectionRevision.current++; setViewId(view); }} onRefresh={refresh} />
+        <ViewTabs baseId={id} views={views} activeId={current?.id} canEdit={canEdit} dirty={dirty} icon={(type) => <ViewGlyph type={type} />} onSelect={(view) => { viewSelectionRevision.current++; setViewId(view); }} onRefresh={refresh} onRecordUndo={(step) => undoStack.record(step)} />
         <NewViewMenu open={viewMenuOpen} onOpenChange={setViewMenuOpen} canEdit={canEdit} busy={q.isFetching || ledger.blocked("view:write")} onCreate={(type, name, isPersonal) => void newView(type, name, isPersonal)} />
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
@@ -478,20 +528,39 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         </span>}
         {(current?.type === "grid" || current?.type === "kanban") && <ToolbarSearch value={filter} onChange={setFilter} />}
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
-        {current?.type === "calendar" && (
-          <select
-            className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
-            value={cfg.group ?? ""}
-            onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-            data-calendar-field
-          >
-            <option value="">{t("选择日期字段")}</option>
-            {fields.filter((f) => f.type === "date").map((f) => (
-              <option key={f.id} value={f.id}>
-                {t("按「{name}」排布", { name: f.name })}
-              </option>
-            ))}
-          </select>
+        {(current?.type === "calendar" || current?.type === "gantt") && (
+          <div className="flex shrink-0 items-center gap-1">
+            <select
+              className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
+              value={cfg.group ?? ""}
+              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
+              aria-label={t("开始日期字段")}
+              data-calendar-field
+            >
+              <option value="">{current.type === "gantt" ? t("选择开始日期") : t("选择日期字段")}</option>
+              {fields.filter((f) => f.type === "date").map((f) => (
+                <option key={f.id} value={f.id}>
+                  {t("按「{name}」排布", { name: f.name })}
+                </option>
+              ))}
+            </select>
+            {fields.filter((f) => f.type === "date").length >= 2 && (
+              <select
+                className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
+                value={cfg.endField ?? ""}
+                onChange={(e) => setCfg({ ...cfg, endField: Number(e.target.value) || undefined })}
+                aria-label={t("结束日期字段")}
+                data-schedule-end-field
+              >
+                <option value="">{t("自动结束字段")}</option>
+                {fields.filter((f) => f.type === "date" && f.id !== cfg.group).map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {t("结束「{name}」", { name: f.name })}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         )}
         {base.role === "manage" && (
           <button className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground sm:hidden" onClick={() => setAutoOpen(true)} data-open-automations>
@@ -523,17 +592,31 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {current?.type === "calendar" && (
         <CalendarView
           baseId={id}
+          tableId={activeTableId}
           canEdit={canEdit}
           fields={visibleFields}
           records={records}
           members={members}
           dateFieldId={cfg.group}
+          endDateFieldId={cfg.endField}
           onMutate={refresh}
           onOpen={(r) => setDetailRecord(r.id)}
+          onRecordUndo={(step) => undoStack.record(step)}
         />
       )}
       {current?.type === "gantt" && (
-        <Gantt baseId={id} canEdit={canEdit} fields={visibleFields} records={records} members={members} startFieldId={cfg.group} onMutate={refresh} onOpen={(r) => setDetailRecord(r.id)} />
+        <Gantt
+          baseId={id}
+          canEdit={canEdit}
+          fields={visibleFields}
+          records={records}
+          members={members}
+          startFieldId={cfg.group}
+          endFieldId={cfg.endField}
+          onMutate={refresh}
+          onOpen={(r) => setDetailRecord(r.id)}
+          onRecordUndo={(step) => undoStack.record(step)}
+        />
       )}
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);

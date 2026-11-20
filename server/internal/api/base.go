@@ -606,7 +606,7 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 				return nil
 			}
 			if to.Type == "date" {
-				if _, err := time.Parse("2006-01-02", val); err != nil {
+				if !store.ValidBaseDateValue(val) {
 					return nil
 				}
 			}
@@ -799,8 +799,7 @@ func validCell(f store.Field, v json.RawMessage) bool {
 	case "date":
 		var s string
 		if json.Unmarshal(v, &s) == nil {
-			_, err := time.Parse("2006-01-02", s)
-			return err == nil
+			return store.ValidBaseDateValue(s)
 		}
 	case "url":
 		var s string

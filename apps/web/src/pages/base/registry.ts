@@ -109,7 +109,17 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     icon: CalendarDays,
     label: "日期",
     width: 180,
-    parse: (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t.trim()) ? t.trim() : t === "" ? null : undefined),
+    parse: (t) => {
+      const s = t.trim();
+      if (s === "") return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})$/.exec(s);
+      if (m) {
+        const hh = Number(m[2]), mm = Number(m[3]);
+        if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) return `${m[1]} ${m[2]}:${m[3]}`;
+      }
+      return undefined;
+    },
     format: (v) => String(v ?? ""),
     compare: (a, b) => String(a).localeCompare(String(b)),
   },

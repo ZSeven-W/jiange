@@ -152,4 +152,80 @@ describe("base undo/redo", () => {
     expect(rows.get(1)!["10"]).toBe("x1");
     expect(rows.get(2)!["10"]).toBe("y1");
   });
+
+  it("undoes and redoes field delete (lossless restore) and view rename/delete/reorder with ID remapping", async () => {
+    const calls: string[] = [];
+    let nextFieldId = 200;
+    let nextViewId = 300;
+    let selectedViewId = 0;
+    const api: UndoApi = {
+      setCellsIf: async () => undefined,
+      deleteRecordIf: async () => undefined,
+      addRecord: async () => ({ id: 1, cells: {} }),
+      deleteField: async (fid) => { calls.push(`deleteField:${fid}`); },
+      restoreField: async (input) => {
+        const id = ++nextFieldId;
+        calls.push(`restoreField:${input.field.name}:${input.cells?.length ?? 0}->${id}`);
+        return { field: { id, name: input.field.name ?? "", type: input.field.type ?? "text", position: input.field.position ?? 2 }, restoredCells: input.cells?.length ?? 0 };
+      },
+      renameView: async (vid, expected, name) => {
+        calls.push(`renameView:${vid}:${expected}->${name}`);
+        return { id: vid, baseId: 1, type: "grid", name, config: {}, pos: 1 };
+      },
+      addView: async (v) => {
+        const id = ++nextViewId;
+        calls.push(`addView:${v.name}:${v.pos ?? 0}->${id}`);
+        return { id, baseId: 1, type: v.type ?? "grid", name: v.name ?? "", config: v.config ?? {}, pos: v.pos ?? 1 };
+      },
+      deleteView: async (vid) => { calls.push(`deleteView:${vid}`); },
+      onSelectView: (vid) => { selectedViewId = vid; },
+    };
+
+    const stack = new BaseUndoStack();
+    stack.record({
+      label: "删除字段「备注」",
+      cells: [],
+      created: [],
+      structural: {
+        kind: "field_delete",
+        field: { id: 50, name: "备注", type: "text", position: 3 },
+        cells: [{ recordId: 1, value: "关键说明" }],
+      },
+    });
+    stack.record({
+      label: "重命名视图「排期表」",
+      cells: [],
+      created: [],
+      structural: { kind: "view_rename", viewId: 10, beforeName: "表格视图", afterName: "排期表" },
+    });
+    stack.record({
+      label: "删除视图「甘特视图」",
+      cells: [],
+      created: [],
+      structural: { kind: "view_delete", view: { id: 12, name: "甘特视图", type: "gantt", pos: 2, config: { group: 2 } } },
+    });
+
+    // Undo view_delete -> restores view with new ID 301 and selects it.
+    expect((await stack.undo(api))?.ok).toBe(true);
+    expect(selectedViewId).toBe(301);
+    // Undo view_rename -> renames 排期表 back to 表格视图.
+    expect((await stack.undo(api))?.ok).toBe(true);
+    // Undo field_delete -> atomically restores field + 1 cell with new ID 201.
+    expect((await stack.undo(api))?.ok).toBe(true);
+    // Redo field_delete -> deletes the newly assigned field ID 201!
+    expect((await stack.redo(api))?.ok).toBe(true);
+    // Redo view_rename -> renames back to 排期表.
+    expect((await stack.redo(api))?.ok).toBe(true);
+    // Redo view_delete -> deletes the restored view ID 301!
+    expect((await stack.redo(api))?.ok).toBe(true);
+
+    expect(calls).toEqual([
+      "addView:甘特视图:2->301",
+      "renameView:10:排期表->表格视图",
+      "restoreField:备注:1->201",
+      "deleteField:201",
+      "renameView:10:表格视图->排期表",
+      "deleteView:301",
+    ]);
+  });
 });

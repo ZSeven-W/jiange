@@ -239,6 +239,8 @@ export interface ViewConfig {
   filters?: { conj: "and" | "or"; rules: FilterRule[] };
   sorts?: { f: number; asc: boolean }[];
   group?: number;
+  /** 日历/甘特视图可选结束时间字段 ID */
+  endField?: number;
   hidden?: number[];
   /** 管理视图：filters 强制生效、hidden 字段对非 manage 角色剔除/写保护 */
   locked?: boolean;
@@ -331,6 +333,8 @@ export const baseApi = {
   patchField: (id: number, fid: number, f: Partial<Field>) => request<Field>("PATCH", `/api/bases/${id}/fields/${fid}`, f),
   reorderFields: (id: number, expectedFieldIds: number[], desiredFieldIds: number[]) => request<void>("POST", `/api/bases/${id}/fields/reorder`, { expectedFieldIds, desiredFieldIds }),
   deleteField: (id: number, fid: number) => request<void>("DELETE", `/api/bases/${id}/fields/${fid}`),
+  restoreField: (id: number, input: { field: Partial<Field>; cells?: { recordId: number; value: Cell | number[] | null }[] }) =>
+    request<{ field: Field; restoredCells: number }>("POST", `/api/bases/${id}/fields/restore`, input),
   addRecord: (id: number, cells: Record<string, Cell> = {}, tableId?: number | null) =>
     request<BaseRecord>("POST", `/api/bases/${id}/records`, tableId ? { cells, tableId } : { cells }),
   setCells: (id: number, rid: number, cells: Record<string, Cell | number[] | null>) => request<BaseRecord>("PATCH", `/api/bases/${id}/records/${rid}`, { cells }),

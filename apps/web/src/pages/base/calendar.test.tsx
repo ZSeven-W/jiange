@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BaseRecord, Field } from "@/lib/api";
-import { CalendarView, calendarDate, calendarDays, calendarKey, groupCalendarRecords, shiftCalendar } from "./calendar-view";
+import { CalendarView, calendarDate, calendarDateTime, calendarDays, calendarKey, calendarTimedSpan, groupCalendarRecords, layoutDayTimedEvents, shiftCalendar } from "./calendar-view";
 import { sessionWriteLedger } from "./write-safety";
 
 const record = (id: number, date?: string): BaseRecord => ({ id, baseId: 1, position: id, cells: { "1": `记录${id}`, ...(date === undefined ? {} : { "2": date }) } });
@@ -73,5 +73,31 @@ describe("calendar view", () => {
     ledger.fail(op, "结果不确定");
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><CalendarView baseId={1} canEdit fields={fields} records={[record(1)]} members={[]} onMutate={() => {}} /></QueryClientProvider>);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="2026-11-07 新增记录"/);
+  });
+
+  it("supports minute-precision hourly datetimes, timed spans, and overlapping column layout", () => {
+    expect(calendarDateTime("2026-11-20")).toMatchObject({ dayKey: "2026-11-20", isAllDay: true, minutes: null });
+    expect(calendarDateTime("2026-11-20 09:30")).toMatchObject({ dayKey: "2026-11-20", isAllDay: false, minutes: 570 });
+    expect(calendarDateTime("2026-11-20T09:30:00Z")).toBeNull();
+    expect(calendarDateTime("2026-11-20 24:00")).toBeNull();
+
+    const grouped = groupCalendarRecords([
+      record(1, "2026-11-20 14:00"),
+      record(2, "2026-11-20"),
+      record(3, "2026-11-20 09:30"),
+    ], 2);
+    expect(grouped.byDay.get("2026-11-20")?.map((r) => r.id)).toEqual([2, 3, 1]);
+
+    const span = calendarTimedSpan("2026-11-20 09:00", "2026-11-20 10:30", false);
+    expect(span).toEqual({ dayKey: "2026-11-20", startMin: 540, endMin: 630, duration: 90 });
+
+    const layout = layoutDayTimedEvents([
+      { id: 1, startMin: 540, endMin: 660 },
+      { id: 2, startMin: 600, endMin: 720 },
+      { id: 3, startMin: 780, endMin: 840 },
+    ]);
+    expect(layout.get(1)).toEqual({ col: 0, cols: 2 });
+    expect(layout.get(2)).toEqual({ col: 1, cols: 2 });
+    expect(layout.get(3)).toEqual({ col: 0, cols: 1 });
   });
 });

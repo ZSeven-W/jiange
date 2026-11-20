@@ -41,10 +41,11 @@ type Sort struct {
 
 // Config is what a saved view keeps in bt_views.config.
 type Config struct {
-	Filters *Filters `json:"filters,omitempty"`
-	Sorts   []Sort   `json:"sorts,omitempty"`
-	Group   *int64   `json:"group,omitempty"`
-	Hidden  []int64  `json:"hidden,omitempty"`
+	Filters  *Filters `json:"filters,omitempty"`
+	Sorts    []Sort   `json:"sorts,omitempty"`
+	Group    *int64   `json:"group,omitempty"`
+	EndField *int64   `json:"endField,omitempty"`
+	Hidden   []int64  `json:"hidden,omitempty"`
 	// Locked marks an admin data-permission view: its filters act as a mandatory
 	// row predicate and its hidden fields are stripped for non-manage roles.
 	Locked bool `json:"locked,omitempty"`
@@ -106,6 +107,11 @@ func Validate(fields []FieldSpec, cfg Config) error {
 	if cfg.Group != nil {
 		if _, ok := byID[*cfg.Group]; !ok {
 			return fmt.Errorf("unknown field %d", *cfg.Group)
+		}
+	}
+	if cfg.EndField != nil {
+		if _, ok := byID[*cfg.EndField]; !ok {
+			return fmt.Errorf("unknown field %d", *cfg.EndField)
 		}
 	}
 	return nil

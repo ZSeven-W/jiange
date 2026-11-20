@@ -248,14 +248,20 @@ export function CellEditor({
     }
     onCommit(v === undefined ? null : v, dir, text);
   };
+  const isTimedDate = field.type === "date" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(text.trim());
+  const inputVal = isTimedDate ? text.trim().replace(" ", "T") : text;
   return (
     <input
       autoFocus
-      type={field.type === "date" ? "date" : "text"}
+      type={field.type === "date" ? (isTimedDate ? "datetime-local" : "date") : "text"}
       inputMode={field.type === "number" ? "decimal" : undefined}
       className={cn("w-full bg-transparent outline-none", field.type === "number" && "text-right")}
-      value={text}
-      onChange={(e) => { setText(e.target.value); onDraft?.(e.target.value); }}
+      value={inputVal}
+      onChange={(e) => {
+        const next = isTimedDate ? e.target.value.replace("T", " ") : e.target.value;
+        setText(next);
+        onDraft?.(next);
+      }}
       onBlur={() => commit()}
       onKeyDown={(e) => {
         if (e.key === "Enter") {

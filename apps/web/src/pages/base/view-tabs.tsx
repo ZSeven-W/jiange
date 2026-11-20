@@ -6,6 +6,7 @@ import { ApiError, baseApi, type View } from "@/lib/api";
 import { ask, askText } from "@/components/ui/ask";
 import { popupPosition } from "./popup-position";
 import { useWriteLedger, type WriteLedger } from "./write-safety";
+import { viewToUndoSnapshot, type UndoStep } from "./undo";
 
 /** Build one complete ordering for the server's atomic reorder operation. */
 export function moveViewIds(ids: readonly number[], moving: number, destination: number): number[] | null {
@@ -23,9 +24,10 @@ export function retainRejectedViewRename(ledger: WriteLedger, draft: string, vie
   if (held !== null) ledger.fail(held, t("名称未保存，权限或视图可能已变化。请复制输入并核对后重新命名。"));
 }
 
-export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSelect, onRefresh }: {
+export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSelect, onRefresh, onRecordUndo }: {
   baseId: number; views: View[]; activeId?: number; canEdit: boolean; dirty: boolean;
   icon: (type: View["type"]) => ReactNode; onSelect: (id: number) => void; onRefresh: () => Promise<unknown>;
+  onRecordUndo?: (step: UndoStep) => void;
 }) {
   const [menu, setMenu] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -116,24 +118,60 @@ export function ViewTabs({ baseId, views, activeId, canEdit, dirty, icon, onSele
     const trimmed = name.trim();
     if (!trimmed || [...trimmed].length > 100) { setMessage(t("视图名称需为 1–100 个字符。")); return; }
     if (trimmed === view.name) return;
-    void run(t("重命名视图"), trimmed, async () => { await baseApi.renameView(originalBase, view.id, view.name, trimmed); }, view.id);
+    void run(t("重命名视图"), trimmed, async () => {
+      await baseApi.renameView(originalBase, view.id, view.name, trimmed);
+      onRecordUndo?.({
+        label: t("重命名视图「{name}」", { name: trimmed }),
+        cells: [],
+        created: [],
+        structural: { kind: "view_rename", viewId: view.id, beforeName: view.name, afterName: trimmed },
+      });
+    }, view.id);
   };
   const duplicate = async (view: View) => {
     const originalBase = baseId;
     setMenu(null);
     if (dirty && view.id === activeId && !await ask(t("复制已保存的视图？"), t("当前临时配置尚未保存，副本将使用已保存的配置。"), false)) return;
     if (!valid(originalBase)) return;
-    void run(t("复制视图"), view.name, async () => (await baseApi.duplicateView(originalBase, view.id)).id);
+    void run(t("复制视图"), view.name, async () => {
+      const created = await baseApi.duplicateView(originalBase, view.id);
+      onRecordUndo?.({
+        label: t("复制视图「{name}」", { name: created.name }),
+        cells: [],
+        created: [],
+        structural: { kind: "view_create", view: viewToUndoSnapshot(created) },
+      });
+      return created.id;
+    });
   };
   const remove = async (view: View) => {
     const originalBase = baseId;
     setMenu(null);
     if (!await ask(t("删除视图「{name}」？", { name: view.name }), t("删除后不可恢复。")) || !valid(originalBase)) return;
-    void run(t("删除视图"), view.name, async () => { await baseApi.deleteView(originalBase, view.id); });
+    const snap = viewToUndoSnapshot(view);
+    void run(t("删除视图"), view.name, async () => {
+      await baseApi.deleteView(originalBase, view.id);
+      onRecordUndo?.({
+        label: t("删除视图「{name}」", { name: view.name }),
+        cells: [],
+        created: [],
+        structural: { kind: "view_delete", view: snap },
+      });
+    });
   };
   const reorder = (view: View, destination: View, expected = views.map((item) => item.id)) => {
     const order = moveViewIds(expected, view.id, destination.id);
-    if (order) void run(t("调整视图顺序"), "", async () => { await baseApi.reorderViews(baseId, expected, order); });
+    if (order) {
+      void run(t("调整视图顺序"), "", async () => {
+        await baseApi.reorderViews(baseId, expected, order);
+        onRecordUndo?.({
+          label: t("调整视图顺序"),
+          cells: [],
+          created: [],
+          structural: { kind: "view_reorder", beforeOrder: [...expected], afterOrder: [...order] },
+        });
+      });
+    }
   };
   const selected = views.find((view) => view.id === menu);
   const selectedIndex = selected ? views.findIndex((view) => view.id === selected.id) : -1;

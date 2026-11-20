@@ -18,6 +18,21 @@ func nullCell(raw json.RawMessage) bool {
 	return len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
+// ValidBaseDateValue accepts civil date-only strings ("YYYY-MM-DD") and civil
+// minute-precision date-time strings ("YYYY-MM-DD HH:mm") used by Calendar
+// hourly scheduling, while rejecting ISO timezone suffixes and invalid dates.
+func ValidBaseDateValue(value string) bool {
+	if len(value) == 10 {
+		t, err := time.Parse("2006-01-02", value)
+		return err == nil && t.Year() >= 1 && t.Format("2006-01-02") == value
+	}
+	if len(value) == 16 {
+		t, err := time.Parse("2006-01-02 15:04", value)
+		return err == nil && t.Year() >= 1 && t.Format("2006-01-02 15:04") == value
+	}
+	return false
+}
+
 // validateDateComparison restricts this endpoint to date scheduling. Exact
 // key equality prevents an unchecked field being changed by a forged request.
 func validateDateComparison(expected, cells map[string]json.RawMessage) error {
@@ -44,7 +59,7 @@ func validateDateComparison(expected, cells map[string]json.RawMessage) error {
 			if json.Unmarshal(next, &value) != nil {
 				return ErrInvalidDateCells
 			}
-			if _, err := time.Parse("2006-01-02", value); err != nil {
+			if !ValidBaseDateValue(value) {
 				return ErrInvalidDateCells
 			}
 		}

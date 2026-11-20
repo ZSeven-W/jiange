@@ -15,7 +15,7 @@ import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, runWriteBat
 import { authorizedDetailRecord } from "./record-authorization";
 import { captureGridSelection, checkedTargetsCurrent, extendGridSelection, selectionCellCount, selectionOutline, validGridSelection, waitForBatchTargets, type GridSelection, type SelectionRect } from "./grid-selection";
 import { mergeVisibleFieldOrder, planFieldReorder } from "./field-reorder";
-import { definedCells, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
+import { definedCells, emptyCell, fieldToUndoSnapshot, UNDOABLE_TYPES, type BaseUndoStack, type UndoCellValue } from "./undo";
 import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } from "./selection-statistics";
 import { RecordMenu } from "./record-menu";
 import { recordMenuTargets, sameRecordTargets } from "./record-menu-targets";
@@ -478,7 +478,25 @@ export function Grid({
     if (!current.current.mounted || current.current.baseId !== baseId || !current.current.canEdit) return;
     const op = ledger.begin(t("删除字段「{name}」", { name: f.name }), "", `field:delete:${f.id}`);
     if (op === null) return;
-    try { await baseApi.deleteField(baseId, f.id); ledger.complete(op); }
+    const canRestore = f.type !== "link" && !f.isPrimary;
+    const snapshot = canRestore ? fieldToUndoSnapshot(f) : null;
+    const capturedCells = canRestore
+      ? (authorizedRecords ?? records)
+          .filter((r) => !emptyCell(r.cells[f.id] as UndoCellValue))
+          .map((r) => ({ recordId: r.id, value: r.cells[f.id] as UndoCellValue }))
+      : [];
+    try {
+      await baseApi.deleteField(baseId, f.id);
+      ledger.complete(op);
+      if (snapshot) {
+        undo?.stack.record({
+          label: t("删除字段「{name}」", { name: f.name }),
+          cells: [],
+          created: [],
+          structural: { kind: "field_delete", field: snapshot, cells: capturedCells },
+        });
+      }
+    }
     catch { ledger.fail(op, t("无法确认字段是否删除。请刷新并核对字段列表。")); }
     finally { refreshWrites(onMutate); }
   };
@@ -488,10 +506,51 @@ export function Grid({
     const label = fid === undefined ? t("新增字段") : t("修改字段 #{id}", { id: fid });
     const op = ledger.begin(label, cellDraft(patch), fid === undefined ? "field:create" : `field:edit:${fid}`);
     if (op === null) throw new Error("previous result unresolved");
+    const beforeField = fid !== undefined ? (allFields ?? fields).find((x) => x.id === fid) : undefined;
     try {
-      if (fid === undefined) await baseApi.addField(baseId, tableId ? { ...patch, tableId } : patch);
-      else await baseApi.patchField(baseId, fid, patch);
-      ledger.complete(op);
+      if (fid === undefined) {
+        const created = await baseApi.addField(baseId, tableId ? { ...patch, tableId } : patch);
+        ledger.complete(op);
+        if (created.type !== "link") {
+          undo?.stack.record({
+            label: t("新增字段「{name}」", { name: created.name }),
+            cells: [],
+            created: [],
+            structural: { kind: "field_create", field: fieldToUndoSnapshot(created) },
+          });
+        }
+      } else {
+        const updated = await baseApi.patchField(baseId, fid, patch);
+        ledger.complete(op);
+        if (beforeField && beforeField.type === updated.type && beforeField.type !== "link") {
+          const before: Partial<Field> = {
+            name: beforeField.name,
+            description: beforeField.description ?? "",
+            ...(beforeField.options ? { options: [...beforeField.options] } : {}),
+            ...(beforeField.optionColors ? { optionColors: [...beforeField.optionColors] } : {}),
+            ...(beforeField.formula !== undefined ? { formula: beforeField.formula } : {}),
+            defaultValue: beforeField.defaultValue ?? null,
+            ...(beforeField.type === "person" ? { multiple: !!beforeField.multiple } : {}),
+          };
+          const after: Partial<Field> = {
+            name: updated.name,
+            description: updated.description ?? "",
+            ...(updated.options ? { options: [...updated.options] } : {}),
+            ...(updated.optionColors ? { optionColors: [...updated.optionColors] } : {}),
+            ...(updated.formula !== undefined ? { formula: updated.formula } : {}),
+            defaultValue: updated.defaultValue ?? null,
+            ...(updated.type === "person" ? { multiple: !!updated.multiple } : {}),
+          };
+          if (JSON.stringify(before) !== JSON.stringify(after)) {
+            undo?.stack.record({
+              label: t("修改字段「{name}」", { name: updated.name }),
+              cells: [],
+              created: [],
+              structural: { kind: "field_update", fieldId: fid, before, after },
+            });
+          }
+        }
+      }
     } catch (error) {
       ledger.fail(op, t("无法确认字段是否已保存。请刷新并核对字段列表，勿直接重复提交。"));
       throw error;
@@ -592,7 +651,16 @@ export function Grid({
     if (!desired) { setDragError(t("无法确认完整字段顺序，请刷新后重新拖动。")); return; }
     const op = ledger.begin(t("调整字段顺序"), "", `field:order:${fid}`);
     if (op === null) return;
-    try { await baseApi.reorderFields(baseId, allOrder, desired); ledger.complete(op); }
+    try {
+      await baseApi.reorderFields(baseId, allOrder, desired);
+      ledger.complete(op);
+      undo?.stack.record({
+        label: t("调整字段顺序"),
+        cells: [],
+        created: [],
+        structural: { kind: "field_reorder", beforeOrder: [...allOrder], afterOrder: [...desired] },
+      });
+    }
     catch (error) {
       if (error instanceof ApiError && error.status === 409) { ledger.complete(op); setDragError(t("字段顺序已变化，未执行拖动，请刷新后重试。")); }
       else ledger.fail(op, t("无法确认顺序是否已保存，请刷新并核对。"));

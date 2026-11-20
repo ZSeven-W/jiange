@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BaseRecord, Field } from "@/lib/api";
-import { Gantt, ganttDate, ganttDay, ganttDropIndex, ganttMoveCells, ganttRange, rescheduleGantt } from "./gantt";
+import { Gantt, ganttDate, ganttDay, ganttDropIndex, ganttMoveCells, ganttRange, rescheduleGantt, resizeGanttRange } from "./gantt";
 
 const day = (text: string) => ganttDay(text)!;
 const fields: Field[] = [
@@ -80,5 +80,24 @@ describe("gantt view", () => {
       expect(html).not.toContain('draggable="true"');
       expect(html).toContain('data-gantt-bar="1"');
     } finally { vi.useRealTimers(); }
+  });
+
+  it("resizes start and end edges cleanly with clamping and handles timed datetime cells", () => {
+    const r = ganttRange("2026-11-10 09:00", "2026-11-14 18:00", false)!;
+    expect(ganttDate(r.start)).toBe("2026-11-10");
+    expect(ganttDate(r.end)).toBe("2026-11-14");
+
+    const extendedEnd = resizeGanttRange(r, "end", 3, false)!;
+    expect(ganttDate(extendedEnd.start)).toBe("2026-11-10");
+    expect(ganttDate(extendedEnd.end)).toBe("2026-11-17");
+
+    // Shrinking end past start clamps to start.
+    const clampedEnd = resizeGanttRange(r, "end", -10, false)!;
+    expect(ganttDate(clampedEnd.end)).toBe("2026-11-10");
+
+    // Moving start past end clamps to end.
+    const clampedStart = resizeGanttRange(r, "start", 10, false)!;
+    expect(ganttDate(clampedStart.start)).toBe("2026-11-14");
+    expect(resizeGanttRange(r, "end", 2, true)).toBeNull();
   });
 });

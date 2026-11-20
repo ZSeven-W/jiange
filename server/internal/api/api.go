@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/tables/reorder":                 s.reorderBaseTables,
 		"POST /api/bases/{id}/fields":                         s.addField,
 		"POST /api/bases/{id}/fields/reorder":                 s.reorderFields,
+		"POST /api/bases/{id}/fields/restore":                 s.restoreBaseField,
 		"PATCH /api/bases/{id}/fields/{fid}":                  s.patchField,
 		"DELETE /api/bases/{id}/fields/{fid}":                 s.deleteField,
 		"POST /api/bases/{id}/records":                        func(w http.ResponseWriter, r *http.Request) { s.mutateRecordGuarded(w, r, "add") },
