@@ -1,4 +1,4 @@
-import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill, tableCellRich, tableDataOf, type TableHorizontalAlign, type TableRichSpan, type TableVerticalAlign } from "./table-cells.js";
+import { cellAlignKey, cellFillKey, cellRichKey, cellTableWrites, serializeTableRichSpans, tableCellAlign, tableCellFill, tableCellRich, tableDataOf, type TableCellMarks, type TableHorizontalAlign, type TableRichSpan, type TableVerticalAlign } from "./table-cells.js";
 import { exportableTableMerges, exportableTableWidths, type TableMerge } from "./docx-tables.js";
 /**
  * Word (.docx) import and export for Jiange documents, entirely client side.
@@ -64,6 +64,17 @@ export interface DocxImage {
   height: number;
 }
 
+export interface DocxExportComment {
+  id?: string | number;
+  author: string;
+  date?: string;
+  body: string;
+  blockId?: string;
+  quote?: string;
+  resolved?: boolean;
+  replies?: { author: string; date?: string; body: string }[];
+}
+
 export interface DocxExportOptions {
   title?: string;
   /** Embedded image bytes keyed by the image block's fileId. */
@@ -71,6 +82,14 @@ export interface DocxExportOptions {
   /** Origin used to turn in-app links (files, `#/doc/…`) into absolute URLs. */
   origin?: string;
   now?: Date;
+  /** Optional document comments exported as native Word comments (word/comments.xml). */
+  comments?: DocxExportComment[];
+  /** Optional running header text (word/header1.xml). */
+  headerText?: string;
+  /** Optional running footer text (word/footer1.xml). */
+  footerText?: string;
+  /** Include native Word dynamic PAGE / NUMPAGES fields in footer. */
+  includePageNumbers?: boolean;
 }
 
 /** Identify PNG/JPEG/GIF bytes and read their pixel size from the header. */
@@ -156,16 +175,62 @@ function hexColor(value: string | undefined): string | undefined {
   return hex.toUpperCase();
 }
 
+interface AssignedComment {
+  cid: number;
+  comment: DocxExportComment;
+  placed: boolean;
+}
+
 class DocxWriter {
   rels: { id: string; type: string; target: string; external?: boolean }[] = [];
   media: { name: string; data: Uint8Array; ext: string }[] = [];
   nums: number[] = []; // extra numIds for ordered lists (restart numbering)
+  comments: AssignedComment[] = [];
+  private commentsByBlock = new Map<string, AssignedComment[]>();
+  headerRelId?: string;
+  footerRelId?: string;
   docPrId = 1;
   private nextRel = 1;
   constructor(readonly options: DocxExportOptions) {
     this.rel(`${REL_BASE}/styles`, "styles.xml");
     this.rel(`${REL_BASE}/numbering`, "numbering.xml");
     this.rel(`${REL_BASE}/settings`, "settings.xml");
+    if (options.comments?.length) {
+      let cid = 0;
+      for (const c of options.comments) {
+        const hasContent = !!c.body?.trim() || !!c.replies?.some((r) => r.body?.trim());
+        if (!hasContent) continue;
+        const entry: AssignedComment = { cid: cid++, comment: c, placed: false };
+        this.comments.push(entry);
+        if (c.blockId) {
+          const list = this.commentsByBlock.get(c.blockId) ?? [];
+          list.push(entry);
+          this.commentsByBlock.set(c.blockId, list);
+        }
+      }
+      if (this.comments.length) {
+        this.rel(`${REL_BASE}/comments`, "comments.xml");
+      }
+    }
+    if (options.headerText?.trim()) {
+      this.headerRelId = this.rel(`${REL_BASE}/header`, "header1.xml");
+    }
+    if (options.footerText?.trim() || options.includePageNumbers) {
+      this.footerRelId = this.rel(`${REL_BASE}/footer`, "footer1.xml");
+    }
+  }
+  takeBlockComments(blockId: string | undefined): AssignedComment[] {
+    if (!blockId) return [];
+    const list = this.commentsByBlock.get(blockId);
+    if (!list || !list.length) return [];
+    const fresh = list.filter((c) => !c.placed);
+    for (const c of fresh) c.placed = true;
+    return fresh;
+  }
+  takeUnplacedComments(): AssignedComment[] {
+    const rest = this.comments.filter((c) => !c.placed);
+    for (const c of rest) c.placed = true;
+    return rest;
   }
   rel(type: string, target: string, external = false): string {
     const id = `rId${this.nextRel++}`;
@@ -234,8 +299,15 @@ function textContentXml(text: string): string {
   return out;
 }
 
-function paragraph(pPr: string, content: string): string {
-  return `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ""}${content}</w:p>`;
+function wrapCommentRuns(content: string, comments: AssignedComment[]): string {
+  if (!comments.length) return content;
+  const starts = comments.map((c) => `<w:commentRangeStart w:id="${c.cid}"/>`).join("");
+  const ends = comments.map((c) => `<w:commentRangeEnd w:id="${c.cid}"/><w:r><w:commentReference w:id="${c.cid}"/></w:r>`).join("");
+  return `${starts}${content}${ends}`;
+}
+
+function paragraph(pPr: string, content: string, comments: AssignedComment[] = []): string {
+  return `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ""}${wrapCommentRuns(content, comments)}</w:p>`;
 }
 
 function alignXml(props: Record<string, string>): string {
@@ -337,52 +409,53 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
     if (block.id && consumed.has(block.id)) continue;
     const spans = block.spans.filter((span) => span.text);
     const text = spans.map((span) => span.text).join("");
+    const blockComments = w.takeBlockComments(block.id);
     const isList = block.type === "bullet" || block.type === "ordered" || block.type === "todo";
     if (!isList) { inList = false; orderedNum = 0; }
     switch (block.type) {
       case "title":
-        if (text.trim()) out.push(paragraph(`<w:pStyle w:val="Title"/>`, w.runs(spans)));
+        if (text.trim()) out.push(paragraph(`<w:pStyle w:val="Title"/>`, w.runs(spans), blockComments));
         break;
       case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": case "h7": case "h8": case "h9":
-        out.push(paragraph(`<w:pStyle w:val="Heading${block.type[1]}"/>${alignXml(block.props)}`, w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="Heading${block.type[1]}"/>${alignXml(block.props)}`, w.runs(spans), blockComments));
         break;
       case "bullet":
-        out.push(paragraph(`<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${indentLevel(block.props)}"/><w:numId w:val="1"/></w:numPr>${alignXml(block.props)}`, w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${indentLevel(block.props)}"/><w:numId w:val="1"/></w:numPr>${alignXml(block.props)}`, w.runs(spans), blockComments));
         break;
       case "ordered":
         if (!inList || !orderedNum) { w.nums.push(w.nums.length + 2); orderedNum = w.nums.at(-1)!; }
-        out.push(paragraph(`<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${indentLevel(block.props)}"/><w:numId w:val="${orderedNum}"/></w:numPr>${alignXml(block.props)}`, w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${indentLevel(block.props)}"/><w:numId w:val="${orderedNum}"/></w:numPr>${alignXml(block.props)}`, w.runs(spans), blockComments));
         break;
       case "todo": {
         const level = indentLevel(block.props);
         const box = block.props.checked === "true" ? TODO_CHECKED : TODO_UNCHECKED;
-        out.push(paragraph(`<w:pStyle w:val="JiangeTodo"/><w:ind w:left="${LIST_INDENT * (level + 1)}" w:hanging="${LIST_INDENT}"/>${alignXml(block.props)}`, w.run(`${box} `, {}) + w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="JiangeTodo"/><w:ind w:left="${LIST_INDENT * (level + 1)}" w:hanging="${LIST_INDENT}"/>${alignXml(block.props)}`, w.run(`${box} `, {}) + w.runs(spans), blockComments));
         break;
       }
       case "quote":
-        out.push(paragraph(`<w:pStyle w:val="Quote"/>${alignXml(block.props)}`, w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="Quote"/>${alignXml(block.props)}`, w.runs(spans), blockComments));
         break;
       case "callout": {
         const [fill, border] = CALLOUT_COLORS[Number(block.props.color ?? 0)] ?? CALLOUT_COLORS[0];
         const b = `w:val="single" w:sz="6" w:space="4" w:color="${border.slice(1)}"`;
         const icon = block.props.emoji ? w.run(`${block.props.emoji} `, {}, `<w:rStyle w:val="JiangeCalloutIcon"/>`) : "";
-        out.push(paragraph(`<w:pStyle w:val="JiangeCallout"/><w:pBdr><w:top ${b}/><w:left ${b}/><w:bottom ${b}/><w:right ${b}/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="${fill.slice(1)}"/>${alignXml(block.props)}`, icon + w.runs(spans)));
+        out.push(paragraph(`<w:pStyle w:val="JiangeCallout"/><w:pBdr><w:top ${b}/><w:left ${b}/><w:bottom ${b}/><w:right ${b}/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="${fill.slice(1)}"/>${alignXml(block.props)}`, icon + w.runs(spans), blockComments));
         break;
       }
       case "code":
-        out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, text ? `<w:r><w:rPr><w:rFonts w:ascii="${MONO_FONT}" w:hAnsi="${MONO_FONT}" w:cs="${MONO_FONT}"/></w:rPr>${textContentXml(text)}</w:r>` : ""));
+        out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, text ? `<w:r><w:rPr><w:rFonts w:ascii="${MONO_FONT}" w:hAnsi="${MONO_FONT}" w:cs="${MONO_FONT}"/></w:rPr>${textContentXml(text)}</w:r>` : "", blockComments));
         break;
       case "math":
       case "diagram":
-        out.push(paragraph(`<w:pStyle w:val="${block.type === "math" ? "JiangeMath" : "JiangeDiagram"}"/>`, text ? `<w:r><w:rPr><w:rFonts w:ascii="${MONO_FONT}" w:hAnsi="${MONO_FONT}" w:cs="${MONO_FONT}"/></w:rPr>${textContentXml(text)}</w:r>` : ""));
+        out.push(paragraph(`<w:pStyle w:val="${block.type === "math" ? "JiangeMath" : "JiangeDiagram"}"/>`, text ? `<w:r><w:rPr><w:rFonts w:ascii="${MONO_FONT}" w:hAnsi="${MONO_FONT}" w:cs="${MONO_FONT}"/></w:rPr>${textContentXml(text)}</w:r>` : "", blockComments));
         break;
       case "divider":
-        out.push(paragraph(`<w:pStyle w:val="JiangeDivider"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="DEE0E3"/></w:pBdr>`, ""));
+        out.push(paragraph(`<w:pStyle w:val="JiangeDivider"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="DEE0E3"/></w:pBdr>`, "", blockComments));
         break;
       case "table": {
         const rows = markdownTableRows(tableDataOf(block.props));
-        if (rows) { out.push(tableXml(rows, block.props)); out.push(paragraph("", "")); }
-        else out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, w.run(tableDataOf(block.props), { code: "true" })));
+        if (rows) { out.push(tableXml(rows, block.props)); out.push(paragraph("", "", blockComments)); }
+        else out.push(paragraph(`<w:pStyle w:val="JiangeCode"/>`, w.run(tableDataOf(block.props), { code: "true" }), blockComments));
         break;
       }
       case "image": {
@@ -393,22 +466,22 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         // Images default to centered in Jiange; normal Word paragraphs default left.
         const imageAlignment = block.props.align === "left" || block.props.align === "right" ? block.props.align : "center";
         const alignment = alignXml({ align: imageAlignment });
-        if (image) out.push(paragraph(alignment, w.image(image, name, width)));
-        else out.push(paragraph(alignment, w.run(`[图片：${name}]`, {})));
+        if (image) out.push(paragraph(alignment, w.image(image, name, width), blockComments));
+        else out.push(paragraph(alignment, w.run(`[图片：${name}]`, {}), blockComments));
         if (block.props.caption) out.push(paragraph(`<w:pStyle w:val="Caption"/>${alignment}`, w.run(block.props.caption, {})));
         break;
       }
       case "file": {
         const name = block.props.name || text || "附件";
         const url = block.props.fileId && w.options.origin ? `${w.options.origin}/api/files/${encodeURIComponent(block.props.fileId)}` : block.props.url;
-        out.push(paragraph("", w.runs([{ text: `📎 ${name}`, marks: url ? { link: url } : {} }])));
+        out.push(paragraph("", w.runs([{ text: `📎 ${name}`, marks: url ? { link: url } : {} }]), blockComments));
         break;
       }
       case "bookmark":
       case "video": {
         const url = block.props.url;
         const label = block.props.title || url || text || (block.type === "video" ? "视频" : "网页");
-        out.push(paragraph("", w.runs([{ text: label, marks: url ? { link: url } : {} }])));
+        out.push(paragraph("", w.runs([{ text: label, marks: url ? { link: url } : {} }]), blockComments));
         break;
       }
       case "embed": {
@@ -416,23 +489,24 @@ function bodyXml(blocks: DocxExportBlock[], w: DocxWriter): string {
         const route = block.props.resourceKind === "sheet" || block.props.resourceKind === "base" || block.props.resourceKind === "survey" || block.props.resourceKind === "slides" ? block.props.resourceKind : "doc";
         const title = block.props.title || (block.props.resourceId ? `#${block.props.resourceId}` : kindLabel);
         const url = block.props.resourceId ? `#/${route}/${block.props.resourceId}` : undefined;
-        out.push(paragraph("", w.runs([{ text: `嵌入${kindLabel}：${title}`, marks: url ? { link: url } : {} }])));
+        out.push(paragraph("", w.runs([{ text: `嵌入${kindLabel}：${title}`, marks: url ? { link: url } : {} }]), blockComments));
         break;
       }
       case "reminder": {
         const box = block.props.done === "true" ? TODO_CHECKED : TODO_UNCHECKED;
         const when = [block.props.date, block.props.time].filter(Boolean).join(" ");
         const body = [when, block.props.label].filter(Boolean).join(" ").trim() || "日期提醒";
-        out.push(paragraph(`<w:pStyle w:val="JiangeTodo"/>`, w.run(`${box} ⏰ ${body}`, {})));
+        out.push(paragraph(`<w:pStyle w:val="JiangeTodo"/>`, w.run(`${box} ⏰ ${body}`, {}), blockComments));
         break;
       }
       case "columns": {
         const tbl = columnsTableXml(block, blocks, consumed, w);
         if (tbl) out.push(tbl);
+        if (blockComments.length) out.push(paragraph("", "", blockComments));
         break;
       }
       default:
-        out.push(paragraph(alignXml(block.props), w.runs(spans)));
+        out.push(paragraph(alignXml(block.props), w.runs(spans), blockComments));
     }
     if (isList) inList = true;
   }
@@ -476,21 +550,78 @@ function numberingXml(orderedNums: number[]): string {
 <w:numbering xmlns:w="${NS_W}"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>${bullets}</w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>${ordered}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>${orderedNums.map((id) => `<w:num w:numId="${id}"><w:abstractNumId w:val="1"/>${restart}</w:num>`).join("")}</w:numbering>`;
 }
 
+function commentsXml(comments: AssignedComment[], fallbackDate: string): string {
+  const items = comments.map(({ cid, comment }) => {
+    const author = comment.author?.trim() || "协作者";
+    const initials = [...author].slice(0, 2).join("");
+    const date = comment.date && !Number.isNaN(Date.parse(comment.date)) ? new Date(comment.date).toISOString().replace(/\.\d+Z$/, "Z") : fallbackDate;
+    const paras: string[] = [];
+    const mainLines = (comment.body || "").split(/\r?\n/);
+    const statusPrefix = comment.resolved ? "[已解决] " : "";
+    for (let i = 0; i < mainLines.length; i++) {
+      const line = i === 0 ? statusPrefix + mainLines[i] : mainLines[i];
+      paras.push(`<w:p><w:r>${textContentXml(line)}</w:r></w:p>`);
+    }
+    if (comment.replies?.length) {
+      for (const reply of comment.replies) {
+        if (!reply.body?.trim()) continue;
+        const rAuthor = reply.author?.trim() || "协作者";
+        paras.push(`<w:p><w:r><w:rPr><w:color w:val="646A73"/></w:rPr>${textContentXml(`↳ ${rAuthor}：${reply.body}`)}</w:r></w:p>`);
+      }
+    }
+    return `<w:comment w:id="${cid}" w:author="${escapeXml(author)}" w:date="${escapeXml(date)}" w:initials="${escapeXml(initials)}">${paras.join("")}</w:comment>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${NS_W}">${items}</w:comments>`;
+}
+
+function headerXml(text: string): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="${NS_W}"><w:p><w:pPr><w:jc w:val="right"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="E5E6EB"/></w:pBdr></w:pPr><w:r><w:rPr><w:color w:val="8F959E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>${textContentXml(text.trim())}</w:r></w:p></w:hdr>`;
+}
+
+function footerXml(text: string | undefined, includePageNumbers: boolean): string {
+  const runs: string[] = [];
+  const muted = `<w:rPr><w:color w:val="8F959E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>`;
+  if (text?.trim()) {
+    runs.push(`<w:r>${muted}${textContentXml(text.trim())}</w:r>`);
+  }
+  if (includePageNumbers) {
+    if (runs.length) runs.push(`<w:r>${muted}${textContentXml("  ·  ")}</w:r>`);
+    runs.push(`<w:r>${muted}${textContentXml("第 ")}</w:r>`);
+    runs.push(`<w:fldSimple w:instr=" PAGE "><w:r>${muted}<w:t>1</w:t></w:r></w:fldSimple>`);
+    runs.push(`<w:r>${muted}${textContentXml(" 页 / 共 ")}</w:r>`);
+    runs.push(`<w:fldSimple w:instr=" NUMPAGES "><w:r>${muted}<w:t>1</w:t></w:r></w:fldSimple>`);
+    runs.push(`<w:r>${muted}${textContentXml(" 页")}</w:r>`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="${NS_W}"><w:p><w:pPr><w:jc w:val="center"/><w:pBdr><w:top w:val="single" w:sz="4" w:space="4" w:color="E5E6EB"/></w:pBdr></w:pPr>${runs.join("")}</w:p></w:ftr>`;
+}
+
 /** Build a .docx package from a document view (title block included as the Word title). */
 export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExportOptions = {}): Uint8Array {
   const w = new DocxWriter(options);
   const blocks = view.blocks.some((b) => b.type === "title") || !options.title
     ? view.blocks
     : [{ type: "title", props: {}, spans: [{ text: options.title, marks: {} }] }, ...view.blocks];
-  const body = bodyXml(blocks, w);
+  let body = bodyXml(blocks, w);
+  const unplaced = w.takeUnplacedComments();
+  if (unplaced.length) {
+    body += paragraph("", "", unplaced);
+  }
+  const sectRefs = `${w.headerRelId ? `<w:headerReference w:type="default" r:id="${w.headerRelId}"/>` : ""}${w.footerRelId ? `<w:footerReference w:type="default" r:id="${w.footerRelId}"/>` : ""}`;
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="${NS_W}" xmlns:r="${NS_R}" xmlns:wp="${NS_WP}" xmlns:a="${NS_A}" xmlns:pic="${NS_PIC}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+<w:document xmlns:w="${NS_W}" xmlns:r="${NS_R}" xmlns:wp="${NS_WP}" xmlns:a="${NS_A}" xmlns:pic="${NS_PIC}"><w:body>${body}<w:sectPr>${sectRefs}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const encoder = new TextEncoder();
   const title = options.title ?? blocks.find((b) => b.type === "title")?.spans.map((s) => s.text).join("") ?? "";
   const now = (options.now ?? new Date()).toISOString().replace(/\.\d+Z$/, "Z");
   const mediaTypes = [...new Set(w.media.map((m) => m.ext))].map((ext) => `<Default Extension="${ext}" ContentType="image/${ext}"/>`).join("");
+  const extraOverrides = [
+    w.comments.length ? `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>` : "",
+    w.headerRelId ? `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>` : "",
+    w.footerRelId ? `<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>` : "",
+  ].join("");
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${mediaTypes}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${mediaTypes}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${extraOverrides}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL_DOC}" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="${REL_BASE}/extended-properties" Target="docProps/app.xml"/></Relationships>`;
   const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -501,7 +632,7 @@ export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExpo
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Jiange</Application></Properties>`;
   const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:settings xmlns:w="${NS_W}"><w:defaultTabStop w:val="420"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
-  return createZip([
+  const entries = [
     { name: "[Content_Types].xml", data: encoder.encode(contentTypes) },
     { name: "_rels/.rels", data: encoder.encode(rootRels) },
     { name: "docProps/core.xml", data: encoder.encode(core) },
@@ -511,13 +642,33 @@ export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExpo
     { name: "word/numbering.xml", data: encoder.encode(numberingXml(w.nums)) },
     { name: "word/settings.xml", data: encoder.encode(settings) },
     { name: "word/_rels/document.xml.rels", data: encoder.encode(docRels) },
+    ...(w.comments.length ? [{ name: "word/comments.xml", data: encoder.encode(commentsXml(w.comments, now)) }] : []),
+    ...(w.headerRelId ? [{ name: "word/header1.xml", data: encoder.encode(headerXml(options.headerText!)) }] : []),
+    ...(w.footerRelId ? [{ name: "word/footer1.xml", data: encoder.encode(footerXml(options.footerText, !!options.includePageNumbers)) }] : []),
     ...w.media.map((m) => ({ name: `word/media/${m.name}`, data: m.data })),
-  ], options.now);
+  ];
+  return createZip(entries, options.now);
 }
 
 // ---------------------------------------------------------------- import
 
 export class DocxImportError extends Error {}
+
+export interface DocxImportedComment {
+  id: string;
+  author: string;
+  date?: string;
+  text: string;
+  quote?: string;
+  /** Zero-based index into result.blocks where this comment was anchored, if known. */
+  blockIndex?: number;
+}
+
+export interface DocxImportedFootnote {
+  id: string;
+  kind: "footnote" | "endnote";
+  text: string;
+}
 
 export interface DocxImportResult {
   blocks: MdBlock[];
@@ -526,9 +677,146 @@ export interface DocxImportResult {
   warnings: string[];
   /** Embedded image parts, referenced by importImageId until uploaded. */
   images?: Map<string, DocxImage>;
+  /** Parsed Word comments (word/comments.xml) with anchored block indices & quotes. */
+  comments?: DocxImportedComment[];
+  /** Parsed Word footnotes & endnotes (also appended as readable blocks at the end). */
+  footnotes?: DocxImportedFootnote[];
+  /** Extracted running header text (word/header*.xml), if any. */
+  headerText?: string;
+  /** Extracted running footer text (word/footer*.xml), if any. */
+  footerText?: string;
 }
 
-type InlineOutput = { spans: MdSpan[]; icon: string; image: boolean; images: { at: number; id: string; name: string; width?: number }[] };
+type InlineOutput = {
+  spans: MdSpan[];
+  icon: string;
+  image: boolean;
+  images: { at: number; id: string; name: string; width?: number }[];
+  textBoxes: string[];
+  commentRefs: string[];
+};
+
+interface RawDocxComment {
+  id: string;
+  author: string;
+  date?: string;
+  text: string;
+}
+
+function extractPlainXmlText(root: XmlElement, skipPageFields = false): string {
+  const lines: string[] = [];
+  const walkPara = (p: XmlElement) => {
+    let line = "";
+    let inInstr = false;
+    const walk = (node: XmlElement) => {
+      for (const c of node.children) {
+        if (typeof c === "string") continue;
+        if (c.name === "w:fldSimple") {
+          const instr = (c.attrs["w:instr"] ?? "").trim().toUpperCase();
+          if (skipPageFields && (/^(PAGE|NUMPAGES)\b/.test(instr))) continue;
+          walk(c);
+          continue;
+        }
+        if (c.name === "w:fldChar") {
+          const t = c.attrs["w:fldCharType"];
+          if (t === "begin") inInstr = true;
+          else if (t === "separate" || t === "end") inInstr = false;
+          continue;
+        }
+        if (c.name === "w:instrText" || c.name === "w:del" || c.name === "w:moveFrom") continue;
+        if (c.name === "w:t" && !inInstr) {
+          line += c.children.filter((x): x is string => typeof x === "string").join("");
+        } else if ((c.name === "w:br" || c.name === "w:cr") && !inInstr) {
+          line += "\n";
+        } else if (c.name === "w:tab" && !inInstr) {
+          line += " ";
+        } else {
+          walk(c);
+        }
+      }
+    };
+    walk(p);
+    const trimmed = line.replace(/\s+/g, " ").trim();
+    if (trimmed) lines.push(trimmed);
+  };
+  const findParas = (node: XmlElement) => {
+    for (const c of children(node)) {
+      if (c.name === "w:p") walkPara(c);
+      else findParas(c);
+    }
+  };
+  findParas(root);
+  return lines.join("\n").trim();
+}
+
+function parseNotesPart(xml: XmlElement | undefined, tag: "w:footnote" | "w:endnote"): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!xml) return map;
+  for (const el of children(xml, tag)) {
+    const type = el.attrs["w:type"];
+    if (type === "separator" || type === "continuationSeparator" || type === "continuationNotice") continue;
+    const id = el.attrs["w:id"];
+    if (!id || Number(id) <= 0) continue;
+    const text = extractPlainXmlText(el);
+    if (text) map.set(id, text);
+  }
+  return map;
+}
+
+function parseCommentsPart(xml: XmlElement | undefined): Map<string, RawDocxComment> {
+  const map = new Map<string, RawDocxComment>();
+  if (!xml) return map;
+  for (const el of children(xml, "w:comment")) {
+    const id = el.attrs["w:id"];
+    if (id === undefined || id === "") continue;
+    const text = extractPlainXmlText(el);
+    if (!text) continue;
+    map.set(id, {
+      id,
+      author: el.attrs["w:author"] || "Word 批注",
+      date: el.attrs["w:date"] || undefined,
+      text,
+    });
+  }
+  return map;
+}
+
+function collectTextBoxContents(node: XmlElement): string[] {
+  const out: string[] = [];
+  const walk = (el: XmlElement) => {
+    if (el.name === "w:txbxContent") {
+      const text = extractPlainXmlText(el);
+      if (text) out.push(text);
+      return;
+    }
+    for (const c of children(el)) walk(c);
+  };
+  walk(node);
+  return out;
+}
+
+function findNonTextBoxBlip(node: XmlElement): XmlElement | undefined {
+  if (node.name === "w:txbxContent") return undefined;
+  if (node.name === "a:blip") return node;
+  for (const c of children(node)) {
+    const hit = findNonTextBoxBlip(c);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function selectAlternateBranch(node: XmlElement): XmlElement | undefined {
+  const choice = child(node, "mc:Choice");
+  const fallback = child(node, "mc:Fallback");
+  const hasUseful = (el: XmlElement | undefined): boolean => {
+    if (!el) return false;
+    if (el.name === "w:txbxContent" || el.name === "a:blip" || el.name === "w:t" || el.name === "w:drawing" || el.name === "w:p" || el.name === "w:tbl") return true;
+    return children(el).some(hasUseful);
+  };
+  if (hasUseful(choice)) return choice;
+  if (hasUseful(fallback)) return fallback;
+  return undefined;
+}
 
 /** The body width for a single, ordinary Word section, in EMUs. */
 function wordBodyWidth(body: XmlElement | undefined): { width?: number; complex: boolean } {
@@ -657,6 +945,12 @@ function styleKind(style: StyleInfo): ParaKind | undefined {
 class DocxReader {
   warnings = new Set<string>();
   title?: string;
+  usedFootnotes: DocxImportedFootnote[] = [];
+  private usedFootnoteKeys = new Map<string, number>();
+  private activeComments = new Map<string, string>();
+  private commentQuotes = new Map<string, string>();
+  private commentBlocks = new Map<string, number>();
+  private referencedCommentIds: string[] = [];
   private field: { instr: string; phase: "instr" | "result"; link?: string }[] = [];
   constructor(
     private styles: Map<string, StyleInfo>,
@@ -664,7 +958,35 @@ class DocxReader {
     private rels: Map<string, { type: string; target: string; external: boolean }>,
     private images: Map<string, DocxImage>,
     private layout: { width?: number; complex: boolean },
+    private footnotesMap: Map<string, string>,
+    private endnotesMap: Map<string, string>,
+    private commentsMap: Map<string, RawDocxComment>,
+    private importImages: boolean,
   ) {}
+
+  buildImportedComments(): DocxImportedComment[] {
+    const out: DocxImportedComment[] = [];
+    const seen = new Set<string>();
+    const add = (id: string) => {
+      if (seen.has(id)) return;
+      const raw = this.commentsMap.get(id);
+      if (!raw) return;
+      seen.add(id);
+      const quote = this.commentQuotes.get(id)?.trim() || undefined;
+      const blockIndex = this.commentBlocks.get(id);
+      out.push({
+        id: raw.id,
+        author: raw.author,
+        ...(raw.date ? { date: raw.date } : {}),
+        text: raw.text,
+        ...(quote ? { quote } : {}),
+        ...(blockIndex !== undefined ? { blockIndex } : {}),
+      });
+    };
+    for (const id of this.referencedCommentIds) add(id);
+    for (const id of this.commentsMap.keys()) add(id);
+    return out;
+  }
 
   paragraphKind(pPr: XmlElement | undefined): { kind: ParaKind; numbered?: { numId: string; ilvl: number } } {
     const chain = styleChain(this.styles, child(pPr, "w:pStyle")?.attrs["w:val"]);
@@ -737,7 +1059,27 @@ class DocxReader {
         case "w:ins": case "w:moveTo": case "w:smartTag": case "w:customXml": case "w:sdtContent": case "w:dir": case "w:bdo":
           this.inline(c, out, link); break;
         case "w:del": case "w:moveFrom": this.warnings.add("修订中被删除的内容未导入，插入的修订按已接受处理"); break;
-        case "mc:AlternateContent": out.image = true; break;
+        case "w:commentRangeStart": {
+          const cid = c.attrs["w:id"];
+          if (cid !== undefined && cid !== "") this.activeComments.set(cid, "");
+          break;
+        }
+        case "w:commentRangeEnd": {
+          const cid = c.attrs["w:id"];
+          if (cid !== undefined && cid !== "") {
+            const captured = this.activeComments.get(cid);
+            if (captured) this.commentQuotes.set(cid, captured);
+            this.activeComments.delete(cid);
+            if (this.commentsMap.has(cid)) out.commentRefs.push(cid);
+          }
+          break;
+        }
+        case "mc:AlternateContent": {
+          const branch = selectAlternateBranch(c);
+          if (branch) this.inline(branch, out, link);
+          else out.image = true;
+          break;
+        }
         default: break;
       }
     }
@@ -749,6 +1091,11 @@ class DocxReader {
       if (!text || hidden) return;
       if (this.field.some((f) => f.phase === "instr")) return;
       if (icon) { out.icon += text; return; }
+      if (this.activeComments.size > 0) {
+        for (const [cid, existing] of this.activeComments) {
+          if (existing.length < 180) this.activeComments.set(cid, (existing + text).slice(0, 180));
+        }
+      }
       const href = link ?? this.fieldLink();
       const m = href ? { ...marks, link: href } : { ...marks };
       const prev = out.spans.at(-1);
@@ -788,8 +1135,13 @@ class DocxReader {
           if (hidden || this.field.some((f) => f.phase === "instr")) break;
           const find = (node: XmlElement, name: string): XmlElement | undefined => node.name === name ? node : children(node).map((c) => find(c, name)).find(Boolean);
           const countBlips = (node: XmlElement): number => (node.name === "a:blip" ? 1 : 0) + children(node).reduce((sum, c) => sum + countBlips(c), 0);
-          const rid = find(c, "a:blip")?.attrs["r:embed"];
-          if (rid && this.images.has(rid) && !hasTextBox(c)) {
+          const tbTexts = hasTextBox(c) ? collectTextBoxContents(c) : [];
+          if (tbTexts.length) {
+            out.textBoxes.push(...tbTexts);
+          }
+          const blip = findNonTextBoxBlip(c);
+          const rid = blip?.attrs["r:embed"];
+          if (rid && this.images.has(rid)) {
             if (countBlips(c) > 1) this.warnings.add("组合图形只导入了第一张图片");
             const name = find(c, "wp:docPr")?.attrs.descr || "图片";
             const extent = find(c, "wp:extent");
@@ -805,20 +1157,72 @@ class DocxReader {
             const transform = find(c, "a:xfrm")?.attrs;
             if (find(c, "wp:anchor") || find(c, "a:srcRect") || Number(transform?.rot ?? 0) !== 0 || transform?.flipH === "1" || transform?.flipV === "1" || distorted) this.warnings.add("图片裁剪、旋转、变形或文字环绕设置无法完整保留");
             out.images.push({ at: out.spans.length, id: rid, name: name.slice(0, 200), width });
+          } else if (!tbTexts.length) {
+            out.image = true;
+          }
+          break;
+        }
+        case "w:pict": {
+          if (hidden || this.field.some((f) => f.phase === "instr")) break;
+          const tbTexts = hasTextBox(c) ? collectTextBoxContents(c) : [];
+          if (tbTexts.length) out.textBoxes.push(...tbTexts);
+          else out.image = true;
+          break;
+        }
+        case "w:object": out.image = true; break;
+        case "mc:AlternateContent": {
+          const branch = selectAlternateBranch(c);
+          if (branch) {
+            for (const bc of children(branch)) {
+              if (bc.name === "w:drawing" || bc.name === "w:pict") {
+                const subRun: XmlElement = { name: "w:r", attrs: {}, children: [bc] };
+                this.runInto(subRun, out, link);
+              } else if (bc.name === "w:r") {
+                this.runInto(bc, out, link);
+              } else {
+                this.inline(bc, out, link);
+              }
+            }
           } else out.image = true;
           break;
         }
-        case "w:pict": case "w:object": case "mc:AlternateContent": out.image = true; break;
-        case "w:footnoteReference": case "w:endnoteReference": this.warnings.add("脚注和尾注未导入"); break;
-        case "w:commentReference": this.warnings.add("Word 批注未导入"); break;
+        case "w:footnoteReference":
+        case "w:endnoteReference": {
+          const kind = c.name === "w:footnoteReference" ? "footnote" : "endnote";
+          const noteId = c.attrs["w:id"] ?? "";
+          const noteText = kind === "footnote" ? this.footnotesMap.get(noteId) : this.endnotesMap.get(noteId);
+          if (noteText) {
+            const key = `${kind}:${noteId}`;
+            let num = this.usedFootnoteKeys.get(key);
+            if (!num) {
+              this.usedFootnotes.push({ id: noteId, kind, text: noteText });
+              num = this.usedFootnotes.length;
+              this.usedFootnoteKeys.set(key, num);
+            }
+            push(kind === "footnote" ? `[注${num}]` : `[尾注${num}]`);
+          } else {
+            this.warnings.add("脚注和尾注未导入");
+          }
+          break;
+        }
+        case "w:commentReference": {
+          const cid = c.attrs["w:id"] ?? "";
+          if (cid && this.commentsMap.has(cid)) {
+            out.commentRefs.push(cid);
+          } else {
+            this.warnings.add("Word 批注未导入");
+          }
+          break;
+        }
         default: break;
       }
     }
   }
 
   paragraph(p: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }): void {
-    const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
+    const out: InlineOutput = { spans: [], icon: "", image: false, images: [], textBoxes: [], commentRefs: [] };
     this.inline(p, out);
+    const startIndex = blocks.length;
     if (out.image) this.warnings.add(hasTextBox(p) ? "文本框中的内容未导入" : "部分图片无法导入，已跳过");
     if (out.images.length) {
       if (out.spans.length) this.warnings.add("行内图片已拆分为独立图片块");
@@ -835,9 +1239,23 @@ class DocxReader {
         at = image.at;
       }
       if (at < out.spans.length) this.paragraphText(p, blocks, state, out.spans.slice(at), out.icon);
-      return;
+    } else {
+      this.paragraphText(p, blocks, state, out.spans, out.icon, out.image);
     }
-    this.paragraphText(p, blocks, state, out.spans, out.icon, out.image);
+    if (out.commentRefs.length) {
+      const targetIndex = blocks.length > startIndex ? startIndex : Math.max(0, blocks.length - 1);
+      for (const cid of out.commentRefs) {
+        this.referencedCommentIds.push(cid);
+        if (!this.commentBlocks.has(cid) && blocks.length > 0) this.commentBlocks.set(cid, targetIndex);
+      }
+    }
+    if (out.textBoxes.length) {
+      this.warnings.add("文本框内容已转换为高亮块导入");
+      for (const tb of out.textBoxes) {
+        blocks.push({ type: "callout", text: tb, props: { emoji: "📝" }, spans: [{ text: tb, marks: {} }] });
+        state.lastCode = false;
+      }
+    }
   }
 
   private paragraphText(p: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }, initialSpans: MdSpan[], icon: string, hasImage = false): void {
@@ -902,25 +1320,80 @@ class DocxReader {
     blocks.push(textBlock(kind, spans, props));
   }
 
-  cellText(tc: XmlElement, header = false): { text: string; styled: boolean } {
+  cellText(tc: XmlElement, header = false): {
+    text: string;
+    richSpans: TableRichSpan[];
+    styled: boolean;
+    images: { id: string; name: string; width?: number }[];
+    commentRefs: string[];
+  } {
     const lines: string[] = [];
+    const richLines: TableRichSpan[][] = [];
+    const cellImages: { id: string; name: string; width?: number }[] = [];
+    const commentRefs: string[] = [];
     let styled = false;
     const walk = (node: XmlElement) => {
       for (const c of children(node)) {
         if (c.name === "w:p") {
-          const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
+          const out: InlineOutput = { spans: [], icon: "", image: false, images: [], textBoxes: [], commentRefs: [] };
           this.inline(c, out);
-          if (out.image || out.images.length) this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
-          // Bold header rows are presentation (our own export writes them).
-          if (out.spans.some((s) => Object.keys(s.marks).some((k) => !(header && k === "bold")))) styled = true;
-          lines.push(out.icon + out.spans.map((s) => s.text).join(""));
+          if (out.commentRefs.length) commentRefs.push(...out.commentRefs);
+          if (out.images.length) {
+            if (this.importImages) {
+              for (const img of out.images) cellImages.push({ id: img.id, name: img.name, width: img.width });
+            } else {
+              this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
+            }
+          } else if (out.image) {
+            this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
+          }
+          const lineRich: TableRichSpan[] = [];
+          if (out.icon) lineRich.push({ text: out.icon });
+          for (const s of out.spans) {
+            const marks: TableCellMarks = {};
+            for (const [k, v] of Object.entries(s.marks)) {
+              if (!v) continue;
+              if (k === "bold") { if (!header) marks.bold = true; }
+              else if (k === "italic") marks.italic = true;
+              else if (k === "underline") marks.underline = true;
+              else if (k === "strike") marks.strike = true;
+              else if (k === "code") marks.code = true;
+              else if (k === "color" && /^#[0-9a-f]{6}$/i.test(v)) marks.color = v.toUpperCase();
+              else if (k === "bg" && s.marks.code && v.toUpperCase() === "#F2F3F5") { /* presentation fill of table inline code */ }
+              else styled = true;
+            }
+            if (s.text) lineRich.push(Object.keys(marks).length ? { text: s.text, marks } : { text: s.text });
+          }
+          let plainLine = out.icon + out.spans.map((s) => s.text).join("");
+          if (out.textBoxes.length) {
+            const tbText = out.textBoxes.join("\n");
+            plainLine = plainLine ? `${plainLine}\n${tbText}` : tbText;
+            lineRich.push({ text: (lineRich.length ? "\n" : "") + tbText });
+          }
+          if (this.importImages && out.images.length) {
+            const markers = out.images.map((img) => `[图片：${img.name}]`).join(" ");
+            if (plainLine) {
+              plainLine += "\n" + markers;
+              lineRich.push({ text: "\n" + markers });
+            } else {
+              plainLine = markers;
+              lineRich.push({ text: markers });
+            }
+          }
+          lines.push(plainLine);
+          richLines.push(lineRich);
         } else if (c.name === "w:tbl") { this.warnings.add("嵌套表格已展开为单元格文字"); walk(c); }
         else if (c.name === "w:tr" || c.name === "w:tc" || c.name === "w:sdt" || c.name === "w:sdtContent" || c.name === "w:customXml") walk(c);
       }
     };
     walk(tc);
-    while (lines.length > 1 && lines.at(-1) === "") lines.pop();
-    return { text: lines.join("\n"), styled };
+    while (lines.length > 1 && lines.at(-1) === "") { lines.pop(); richLines.pop(); }
+    const richSpans: TableRichSpan[] = [];
+    for (let i = 0; i < richLines.length; i++) {
+      if (i > 0) richSpans.push({ text: "\n" });
+      richSpans.push(...richLines[i]);
+    }
+    return { text: lines.join("\n"), richSpans, styled, images: cellImages, commentRefs };
   }
 
   table(tbl: XmlElement, blocks: MdBlock[]): void {
@@ -936,6 +1409,9 @@ class DocxReader {
     const cellWidths: { column: number; span: number; width: XmlElement }[] = [];
     const fills: { row: number; col: number; span: number; fill: string }[] = [];
     const aligns: { row: number; col: number; span: number; horizontal: TableHorizontalAlign; vertical: TableVerticalAlign }[] = [];
+    const richCells: { row: number; col: number; serialized: string }[] = [];
+    const tableImages: { row: number; col: number; id: string; name: string; width?: number }[] = [];
+    const tableCommentRefs: string[] = [];
     // Only infer first-column semantics from our own style. In third-party Word
     // documents tblLook is conditional styling, not an unambiguous title column.
     const ownTable = child(tablePr, "w:tblStyle")?.attrs["w:val"] === "JiangeTable";
@@ -991,6 +1467,12 @@ class DocxReader {
         if (preferredWidth) cellWidths.push({ column, span, width: preferredWidth });
         const cell = this.cellText(tc, (header && rowIndex === 0) || (headerColumn && column === 0));
         styled ||= cell.styled;
+        if (cell.commentRefs.length) tableCommentRefs.push(...cell.commentRefs);
+        if (cell.images.length) {
+          for (const img of cell.images) tableImages.push({ row: rowIndex, col: column, ...img });
+        }
+        const serializedRich = serializeTableRichSpans(cell.richSpans);
+        if (serializedRich) richCells.push({ row: rowIndex, col: column, serialized: serializedRich });
         if (child(tcPr, "w:hMerge")) unsupportedMerge = true;
         if (continued) {
           const prior = active.get(column);
@@ -1012,15 +1494,18 @@ class DocxReader {
     const width = rows.reduce((max, row) => Math.max(max, row.length), gridNodes.length <= 1024 ? gridNodes.length : 0);
     if (!rows.length || !width) return;
     for (const row of rows) while (row.length < width) row.push("");
-    if (styled) this.warnings.add("表格单元格中的文字样式不会导入");
+    if (styled) this.warnings.add("表格单元格中的部分扩展样式（如链接或底色）未保留");
     if (unsupportedMerge) this.warnings.add("部分合并单元格无法无损导入，已拆分并保留内容");
     const props: Record<string, string> = { tableData: JSON.stringify(rows) };
-    if (fills.length || aligns.length) {
+    if (fills.length || aligns.length || richCells.length) {
       Object.assign(props, cellTableWrites(props, rows, 0));
       for (const fill of fills) for (let col = fill.col; col < fill.col + fill.span && col < width; col++) props[cellFillKey(`r${fill.row}`, `c${col}`)] = fill.fill;
       for (const align of aligns) for (let col = align.col; col < align.col + align.span && col < width; col++) {
         if (align.horizontal !== "left") props[cellAlignKey(`r${align.row}`, `c${col}`, "horizontal")] = align.horizontal;
         if (align.vertical !== "top") props[cellAlignKey(`r${align.row}`, `c${col}`, "vertical")] = align.vertical;
+      }
+      for (const rc of richCells) {
+        props[cellRichKey(`r${rc.row}`, `c${rc.col}`)] = rc.serialized;
       }
     }
     if (!header) props.tableHeader = "none";
@@ -1043,7 +1528,29 @@ class DocxReader {
         if (pixels.some((px) => px < 100) || conflicting || (tableWidth && tableType !== "auto" && tableType !== "nil" && (tableType !== "dxa" || !Number.isFinite(tableAmount) || Math.abs(tableAmount - total) > 2))) this.warnings.add("表格列宽与网格不一致或小于最小宽度，显示可能不同");
       } else this.warnings.add("表格固定列宽无法识别，已使用默认列宽");
     } else if (!ownTable && gridNodes.length) this.warnings.add("Word 表格使用自动布局，列宽可能不同");
+    const tableBlockIndex = blocks.length;
     blocks.push({ type: "table", text: "", props, spans: [] });
+    for (const cid of tableCommentRefs) {
+      this.referencedCommentIds.push(cid);
+      if (!this.commentBlocks.has(cid)) this.commentBlocks.set(cid, tableBlockIndex);
+    }
+    if (tableImages.length) {
+      this.warnings.add("表格单元格中的图片已提取为表格下方独立图片块");
+      for (const img of tableImages) {
+        blocks.push({
+          type: "image",
+          text: "",
+          props: {
+            importImageId: img.id,
+            name: img.name,
+            align: "center",
+            caption: `表格第 ${img.row + 1} 行第 ${img.col + 1} 列：${img.name}`,
+            ...(img.width === undefined ? {} : { imageWidth: String(img.width) }),
+          },
+          spans: [],
+        });
+      }
+    }
   }
 
   body(node: XmlElement, blocks: MdBlock[], state: { lastCode: boolean }): void {
@@ -1054,10 +1561,10 @@ class DocxReader {
         const isCaption = /^caption$/i.test(styleId ?? "") || styleChain(this.styles, styleId).some((style) => style.name === "caption");
         if (last?.type === "image" && isCaption) {
           const previousField = this.field.map((field) => ({ ...field }));
-          const out: InlineOutput = { spans: [], icon: "", image: false, images: [] };
+          const out: InlineOutput = { spans: [], icon: "", image: false, images: [], textBoxes: [], commentRefs: [] };
           this.inline(c, out);
           const text = out.icon + out.spans.map((span) => span.text).join("");
-          if (!out.image && !out.images.length && text) {
+          if (!out.image && !out.images.length && !out.textBoxes.length && text) {
             last.props.caption = text;
             if (out.spans.some((span) => Object.keys(span.marks).length > 0)) this.warnings.add("图片说明中的文字样式未保留");
             state.lastCode = false;
@@ -1070,7 +1577,11 @@ class DocxReader {
       else if (c.name === "w:tbl") { state.lastCode = false; this.table(c, blocks); }
       else if (c.name === "w:sdt") this.body(child(c, "w:sdtContent") ?? c, blocks, state);
       else if (c.name === "w:customXml" || c.name === "w:ins" || c.name === "w:moveTo") this.body(c, blocks, state);
-      else if (c.name === "mc:AlternateContent") this.warnings.add("部分特殊内容未导入");
+      else if (c.name === "mc:AlternateContent") {
+        const branch = selectAlternateBranch(c);
+        if (branch) this.body(branch, blocks, state);
+        else this.warnings.add("部分特殊内容未导入");
+      }
     }
   }
 }
@@ -1127,9 +1638,13 @@ export async function parseDocx(bytes: Uint8Array, options: { images?: boolean }
   const dir = main.includes("/") ? main.slice(0, main.lastIndexOf("/") + 1) : "";
   const docRels = parseRels(await read(`${dir}_rels/${main.slice(dir.length)}.rels`));
   let stylesPath = `${dir}styles.xml`, numberingPath = `${dir}numbering.xml`;
+  let footnotesPath = `${dir}footnotes.xml`, endnotesPath = `${dir}endnotes.xml`, commentsPath = `${dir}comments.xml`;
   for (const rel of docRels.values()) {
     if (rel.type.endsWith("/styles")) stylesPath = relTarget(main, rel.target);
     else if (rel.type.endsWith("/numbering")) numberingPath = relTarget(main, rel.target);
+    else if (rel.type.endsWith("/footnotes")) footnotesPath = relTarget(main, rel.target);
+    else if (rel.type.endsWith("/endnotes")) endnotesPath = relTarget(main, rel.target);
+    else if (rel.type.endsWith("/comments")) commentsPath = relTarget(main, rel.target);
   }
   const images = new Map<string, DocxImage>();
   if (options.images) {
@@ -1148,12 +1663,69 @@ export async function parseDocx(bytes: Uint8Array, options: { images?: boolean }
     }
   }
   const body = child(document, "w:body");
-  const reader = new DocxReader(parseStyles(await read(stylesPath)), parseNumbering(await read(numberingPath)), docRels, images, wordBodyWidth(body));
+  const footnotesMap = parseNotesPart(await read(footnotesPath), "w:footnote");
+  const endnotesMap = parseNotesPart(await read(endnotesPath), "w:endnote");
+  const commentsMap = parseCommentsPart(await read(commentsPath));
+  const reader = new DocxReader(
+    parseStyles(await read(stylesPath)),
+    parseNumbering(await read(numberingPath)),
+    docRels,
+    images,
+    wordBodyWidth(body),
+    footnotesMap,
+    endnotesMap,
+    commentsMap,
+    !!options.images,
+  );
   const blocks: MdBlock[] = [];
   if (body) reader.body(body, blocks, { lastCode: false });
-  if ([...byName.keys()].some((name) => /^word\/(header|footer)\d*\.xml$/.test(name))) reader.warnings.add("页眉和页脚未导入");
+
+  // Append referenced footnotes & endnotes cleanly as a structured section at the end.
+  if (reader.usedFootnotes.length > 0) {
+    blocks.push({ type: "divider", text: "", props: {}, spans: [] });
+    blocks.push(textBlock("h4", [{ text: "脚注与尾注", marks: {} }], {}));
+    for (let i = 0; i < reader.usedFootnotes.length; i++) {
+      const fn = reader.usedFootnotes[i];
+      const prefix = fn.kind === "footnote" ? `[注${i + 1}] ` : `[尾注${i + 1}] `;
+      blocks.push(textBlock("paragraph", [{ text: prefix, marks: { bold: "true" } }, { text: fn.text, marks: {} }], {}));
+    }
+  }
+
+  // Extract running header / footer text from default section references (or word/header*.xml / footer*.xml).
+  const readSectionHeaderFooter = async (refTag: "w:headerReference" | "w:footerReference", fallbackRe: RegExp): Promise<string | undefined> => {
+    const sectPr = child(body, "w:sectPr");
+    const refs = children(sectPr, refTag);
+    const chosen = refs.find((r) => (r.attrs["w:type"] ?? "default") === "default") ?? refs[0];
+    const rel = chosen ? docRels.get(chosen.attrs["r:id"] ?? "") : undefined;
+    const candidatePath = rel && !rel.external ? relTarget(main, rel.target) : [...byName.keys()].find((n) => fallbackRe.test(n));
+    if (!candidatePath) return undefined;
+    const xml = await read(candidatePath);
+    if (!xml) return undefined;
+    const cleaned = extractPlainXmlText(xml, true)
+      .replace(/第\s*页\s*\/\s*共\s*页/g, "")
+      .replace(/\bPage\s+of\b/gi, "")
+      .replace(/(?:\s+|^)\/(?:\s+|$)/g, " ")
+      .replace(/\s*[·|/-]\s*$/g, "")
+      .replace(/^\s*[·|/-]\s*/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return cleaned || undefined;
+  };
+  const headerText = await readSectionHeaderFooter("w:headerReference", /^word\/header\d*\.xml$/);
+  const footerText = await readSectionHeaderFooter("w:footerReference", /^word\/footer\d*\.xml$/);
+  const importedComments = reader.buildImportedComments();
+
   if (!blocks.length) throw new DocxImportError("文件没有可导入的内容。");
-  return { blocks, title: reader.title, warnings: [...reader.warnings], ...(images.size ? { images } : {}) };
+  return {
+    blocks,
+    title: reader.title,
+    warnings: [...reader.warnings],
+    ...(images.size ? { images } : {}),
+    ...(importedComments.length ? { comments: importedComments } : {}),
+    ...(reader.usedFootnotes.length ? { footnotes: reader.usedFootnotes } : {}),
+    ...(headerText ? { headerText } : {}),
+    ...(footerText ? { footerText } : {}),
+  };
 }
 
 /** Read a picked File (size-checked before loading it into memory). */

@@ -131,44 +131,118 @@
   [data-table-title-row] td { clip-path: none !important; }
 }
 
-/* 导出 PDF：打印当前文档（⋯ 菜单触发 window.print()）。隐藏侧栏/顶栏/
-   面板/覆盖层，正文转为白底黑字单栏，媒体块不跨页截断。 */
+/* 导出 PDF：打印当前文档（通过打印设置对话框注入 @page 后触发 window.print()）。
+   展开滚动容器避免长文档截断，隐藏侧栏/顶栏/面板/浮层与交互控件，
+   启用标题防孤行、表格跨页重复表头、媒体与评论卡片防跨页截断。 */
+[data-doc-print-header],
+[data-doc-print-footer],
+[data-doc-print-comments] {
+  display: none;
+}
 @media print {
-  body:has([data-print-doc]) {
+  html:has([data-print-doc]),
+  body:has([data-print-doc]),
+  body:has([data-print-doc]) #root,
+  body:has([data-print-doc]) #root > div,
+  body:has([data-print-doc]) [data-doc-scroll] {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
     background: #fff !important;
+  }
+  body:has([data-print-doc]) #root > div {
+    display: block !important;
+  }
+  body:has([data-print-doc]) [data-doc-scroll] {
+    padding-right: 0 !important;
   }
   body:has([data-print-doc]) aside,
   body:has([data-print-doc]) header,
+  body:has([data-print-doc]) #workspace-navigation,
+  body:has([data-print-doc]) button[aria-label="打开导航"],
   body:has([data-print-doc]) [data-comments-panel],
   body:has([data-print-doc]) [data-version-panel],
   body:has([data-print-doc]) [data-document-presentation],
   body:has([data-print-doc]) [data-outline-panel],
+  body:has([data-print-doc]) [data-outline-trigger],
   body:has([data-print-doc]) [data-attachment-preview],
   body:has([data-print-doc]) [data-ask],
   body:has([data-print-doc]) [data-slash-menu],
-  body:has([data-print-doc]) [data-format-toolbar] {
+  body:has([data-print-doc]) [data-format-toolbar],
+  body:has([data-print-doc]) [data-doc-print-dialog],
+  body:has([data-print-doc]) [data-suggestion-panel],
+  body:has([data-print-doc]) [data-doc-ai-panel],
+  body:has([data-print-doc]) [data-document-references],
+  body:has([data-print-doc]) [data-find-panel],
+  body:has([data-print-doc]) [data-page-notice],
+  body:has([data-print-doc]) [data-suggest-banner],
+  body:has([data-print-doc]) [data-title-sync-notice],
+  body:has([data-print-doc]) [data-recovery-drafts],
+  body:has([data-print-doc]) [data-pending-word] {
     display: none !important;
   }
   body:has([data-print-doc]) [data-print-doc] {
     display: block !important;
     max-width: 100% !important;
     padding: 0 !important;
-    color: #000 !important;
+    color: #1f2329 !important;
     background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
-  /* 块内装饰（悬停手柄/角标）不打印 */
+  [data-print-doc] [data-doc-print-header],
+  [data-print-doc] [data-doc-print-footer],
+  [data-print-doc] [data-doc-print-comments] {
+    display: block !important;
+  }
+  /* 块内装饰与交互控件不打印 */
   [data-print-doc] [data-block] > span,
   [data-print-doc] [data-comment-bubble],
-  [data-print-doc] [data-insert-after] {
+  [data-print-doc] [data-insert-after],
+  [data-print-doc] [data-table-col-grip],
+  [data-print-doc] [data-table-resize],
+  [data-print-doc] [data-callout-colors],
+  [data-print-doc] [data-callout-emoji-pop],
+  [data-print-doc] [data-embed-refresh],
+  [data-print-doc] [data-embed-change],
+  [data-print-doc] [data-embed-open],
+  [data-print-doc] [data-reminder-controls],
+  [data-print-doc] [data-reminder-edit-time] {
     display: none !important;
   }
-  /* 媒体与图表块避免跨页截断 */
+  /* 标题防孤行，表格跨页自动重复表头 */
+  [data-print-doc] h1,
+  [data-print-doc] h2,
+  [data-print-doc] h3,
+  [data-print-doc] h4,
+  [data-print-doc] h5,
+  [data-print-doc] h6 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  [data-print-doc] thead {
+    display: table-header-group;
+  }
+  [data-print-doc] table {
+    border-collapse: collapse;
+  }
+  /* 媒体、高亮块、表格行、代码块、嵌入卡片与评论项避免跨页截断 */
+  [data-print-doc] tr,
+  [data-print-doc] pre,
+  [data-print-doc] blockquote,
   [data-print-doc] [data-math],
   [data-print-doc] [data-diagram],
   [data-print-doc] [data-video],
-  [data-print-doc] figure {
+  [data-print-doc] [data-callout-color],
+  [data-print-doc] [data-embed-block],
+  [data-print-doc] [data-reminder-block],
+  [data-print-doc] [data-doc-print-comment-item],
+  [data-print-doc] figure,
+  [data-print-doc] img {
     break-inside: avoid;
+    page-break-inside: avoid;
   }
+  [data-print-doc] img,
   [data-print-doc] svg {
     max-width: 100% !important;
     height: auto !important;

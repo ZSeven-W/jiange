@@ -4,7 +4,7 @@ import { buildDocx, docxExportLosses, DOCX_MAX_BYTES, DocxImportError, imageInfo
 import { createZip, crc32, listZip, readZipEntry } from "../src/zip.js";
 import { parseXml, XmlError } from "../src/xml.js";
 import type { MdBlock } from "../src/markdown.js";
-import { cellAlignKey, cellFillKey, cellTableWrites, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableCellAlign, tableCellFill, tableRowsOf } from "../src/table-cells.js";
+import { cellAlignKey, cellFillKey, cellRichKey, cellTableWrites, serializeTableRichSpans, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableCellAlign, tableCellFill, tableCellRich, tableRowsOf } from "../src/table-cells.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -520,5 +520,131 @@ describe("Word import rejects bad input", () => {
     expect(isDocxFile({ name: "报告.DOCX" })).toBe(true);
     expect(isDocxFile({ name: "x", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" })).toBe(true);
     expect(isDocxFile({ name: "a.md", type: "text/markdown" })).toBe(false);
+  });
+});
+
+describe("Word advanced fidelity: table rich text, table images, comments, footnotes, headers/footers & textboxes", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 40, 0, 0, 0, 20, 8, 6, 0, 0, 0]);
+
+  it("round-trips inline table cell rich text losslessly without warnings", async () => {
+    const rows = [["项目", "说明"], ["鉴格", "核心通过"]];
+    const props: Record<string, string> = { tableData: JSON.stringify(rows), tableHeader: "row" };
+    Object.assign(props, cellTableWrites(props, rows, 0));
+    props[cellRichKey("r1", "c0")] = serializeTableRichSpans([{ text: "鉴格", marks: { bold: true, underline: true, color: "#245BDB" } }]);
+    props[cellRichKey("r1", "c1")] = serializeTableRichSpans([
+      { text: "核心", marks: { italic: true, strike: true } },
+      { text: "通过", marks: { code: true } },
+    ]);
+    const bytes = buildDocx({ blocks: [b("table", "", props)] });
+    const imported = await parseDocx(bytes);
+    expect(imported.warnings).toEqual([]);
+    const tbl = imported.blocks[0];
+    expect(tableCellRich(tbl.props, 1, 0)).toEqual([{ text: "鉴格", marks: { bold: true, underline: true, color: "#245BDB" } }]);
+    expect(tableCellRich(tbl.props, 1, 1)).toEqual([
+      { text: "核心", marks: { italic: true, strike: true } },
+      { text: "通过", marks: { code: true } },
+    ]);
+  });
+
+  it("extracts images embedded inside Word table cells as standalone image blocks below the table", async () => {
+    const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+    const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    const docXml = `<w:document xmlns:w="${W}" xmlns:r="${R}" xmlns:wp="${WP}" xmlns:a="${A}"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>模块</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>示意图</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>网关</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:drawing><wp:inline><wp:extent cx="952500" cy="476250"/><wp:docPr descr="架构图"/><a:blip r:embed="rImg1"/></wp:inline></w:drawing></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`;
+    const rels = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rImg1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/cell.png"/></Relationships>`;
+    const zip = createZip([
+      { name: "word/document.xml", data: enc.encode(docXml) },
+      { name: "word/_rels/document.xml.rels", data: enc.encode(rels) },
+      { name: "word/media/cell.png", data: png },
+    ]);
+    const res = await parseDocx(zip, { images: true });
+    expect(res.blocks).toHaveLength(2);
+    expect(res.blocks[0].type).toBe("table");
+    expect(JSON.parse(res.blocks[0].props.tableData)).toEqual([["模块", "示意图"], ["网关", "[图片：架构图]"]]);
+    expect(res.blocks[1].type).toBe("image");
+    expect(res.blocks[1].props.importImageId).toBe("rImg1");
+    expect(res.blocks[1].props.caption).toContain("表格第 2 行第 2 列：架构图");
+    expect(res.images?.get("rImg1")?.data).toEqual(png);
+    expect(res.warnings).toContain("表格单元格中的图片已提取为表格下方独立图片块");
+  });
+
+  it("round-trips native Word comments, running headers, and footers with page numbers", async () => {
+    const blocks: DocxExportBlock[] = [
+      { id: "1:1", type: "title", props: {}, spans: [{ text: "Q4 评审纪要", marks: {} }] },
+      { id: "1:2", type: "paragraph", props: {}, spans: [{ text: "核心架构需要升级持久化索引。", marks: {} }] },
+      { id: "1:3", type: "paragraph", props: {}, spans: [{ text: "下周完成全量压测。", marks: {} }] },
+    ];
+    const bytes = buildDocx(
+      { blocks },
+      {
+        title: "Q4 评审纪要",
+        headerText: "Q4 评审纪要 · 内部审阅",
+        footerText: "鉴格云文档导出",
+        includePageNumbers: true,
+        comments: [
+          {
+            id: 101,
+            author: "林架构",
+            date: "2026-11-20T05:00:00Z",
+            blockId: "1:2",
+            body: "建议补充并发压测指标",
+            replies: [{ author: "周产品", body: "已纳入验收清单" }],
+          },
+        ],
+        now: new Date("2026-11-20T05:00:00Z"),
+      },
+    );
+    const entries = listZip(bytes);
+    const names = entries.map((e) => e.name);
+    expect(names).toEqual(expect.arrayContaining(["word/comments.xml", "word/header1.xml", "word/footer1.xml"]));
+    for (const entry of entries) {
+      const xml = dec.decode(await readZipEntry(bytes, entry, 1 << 24));
+      expect(() => parseXml(xml)).not.toThrow();
+    }
+    const footerXmlStr = dec.decode(await readZipEntry(bytes, entries.find((e) => e.name === "word/footer1.xml")!, 1 << 20));
+    expect(footerXmlStr).toContain("PAGE");
+    expect(footerXmlStr).toContain("NUMPAGES");
+
+    const imported = await parseDocx(bytes);
+    expect(imported.headerText).toBe("Q4 评审纪要 · 内部审阅");
+    expect(imported.footerText).toBe("鉴格云文档导出");
+    expect(imported.comments).toHaveLength(1);
+    expect(imported.comments![0]).toMatchObject({
+      author: "林架构",
+      blockIndex: 0,
+      quote: "核心架构需要升级持久化索引。",
+    });
+    expect(imported.comments![0].text).toContain("建议补充并发压测指标");
+    expect(imported.comments![0].text).toContain("周产品：已纳入验收清单");
+    expect(imported.warnings).toEqual([]);
+  });
+
+  it("imports Word footnotes, endnotes, and mc:AlternateContent textboxes without duplication", async () => {
+    const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const footnotes = `<?xml version="1.0"?><w:footnotes xmlns:w="${W}"><w:footnote w:type="separator" w:id="0"><w:p/></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>参见 RFC 9110 规范。</w:t></w:r></w:p></w:footnote></w:footnotes>`;
+    const endnotes = `<?xml version="1.0"?><w:endnotes xmlns:w="${W}"><w:endnote w:id="1"><w:p><w:r><w:t>全部数据来自生产监控。</w:t></w:r></w:p></w:endnote></w:endnotes>`;
+    const body = `
+      <w:p><w:r><w:t>协议兼容说明</w:t><w:footnoteReference w:id="1"/><w:t>与监控指标</w:t><w:endnoteReference w:id="1"/></w:r></w:p>
+      <w:p><w:r><mc:AlternateContent xmlns:mc="${MC}"><mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p><w:r><w:t>重点提示：请勿跳过灰度阶段</w:t></w:r></w:p></w:txbxContent></w:drawing></mc:Choice><mc:Fallback><w:pict><w:txbxContent><w:p><w:r><w:t>重点提示：请勿跳过灰度阶段</w:t></w:r></w:p></w:txbxContent></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>
+    `;
+    const rels = `<Relationship Id="rFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rEn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>`;
+    const zip = rawDocx(body, [
+      { name: "word/footnotes.xml", data: footnotes },
+      { name: "word/endnotes.xml", data: endnotes },
+    ], rels);
+    const res = await parseDocx(zip);
+    expect(res.blocks[0].text).toBe("协议兼容说明[注1]与监控指标[尾注2]");
+    const callouts = res.blocks.filter((blk) => blk.type === "callout");
+    expect(callouts).toHaveLength(1);
+    expect(callouts[0].text).toBe("重点提示：请勿跳过灰度阶段");
+    expect(res.footnotes).toEqual([
+      { id: "1", kind: "footnote", text: "参见 RFC 9110 规范。" },
+      { id: "1", kind: "endnote", text: "全部数据来自生产监控。" },
+    ]);
+    expect(res.blocks.some((blk) => blk.type === "h4" && blk.text === "脚注与尾注")).toBe(true);
+    expect(res.blocks.some((blk) => blk.text.includes("[注1] 参见 RFC 9110 规范。"))).toBe(true);
+    expect(res.blocks.some((blk) => blk.text.includes("[尾注2] 全部数据来自生产监控。"))).toBe(true);
   });
 });

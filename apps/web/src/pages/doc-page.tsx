@@ -63,9 +63,17 @@ import { commentsApi, extrasApi, suggestionsApi, type DocSuggestion } from "@/li
 import { SuggestionPanel, type SuggestionBlockOption } from "./suggestion-panel";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
 import { appendBlocksOps, appendMarkdownOps } from "@/lib/md-import";
-import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxImportResult } from "@/lib/docx";
+import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxExportComment, type DocxImportResult, type DocxImportedComment } from "@/lib/docx";
 import { fetchDocxImages } from "./docx-images";
 import { uploadDocxImportImages } from "./docx-import-images";
+import {
+  applyPrintPageStyle,
+  buildPrintCommentsThreads,
+  DEFAULT_PRINT_SETTINGS,
+  DocPrintDialog,
+  type DocPrintSettings,
+  type PrintPreviewLine,
+} from "./doc-print-dialog";
 import { aiApi, openAISettings, type AIMessage } from "@/lib/ai";
 import { DocAIPanel } from "./doc-ai-panel";
 import { archivePendingDraft, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, removeRecoveryDraft } from "@/lib/pending-ops-storage";
@@ -545,6 +553,134 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     try { await templatesApi.add(name.trim(), md); void qc.invalidateQueries({ queryKey: ["my-templates"] }); setPageNotice({ ok: true, text: `已保存为模板「${name.trim()}」，新建文档时可在模板中选择。` }); }
     catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : "保存模板失败，请重试。" }); }
   };
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printSettings, setPrintSettings] = useState<DocPrintSettings>(DEFAULT_PRINT_SETTINGS);
+  const [docxHeaderFooter, setDocxHeaderFooter] = useState<{ headerText?: string; footerText?: string }>({});
+  const printStyleCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    setPrintOpen(false);
+    setDocxHeaderFooter({});
+    setPrintSettings(DEFAULT_PRINT_SETTINGS);
+    printStyleCleanup.current?.();
+    printStyleCleanup.current = null;
+  }, [id, me.user.id]);
+  useEffect(() => () => {
+    printStyleCleanup.current?.();
+    printStyleCleanup.current = null;
+  }, []);
+  const printableCommentThreads = useMemo(
+    () => (commentsAvailable && comments.isSuccess ? buildPrintCommentsThreads(comments.data) : []),
+    [commentsAvailable, comments.isSuccess, comments.data],
+  );
+  const printPreviewLines = useMemo<PrintPreviewLine[]>(() => {
+    const doc = sync.client.doc;
+    if (!printOpen || !doc) return [];
+    const lines: PrintPreviewLine[] = [];
+    for (const block of doc.view().blocks) {
+      if (block.type === "title") continue;
+      const text = block.spans.map((sp) => sp.text).join("").trim();
+      if (block.type === "table") {
+        lines.push({ kind: "table", text: "表格内容（跨页自动重复表头）" });
+      } else if (block.type === "callout") {
+        if (text) lines.push({ kind: "callout", text });
+      } else if (/^h[1-9]$/.test(block.type)) {
+        if (text) lines.push({ kind: "heading", text });
+      } else if (text) {
+        lines.push({ kind: "paragraph", text });
+      }
+      if (lines.length >= 6) break;
+    }
+    return lines;
+  }, [printOpen, sync.client.doc, sync.version]);
+  const importWordComments = async (
+    imported: DocxImportedComment[] | undefined,
+    createdBlockIds: string[],
+  ): Promise<number> => {
+    const allowed = permissionsVerified && metadataVerified && commentsAvailable && sync.blocked !== "table_unsupported" && canWriteComments(meta.data);
+    if (!imported?.length || !allowed) return 0;
+    let added = 0;
+    for (const item of imported.slice(0, 50)) {
+      const authorTag = item.author ? `Word 批注 · ${item.author}` : "Word 批注";
+      const dateTag = item.date ? ` (${item.date.slice(0, 10)})` : "";
+      const rawBody = `[${authorTag}${dateTag}] ${item.text}`.trim();
+      const body = [...rawBody].slice(0, 2000).join("");
+      if (!body) continue;
+      const quote = item.quote ? [...item.quote].slice(0, 500).join("") : "";
+      const block =
+        item.blockIndex !== undefined && item.blockIndex >= 0 && item.blockIndex < createdBlockIds.length
+          ? createdBlockIds[item.blockIndex]
+          : createdBlockIds[0] ?? "";
+      try {
+        await commentsApi.create(id, { block, quote, body });
+        added += 1;
+      } catch {
+        // Keep already-imported body blocks & remaining comments intact.
+      }
+    }
+    if (added > 0) {
+      await qc.invalidateQueries({ queryKey: commentListKey(id, me.user.id, commentSession) });
+    }
+    return added;
+  };
+  const applyImportedWordMetadata = (result: DocxImportResult, addedComments: number) => {
+    const headerText = result.headerText?.trim() || undefined;
+    const footerText = result.footerText?.trim() || undefined;
+    if (headerText || footerText) {
+      setDocxHeaderFooter((prev) => ({
+        headerText: headerText ?? prev.headerText,
+        footerText: footerText ?? prev.footerText,
+      }));
+      setPrintSettings((prev) => ({
+        ...prev,
+        showHeader: headerText ? true : prev.showHeader,
+        headerText: headerText ?? prev.headerText,
+        showFooter: footerText ? true : prev.showFooter,
+        footerText: footerText ?? prev.footerText,
+      }));
+    }
+    const extras: string[] = [];
+    if (addedComments > 0) extras.push(`${addedComments} 条批注`);
+    if (result.footnotes?.length) extras.push(`${result.footnotes.length} 条脚注/尾注`);
+    if (headerText || footerText) extras.push("页眉/页脚（已同步至打印设置）");
+    if (extras.length) {
+      setPageNotice({ ok: true, text: `已导入 Word 内容，包含 ${extras.join("、")}。` });
+    }
+  };
+  const openPrintDialog = () => {
+    if (!downloadAllowed) {
+      setExportNotice({ id, user: me.user.id, text: "当前文档已禁止下载与打印。" });
+      return;
+    }
+    const fallbackHeader = docxHeaderFooter.headerText || docTitle({ title, docType: meta.data?.docType });
+    const fallbackFooter = docxHeaderFooter.footerText || "";
+    setPrintSettings((prev) => ({
+      ...prev,
+      headerText: prev.headerText || fallbackHeader,
+      footerText: prev.footerText || fallbackFooter,
+    }));
+    setPresenting(false);
+    setPrintOpen(true);
+  };
+  const confirmPrint = () => {
+    if (!downloadAllowed) {
+      setPrintOpen(false);
+      setExportNotice({ id, user: me.user.id, text: "当前文档已禁止下载与打印。" });
+      return;
+    }
+    printStyleCleanup.current?.();
+    const cleanup = applyPrintPageStyle(printSettings);
+    printStyleCleanup.current = cleanup;
+    setPrintOpen(false);
+    window.addEventListener("afterprint", () => {
+      if (printStyleCleanup.current === cleanup) {
+        cleanup();
+        printStyleCleanup.current = null;
+      }
+    }, { once: true });
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  };
   useEffect(() => { if (!pageNotice) return; const timer = window.setTimeout(() => setPageNotice(null), 4000); return () => window.clearTimeout(timer); }, [pageNotice]);
   const exportDocument = async (format: "md" | "docx" = "md") => {
     if (exportingMarkdown.current || !permissionsVerified || !canCopyDocument(meta.data)) return;
@@ -589,8 +725,39 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         return;
       }
       const name = (title || current.meta?.title || "未命名").trim() || "未命名";
+      const exportComments: DocxExportComment[] =
+        format === "docx"
+          ? printableCommentThreads.map(({ root, replies }) => ({
+              id: root.id,
+              author: root.userName || "协作者",
+              date: root.createdAt,
+              blockId: root.block || undefined,
+              body: root.body,
+              resolved: root.resolved,
+              replies: replies.map((reply) => ({
+                author: reply.userName || "协作者",
+                date: reply.createdAt,
+                body: reply.body,
+              })),
+            }))
+          : [];
+      const docxHeader = (printSettings.showHeader && printSettings.headerText.trim()) || docxHeaderFooter.headerText || name;
+      const docxFooter = (printSettings.showFooter && printSettings.footerText.trim()) || docxHeaderFooter.footerText || undefined;
       const blob = format === "docx"
-        ? new Blob([buildDocx(view, { title: name, images, origin: location.origin })], { type: DOCX_MIME })
+        ? new Blob(
+            [
+              buildDocx(view, {
+                title: name,
+                images,
+                origin: location.origin,
+                comments: exportComments,
+                headerText: docxHeader,
+                footerText: docxFooter,
+                includePageNumbers: true,
+              }),
+            ],
+            { type: DOCX_MIME },
+          )
         : new Blob([viewToMarkdown(view)], { type: "text/markdown;charset=utf-8" });
       const a = document.createElement("a");
       const url = URL.createObjectURL(blob);
@@ -644,6 +811,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       if (!ready() || !recordExternalUndo.current) { setTemplateError("文档状态已变化，正文未导入；已上传的图片可能作为未引用附件保留。"); return; }
       const tx = appendBlocksOps(d, blocks);
       if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
+      const createdBlockIds = tx.items
+        .filter((item): item is { k: "create"; block: OpId } => item.k === "create")
+        .map((item) => idKey(item.block));
+      const addedComments = await importWordComments(result.comments, createdBlockIds);
+      applyImportedWordMetadata(result, addedComments);
       setTemplateError("");
     } finally { importingWord.current = false; }
   };
@@ -926,6 +1098,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
       setPendingWordSubmitted(true);
       sync.client.push(tx.ops);
+      const createdBlockIds = tx.items
+        .filter((item): item is { k: "create"; block: OpId } => item.k === "create")
+        .map((item) => idKey(item.block));
+      const addedComments = await importWordComments(parsed.comments, createdBlockIds);
+      applyImportedWordMetadata(parsed, addedComments);
     } catch {
       const context = exportContext.current;
       if (context.mounted && context.id === id && context.user === me.user.id) setTemplateError("导入未完成，原 Word 文件仍保存在本地；已上传的图片可能作为未引用附件保留，请检查文档后重试。");
@@ -1306,6 +1483,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onMentionedPeople={sync.client.doc ? () => setMentionsTarget({ doc: id, user: me.user.id }) : undefined}
           onExport={downloadAllowed ? (format) => void exportDocument(format) : undefined}
           onImport={canEditContent ? importFile : undefined}
+          onPrint={openPrintDialog}
           onOutline={() => setOutlineOpen((v) => !v)}
           onShowReferences={canEditContent && permissionsVerified && referenceSetting?.visible === false && !referenceVisibilityBusy ? () => { void changeReferenceVisibility(true); } : undefined}
           width={width}
@@ -1402,6 +1580,14 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
           <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : showReferences ? "pb-0" : "pb-40")}>
+            {downloadAllowed && printSettings.showHeader && (printSettings.headerText.trim() || title.trim()) && (
+              <div data-doc-print-header className="mb-5 border-b border-[#DEE0E3] pb-2 text-[11px] text-[#646A73]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="truncate font-medium">{printSettings.headerText.trim() || docTitle({ title, docType: meta.data?.docType })}</span>
+                  <span className="shrink-0">{new Date().toISOString().slice(0, 10)}</span>
+                </div>
+              </div>
+            )}
             <div className="group/doc-cover relative" data-outline-anchor data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
@@ -1492,6 +1678,43 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
+            {downloadAllowed && printSettings.includeComments && printableCommentThreads.length > 0 && (
+              <section data-doc-print-comments className="mt-10 border-t border-[#DEE0E3] pt-5">
+                <h2 className="mb-3 text-[15px] font-semibold text-[#1F2329]">评论附录（共 {printableCommentThreads.length} 条线程）</h2>
+                <div className="space-y-3">
+                  {printableCommentThreads.map(({ root, replies }) => (
+                    <div key={root.id} data-doc-print-comment-item className="rounded-md border border-[#DEE0E3] bg-[#F7F8FA] p-3 text-[12px] text-[#1F2329]">
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-[#646A73]">
+                        <span className="font-medium text-[#1F2329]">{root.userName || "协作者"}</span>
+                        <span>{formatEditTime(root.createdAt)}{root.resolved ? " · 已解决" : ""}</span>
+                      </div>
+                      {root.quote && (
+                        <blockquote className="mt-1.5 border-l-2 border-[#3370FF] pl-2 text-[11px] text-[#4E5969]">
+                          “{root.quote}”
+                        </blockquote>
+                      )}
+                      <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{root.body}</p>
+                      {replies.length > 0 && (
+                        <div className="mt-2 space-y-1.5 border-t border-[#E5E6EB] pt-2 pl-3">
+                          {replies.map((reply) => (
+                            <div key={reply.id} className="text-[11px] leading-relaxed">
+                              <span className="font-medium text-[#1F2329]">{reply.userName || "协作者"}</span>
+                              <span className="ml-1.5 text-[#8F959E]">{formatEditTime(reply.createdAt)}</span>
+                              <p className="mt-0.5 whitespace-pre-wrap text-[#1F2329]">{reply.body}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            {downloadAllowed && printSettings.showFooter && printSettings.footerText.trim() && (
+              <div data-doc-print-footer className="mt-8 border-t border-[#DEE0E3] pt-2 text-[11px] text-[#646A73]">
+                {printSettings.footerText.trim()}
+              </div>
+            )}
           </article>}</DocumentCover>
           </div>
           </div>
@@ -1551,6 +1774,19 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         />
       )}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} userId={me.user.id} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      {printOpen && downloadAllowed && (
+        <DocPrintDialog
+          title={docTitle({ title, docType: meta.data?.docType })}
+          settings={printSettings}
+          onChange={setPrintSettings}
+          previewLines={printPreviewLines}
+          commentCount={printableCommentThreads.length}
+          defaultHeaderText={docxHeaderFooter.headerText || docTitle({ title, docType: meta.data?.docType })}
+          defaultFooterText={docxHeaderFooter.footerText || ""}
+          onConfirm={confirmPrint}
+          onClose={() => setPrintOpen(false)}
+        />
+      )}
       {commentHistoryOpen && commentsAvailable && comments.data && <HistoryCommentsPanel key={`${id}:${me.user.id}:${commentSession}`} id={id} userId={me.user.id} session={commentSession} comments={comments.data} members={members.data ?? []} canSubmit={canSubmitComment} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setCommentHistoryTarget(null)} onAccessDenied={revalidateCommentAccess} onPolicyDenied={() => { void meta.refetch(); }} />}
       {metadataVerified && meta.data && infoTarget?.doc === id && infoTarget.user === me.user.id && <DocumentInfoDialog meta={meta.data} stats={infoStats} comments={commentsAvailable ? (comments.data?.length ?? null) : null} synced={sync.caughtUp && sync.status === "synced"} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={closeDocumentInfo} />}
       {mentionSummary && <DocumentMentionsDialog summary={mentionSummary} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => {
@@ -1659,6 +1895,7 @@ function TopBar({
   onCommentHistory,
   onExport,
   onImport,
+  onPrint,
   onOutline,
   onShowReferences,
   width,
@@ -1700,6 +1937,7 @@ function TopBar({
   onCommentHistory?: () => void;
   onExport?: (format: "md" | "docx") => void;
   onImport?: (f: File) => void;
+  onPrint: () => void;
   readOnly: boolean;
   allowContentCopy: boolean;
   allowDocumentPrint: boolean;
@@ -1756,7 +1994,7 @@ function TopBar({
         </Button>
         {!readOnly && <ModeMenu mode={docMode} onChange={onDocModeChange} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={() => window.print()} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={onPrint} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -1871,13 +2109,13 @@ function DocMenu({
   onCommentHistory,
   onExport,
   onImport,
+  onPrint,
   onOutline,
   onShowReferences,
   width,
   onWidthChange,
   onComments,
   onFind,
-  onPrint,
   onAI,
   onSaveTemplate,
 }: {
