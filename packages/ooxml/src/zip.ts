@@ -188,8 +188,17 @@ export interface ZipEntry {
   localOffset: number;
 }
 
+export interface ZipListOptions {
+  /** Maximum number of ZIP central-directory entries allowed (default 10_000). */
+  maxEntries?: number;
+}
+
+export const ZIP_DEFAULT_MAX_ENTRIES = 10_000;
+
 /** Parse the central directory. Throws ZipError for anything that is not a sane, single-disk zip. */
-export function listZip(bytes: Uint8Array): ZipEntry[] {
+export function listZip(bytes: Uint8Array, options: ZipListOptions = {}): ZipEntry[] {
+  const maxEntries = options.maxEntries ?? ZIP_DEFAULT_MAX_ENTRIES;
+  if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) throw new ZipError("invalid entry limit");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const minEnd = Math.max(0, bytes.length - 22 - 0xffff);
   let endAt = -1;
@@ -202,6 +211,7 @@ export function listZip(bytes: Uint8Array): ZipEntry[] {
   const cdOffset = view.getUint32(endAt + 16, true);
   if (view.getUint16(endAt + 4, true) !== 0 || view.getUint16(endAt + 6, true) !== 0) throw new ZipError("multi-disk zip");
   if (cdOffset + cdSize > endAt || count === 0xffff || cdOffset === 0xffffffff) throw new ZipError("invalid central directory");
+  if (count > maxEntries) throw new ZipError("too many zip entries");
   const decoder = new TextDecoder();
   const entries: ZipEntry[] = [];
   let p = cdOffset;

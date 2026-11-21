@@ -7,7 +7,7 @@ import type {
   SheetNumFmt,
   SheetWorksheet,
 } from "./types.js";
-import { writeXlsx, writeXlsxAsync, type WriteXlsxOptions, type XlsxCell, type XlsxSheet, type XlsxStyle } from "./xlsx.js";
+import { writeXlsx, writeXlsxAsync, type WriteXlsxOptions, type XlsxCell, type XlsxComment, type XlsxSheet, type XlsxStyle } from "./xlsx.js";
 import { readXlsx, XLSX_MAX_INPUT_BYTES, type ReadXlsxOptions } from "./xlsx-read.js";
 
 const NUM_FMT_CODES: Record<string, string> = {
@@ -85,7 +85,7 @@ export function xlsxStyleToSheet(style: XlsxStyle | undefined): SheetCellStyle |
 
 function buildXlsxSheets(sheets: readonly SheetWorksheet[]): XlsxSheet[] {
   return sheets.map((ws) => {
-    const { cellByKey } = buildWorksheetGridMap(ws);
+    const { rowPosById, colPosById, cellByKey } = buildWorksheetGridMap(ws);
     const cells: XlsxCell[] = [];
     for (let r = 0; r < ws.rows.length; r++) {
       for (let c = 0; c < ws.columns.length; c++) {
@@ -124,6 +124,21 @@ function buildXlsxSheets(sheets: readonly SheetWorksheet[]): XlsxSheet[] {
     ws.rows.forEach((row, idx) => {
       if (row.size && row.size > 0) rowHeights[idx] = Math.min(409, Math.max(1, Number((row.size * 0.75).toFixed(2))));
     });
+    const commentsByCoord = new Map<string, XlsxComment>();
+    for (const cm of ws.comments ?? []) {
+      if (!cm.body) continue;
+      const row = rowPosById.get(cm.rowId);
+      const col = colPosById.get(cm.columnId);
+      if (row === undefined || col === undefined) continue;
+      const key = `${row}:${col}`;
+      const existing = commentsByCoord.get(key);
+      if (existing) {
+        existing.text = `${existing.text}\n${cm.body}`;
+      } else {
+        commentsByCoord.set(key, { row, col, text: cm.body, ...(cm.authorName ? { author: cm.authorName } : {}) });
+      }
+    }
+    const comments = [...commentsByCoord.values()];
     return {
       name: ws.title,
       cells,
@@ -132,7 +147,9 @@ function buildXlsxSheets(sheets: readonly SheetWorksheet[]): XlsxSheet[] {
       ...(Object.keys(colWidths).length ? { colWidths } : {}),
       ...(Object.keys(rowHeights).length ? { rowHeights } : {}),
       ...(ws.validations?.length ? { validations: ws.validations } : {}),
+      ...(ws.conditionalFormats?.length ? { conditionalFormats: ws.conditionalFormats } : {}),
       ...(ws.hyperlinks?.length ? { hyperlinks: ws.hyperlinks } : {}),
+      ...(comments.length ? { comments } : {}),
     };
   });
 }
@@ -204,6 +221,7 @@ export async function parseXlsxBytesForWorkbook(
       if (raw) cellCount++;
       cells.push(style ? { row: c.row, col: c.col, raw, style } : { row: c.row, col: c.col, raw });
     }
+    for (const cm of sheet.comments ?? []) grow(cm.row, cm.col);
     const rows = Math.min(MAX_ROWS, maxRow);
     const cols = Math.min(MAX_COLS, maxCol);
     const merges: SheetMerge[] = [];
@@ -239,9 +257,13 @@ export async function parseXlsxBytesForWorkbook(
       ...(sheet.colWidths ? { colWidths: { ...sheet.colWidths } } : {}),
       ...(sheet.rowHeights ? { rowHeights: { ...sheet.rowHeights } } : {}),
       ...(sheet.validations?.length ? { validations: [...sheet.validations] } : {}),
+      ...(sheet.conditionalFormats?.length ? { conditionalFormats: [...sheet.conditionalFormats] } : {}),
       ...(sheet.hyperlinks?.length ? { hyperlinks: [...sheet.hyperlinks] } : {}),
+      ...(sheet.comments?.length ? { comments: sheet.comments.map((cm) => ({ ...cm })) } : {}),
     };
   });
   const warnings = [...new Set([...parsed.warnings, ...extraWarnings].map((w) => WARNING_LABELS[w] ?? "部分扩展属性未导入"))];
   return { sheets, warnings, cellCount };
 }
+
+export const importXlsxToWorkbookData = parseXlsxBytesForWorkbook;

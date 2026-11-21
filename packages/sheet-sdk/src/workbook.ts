@@ -22,6 +22,7 @@ import type {
   SheetCellStyle,
   SheetChart,
   SheetChartType,
+  SheetComment,
   SheetCondFormatOp,
   SheetConditionalFormat,
   SheetDataValidation,
@@ -193,6 +194,36 @@ function parseSheetRange(ref: string): { top: number; left: number; bottom: numb
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
+}
+
+function buildAxisIndexMap(axes: readonly SheetAxis[]): Map<number, number> | null {
+  for (let i = 0; i < axes.length; i++) {
+    if (axes[i].id !== i + 1) {
+      const map = new Map<number, number>();
+      for (let j = 0; j < axes.length; j++) map.set(axes[j].id, j);
+      return map;
+    }
+  }
+  return null;
+}
+
+function resolveAxisIndex(id: number, len: number, map: Map<number, number> | null): number {
+  if (map) return map.get(id) ?? -1;
+  return (id - 1) >>> 0 < len ? id - 1 : -1;
+}
+
+interface SheetStatsCacheEntry {
+  revision: number;
+  cellsRef: SheetCell[];
+  minR: number;
+  maxR: number;
+  minC: number;
+  maxC: number;
+  nonEmpty: number;
+  formulas: number;
+  usedRange: string | null;
+  rowPosById: Map<number, number> | null;
+  colPosById: Map<number, number> | null;
 }
 
 /**
@@ -386,6 +417,27 @@ export class WorksheetProxy {
     this.wb._bumpVersion();
     return this;
   }
+
+  addComment(a1: string, body: string, authorName = ""): SheetComment {
+    const pt = parseA1Token(a1);
+    if (!pt) throw new Error(`Invalid cell address: ${a1}`);
+    const ws = this.ws;
+    this.wb._ensureGridSize(ws, pt.row + 1, pt.col + 1);
+    const nextId = (ws.comments ?? []).reduce((m, c) => Math.max(m, c.id), 0) + 1;
+    const created: SheetComment = {
+      id: nextId,
+      worksheetId: ws.id,
+      rowId: ws.rows[pt.row].id,
+      columnId: ws.columns[pt.col].id,
+      authorName,
+      body,
+      resolved: false,
+    };
+    ws.comments = [...(ws.comments ?? []), created];
+    ws.revision++;
+    this.wb._bumpVersion();
+    return created;
+  }
 }
 
 /**
@@ -403,6 +455,7 @@ export class Workbook {
   private redoStack: UndoEntry[] = [];
   private maxUndo = 50;
   private cellIndexCache = new Map<number, { revision: number; ref: SheetCell[]; byAxisKey: Map<string, number> }>();
+  private sheetStatsCache = new Map<number, SheetStatsCacheEntry>();
 
   private constructor(sheets: SheetWorksheet[], definedNames: SheetDefinedName[] = []) {
     this.sheets = sheets.length ? cloneJson(sheets) : [makeEmptyWorksheet(1, "Sheet1", 0)];
@@ -430,12 +483,28 @@ export class Workbook {
         if (c.row + 10 > maxRow) maxRow = c.row + 10;
         if (c.col + 5 > maxCol) maxCol = c.col + 5;
       }
+      for (const cm of s.comments ?? []) {
+        if (cm.row + 10 > maxRow) maxRow = cm.row + 10;
+        if (cm.col + 5 > maxCol) maxCol = cm.col + 5;
+      }
       const ws = makeEmptyWorksheet(idx + 1, s.name, idx, maxRow, maxCol);
       ws.frozenRows = s.frozen?.rows ?? 0;
       ws.frozenCols = s.frozen?.cols ?? 0;
       ws.merges = (s.merges ?? []).map((m) => ({ ...m }));
       if (s.validations?.length) ws.validations = cloneJson([...s.validations]);
+      if (s.conditionalFormats?.length) ws.conditionalFormats = cloneJson([...s.conditionalFormats]);
       if (s.hyperlinks?.length) ws.hyperlinks = cloneJson([...s.hyperlinks]);
+      if (s.comments?.length) {
+        ws.comments = s.comments.map((cm, cIdx) => ({
+          id: cIdx + 1,
+          worksheetId: ws.id,
+          rowId: ws.rows[cm.row].id,
+          columnId: ws.columns[cm.col].id,
+          authorName: cm.author ?? "",
+          body: cm.text,
+          resolved: false,
+        }));
+      }
       if (s.colWidths) {
         for (const [k, w] of Object.entries(s.colWidths)) {
           const ci = Number(k);
@@ -534,7 +603,9 @@ export class Workbook {
     if (this.sheets.length <= 1) throw new Error("Cannot delete the last worksheet");
     const idx = this.sheets.findIndex((s) => s.title.toLowerCase() === name.trim().toLowerCase());
     if (idx < 0) throw new Error(`Worksheet not found: ${name}`);
-    this.sheets.splice(idx, 1);
+    const [removed] = this.sheets.splice(idx, 1);
+    this.sheetStatsCache.delete(removed.id);
+    this.cellIndexCache.delete(removed.id);
     this.sheets.forEach((s, i) => { s.pos = i; });
     this.recalculateAll();
     this._bumpVersion();
@@ -657,58 +728,31 @@ export class Workbook {
 
     for (let si = startIdx; si < targetSheets.length; si++) {
       const ws = targetSheets[si];
-      const evalMap = this.engine.getSheetValues(ws.id);
-      const rowPosById = new Map<number, number>();
-      for (let i = 0; i < ws.rows.length; i++) rowPosById.set(ws.rows[i].id, i);
-      const colPosById = new Map<number, number>();
-      for (let i = 0; i < ws.columns.length; i++) colPosById.set(ws.columns[i].id, i);
-
-      let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
-      let nonEmpty = 0, formulas = 0, errors = 0;
-
-      for (let i = 0; i < ws.cells.length; i++) {
-        const cell = ws.cells[i];
-        if (!cell.raw) continue;
-        const r = rowPosById.get(cell.rowId);
-        const c = colPosById.get(cell.columnId);
-        if (r === undefined || c === undefined) continue;
-        nonEmpty++;
-        if (cell.raw.charCodeAt(0) === 61 /* '=' */) {
-          formulas++;
-          const ev = evalMap[`${r}:${c}`];
-          if (ev?.kind === "error") errors++;
-        } else if (cell.raw.charCodeAt(0) === 35 /* '#' */) {
-          const ev = evalMap[`${r}:${c}`];
-          if (ev?.kind === "error") errors++;
-        }
-        if (r < minR) minR = r;
-        if (r > maxR) maxR = r;
-        if (c < minC) minC = c;
-        if (c > maxC) maxC = c;
-      }
+      const stats = this.getSheetStats(ws);
+      const { minR, maxR, minC, maxC, nonEmpty, formulas, usedRange, rowPosById, colPosById } = stats;
+      const errors = this.engine.getSheetErrorCount(ws.id);
 
       totalCells += nonEmpty;
       totalFormulas += formulas;
       totalErrors += errors;
 
-      const usedRange = maxR >= minR && maxC >= minC
-        ? `${sheetAddress({ row: minR, col: minC })}:${sheetAddress({ row: maxR, col: maxC })}`
-        : null;
-
       const headers: string[] = [];
       const sampleRows: string[][] = [];
       if (usedRange) {
         const capCol = Math.min(maxC, minC + 15);
-        for (let c = minC; c <= capCol; c++) {
-          const cell = this._getRawCellAt(ws.id, minR, c);
-          headers.push(formatCellDisplay(cell?.raw ?? "", evalMap[`${minR}:${c}`], cell?.style) || columnName(c));
-        }
         const maxSampleRow = Math.min(maxR, minR + sampleLimit);
+        const spanCols = capCol - minC + 1;
+        const window = this.readInspectWindow(ws, minR, maxSampleRow, minC, capCol, rowPosById, colPosById);
+        for (let c = minC; c <= capCol; c++) {
+          const cell = window.get(c - minC);
+          headers.push(formatCellDisplay(cell?.raw ?? "", this.engine.peekValue(ws.id, minR, c), cell?.style) || columnName(c));
+        }
         for (let r = minR + 1; r <= maxSampleRow; r++) {
           const rowVals: string[] = [];
+          const rowOff = (r - minR) * spanCols;
           for (let c = minC; c <= capCol; c++) {
-            const cell = this._getRawCellAt(ws.id, r, c);
-            rowVals.push(formatCellDisplay(cell?.raw ?? "", evalMap[`${r}:${c}`], cell?.style));
+            const cell = window.get(rowOff + (c - minC));
+            rowVals.push(formatCellDisplay(cell?.raw ?? "", this.engine.peekValue(ws.id, r, c), cell?.style));
           }
           sampleRows.push(rowVals);
         }
@@ -1018,6 +1062,91 @@ export class Workbook {
     this._setCellsBatch(sheetId, [{ row, col, raw, style }]);
   }
 
+  private getSheetStats(ws: SheetWorksheet): SheetStatsCacheEntry {
+    const cached = this.sheetStatsCache.get(ws.id);
+    if (cached && cached.revision === ws.revision && cached.cellsRef === ws.cells) {
+      return cached;
+    }
+    const rowLen = ws.rows.length;
+    const colLen = ws.columns.length;
+    const rowPosById = buildAxisIndexMap(ws.rows);
+    const colPosById = buildAxisIndexMap(ws.columns);
+
+    let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
+    let nonEmpty = 0, formulas = 0;
+    const cells = ws.cells;
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      const raw = cell.raw;
+      if (!raw) continue;
+      const r = resolveAxisIndex(cell.rowId, rowLen, rowPosById);
+      const c = resolveAxisIndex(cell.columnId, colLen, colPosById);
+      if (r < 0 || c < 0) continue;
+      nonEmpty++;
+      if (raw.charCodeAt(0) === 61 /* '=' */) formulas++;
+      if (r < minR) minR = r;
+      if (r > maxR) maxR = r;
+      if (c < minC) minC = c;
+      if (c > maxC) maxC = c;
+    }
+
+    const usedRange = maxR >= minR && maxC >= minC
+      ? `${sheetAddress({ row: minR, col: minC })}:${sheetAddress({ row: maxR, col: maxC })}`
+      : null;
+
+    const entry: SheetStatsCacheEntry = {
+      revision: ws.revision,
+      cellsRef: ws.cells,
+      minR,
+      maxR,
+      minC,
+      maxC,
+      nonEmpty,
+      formulas,
+      usedRange,
+      rowPosById,
+      colPosById,
+    };
+    this.sheetStatsCache.set(ws.id, entry);
+    return entry;
+  }
+
+  private readInspectWindow(
+    ws: SheetWorksheet,
+    minR: number,
+    maxSampleRow: number,
+    minC: number,
+    capCol: number,
+    rowPosById: Map<number, number> | null,
+    colPosById: Map<number, number> | null,
+  ): Map<number, SheetCell> {
+    const window = new Map<number, SheetCell>();
+    const spanCols = capCol - minC + 1;
+    const cached = this.cellIndexCache.get(ws.id);
+    if (cached && cached.revision === ws.revision && cached.ref === ws.cells) {
+      for (let r = minR; r <= maxSampleRow; r++) {
+        const rId = ws.rows[r].id;
+        const rowOff = (r - minR) * spanCols;
+        for (let c = minC; c <= capCol; c++) {
+          const idx = cached.byAxisKey.get(`${rId}:${ws.columns[c].id}`);
+          if (idx !== undefined) window.set(rowOff + (c - minC), ws.cells[idx]);
+        }
+      }
+      return window;
+    }
+    const rowLen = ws.rows.length;
+    const colLen = ws.columns.length;
+    for (let i = 0; i < ws.cells.length; i++) {
+      const cell = ws.cells[i];
+      const r = resolveAxisIndex(cell.rowId, rowLen, rowPosById);
+      if (r < minR || r > maxSampleRow) continue;
+      const c = resolveAxisIndex(cell.columnId, colLen, colPosById);
+      if (c < minC || c > capCol) continue;
+      window.set((r - minR) * spanCols + (c - minC), cell);
+    }
+    return window;
+  }
+
   private getCellIndex(ws: SheetWorksheet): Map<string, number> {
     const cached = this.cellIndexCache.get(ws.id);
     if (cached && cached.revision === ws.revision && cached.ref === ws.cells) {
@@ -1126,6 +1255,8 @@ export class Workbook {
   private restoreState(state: { sheets: SheetWorksheet[]; definedNames: SheetDefinedName[] }): void {
     this.sheets = cloneJson(state.sheets);
     this.definedNames = cloneJson(state.definedNames);
+    this.sheetStatsCache.clear();
+    this.cellIndexCache.clear();
     this.recalculateAll();
     this._bumpVersion();
   }

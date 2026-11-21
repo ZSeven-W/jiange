@@ -1,6 +1,6 @@
 import { listZip, readZipEntry, type ZipEntry } from "@jiange/ooxml/zip";
 import { translateWorkbookFormula } from "./formula-ast.js";
-import type { SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
+import type { SheetCondFormatOp, SheetConditionalFormat, SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
 import { xattr, xchildren, xlsxXml, xtext, type XlsxXmlNode } from "./xlsx-xml.js";
 import {
   resolveXlsxLimits,
@@ -8,12 +8,13 @@ import {
   XLSX_MAX_FILE_BYTES,
   type XlsxCell,
   type XlsxCellError,
+  type XlsxComment,
   type XlsxLimits,
   type XlsxScalar,
   type XlsxSheet,
   type XlsxWorkbook,
 } from "./xlsx.js";
-import { parseMergeRef, readXlsxStyles, type XlsxMerge, type XlsxStyle } from "./xlsx-style.js";
+import { parseMergeRef, readXlsxDxfs, readXlsxStyles, type XlsxDxfStyle, type XlsxMerge, type XlsxStyle } from "./xlsx-style.js";
 
 export const XLSX_MAX_INPUT_BYTES = XLSX_MAX_FILE_BYTES;
 const MAX_ENTRIES = 4096;
@@ -110,6 +111,23 @@ function safeExternalLink(url: string): string | null {
   } catch { return null; }
 }
 
+const CF_CELL_IS_OPS: Record<string, SheetCondFormatOp> = {
+  greaterThan: "gt",
+  greaterThanOrEqual: "gte",
+  lessThan: "lt",
+  lessThanOrEqual: "lte",
+  equal: "eq",
+  notEqual: "neq",
+  between: "between",
+};
+
+function unquoteCfFormula(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+    ? trimmed.slice(1, -1).replace(/""/g, '"')
+    : trimmed;
+}
+
 /** Read XLSX cells, styles, merges, frozen panes, column widths, row heights, shared formulas, defined names, validations, and hyperlinks. */
 export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {}): Promise<XlsxImportResult> {
   const limits = resolveXlsxLimits(options.limits);
@@ -159,10 +177,12 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
     const styleRels = rels.filter((rel) => relKind(rel.type, "styles"));
     if (styleRels.length > 1 || styleRels[0]?.external) throw new XlsxError("invalid styles relationship");
     let cellStyles: (XlsxStyle | undefined)[] = [];
+    let dxfStyles: XlsxDxfStyle[] = [];
     if (styleRels.length) {
       const root = await xml(safePath(workbookPath, styleRels[0].target));
       if (root.ns !== workbook.ns) throw new XlsxError("invalid styles part");
       cellStyles = readXlsxStyles(root, warnings);
+      dxfStyles = readXlsxDxfs(root, warnings);
     }
     const sharedRels = rels.filter((rel) => relKind(rel.type, "sharedStrings"));
     if (sharedRels.length > 1 || sharedRels[0]?.external) throw new XlsxError("invalid shared strings relationship");
@@ -202,7 +222,7 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
       const path = safePath(workbookPath, rel.target); if (usedParts.has(path)) throw new XlsxError("duplicate worksheet part"); usedParts.add(path);
       const sheet = await xml(path);
       if (sheet.name !== "worksheet" || sheet.ns !== workbook.ns) throw new XlsxError("invalid worksheet part");
-      if (hasOtherChildren(sheet, ["sheetData", "dimension", "sheetViews", "sheetFormatPr", "cols", "mergeCells", "dataValidations", "hyperlinks", "pageMargins"])) {
+      if (hasOtherChildren(sheet, ["sheetData", "dimension", "sheetViews", "sheetFormatPr", "cols", "mergeCells", "conditionalFormatting", "dataValidations", "hyperlinks", "pageMargins"])) {
         warnings.add("worksheet_features_not_preserved");
       }
 
@@ -240,6 +260,53 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
         for (const item of items) merges.push(parseMergeRef(xattr(item, "ref") ?? "", address));
       }
 
+      // Conditional formatting
+      const conditionalFormats: SheetConditionalFormat[] = [];
+      let cfIdx = 0;
+      for (const cfEl of xchildren(sheet, "conditionalFormatting")) {
+        const rects = parseSqref(xattr(cfEl, "sqref") ?? "");
+        for (const rule of xchildren(cfEl, "cfRule")) {
+          const ruleType = xattr(rule, "type") ?? "";
+          const dxfAttr = xattr(rule, "dxfId");
+          const dxf = dxfAttr !== undefined && /^\d+$/.test(dxfAttr) ? dxfStyles[Number(dxfAttr)] : undefined;
+          let op: SheetCondFormatOp | undefined;
+          let value1: string | undefined;
+          let value2: string | undefined;
+          if (ruleType === "containsBlanks") {
+            op = "empty";
+          } else if (ruleType === "notContainsBlanks") {
+            op = "not_empty";
+          } else if (ruleType === "containsText") {
+            op = "contains";
+            value1 = xattr(rule, "text") ?? "";
+          } else if (ruleType === "cellIs") {
+            const mapped = CF_CELL_IS_OPS[xattr(rule, "operator") ?? ""];
+            if (mapped) {
+              op = mapped;
+              const formulas = xchildren(rule, "formula");
+              if (formulas[0]) value1 = unquoteCfFormula(xtext(formulas[0]));
+              if (op === "between" && formulas[1]) value2 = unquoteCfFormula(xtext(formulas[1]));
+            }
+          }
+          if (!op) {
+            warnings.add("worksheet_features_not_preserved");
+            continue;
+          }
+          for (const rect of rects) {
+            conditionalFormats.push({
+              id: `cf-${++cfIdx}`,
+              ...rect,
+              op,
+              ...(value1 !== undefined ? { value1 } : {}),
+              ...(value2 !== undefined ? { value2 } : {}),
+              ...(dxf?.bg ? { bg: dxf.bg } : {}),
+              ...(dxf?.color ? { color: dxf.color } : {}),
+              ...(dxf?.bold ? { bold: true } : {}),
+            });
+          }
+        }
+      }
+
       // Data validations
       const validations: SheetDataValidation[] = [];
       const dvList = xchildren(sheet, "dataValidations")[0];
@@ -270,12 +337,15 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
         }
       }
 
-      // Hyperlinks (requires optional worksheet rels)
+      // Optional worksheet relationships (hyperlinks & comments)
+      const wsRelPath = relPath(path);
+      const wsRelsList = entries.has(wsRelPath) ? relationships(await xml(wsRelPath)) : [];
+      const wsRels = new Map(wsRelsList.map((r) => [r.id, r]));
+
+      // Hyperlinks
       const hyperlinks: SheetHyperlink[] = [];
       const hlList = xchildren(sheet, "hyperlinks")[0];
       if (hlList) {
-        const wsRelPath = relPath(path);
-        const wsRels = entries.has(wsRelPath) ? new Map(relationships(await xml(wsRelPath)).map((r) => [r.id, r])) : new Map<string, Relationship>();
         for (const hl of xchildren(hlList, "hyperlink")) {
           const refAttr = xattr(hl, "ref");
           const rid = [...DOC_REL_NS].map((ns) => xattr(hl, "id", ns)).find(Boolean);
@@ -289,6 +359,30 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
             const tooltip = xattr(hl, "tooltip");
             hyperlinks.push({ row: pt.row, col: pt.col, target: safeUrl, ...(tooltip ? { tooltip } : {}) });
           } catch { warnings.add("worksheet_features_not_preserved"); }
+        }
+      }
+
+      // Comments
+      const comments: XlsxComment[] = [];
+      for (const cRel of wsRelsList.filter((r) => relKind(r.type, "comments"))) {
+        if (cRel.external) throw new XlsxError("invalid comments relationship");
+        const cRoot = await xml(safePath(path, cRel.target));
+        if (cRoot.name !== "comments" || cRoot.ns !== workbook.ns) throw new XlsxError("invalid comments part");
+        const authorsNode = xchildren(cRoot, "authors")[0];
+        const authors = authorsNode ? xchildren(authorsNode, "author").map((a) => xtext(a)) : [];
+        const listNode = xchildren(cRoot, "commentList")[0];
+        if (listNode) {
+          const items = xchildren(listNode, "comment");
+          if (items.length > 5000) throw new XlsxError("too many comments");
+          for (const cm of items) {
+            const pt = address(xattr(cm, "ref") ?? "");
+            const textNode = xchildren(cm, "text")[0];
+            if (!textNode) throw new XlsxError("invalid comment");
+            const body = stringItem(textNode, warnings);
+            const aIdAttr = xattr(cm, "authorId");
+            const author = aIdAttr !== undefined && /^\d+$/.test(aIdAttr) ? authors[Number(aIdAttr)] : undefined;
+            comments.push({ row: pt.row, col: pt.col, text: body, ...(author ? { author } : {}) });
+          }
         }
       }
 
@@ -385,7 +479,9 @@ export async function readXlsx(bytes: Uint8Array, options: ReadXlsxOptions = {})
         ...(Object.keys(colWidths).length ? { colWidths } : {}),
         ...(Object.keys(rowHeights).length ? { rowHeights } : {}),
         ...(validations.length ? { validations } : {}),
+        ...(conditionalFormats.length ? { conditionalFormats } : {}),
         ...(hyperlinks.length ? { hyperlinks } : {}),
+        ...(comments.length ? { comments } : {}),
       });
     }
 

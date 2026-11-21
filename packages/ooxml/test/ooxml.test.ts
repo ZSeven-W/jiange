@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createZip, createZipAsync, deflateRaw, inflateRaw, listZip, readZipEntry, parseXml, child, children, textContent, escapeXml, XmlError, ZipError } from "../src/index.js";
+import { createZip, createZipAsync, deflateRaw, inflateRaw, listZip, readZipEntry, parseXml, child, children, textContent, escapeXml, XmlError, ZipError, ZIP_DEFAULT_MAX_ENTRIES } from "../src/index.js";
 
 describe("shared OOXML primitives", () => {
   it("reads a bounded XML entry from a generated archive", async () => {
@@ -131,6 +131,20 @@ describe("shared OOXML primitives", () => {
     };
     const eocd = findEocd(valid);
     const cdOffset = new DataView(valid.buffer).getUint32(eocd + 16, true);
+
+    // Configurable maxEntries limit on listZip
+    const multi = createZip([
+      { name: "a.txt", data: new TextEncoder().encode("1") },
+      { name: "b.txt", data: new TextEncoder().encode("2") },
+      { name: "c.txt", data: new TextEncoder().encode("3") },
+    ]);
+    expect(listZip(multi, { maxEntries: 3 })).toHaveLength(3);
+    expect(() => listZip(multi, { maxEntries: 2 })).toThrow(/too many zip entries/);
+    expect(() => listZip(multi, { maxEntries: 0 })).toThrow(/invalid entry limit/);
+    expect(() => listZip(multi, { maxEntries: Number.NaN })).toThrow(/invalid entry limit/);
+    const overDefault = valid.slice();
+    new DataView(overDefault.buffer).setUint16(eocd + 10, ZIP_DEFAULT_MAX_ENTRIES + 1, true);
+    expect(() => listZip(overDefault)).toThrow(/too many zip entries/);
 
     // Multi-disk checks (disk number & start disk)
     const multiDisk1 = valid.slice();

@@ -148,6 +148,62 @@ describe("XLSX import", () => {
     expect(result.warnings).toContain("empty_formula_cache_not_preserved");
     expect(() => writeXlsx(result.workbook)).not.toThrow();
   });
+  it("round-trips conditional formats (all 10 operators + dxfs) and comments (xl/commentsN.xml) with zero warnings", async () => {
+    const { writeXlsxAsync } = await import("../src/xlsx.js");
+    const workbook = {
+      sheets: [
+        {
+          name: "Review",
+          cells: [
+            { row: 0, col: 0, value: "Metric" },
+            { row: 0, col: 1, value: "Score" },
+            { row: 1, col: 0, value: "Alpha" },
+            { row: 1, col: 1, value: 92 },
+            { row: 2, col: 0, value: "Beta" },
+            { row: 2, col: 1, value: 45 },
+          ],
+          hyperlinks: [{ row: 0, col: 0, target: "https://jiange.dev" }],
+          conditionalFormats: [
+            { id: "cf-1", top: 1, left: 1, bottom: 2, right: 1, op: "gt" as const, value1: "80", bg: "#DCFCE7", color: "#166534", bold: true },
+            { id: "cf-2", top: 1, left: 1, bottom: 2, right: 1, op: "gte" as const, value1: "90", bg: "#DCFCE7", color: "#166534", bold: true },
+            { id: "cf-3", top: 1, left: 1, bottom: 2, right: 1, op: "lt" as const, value1: "50", bg: "#FEE2E2" },
+            { id: "cf-4", top: 1, left: 1, bottom: 2, right: 1, op: "lte" as const, value1: "60", color: "#991B1B" },
+            { id: "cf-5", top: 1, left: 0, bottom: 2, right: 0, op: "eq" as const, value1: "Alpha", bold: true },
+            { id: "cf-6", top: 1, left: 0, bottom: 2, right: 0, op: "neq" as const, value1: "Gamma" },
+            { id: "cf-7", top: 1, left: 1, bottom: 2, right: 1, op: "between" as const, value1: "40", value2: "70", bg: "#FEF3C7" },
+            { id: "cf-8", top: 1, left: 0, bottom: 2, right: 0, op: "contains" as const, value1: "Al", color: "#1E40AF" },
+            { id: "cf-9", top: 3, left: 0, bottom: 3, right: 0, op: "empty" as const, bg: "#F3F4F6" },
+            { id: "cf-10", top: 3, left: 1, bottom: 3, right: 1, op: "not_empty" as const, bold: true },
+          ],
+          comments: [
+            { row: 1, col: 1, text: "Exceeds Q4 target", author: "Alice" },
+            { row: 2, col: 1, text: "Needs follow-up", author: "Alice" },
+            { row: 0, col: 0, text: "Anonymous note" },
+          ],
+        },
+        {
+          name: "Plain",
+          cells: [{ row: 0, col: 0, value: 1 }],
+        },
+      ],
+    };
+
+    const bytes = await writeXlsxAsync(workbook);
+    const entryNames = listZip(bytes).map((e) => e.name);
+    expect(entryNames).toContain("xl/styles.xml");
+    expect(entryNames).toContain("xl/comments1.xml");
+    expect(entryNames).not.toContain("xl/comments2.xml");
+    expect(entryNames).toContain("xl/worksheets/_rels/sheet1.xml.rels");
+
+    const parsed = await readXlsx(bytes);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.workbook.sheets[0].conditionalFormats).toEqual(workbook.sheets[0].conditionalFormats);
+    expect(parsed.workbook.sheets[0].comments).toEqual(workbook.sheets[0].comments);
+    expect(parsed.workbook.sheets[0].hyperlinks).toEqual(workbook.sheets[0].hyperlinks);
+    expect(parsed.workbook.sheets[1].conditionalFormats).toBeUndefined();
+    expect(parsed.workbook.sheets[1].comments).toBeUndefined();
+  });
+
   it("reads an exported worksheet at the advertised cell limit", async () => {
     const cells = Array.from({length:50_000}, (_,row) => ({row,col:0,value:"x"}));
     const result = await readXlsx(writeXlsx({sheets:[{name:"Limit",cells}]}));

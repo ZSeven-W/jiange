@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SheetWorksheet } from "../src/types.js";
 import {
   exportWorkbookToXlsx,
+  importXlsxToWorkbookData,
   numFmtFromCode,
   parseXlsxBytesForWorkbook,
   sheetStyleToXlsx,
@@ -19,6 +20,7 @@ import { readXlsx } from "../src/xlsx-read.js";
 import {
   normalizeXlsxStyle,
   parseMergeRef,
+  readXlsxDxfs,
   readXlsxStyles,
   XlsxStyleTable,
 } from "../src/xlsx-style.js";
@@ -159,6 +161,24 @@ describe("xlsx-style 100% branch coverage", () => {
     expect(styles[6]).toBeUndefined(); // caught normalizeXlsxStyle failure on numFmtId=201
     expect(warn.has("style_colors_not_preserved")).toBe(true);
     expect(warn.has("cell_formatting_not_preserved")).toBe(true);
+
+    // readXlsxDxfs coverage: missing dxfs, empty dxf, font with/without bold/color, fill with gradient/bgColor/fgColor/themed
+    expect(readXlsxDxfs(xlsxXml(`<styleSheet xmlns="${SHEET_NS}"/>`), new Set())).toEqual([]);
+    const dxfWarn = new Set<string>();
+    const dxfs = readXlsxDxfs(
+      xlsxXml(
+        `<styleSheet xmlns="${SHEET_NS}"><dxfs>` +
+          `<dxf/>` +
+          `<dxf><font><b val="0"/><color theme="2"/></font><fill><gradientFill/></fill></dxf>` +
+          `<dxf><font><b/><color rgb="FF112233"/></font><fill><patternFill patternType="solid"><bgColor rgb="FFAABBCC"/></patternFill></fill></dxf>` +
+          `<dxf><fill><patternFill patternType="solid"><fgColor rgb="FF445566"/></patternFill></fill></dxf>` +
+          `<dxf><fill><patternFill patternType="none"/></fill></dxf>` +
+          `</dxfs></styleSheet>`,
+      ),
+      dxfWarn,
+    );
+    expect(dxfs).toEqual([{}, {}, { bold: true, color: "#112233", bg: "#AABBCC" }, { bg: "#445566" }, {}]);
+    expect(dxfWarn.has("style_colors_not_preserved")).toBe(true);
   });
 });
 
@@ -227,6 +247,52 @@ describe("xlsx writer 100% branch coverage", () => {
     expect(() =>
       writeXlsx({ sheets: [{ name: "S", cells: [], hyperlinks: [{ row: 0, col: 0, target: "not-a-url" }] }] }),
     ).toThrow("unsupported hyperlink URL scheme");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], conditionalFormats: "bad" as never }] }),
+    ).toThrow("invalid conditionalFormats");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], conditionalFormats: [null as never] }] }),
+    ).toThrow("invalid conditional format rule");
+    expect(() =>
+      writeXlsx({
+        sheets: [{ name: "S", cells: [], conditionalFormats: [{ id: "c", top: 0, left: 0, bottom: 0, right: 0, op: "bogus" as never }] }],
+      }),
+    ).toThrow("invalid conditional format rule");
+    expect(() =>
+      writeXlsx({
+        sheets: [{ name: "S", cells: [], conditionalFormats: [{ id: "c", top: 0, left: 0, bottom: 0, right: 0, op: "gt", bg: "red" }] }],
+      }),
+    ).toThrow("conditional format fill color must be #RRGGBB");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], comments: "bad" as never }] }),
+    ).toThrow("invalid comments");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], comments: [{ row: -1, col: 0, text: "x" }] }] }),
+    ).toThrow("invalid comment coordinates");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], comments: [{ row: 0, col: 0, text: 123 as never }] }] }),
+    ).toThrow("invalid comment text");
+    expect(() =>
+      writeXlsx({ sheets: [{ name: "S", cells: [], comments: [{ row: 0, col: 0, text: "x", author: 123 as never }] }] }),
+    ).toThrow("invalid comment author");
+    expect(() =>
+      writeXlsx({
+        sheets: [{ name: "S", cells: [], comments: [{ row: 0, col: 0, text: "a" }, { row: 0, col: 0, text: "b" }] }],
+      }),
+    ).toThrow("duplicate comment coordinate");
+    // Conditional formats with omitted value1/value2 + empty comments array
+    const cfDefaultsBytes = writeXlsx({
+      sheets: [{
+        name: "S",
+        cells: [],
+        conditionalFormats: [
+          { id: "c1", top: 0, left: 0, bottom: 0, right: 0, op: "contains" },
+          { id: "c2", top: 0, left: 0, bottom: 0, right: 0, op: "between" },
+        ],
+        comments: [],
+      }],
+    });
+    expect((await readXlsx(cfDefaultsBytes)).workbook.sheets[0].conditionalFormats?.length).toBe(2);
     expect(() =>
       writeXlsx({ sheets: [{ name: "S", cells: [] }], definedNames: "bad" as never }),
     ).toThrow("invalid definedNames");
@@ -329,6 +395,16 @@ describe("workbook-xlsx 100% branch coverage", () => {
       frozenCols: 0,
       merges: [{ top: 0, left: 0, bottom: 1, right: 1 }],
       hyperlinks: [{ row: 0, col: 0, target: "https://example.com" }],
+      conditionalFormats: [
+        { id: "cf1", top: 0, left: 0, bottom: 1, right: 1, op: "gt", value1: "5", bg: "#DCFCE7", bold: true },
+      ],
+      comments: [
+        { id: 1, worksheetId: 1, rowId: 1, columnId: 1, authorName: "Alice", body: "First line", resolved: false },
+        { id: 2, worksheetId: 1, rowId: 1, columnId: 1, authorName: "Bob", body: "Second line", resolved: false },
+        { id: 3, worksheetId: 1, rowId: 2, columnId: 2, authorName: "", body: "No author", resolved: false },
+        { id: 4, worksheetId: 1, rowId: 1, columnId: 2, authorName: "Skip", body: "", resolved: false },
+        { id: 5, worksheetId: 1, rowId: 999, columnId: 1, authorName: "Orphan", body: "Missing row", resolved: false },
+      ],
       filter: {},
       revision: 1,
       rows: [{ id: 1, pos: 0 }, { id: 2, pos: 1 }],
@@ -341,10 +417,15 @@ describe("workbook-xlsx 100% branch coverage", () => {
       ],
     };
     const exported = exportWorkbookToXlsx([ws]);
-    const imported = await parseXlsxBytesForWorkbook(exported);
+    const imported = await importXlsxToWorkbookData(exported);
     expect(imported.sheets[0].merges).toEqual([{ top: 0, left: 0, bottom: 1, right: 1 }]);
     expect(imported.sheets[0].frozenRows).toBe(1);
     expect(imported.sheets[0].hyperlinks?.length).toBe(1);
+    expect(imported.sheets[0].conditionalFormats?.length).toBe(1);
+    expect(imported.sheets[0].comments).toEqual([
+      { row: 0, col: 0, text: "First line\nSecond line", author: "Alice" },
+      { row: 1, col: 1, text: "No author" },
+    ]);
 
     // Import limits: maxFileBytes, > 50 sheets, maxCells, > MAX_ROWS/MAX_COLS
     await expect(parseXlsxBytesForWorkbook(exported, { limits: { maxFileBytes: 10 } })).rejects.toThrow("20 MiB");
@@ -753,6 +834,88 @@ describe("xlsx-read 100% branch coverage", () => {
       }),
     );
     expect(hlNoRels.workbook.sheets[0].hyperlinks).toBeUndefined();
+
+    // Conditional formatting edge branches (missing sqref, missing type, missing text on containsText,
+    // missing/unsupported operator on cellIs, missing formula1/formula2, unsupported colorScale rule)
+    const cfEdges = await readXlsx(
+      makeMinimalZip({
+        "xl/worksheets/sheet1.xml":
+          `<worksheet xmlns="${SHEET_NS}"><sheetData/>` +
+          `<conditionalFormatting><cfRule/></conditionalFormatting>` +
+          `<conditionalFormatting sqref="A1">` +
+          `<cfRule type="colorScale" priority="1"/>` +
+          `<cfRule type="containsText" priority="2"/>` +
+          `<cfRule type="cellIs" priority="3"/>` +
+          `<cfRule type="cellIs" operator="between" priority="4"/>` +
+          `<cfRule type="cellIs" operator="greaterThan" priority="5" dxfId="bad"><formula>10</formula></cfRule>` +
+          `</conditionalFormatting></worksheet>`,
+      }),
+    );
+    expect(cfEdges.warnings).toContain("worksheet_features_not_preserved");
+    expect(cfEdges.workbook.sheets[0].conditionalFormats?.length).toBe(3);
+
+    // Comments edge & error branches
+    await expect(
+      readXlsx(
+        makeMinimalZip({
+          "xl/worksheets/_rels/sheet1.xml.rels":
+            `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="https://evil.example/c.xml" TargetMode="External"/></Relationships>`,
+        }),
+      ),
+    ).rejects.toThrow("invalid comments relationship");
+    await expect(
+      readXlsx(
+        makeMinimalZip({
+          "xl/worksheets/_rels/sheet1.xml.rels":
+            `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+          "xl/comments1.xml": `<wrong xmlns="${SHEET_NS}"/>`,
+        }),
+      ),
+    ).rejects.toThrow("invalid comments part");
+    const manyComments = Array.from({ length: 5001 }, () => '<comment ref="A1"><text><t>x</t></text></comment>').join("");
+    await expect(
+      readXlsx(
+        makeMinimalZip({
+          "xl/worksheets/_rels/sheet1.xml.rels":
+            `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+          "xl/comments1.xml": `<comments xmlns="${SHEET_NS}"><commentList>${manyComments}</commentList></comments>`,
+        }),
+      ),
+    ).rejects.toThrow("too many comments");
+    await expect(
+      readXlsx(
+        makeMinimalZip({
+          "xl/worksheets/_rels/sheet1.xml.rels":
+            `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+          "xl/comments1.xml": `<comments xmlns="${SHEET_NS}"><commentList><comment/></commentList></comments>`,
+        }),
+      ),
+    ).rejects.toThrow("invalid cell reference");
+    await expect(
+      readXlsx(
+        makeMinimalZip({
+          "xl/worksheets/_rels/sheet1.xml.rels":
+            `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+          "xl/comments1.xml": `<comments xmlns="${SHEET_NS}"><commentList><comment ref="A1"/></commentList></comments>`,
+        }),
+      ),
+    ).rejects.toThrow("invalid comment");
+    const emptyCommentsPart = await readXlsx(
+      makeMinimalZip({
+        "xl/worksheets/_rels/sheet1.xml.rels":
+          `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+        "xl/comments1.xml": `<comments xmlns="${SHEET_NS}"/>`,
+      }),
+    );
+    expect(emptyCommentsPart.workbook.sheets[0].comments).toBeUndefined();
+    const commentNoAuthor = await readXlsx(
+      makeMinimalZip({
+        "xl/worksheets/_rels/sheet1.xml.rels":
+          `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_NS}/comments" Target="../comments1.xml"/></Relationships>`,
+        "xl/comments1.xml": `<comments xmlns="${SHEET_NS}"><commentList><comment ref="B2"><text><t>Hi</t></text></comment></commentList></comments>`,
+      }),
+    );
+    expect(commentNoAuthor.workbook.sheets[0].comments).toEqual([{ row: 1, col: 1, text: "Hi" }]);
 
     // SheetData and cell error branches
     await expect(

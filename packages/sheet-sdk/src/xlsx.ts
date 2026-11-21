@@ -1,10 +1,10 @@
 import { createZip, createZipAsync, type ZipEntryInput } from "@jiange/ooxml/zip";
 import { escapeXml } from "@jiange/ooxml/xml";
 import { columnName } from "./grid.js";
-import type { SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
+import type { SheetCondFormatOp, SheetConditionalFormat, SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
 import { normalizeXlsxStyle, XlsxStyleTable, type XlsxFrozen, type XlsxMerge, type XlsxStyle } from "./xlsx-style.js";
 
-export type { XlsxBorder, XlsxFrozen, XlsxMerge, XlsxStyle } from "./xlsx-style.js";
+export type { XlsxBorder, XlsxDxfStyle, XlsxFrozen, XlsxMerge, XlsxStyle } from "./xlsx-style.js";
 
 /** Zero-based coordinates; formula strings include the leading `=`. */
 export type XlsxCellError = { error: "#NULL!" | "#DIV/0!" | "#VALUE!" | "#REF!" | "#NAME?" | "#NUM!" | "#N/A" | "#GETTING_DATA" | "#SPILL!" | "#CALC!" };
@@ -13,6 +13,13 @@ export type XlsxCell =
   | { row: number; col: number; value: XlsxScalar; formula?: never; style?: XlsxStyle }
   | { row: number; col: number; formula: string; value?: XlsxScalar; style?: XlsxStyle }
   | { row: number; col: number; style: XlsxStyle; value?: never; formula?: never };
+
+export interface XlsxComment {
+  row: number;
+  col: number;
+  text: string;
+  author?: string;
+}
 
 export interface XlsxSheet {
   name: string;
@@ -24,7 +31,9 @@ export interface XlsxSheet {
   /** Zero-based row index → Excel row height in points (1..409). */
   rowHeights?: Readonly<Record<number, number>>;
   validations?: readonly SheetDataValidation[];
+  conditionalFormats?: readonly SheetConditionalFormat[];
   hyperlinks?: readonly SheetHyperlink[];
+  comments?: readonly XlsxComment[];
 }
 
 export interface XlsxWorkbook {
@@ -141,17 +150,45 @@ function safeHyperlinkUrl(target: string): string {
   throw new XlsxError("unsupported hyperlink URL scheme");
 }
 
-function sheetExtras(raw: Record<string, unknown>): {
+const COND_FMT_OPERATORS: Record<SheetCondFormatOp, string> = {
+  gt: "greaterThan",
+  gte: "greaterThanOrEqual",
+  lt: "lessThan",
+  lte: "lessThanOrEqual",
+  eq: "equal",
+  neq: "notEqual",
+  between: "between",
+  contains: "containsText",
+  empty: "containsBlanks",
+  not_empty: "notContainsBlanks",
+};
+
+function cfFormulaLiteral(value: string): string {
+  const trimmed = value.trim();
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) return xmlText(trimmed);
+  return `&quot;${xmlText(value.replace(/"/g, '""'))}&quot;`;
+}
+
+interface SheetRelEntry {
+  id: string;
+  type: "hyperlink" | "comments";
+  target: string;
+  external?: boolean;
+}
+
+function sheetExtras(raw: Record<string, unknown>, styles: XlsxStyleTable, sheetIndex: number, sheetNS: string): {
   views: string;
   cols: string;
   merges: string;
+  conditionalFormats: string;
   validations: string;
   hyperlinks: string;
-  rels: { id: string; target: string }[];
+  commentsXml: string;
+  rels: SheetRelEntry[];
   rowHeights: Map<number, number>;
 } {
-  let views = "", cols = "", merges = "", validations = "", hyperlinks = "";
-  const rels: { id: string; target: string }[] = [];
+  let views = "", cols = "", merges = "", conditionalFormats = "", validations = "", hyperlinks = "", commentsXml = "";
+  const rels: SheetRelEntry[] = [];
   const rowHeights = new Map<number, number>();
 
   if (raw.frozen !== undefined) {
@@ -235,7 +272,7 @@ function sheetExtras(raw: Record<string, unknown>): {
       }
       const url = safeHyperlinkUrl(hl.target);
       const rid = `rId${rels.length + 1}`;
-      rels.push({ id: rid, target: url });
+      rels.push({ id: rid, type: "hyperlink", target: url, external: true });
       const ref = `${columnName(hl.col)}${hl.row + 1}`;
       const tip = hl.tooltip ? ` tooltip="${escapeXml(hl.tooltip)}"` : "";
       items.push(`<hyperlink ref="${ref}" r:id="${rid}"${tip}/>`);
@@ -243,7 +280,85 @@ function sheetExtras(raw: Record<string, unknown>): {
     if (items.length) hyperlinks = `<hyperlinks>${items.join("")}</hyperlinks>`;
   }
 
-  return { views, cols, merges, validations, hyperlinks, rels, rowHeights };
+  if (raw.conditionalFormats !== undefined) {
+    if (!Array.isArray(raw.conditionalFormats) || raw.conditionalFormats.length > 1000) throw new XlsxError("invalid conditionalFormats");
+    const blocks: string[] = [];
+    let priority = 1;
+    for (const cf of raw.conditionalFormats as SheetConditionalFormat[]) {
+      if (
+        !cf || typeof cf !== "object"
+        || !Number.isInteger(cf.top) || !Number.isInteger(cf.left) || !Number.isInteger(cf.bottom) || !Number.isInteger(cf.right)
+        || cf.top < 0 || cf.left < 0 || cf.bottom >= MAX_ROWS || cf.right >= MAX_COLS || cf.top > cf.bottom || cf.left > cf.right
+        || !Object.hasOwn(COND_FMT_OPERATORS, cf.op)
+      ) {
+        throw new XlsxError("invalid conditional format rule");
+      }
+      const dxfId = styles.dxfIndex({ bg: cf.bg, color: cf.color, bold: cf.bold });
+      const dxfAttr = dxfId !== undefined ? ` dxfId="${dxfId}"` : "";
+      const topLeft = `${columnName(cf.left)}${cf.top + 1}`;
+      const sqref = cf.top === cf.bottom && cf.left === cf.right ? topLeft : `${topLeft}:${columnName(cf.right)}${cf.bottom + 1}`;
+      let ruleXml: string;
+      if (cf.op === "empty") {
+        ruleXml = `<cfRule type="containsBlanks"${dxfAttr} priority="${priority++}"><formula>LEN(TRIM(${topLeft}))=0</formula></cfRule>`;
+      } else if (cf.op === "not_empty") {
+        ruleXml = `<cfRule type="notContainsBlanks"${dxfAttr} priority="${priority++}"><formula>LEN(TRIM(${topLeft}))&gt;0</formula></cfRule>`;
+      } else if (cf.op === "contains") {
+        const v1 = cf.value1 ?? "";
+        text(v1, MAX_FORMULA, "conditional format value");
+        ruleXml = `<cfRule type="containsText"${dxfAttr} priority="${priority++}" operator="containsText" text="${escapeXml(v1)}"><formula>NOT(ISERROR(SEARCH(&quot;${xmlText(v1.replace(/"/g, '""'))}&quot;,${topLeft})))</formula></cfRule>`;
+      } else {
+        const v1 = cf.value1 ?? "0";
+        text(v1, MAX_FORMULA, "conditional format value");
+        const f1 = `<formula>${cfFormulaLiteral(v1)}</formula>`;
+        let f2 = "";
+        if (cf.op === "between") {
+          const v2 = cf.value2 ?? v1;
+          text(v2, MAX_FORMULA, "conditional format value");
+          f2 = `<formula>${cfFormulaLiteral(v2)}</formula>`;
+        }
+        ruleXml = `<cfRule type="cellIs"${dxfAttr} priority="${priority++}" operator="${COND_FMT_OPERATORS[cf.op]}">${f1}${f2}</cfRule>`;
+      }
+      blocks.push(`<conditionalFormatting sqref="${sqref}">${ruleXml}</conditionalFormatting>`);
+    }
+    conditionalFormats = blocks.join("");
+  }
+
+  if (raw.comments !== undefined) {
+    if (!Array.isArray(raw.comments) || raw.comments.length > 5000) throw new XlsxError("invalid comments");
+    const authorMap = new Map<string, number>();
+    const authors: string[] = [];
+    const seenCoords = new Set<string>();
+    const items: string[] = [];
+    for (const cm of raw.comments as unknown[]) {
+      object(cm, ["row", "col", "text", "author"], "comment");
+      const { row, col, text: body, author } = cm;
+      if (!Number.isInteger(row) || !Number.isInteger(col) || (row as number) < 0 || (col as number) < 0 || (row as number) >= MAX_ROWS || (col as number) >= MAX_COLS) {
+        throw new XlsxError("invalid comment coordinates");
+      }
+      if (typeof body !== "string") throw new XlsxError("invalid comment text");
+      text(body, MAX_CELL_TEXT, "comment text");
+      if (author !== undefined && typeof author !== "string") throw new XlsxError("invalid comment author");
+      const authorName = author ?? "";
+      text(authorName, 255, "comment author");
+      const key = `${row}:${col}`;
+      if (seenCoords.has(key)) throw new XlsxError("duplicate comment coordinate");
+      seenCoords.add(key);
+      let authorId = authorMap.get(authorName);
+      if (authorId === undefined) {
+        authorId = authors.length;
+        authors.push(authorName);
+        authorMap.set(authorName, authorId);
+      }
+      const ref = `${columnName(col as number)}${(row as number) + 1}`;
+      items.push(`<comment ref="${ref}" authorId="${authorId}"><text><t xml:space="preserve">${xmlText(body)}</t></text></comment>`);
+    }
+    if (items.length) {
+      commentsXml = `<comments xmlns="${sheetNS}"><authors>${authors.map((a) => `<author>${xmlText(a)}</author>`).join("")}</authors><commentList>${items.join("")}</commentList></comments>`;
+      rels.push({ id: `rId${rels.length + 1}`, type: "comments", target: `../comments${sheetIndex + 1}.xml` });
+    }
+  }
+
+  return { views, cols, merges, conditionalFormats, validations, hyperlinks, commentsXml, rels, rowHeights };
 }
 
 function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, useSharedStrings: boolean): { entries: ZipEntryInput[]; limits: XlsxLimits } {
@@ -257,16 +372,18 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
   if (options.modified !== undefined && (!(options.modified instanceof Date) || !Number.isFinite(options.modified.getTime()))) {
     throw new XlsxError("invalid modified date");
   }
+  const sheetNS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const relNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
   const names = new Set<string>();
   const sheetNameToIdx = new Map<string, number>();
   const styles = new XlsxStyleTable();
   const sst = useSharedStrings ? new SharedStringTable() : null;
-  const builtSheets: { name: string; rows: string; views: string; cols: string; merges: string; validations: string; hyperlinks: string; rels: { id: string; target: string }[] }[] = [];
+  const builtSheets: { name: string; rows: string; views: string; cols: string; merges: string; conditionalFormats: string; validations: string; hyperlinks: string; commentsXml: string; rels: SheetRelEntry[] }[] = [];
   let cellsTotal = 0, xmlBytes = 0;
 
   for (let sheetIndex = 0; sheetIndex < workbook.sheets.length; sheetIndex++) {
     const raw = workbook.sheets[sheetIndex];
-    object(raw, ["name", "cells", "merges", "frozen", "colWidths", "rowHeights", "validations", "hyperlinks"], "sheet");
+    object(raw, ["name", "cells", "merges", "frozen", "colWidths", "rowHeights", "validations", "conditionalFormats", "hyperlinks", "comments"], "sheet");
     if (typeof raw.name !== "string" || !raw.name || raw.name.length > 31 || /[\[\]:*?/\\\u0000-\u001f]/.test(raw.name) || raw.name.startsWith("'") || raw.name.endsWith("'")) {
       throw new XlsxError("invalid sheet name");
     }
@@ -279,7 +396,7 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
       throw new XlsxError("too many cells or invalid cell list");
     }
 
-    const extras = sheetExtras(raw as unknown as Record<string, unknown>);
+    const extras = sheetExtras(raw as unknown as Record<string, unknown>, styles, sheetIndex, sheetNS);
     const seen = new Set<string>(), cells: { row: number; col: number; xml: string }[] = [];
     for (const item of raw.cells) {
       const cell = cellXml(item, styles, sst), key = `${cell.row}:${cell.col}`;
@@ -309,7 +426,7 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
       return inner ? `<row r="${rIdx + 1}"${htAttr}>${inner}</row>` : `<row r="${rIdx + 1}"${htAttr}/>`;
     });
 
-    builtSheets.push({ name: raw.name, rows: rows.join(""), views: extras.views, cols: extras.cols, merges: extras.merges, validations: extras.validations, hyperlinks: extras.hyperlinks, rels: extras.rels });
+    builtSheets.push({ name: raw.name, rows: rows.join(""), views: extras.views, cols: extras.cols, merges: extras.merges, conditionalFormats: extras.conditionalFormats, validations: extras.validations, hyperlinks: extras.hyperlinks, commentsXml: extras.commentsXml, rels: extras.rels });
   }
 
   let definedNamesXml = "";
@@ -331,8 +448,6 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
     if (dnItems.length) definedNamesXml = `<definedNames>${dnItems.join("")}</definedNames>`;
   }
 
-  const sheetNS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-  const relNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
   const header = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
   const entries: ZipEntryInput[] = [];
   const add = (name: string, body: string) => {
@@ -349,7 +464,7 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
 
   add(
     "[Content_Types].xml",
-    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${builtSheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}${withStyles ? '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' : ""}${withSst ? '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>' : ""}</Types>`,
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${builtSheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}${builtSheets.map((sheet, i) => sheet.commentsXml ? `<Override PartName="/xl/comments${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>` : "").join("")}${withStyles ? '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' : ""}${withSst ? '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>' : ""}</Types>`,
   );
   add("_rels/.rels", `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${relNS}/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
   add(
@@ -364,12 +479,13 @@ function buildXlsxEntries(workbook: XlsxWorkbook, options: WriteXlsxOptions, use
     const rNsAttr = sheet.hyperlinks ? ` xmlns:r="${relNS}"` : "";
     add(
       `xl/worksheets/sheet${i + 1}.xml`,
-      `<worksheet xmlns="${sheetNS}"${rNsAttr}>${sheet.views}${sheet.cols}<sheetData>${sheet.rows}</sheetData>${sheet.merges}${sheet.validations}${sheet.hyperlinks}</worksheet>`,
+      `<worksheet xmlns="${sheetNS}"${rNsAttr}>${sheet.views}${sheet.cols}<sheetData>${sheet.rows}</sheetData>${sheet.merges}${sheet.conditionalFormats}${sheet.validations}${sheet.hyperlinks}</worksheet>`,
     );
+    if (sheet.commentsXml) add(`xl/comments${i + 1}.xml`, sheet.commentsXml);
     if (sheet.rels.length) {
       add(
         `xl/worksheets/_rels/sheet${i + 1}.xml.rels`,
-        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheet.rels.map((r) => `<Relationship Id="${r.id}" Type="${relNS}/hyperlink" Target="${escapeXml(r.target)}" TargetMode="External"/>`).join("")}</Relationships>`,
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheet.rels.map((r) => `<Relationship Id="${r.id}" Type="${relNS}/${r.type}" Target="${escapeXml(r.target)}"${r.external ? ' TargetMode="External"' : ""}/>`).join("")}</Relationships>`,
       );
     }
   });

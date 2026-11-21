@@ -43,6 +43,7 @@ describe("@jiange/base-sdk", () => {
   it("manages multi-table schemas, formulas, link/lookup resolution, views, dashboard, CSV, undo/redo & AI tools", () => {
     const base = Base.create({ name: "CRM", defaultTableName: "Accounts" });
     expect(base.getName()).toBe("CRM");
+    expect(base.version).toBe(1);
     expect(base.undo()).toBe(false);
     expect(base.redo()).toBe(false);
 

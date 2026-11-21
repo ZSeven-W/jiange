@@ -141,6 +141,7 @@ export class Base {
   private undoStack: Array<{ token: string; snapshot: BaseSnapshot }> = [];
   private redoStack: BaseSnapshot[] = [];
   private undoSeq = 1;
+  private versionCounter = 1;
 
   private constructor(snap: BaseSnapshot) {
     const cloned = cloneSnapshot(snap);
@@ -231,6 +232,7 @@ export class Base {
     this.fields = cloned.fields;
     this.records = cloned.records;
     this.views = cloned.views;
+    this.versionCounter++;
   }
 
   private pushUndo(before: BaseSnapshot): string {
@@ -238,7 +240,12 @@ export class Base {
     this.undoStack.push({ token, snapshot: before });
     if (this.undoStack.length > 100) this.undoStack.shift();
     this.redoStack = [];
+    this.versionCounter++;
     return token;
+  }
+
+  get version(): number {
+    return this.versionCounter;
   }
 
   private resolveTableId(tableId?: number): number {

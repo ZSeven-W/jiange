@@ -324,6 +324,7 @@ export interface ImportedWorksheet {
   validations?: SheetDataValidation[];
   conditionalFormats?: SheetConditionalFormat[];
   hyperlinks?: SheetHyperlink[];
+  comments?: { row: number; col: number; text: string; author?: string }[];
 }
 
 export type EvalValue =

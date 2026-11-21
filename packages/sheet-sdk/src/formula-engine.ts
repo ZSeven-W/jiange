@@ -162,6 +162,8 @@ export class IncrementalFormulaEngine {
 
   // Evaluation cache keyed by `${sheetId}:${row}:${col}`.
   private cache = new Map<string, EvalValue>();
+  // Fast O(1) error counter per sheet, kept in sync with `cache`.
+  private errorCellsBySheet = new Map<number, Set<string>>();
   // Spill overlay keyed by `${sheetId}:${row}:${col}` -> { originKey, value }.
   private spillCells = new Map<string, { originKey: string; value: EvalValue }>();
   private originSpills = new Map<string, string[]>();
@@ -197,6 +199,7 @@ export class IncrementalFormulaEngine {
     this.sheets.clear();
     this.sheetIdByTitle.clear();
     this.cache.clear();
+    this.errorCellsBySheet.clear();
     this.spillCells.clear();
     this.originSpills.clear();
     this.blockedSpillOrigins.clear();
@@ -326,6 +329,7 @@ export class IncrementalFormulaEngine {
     // Invalidate cached values and spills for dirty nodes only.
     for (const key of dirty) {
       this.cache.delete(key);
+      this.errorCellsBySheet.get(Number(key.slice(0, key.indexOf(":"))))?.delete(key);
       this.clearSpillFrom(key);
     }
 
@@ -342,6 +346,7 @@ export class IncrementalFormulaEngine {
 
   evaluateAll(): Map<number, Record<string, EvalValue>> {
     this.cache.clear();
+    this.errorCellsBySheet.clear();
     this.spillCells.clear();
     this.originSpills.clear();
     this.blockedSpillOrigins.clear();
@@ -380,6 +385,33 @@ export class IncrementalFormulaEngine {
     const cached = this.cache.get(cKey);
     if (cached) return cached.kind === "array" ? (cached.value[0]?.[0] ?? EMPTY_VAL) : cached;
     return this.evalCell(sheetId, row, col, 0, new Set(), { ops: 0 });
+  }
+
+  /** Non-mutating O(1) lookup of an evaluated cell value (or spilled overlay). */
+  peekValue(sheetId: number, row: number, col: number): EvalValue | undefined {
+    const cKey = `${sheetId}:${row}:${col}`;
+    const spill = this.spillCells.get(cKey);
+    if (spill) return spill.value;
+    const cached = this.cache.get(cKey);
+    if (!cached) return undefined;
+    return cached.kind === "array" ? (cached.value[0][0] ?? EMPTY_VAL) : cached;
+  }
+
+  /** O(1) count of cached error cells on a worksheet. */
+  getSheetErrorCount(sheetId: number): number {
+    return this.errorCellsBySheet.get(sheetId)?.size ?? 0;
+  }
+
+  private setCachedValue(sheetId: number, cKey: string, val: EvalValue): void {
+    this.cache.set(cKey, val);
+    const top = val.kind === "array" ? (val.value[0][0] ?? EMPTY_VAL) : val;
+    if (top.kind === "error") {
+      let errs = this.errorCellsBySheet.get(sheetId);
+      if (!errs) { errs = new Set(); this.errorCellsBySheet.set(sheetId, errs); }
+      errs.add(cKey);
+    } else {
+      this.errorCellsBySheet.get(sheetId)?.delete(cKey);
+    }
   }
 
   getSheetValues(sheetId: number): Record<string, EvalValue> {
@@ -609,7 +641,7 @@ export class IncrementalFormulaEngine {
     const raw = rt.rawMap.get(`${row}:${col}`) ?? "";
     if (!raw.startsWith("=")) {
       const val = evalScalarRaw(raw);
-      this.cache.set(cKey, val);
+      this.setCachedValue(sheetId, cKey, val);
       return val;
     }
 
@@ -628,7 +660,7 @@ export class IncrementalFormulaEngine {
     }
     active.delete(cKey);
     if (result.kind !== "error" || result.error !== "#LIMIT!") {
-      this.cache.set(cKey, result);
+      this.setCachedValue(sheetId, cKey, result);
     }
     return result.kind === "array" ? (result.value[0]?.[0] ?? EMPTY_VAL) : result;
   }

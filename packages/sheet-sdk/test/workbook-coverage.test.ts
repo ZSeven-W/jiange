@@ -130,13 +130,18 @@ describe("workbook 100% branch coverage", () => {
     expect(defaultWb.canRedo).toBe(true);
     expect(defaultWb.redo()).toBe(true);
 
-    // fromXlsx covering > 50 rows / > 20 cols, frozen, hyperlinks, boolean, error, empty-value cell, and definedNames
+    // fromXlsx covering > 50 rows / > 20 cols, frozen, hyperlinks, conditionalFormats, comments, boolean, error, empty-value cell, and definedNames
     const bytes = writeXlsx({
       sheets: [
         {
           name: "Big",
           frozen: { rows: 1, cols: 2 },
           hyperlinks: [{ row: 0, col: 0, target: "https://example.com" }],
+          conditionalFormats: [{ id: "cf-1", top: 0, left: 0, bottom: 2, right: 2, op: "gt", value1: "10", bg: "#DCFCE7" }],
+          comments: [
+            { row: 65, col: 28, text: "Far comment", author: "Alice" },
+            { row: 0, col: 0, text: "Anon comment" },
+          ],
           cells: [
             { row: 60, col: 25, value: true },
             { row: 0, col: 1, value: false },
@@ -148,10 +153,21 @@ describe("workbook 100% branch coverage", () => {
       definedNames: [{ name: "Tax", ref: "Big!$A$1" }],
     });
     const { workbook: imported } = await Workbook.fromXlsx(bytes);
-    expect(imported.sheet("Big").rowCount).toBe(70);
-    expect(imported.sheet("Big").colCount).toBe(30);
+    expect(imported.sheet("Big").rowCount).toBe(75);
+    expect(imported.sheet("Big").colCount).toBe(33);
     expect(imported.sheet("Big").getCell("B1").raw).toBe("FALSE");
     expect(imported.sheet("Big").getCell("C1").raw).toBe("#N/A");
+    expect(imported.toSnapshot().sheets[0].conditionalFormats?.length).toBe(1);
+    expect(imported.toSnapshot().sheets[0].comments?.length).toBe(2);
+
+    // WorksheetProxy.addComment (valid, second comment increments id, invalid address)
+    const c1 = imported.sheet("Big").addComment("A1", "Note 1", "Bob");
+    const c2 = imported.sheet("Big").addComment("A2", "Note 2");
+    expect(c1.id).toBe(3);
+    expect(c2.authorName).toBe("");
+    expect(() => imported.sheet("Big").addComment("BAD", "x")).toThrow("Invalid cell address");
+    const freshSheet = Workbook.create({ sheets: [{ name: "Fresh", rows: 5, cols: 5 }] });
+    expect(freshSheet.sheet("Fresh").addComment("A1", "First").id).toBe(1);
 
     // fromXlsx with empty inline string without style (hits if (!raw && !style) continue)
     const emptyCellZip = createZip([
@@ -343,5 +359,41 @@ describe("workbook 100% branch coverage", () => {
       wb.apply([{ op: "setCells", sheet: "EmptySheet", cells: [{ a1: "C1", raw: i }] }]);
     }
     expect(wb.canUndo).toBe(true);
+
+    // inspect() fast path & edge branches: non-sequential axis IDs, orphan cell in non-seq map,
+    // cold cellIndexCache with cells outside sample row/col window, warm cellIndexCache,
+    // spilled cell + array cell + empty-row array cell in sample window (peekValue branches)
+    const nonSeqWs: SheetWorksheet = {
+      id: 10,
+      nodeId: 0,
+      title: "CustomIds",
+      pos: 0,
+      frozenRows: 0,
+      frozenCols: 0,
+      merges: [],
+      filter: {},
+      revision: 1,
+      rows: Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, pos: i })),
+      columns: Array.from({ length: 20 }, (_, i) => ({ id: 200 + i, pos: i })),
+      cells: [
+        { rowId: 100, columnId: 200, raw: "=SEQUENCE(2,1)", revision: 1 }, // array origin + spill into row 1
+        { rowId: 100, columnId: 201, raw: "=EMPTY_ARR_FN()", revision: 1 }, // empty-row array in peekValue
+        { rowId: 110, columnId: 200, raw: "outside-sample-row", revision: 1 }, // r > maxSampleRow
+        { rowId: 100, columnId: 219, raw: "outside-sample-col", revision: 1 }, // c > capCol
+        { rowId: 999, columnId: 200, raw: "orphan-row", revision: 1 },
+        { rowId: 100, columnId: 999, raw: "orphan-col", revision: 1 },
+      ],
+    };
+    const customWb = Workbook.fromSnapshot([nonSeqWs]);
+    customWb.registerFunction("EMPTY_ARR_FN", () => arrVal([[], []]));
+    const firstInsp = customWb.inspect({ detail: "summary" });
+    expect(firstInsp.summary.sheets[0].nonEmptyCells).toBe(4);
+    expect(firstInsp.summary.sheets[0].sampleRows?.[0]?.[0]).toBe("2");
+    // Second inspect hits warm sheetStatsCache
+    const secondInsp = customWb.inspect({ detail: "summary" });
+    expect(secondInsp.summary.sheets[0].nonEmptyCells).toBe(4);
+    // Warm cellIndexCache path in readInspectWindow
+    customWb.sheet("CustomIds").setCell("C1", "warm");
+    expect(customWb.inspect({ detail: "summary" }).summary.sheets[0].headers[2]).toBe("warm");
   });
 });

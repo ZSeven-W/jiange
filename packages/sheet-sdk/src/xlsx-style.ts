@@ -13,6 +13,7 @@ export interface XlsxStyle {
 /** Zero-based inclusive range. */
 export interface XlsxMerge { top: number; left: number; bottom: number; right: number }
 export interface XlsxFrozen { rows: number; cols: number }
+export interface XlsxDxfStyle { bg?: string; color?: string; bold?: boolean }
 
 const STYLE_KEYS = ["bold", "italic", "underline", "strike", "fontName", "fontSize", "color", "fill", "horizontal", "vertical", "wrap", "border", "numFmt"] as const;
 const BORDER_KEYS = ["top", "right", "bottom", "left", "color"] as const;
@@ -87,11 +88,13 @@ export class XlsxStyleTable {
   private readonly fills = new Map<string, number>([["", 0], ["gray125", 1]]);
   private readonly borders = new Map<string, number>([["", 0]]);
   private readonly formats = new Map<string, number>();
+  private readonly dxfs = new Map<string, number>();
   private readonly fontXml = ['<font><sz val="11"/><name val="Calibri"/></font>'];
   private readonly fillXml = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
   private readonly borderXml = ["<border><left/><right/><top/><bottom/><diagonal/></border>"];
   private readonly xfXml = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
-  get used(): boolean { return this.xfXml.length > 1; }
+  private readonly dxfXml: string[] = [];
+  get used(): boolean { return this.xfXml.length > 1 || this.dxfXml.length > 0; }
 
   index(style: XlsxStyle | undefined): number {
     if (!style) return 0;
@@ -136,9 +139,26 @@ export class XlsxStyleTable {
     return id;
   }
 
+  dxfIndex(style: XlsxDxfStyle): number | undefined {
+    const bg = colorField(style.bg, "conditional format fill color");
+    const color = colorField(style.color, "conditional format font color");
+    const bold = boolField(style.bold, "conditional format bold");
+    if (!bg && !color && !bold) return undefined;
+    const key = JSON.stringify([bg, color, bold]);
+    const existing = this.dxfs.get(key);
+    if (existing !== undefined) return existing;
+    const id = this.dxfXml.length;
+    const font = bold || color ? `<font>${bold ? "<b/>" : ""}${color ? `<color rgb="${argb(color)}"/>` : ""}</font>` : "";
+    const fill = bg ? `<fill><patternFill patternType="solid"><fgColor rgb="${argb(bg)}"/><bgColor rgb="${argb(bg)}"/></patternFill></fill>` : "";
+    this.dxfXml.push(`<dxf>${font}${fill}</dxf>`);
+    this.dxfs.set(key, id);
+    return id;
+  }
+
   xml(ns: string): string {
     const numFmts = this.formats.size ? `<numFmts count="${this.formats.size}">${[...this.formats].map(([code, id]) => `<numFmt numFmtId="${id}" formatCode="${attr(code)}"/>`).join("")}</numFmts>` : "";
-    return `<styleSheet xmlns="${ns}">${numFmts}<fonts count="${this.fontXml.length}">${this.fontXml.join("")}</fonts><fills count="${this.fillXml.length}">${this.fillXml.join("")}</fills><borders count="${this.borderXml.length}">${this.borderXml.join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${this.xfXml.length}">${this.xfXml.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    const dxfs = this.dxfXml.length ? `<dxfs count="${this.dxfXml.length}">${this.dxfXml.join("")}</dxfs>` : "";
+    return `<styleSheet xmlns="${ns}">${numFmts}<fonts count="${this.fontXml.length}">${this.fontXml.join("")}</fonts><fills count="${this.fillXml.length}">${this.fillXml.join("")}</fills><borders count="${this.borderXml.length}">${this.borderXml.join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${this.xfXml.length}">${this.xfXml.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>${dxfs}</styleSheet>`;
   }
 }
 
@@ -225,6 +245,30 @@ export function readXlsxStyles(root: XlsxXmlNode, warn: Set<string>): (XlsxStyle
       if (Object.keys(alignment.attrs).some((key) => !["|horizontal", "|vertical", "|wrapText"].includes(key))) warn.add("cell_formatting_not_preserved");
     }
     try { return normalizeXlsxStyle(raw); } catch { warn.add("cell_formatting_not_preserved"); return undefined; }
+  });
+}
+
+/** Parse `<dxfs>` differential styles used by conditional formatting rules. */
+export function readXlsxDxfs(root: XlsxXmlNode, warn: Set<string>): XlsxDxfStyle[] {
+  const parent = xchildren(root, "dxfs")[0];
+  if (!parent) return [];
+  return xchildren(parent, "dxf").map((dxf): XlsxDxfStyle => {
+    const out: XlsxDxfStyle = {};
+    const flag: ColorFlag = { themed: false };
+    const font = xchildren(dxf, "font")[0];
+    if (font) {
+      if (on(xchildren(font, "b")[0])) out.bold = true;
+      const color = rgbOf(xchildren(font, "color")[0], flag);
+      if (color) out.color = color;
+    }
+    const fill = xchildren(dxf, "fill")[0];
+    const pattern = fill ? xchildren(fill, "patternFill")[0] : undefined;
+    if (pattern) {
+      const bg = rgbOf(xchildren(pattern, "fgColor")[0], flag) ?? rgbOf(xchildren(pattern, "bgColor")[0], flag);
+      if (bg) out.bg = bg;
+    }
+    if (flag.themed) warn.add("style_colors_not_preserved");
+    return out;
   });
 }
 
