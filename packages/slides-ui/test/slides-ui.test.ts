@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { Presentation } from "@jiange/slides-sdk";
-import { createSlidesViewComponent, mountSlidesView } from "../src/index.js";
+import {
+  createSlidesViewComponent,
+  defineSlidesElement,
+  mountSlidesView,
+  type JiangeSlidesElement,
+} from "../src/index.js";
+import { createSlidesViewComponent as createSlidesViewFromReactSubpath } from "../src/react.js";
 
 function makeDomNode(tag: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
@@ -235,5 +241,93 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     raceCleanups.forEach((c) => c());
     await new Promise((r) => setTimeout(r, 10));
     expect((raceContainer.children[0] as ReturnType<typeof makeDomNode>).remove).toHaveBeenCalled();
+  });
+
+  it("defineSlidesElement is SSR-safe and registers <jiange-slides> lifecycle cleanly", async () => {
+    expect(createSlidesViewFromReactSubpath).toBe(createSlidesViewComponent);
+    expect(defineSlidesElement()).toBe(false);
+
+    const origCustomElements = Object.getOwnPropertyDescriptor(globalThis, "customElements");
+    const origHtmlElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const registry = new Map<string, CustomElementConstructor>();
+    const fakeCustomElements = {
+      define: vi.fn((name: string, ctor: CustomElementConstructor) => { registry.set(name, ctor); }),
+      get: (name: string) => registry.get(name),
+    };
+    const fakeDoc = { createElement: (t: string) => makeDomNode(t) };
+
+    class FakeHTMLElement {
+      isConnected = false;
+      style: Record<string, string> = {};
+      children: unknown[] = [];
+      clientWidth = 960;
+      clientHeight = 540;
+      ownerDocument = fakeDoc;
+      private listeners = new Map<string, Set<(e: unknown) => void>>();
+      appendChild(c: unknown) { this.children.push(c); return c; }
+      addEventListener(ev: string, fn: (e: unknown) => void) {
+        let s = this.listeners.get(ev);
+        if (!s) { s = new Set(); this.listeners.set(ev, s); }
+        s.add(fn);
+      }
+      removeEventListener(ev: string, fn: (e: unknown) => void) { this.listeners.get(ev)?.delete(fn); }
+    }
+
+    try {
+      Object.defineProperty(globalThis, "customElements", { value: fakeCustomElements, configurable: true, writable: true });
+      expect(defineSlidesElement()).toBe(false);
+
+      Object.defineProperty(globalThis, "HTMLElement", { value: FakeHTMLElement, configurable: true, writable: true });
+      expect(defineSlidesElement()).toBe(true);
+      expect(defineSlidesElement()).toBe(true);
+      expect(fakeCustomElements.define).toHaveBeenCalledTimes(1);
+      expect(registry.has("jiange-slides")).toBe(true);
+
+      const Ctor = registry.get("jiange-slides")!;
+      const el = new Ctor() as unknown as JiangeSlidesElement & {
+        isConnected: boolean;
+        connectedCallback(): void;
+        disconnectedCallback(): void;
+      };
+      const deck = Presentation.create({ title: "WC Deck" });
+
+      el.isConnected = true;
+      el.connectedCallback();
+      expect(el.presentation).toBeNull();
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = false;
+      el.presentation = deck;
+      expect(el.presentation).toBe(deck);
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = true;
+      el.connectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      el.options = { gpu: { prefer: "headless" } };
+      expect(el.options).toEqual({ gpu: { prefer: "headless" } });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      el.isConnected = false;
+      el.disconnectedCallback();
+      expect(el.mounted).toBeNull();
+      el.disconnectedCallback();
+
+      // Async mount race: disconnect before mountSlidesView resolves
+      el.isConnected = true;
+      el.connectedCallback();
+      el.isConnected = false;
+      el.disconnectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).toBeNull();
+    } finally {
+      if (origCustomElements) Object.defineProperty(globalThis, "customElements", origCustomElements);
+      else delete (globalThis as Record<string, unknown>).customElements;
+      if (origHtmlElement) Object.defineProperty(globalThis, "HTMLElement", origHtmlElement);
+      else delete (globalThis as Record<string, unknown>).HTMLElement;
+    }
   });
 });

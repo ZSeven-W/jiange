@@ -36,6 +36,9 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
   private viewportHeight = 600;
   private activeBlockId: string | null = null;
   private measuredHeights = new Map<string, number>();
+  private cachedBlocks: DocBlockSnapshot[] = [];
+  private blockIndexById = new Map<string, number>();
+  private cachedVersion = -1;
 
   constructor(
     readonly doc: Document,
@@ -69,18 +72,26 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
   reportBlockHeight(blockId: string, heightPx: number): void {
     const clean = Math.max(16, Math.round(heightPx));
     this.measuredHeights.set(blockId, clean);
-    const idx = this.doc.blocks().findIndex((b) => b.id === blockId);
-    if (idx >= 0) this.list.sizes.setSize(idx, clean);
+    this.syncBlockMetrics();
+    const idx = this.blockIndexById.get(blockId);
+    if (idx !== undefined) this.list.sizes.setSize(idx, clean);
   }
 
   syncBlockMetrics(): DocBlockSnapshot[] {
+    if (this.cachedVersion === this.doc.version) {
+      return this.cachedBlocks;
+    }
     const blocks = this.doc.blocks();
+    this.cachedBlocks = blocks;
+    this.blockIndexById.clear();
     this.list.sizes.setCount(blocks.length);
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
+      this.blockIndexById.set(b.id, i);
       const h = this.measuredHeights.get(b.id) ?? estimateBlockHeight(b);
       this.list.sizes.setSize(i, h);
     }
+    this.cachedVersion = this.doc.version;
     return blocks;
   }
 
@@ -230,34 +241,5 @@ export function mountDocView(
       controller.dispose();
       viewport.remove();
     },
-  };
-}
-
-export interface DocReactLike {
-  useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
-  useRef<T>(initial: T): { current: T };
-  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): unknown;
-}
-
-export function createDocViewComponent(React: DocReactLike) {
-  return function DocView(props: { document: Document; width?: number; height?: number; className?: string } & DocViewOptions) {
-    const hostRef = React.useRef<HTMLElement | null>(null);
-    const viewRef = React.useRef<MountedDocView | null>(null);
-    React.useEffect(() => {
-      const el = hostRef.current;
-      if (!el) return;
-      const view = mountDocView(el, props.document, props);
-      viewRef.current = view;
-      return () => {
-        view.dispose();
-        viewRef.current = null;
-      };
-    }, [props.document]);
-    return React.createElement("div", {
-      ref: hostRef,
-      tabIndex: 0,
-      className: props.className,
-      style: { width: props.width ? `${props.width}px` : "100%", height: props.height ? `${props.height}px` : "100%" },
-    });
   };
 }

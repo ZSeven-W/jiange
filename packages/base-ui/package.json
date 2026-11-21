@@ -9,7 +9,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./base-view": "./src/base-view.ts"
+    "./base-view": "./src/base-view.ts",
+    "./react": "./src/react.ts"
   },
   "files": [
     "dist",
@@ -26,6 +27,10 @@
       "./base-view": {
         "types": "./dist/base-view.d.ts",
         "import": "./dist/base-view.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js"
       }
     }
   },

@@ -2,14 +2,18 @@
  * Zero-GC pre-allocated Float32Array GPU instance buffers & 2D Camera matrix utilities.
  *
  * Packed layouts match WGSL (`@location(...)`) and GLSL 300 es (`layout(location=...)`):
- * - RectInstance: 16 floats (64 bytes): x, y, w, h, r, g, b, a, radius, borderW, br, bg, bb, ba, rotRad, flags
- * - LineInstance: 12 floats (48 bytes): x1, y1, x2, y2, thickness, r, g, b, a, dashLen, gapLen, flags
- * - ArcInstance:  12 floats (48 bytes): cx, cy, rx, ry, startAngle, endAngle, innerRatio, r, g, b, a, borderW
+ * - RectInstance:  16 floats (64 bytes): x, y, w, h, r, g, b, a, radius, borderW, br, bg, bb, ba, rotRad, flags
+ * - LineInstance:  12 floats (48 bytes): x1, y1, x2, y2, thickness, r, g, b, a, dashLen, gapLen, flags
+ * - ArcInstance:   12 floats (48 bytes): cx, cy, rx, ry, startAngle, endAngle, innerRatio, r, g, b, a, borderW
+ * - GlyphInstance: 12 floats (48 bytes): x, y, w, h, u0, v0, u1, v1, r, g, b, a
  */
+
+import type { GlyphAtlas } from "./glyph-atlas.js";
 
 export const RECT_STRIDE = 16;
 export const LINE_STRIDE = 12;
 export const ARC_STRIDE = 12;
+export const GLYPH_STRIDE = 12;
 
 export type RgbaTuple = [number, number, number, number];
 
@@ -48,6 +52,18 @@ export interface ArcInput {
   innerRatio?: number;
   color: RgbaTuple;
   borderWidth?: number;
+}
+
+export interface GlyphInput {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+  color: RgbaTuple;
 }
 
 export interface ScissorRect {
@@ -130,14 +146,17 @@ export class InstanceBatch {
   private lineCount = 0;
   private arcData: Float32Array;
   private arcCount = 0;
+  private glyphData: Float32Array;
+  private glyphCount = 0;
 
   scissor: ScissorRect | null = null;
   camera: Camera2D = new Camera2D();
 
-  constructor(initialRects = 1024, initialLines = 1024, initialArcs = 256) {
+  constructor(initialRects = 1024, initialLines = 1024, initialArcs = 256, initialGlyphs = 1024) {
     this.rectData = new Float32Array(Math.max(16, initialRects) * RECT_STRIDE);
     this.lineData = new Float32Array(Math.max(16, initialLines) * LINE_STRIDE);
     this.arcData = new Float32Array(Math.max(16, initialArcs) * ARC_STRIDE);
+    this.glyphData = new Float32Array(Math.max(16, initialGlyphs) * GLYPH_STRIDE);
   }
 
   get rects(): number {
@@ -152,8 +171,12 @@ export class InstanceBatch {
     return this.arcCount;
   }
 
+  get glyphs(): number {
+    return this.glyphCount;
+  }
+
   get totalInstances(): number {
-    return this.rectCount + this.lineCount + this.arcCount;
+    return this.rectCount + this.lineCount + this.arcCount + this.glyphCount;
   }
 
   /** Reset cursors to 0 without freeing or reallocating typed arrays (zero per-frame GC). */
@@ -161,6 +184,7 @@ export class InstanceBatch {
     this.rectCount = 0;
     this.lineCount = 0;
     this.arcCount = 0;
+    this.glyphCount = 0;
     this.scissor = null;
   }
 
@@ -183,6 +207,13 @@ export class InstanceBatch {
     const grown = new Float32Array(Math.max(needed * ARC_STRIDE, this.arcData.length * 2));
     grown.set(this.arcData);
     this.arcData = grown;
+  }
+
+  private ensureGlyphCapacity(needed: number): void {
+    if (needed * GLYPH_STRIDE <= this.glyphData.length) return;
+    const grown = new Float32Array(Math.max(needed * GLYPH_STRIDE, this.glyphData.length * 2));
+    grown.set(this.glyphData);
+    this.glyphData = grown;
   }
 
   pushRect(r: RectInput): void {
@@ -247,6 +278,62 @@ export class InstanceBatch {
     d[o + 11] = a.borderWidth ?? 0;
   }
 
+  pushGlyph(g: GlyphInput): void {
+    const idx = this.glyphCount++;
+    this.ensureGlyphCapacity(this.glyphCount);
+    const o = idx * GLYPH_STRIDE;
+    const d = this.glyphData;
+    d[o] = g.x;
+    d[o + 1] = g.y;
+    d[o + 2] = g.w;
+    d[o + 3] = g.h;
+    d[o + 4] = g.u0;
+    d[o + 5] = g.v0;
+    d[o + 6] = g.u1;
+    d[o + 7] = g.v1;
+    d[o + 8] = g.color[0];
+    d[o + 9] = g.color[1];
+    d[o + 10] = g.color[2];
+    d[o + 11] = g.color[3];
+  }
+
+  /** Layout and pack a string into instanced glyph quads using a `GlyphAtlas`. */
+  pushText(
+    atlas: GlyphAtlas,
+    text: string,
+    x: number,
+    y: number,
+    fontSize: number,
+    color: RgbaTuple,
+  ): void {
+    let cx = x;
+    let cy = y;
+    const lineHeight = fontSize * 1.25;
+    for (const ch of text) {
+      if (ch === "\n") {
+        cx = x;
+        cy += lineHeight;
+        continue;
+      }
+      const g = atlas.getGlyph(ch);
+      const scale = fontSize / g.height;
+      if (ch !== " ") {
+        this.pushGlyph({
+          x: cx,
+          y: cy,
+          w: g.width * scale,
+          h: g.height * scale,
+          u0: g.u0,
+          v0: g.v0,
+          u1: g.u1,
+          v1: g.v1,
+          color,
+        });
+      }
+      cx += g.advance * scale;
+    }
+  }
+
   rectView(): Float32Array {
     return this.rectData.subarray(0, this.rectCount * RECT_STRIDE);
   }
@@ -257,5 +344,9 @@ export class InstanceBatch {
 
   arcView(): Float32Array {
     return this.arcData.subarray(0, this.arcCount * ARC_STRIDE);
+  }
+
+  glyphView(): Float32Array {
+    return this.glyphData.subarray(0, this.glyphCount * GLYPH_STRIDE);
   }
 }

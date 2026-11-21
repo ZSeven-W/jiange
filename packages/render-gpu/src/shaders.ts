@@ -1,7 +1,7 @@
 /**
  * Dual WGSL (WebGPU) & GLSL 300 es (WebGL2) instanced SDF shaders for `@jiange/render-gpu`.
  * Renders anti-aliased rounded rectangles with crisp borders, thick/dashed lines,
- * and ellipses/pie arcs in a single instanced draw call per primitive type.
+ * ellipses/pie arcs, and shelf-packed R8 bitmap glyph quads in a single instanced draw call per primitive type.
  */
 
 export const WGSL_RECT_SHADER = /* wgsl */ `
@@ -146,6 +146,132 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
   let aa = max(fwidth(in.across), 0.1);
   let alpha = (1.0 - smoothstep(1.0 - aa, 1.0, in.across)) * in.color.a;
   return vec4<f32>(in.color.rgb * alpha, alpha);
+}
+`;
+
+export const WGSL_ARC_SHADER = /* wgsl */ `
+struct CameraUniform {
+  viewport: vec2<f32>,
+  camPos: vec2<f32>,
+  zoom: f32,
+  dpr: f32,
+  _pad0: f32,
+  _pad1: f32,
+};
+
+@group(0) @binding(0) var<uniform> uCam: CameraUniform;
+
+struct ArcIn {
+  @location(0) geom: vec4<f32>,   // cx, cy, rx, ry
+  @location(1) angles: vec4<f32>, // startAngle, endAngle, innerRatio, r
+  @location(2) color: vec4<f32>,  // g, b, a, borderW
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) unit: vec2<f32>,
+  @location(1) color: vec4<f32>,
+  @location(2) angles: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32, inst: ArcIn) -> VsOut {
+  var corners = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
+    vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0)
+  );
+  let u = corners[vid];
+  let world = inst.geom.xy + u * inst.geom.zw;
+  let screen = (world - uCam.camPos) * uCam.zoom;
+  let ndc = vec2<f32>(
+    (screen.x / uCam.viewport.x) * 2.0 - 1.0,
+    1.0 - (screen.y / uCam.viewport.y) * 2.0
+  );
+  var out: VsOut;
+  out.pos = vec4<f32>(ndc, 0.0, 1.0);
+  out.unit = u;
+  out.color = vec4<f32>(inst.angles.w, inst.color.xyz);
+  out.angles = inst.angles.xyz;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+  let tau = 6.28318530718;
+  let r = length(in.unit);
+  if (r > 1.0 || r < in.angles.z) { discard; }
+  var ang = atan2(in.unit.y, in.unit.x);
+  if (ang < 0.0) { ang = ang + tau; }
+  let startA = in.angles.x - floor(in.angles.x / tau) * tau;
+  let sweep = in.angles.y - in.angles.x;
+  if (sweep < 6.282) {
+    let diff = ang - startA + tau;
+    let rel = diff - floor(diff / tau) * tau;
+    if (rel > sweep) { discard; }
+  }
+  let aa = max(fwidth(r), 0.02);
+  let outerA = 1.0 - smoothstep(1.0 - aa, 1.0, r);
+  var innerA = 1.0;
+  if (in.angles.z > 0.0) {
+    innerA = smoothstep(in.angles.z, in.angles.z + aa, r);
+  }
+  let a = in.color.a * outerA * innerA;
+  return vec4<f32>(in.color.rgb * a, a);
+}
+`;
+
+export const WGSL_GLYPH_SHADER = /* wgsl */ `
+struct CameraUniform {
+  viewport: vec2<f32>,
+  camPos: vec2<f32>,
+  zoom: f32,
+  dpr: f32,
+  _pad0: f32,
+  _pad1: f32,
+};
+
+@group(0) @binding(0) var<uniform> uCam: CameraUniform;
+@group(0) @binding(1) var uAtlasSampler: sampler;
+@group(0) @binding(2) var uAtlasTex: texture_2d<f32>;
+
+struct GlyphIn {
+  @location(0) rect: vec4<f32>,   // x, y, w, h
+  @location(1) uvRect: vec4<f32>, // u0, v0, u1, v1
+  @location(2) color: vec4<f32>,  // r, g, b, a
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32, inst: GlyphIn) -> VsOut {
+  var corners = array<vec2<f32>, 6>(
+    vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+    vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0)
+  );
+  let c = corners[vid];
+  let world = inst.rect.xy + c * inst.rect.zw;
+  let screen = (world - uCam.camPos) * uCam.zoom;
+  let ndc = vec2<f32>(
+    (screen.x / uCam.viewport.x) * 2.0 - 1.0,
+    1.0 - (screen.y / uCam.viewport.y) * 2.0
+  );
+  var out: VsOut;
+  out.pos = vec4<f32>(ndc, 0.0, 1.0);
+  out.uv = mix(inst.uvRect.xy, inst.uvRect.zw, c);
+  out.color = inst.color;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+  let cov = textureSample(uAtlasTex, uAtlasSampler, in.uv).r;
+  let a = cov * in.color.a;
+  if (a <= 0.001) { discard; }
+  return vec4<f32>(in.color.rgb * a, a);
 }
 `;
 
@@ -315,6 +441,44 @@ void main() {
   float aa = max(fwidth(r), 0.02);
   float edgeA = 1.0 - smoothstep(1.0 - aa, 1.0, r);
   float a = vColor.a * edgeA;
+  outColor = vec4(vColor.rgb * a, a);
+}
+`;
+
+export const GLSL300_GLYPH_VS = `#version 300 es
+precision highp float;
+uniform vec4 uCamera0; // viewportW, viewportH, camX, camY
+uniform vec4 uCamera1; // zoom, dpr, 0, 0
+layout(location = 0) in vec4 aRect;   // x, y, w, h
+layout(location = 1) in vec4 aUvRect; // u0, v0, u1, v1
+layout(location = 2) in vec4 aColor;  // r, g, b, a
+out vec2 vUv;
+out vec4 vColor;
+void main() {
+  const vec2 corners[6] = vec2[6](
+    vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
+    vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)
+  );
+  vec2 c = corners[gl_VertexID];
+  vec2 world = aRect.xy + c * aRect.zw;
+  vec2 screen = (world - uCamera0.zw) * uCamera1.x;
+  vec2 ndc = vec2((screen.x / uCamera0.x) * 2.0 - 1.0, 1.0 - (screen.y / uCamera0.y) * 2.0);
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  vUv = mix(aUvRect.xy, aUvRect.zw, c);
+  vColor = aColor;
+}
+`;
+
+export const GLSL300_GLYPH_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uAtlas;
+in vec2 vUv;
+in vec4 vColor;
+out vec4 outColor;
+void main() {
+  float cov = texture(uAtlas, vUv).r;
+  float a = cov * vColor.a;
+  if (a <= 0.001) discard;
   outColor = vec4(vColor.rgb * a, a);
 }
 `;

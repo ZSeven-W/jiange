@@ -13,6 +13,7 @@
     "./virtual-pool": "./src/virtual-pool.ts",
     "./spatial-index": "./src/spatial-index.ts",
     "./instance-buffer": "./src/instance-buffer.ts",
+    "./glyph-atlas": "./src/glyph-atlas.ts",
     "./shaders": "./src/shaders.ts",
     "./gpu-surface": "./src/gpu-surface.ts"
   },
@@ -43,6 +44,10 @@
       "./instance-buffer": {
         "types": "./dist/instance-buffer.d.ts",
         "import": "./dist/instance-buffer.js"
+      },
+      "./glyph-atlas": {
+        "types": "./dist/glyph-atlas.d.ts",
+        "import": "./dist/glyph-atlas.js"
       },
       "./shaders": {
         "types": "./dist/shaders.d.ts",

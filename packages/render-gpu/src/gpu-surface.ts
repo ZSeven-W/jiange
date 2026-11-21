@@ -1,19 +1,32 @@
 /**
  * GpuSurface: WebGPU (primary) -> WebGL2 (automatic fallback) -> Headless backend.
  *
- * STRICTLY ZERO Canvas 2D (`getContext("2d")`) usage anywhere in this engine.
- * Supports multi-pass scissor regions (4-quadrant frozen panes), DPI-aware resizing,
+ * STRICTLY ZERO Canvas 2D rendering context usage anywhere in this engine.
+ * Supports all 4 RFC instanced GPU pipelines (Rect, Line, Arc, GlyphAtlas),
+ * multi-pass scissor regions (4-quadrant frozen panes), DPI-aware resizing,
  * dirty-frame RAF scheduling, and per-frame telemetry.
  */
 
-import { ARC_STRIDE, InstanceBatch, LINE_STRIDE, RECT_STRIDE, type RgbaTuple } from "./instance-buffer.js";
+import { GlyphAtlas } from "./glyph-atlas.js";
+import {
+  ARC_STRIDE,
+  GLYPH_STRIDE,
+  InstanceBatch,
+  LINE_STRIDE,
+  RECT_STRIDE,
+  type RgbaTuple,
+} from "./instance-buffer.js";
 import {
   GLSL300_ARC_FS,
   GLSL300_ARC_VS,
+  GLSL300_GLYPH_FS,
+  GLSL300_GLYPH_VS,
   GLSL300_LINE_FS,
   GLSL300_LINE_VS,
   GLSL300_RECT_FS,
   GLSL300_RECT_VS,
+  WGSL_ARC_SHADER,
+  WGSL_GLYPH_SHADER,
   WGSL_LINE_SHADER,
   WGSL_RECT_SHADER,
 } from "./shaders.js";
@@ -26,6 +39,7 @@ export interface GpuFrameStats {
   rectInstances: number;
   lineInstances: number;
   arcInstances: number;
+  glyphInstances: number;
   frameTimeMs: number;
 }
 
@@ -39,6 +53,7 @@ export interface GpuCanvasLike {
 
 export interface GpuBackend {
   readonly kind: GpuBackendKind;
+  readonly glyphAtlas: GlyphAtlas;
   resize(widthPx: number, heightPx: number, dpr: number): void;
   render(batches: readonly InstanceBatch[], clearColor: RgbaTuple): GpuFrameStats;
   dispose(): void;
@@ -49,6 +64,11 @@ export interface GpuBackend {
 // ---------------------------------------------------------------------------
 
 interface WebGpuBufferLike {
+  destroy(): void;
+}
+
+interface WebGpuTextureLike {
+  createView(): unknown;
   destroy(): void;
 }
 
@@ -70,11 +90,23 @@ interface WebGpuCommandEncoderLike {
 interface WebGpuDeviceLike {
   queue: {
     writeBuffer(buf: WebGpuBufferLike, offset: number, data: ArrayBufferView): void;
+    writeTexture(
+      dest: { texture: WebGpuTextureLike },
+      data: ArrayBufferView,
+      dataLayout: { bytesPerRow: number; rowsPerImage?: number },
+      size: { width: number; height: number },
+    ): void;
     submit(cmds: unknown[]): void;
   };
   createShaderModule(desc: { code: string }): unknown;
   createRenderPipeline(desc: Record<string, unknown>): unknown;
   createBuffer(desc: { size: number; usage: number }): WebGpuBufferLike;
+  createTexture(desc: {
+    size: { width: number; height: number };
+    format: string;
+    usage: number;
+  }): WebGpuTextureLike;
+  createSampler(desc?: Record<string, unknown>): unknown;
   createBindGroup(desc: Record<string, unknown>): unknown;
   createCommandEncoder(): WebGpuCommandEncoderLike;
   destroy?(): void;
@@ -88,10 +120,13 @@ interface WebGpuContextLike {
 const GPU_USAGE_VERTEX = 0x0020;
 const GPU_USAGE_UNIFORM = 0x0040;
 const GPU_USAGE_COPY_DST = 0x0008;
+const GPU_TEX_USAGE_COPY_DST = 0x0002;
+const GPU_TEX_USAGE_TEXTURE_BINDING = 0x0004;
 
-/** WebGPU instanced SDF backend. */
+/** WebGPU instanced SDF + glyph atlas backend. */
 export class WebGPUBackend implements GpuBackend {
   readonly kind: GpuBackendKind = "webgpu";
+  readonly glyphAtlas: GlyphAtlas;
   private width = 1;
   private height = 1;
   private dpr = 1;
@@ -99,24 +134,40 @@ export class WebGPUBackend implements GpuBackend {
   private uniformBuffer: WebGpuBufferLike;
   private rectBuffer: WebGpuBufferLike;
   private lineBuffer: WebGpuBufferLike;
+  private arcBuffer: WebGpuBufferLike;
+  private glyphBuffer: WebGpuBufferLike;
   private rectBufBytes: number;
   private lineBufBytes: number;
+  private arcBufBytes: number;
+  private glyphBufBytes: number;
   private rectPipeline: unknown;
   private linePipeline: unknown;
+  private arcPipeline: unknown;
+  private glyphPipeline: unknown;
   private rectBindGroup: unknown;
   private lineBindGroup: unknown;
+  private arcBindGroup: unknown;
+  private glyphBindGroup: unknown;
+  private atlasTexture: WebGpuTextureLike;
+  private atlasSampler: unknown;
 
   constructor(
     private readonly device: WebGpuDeviceLike,
     private readonly context: WebGpuContextLike,
     format: string,
+    glyphAtlas: GlyphAtlas = new GlyphAtlas(),
   ) {
+    this.glyphAtlas = glyphAtlas;
     this.context.configure({ device, format, alphaMode: "premultiplied" });
     this.uniformBuffer = device.createBuffer({ size: 32, usage: GPU_USAGE_UNIFORM | GPU_USAGE_COPY_DST });
     this.rectBufBytes = 1024 * RECT_STRIDE * 4;
     this.lineBufBytes = 1024 * LINE_STRIDE * 4;
+    this.arcBufBytes = 256 * ARC_STRIDE * 4;
+    this.glyphBufBytes = 1024 * GLYPH_STRIDE * 4;
     this.rectBuffer = device.createBuffer({ size: this.rectBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
     this.lineBuffer = device.createBuffer({ size: this.lineBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
+    this.arcBuffer = device.createBuffer({ size: this.arcBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
+    this.glyphBuffer = device.createBuffer({ size: this.glyphBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
 
     const blend = {
       color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
@@ -168,6 +219,62 @@ export class WebGPUBackend implements GpuBackend {
       primitive: { topology: "triangle-list" },
     });
 
+    const arcMod = device.createShaderModule({ code: WGSL_ARC_SHADER });
+    this.arcPipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: arcMod,
+        entryPoint: "vs_main",
+        buffers: [
+          {
+            arrayStride: ARC_STRIDE * 4,
+            stepMode: "instance",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x4" },
+              { shaderLocation: 1, offset: 16, format: "float32x4" },
+              { shaderLocation: 2, offset: 32, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: { module: arcMod, entryPoint: "fs_main", targets: [{ format, blend }] },
+      primitive: { topology: "triangle-list" },
+    });
+
+    const glyphMod = device.createShaderModule({ code: WGSL_GLYPH_SHADER });
+    this.glyphPipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: glyphMod,
+        entryPoint: "vs_main",
+        buffers: [
+          {
+            arrayStride: GLYPH_STRIDE * 4,
+            stepMode: "instance",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x4" },
+              { shaderLocation: 1, offset: 16, format: "float32x4" },
+              { shaderLocation: 2, offset: 32, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: { module: glyphMod, entryPoint: "fs_main", targets: [{ format, blend }] },
+      primitive: { topology: "triangle-list" },
+    });
+
+    this.atlasTexture = device.createTexture({
+      size: { width: this.glyphAtlas.width, height: this.glyphAtlas.height },
+      format: "r8unorm",
+      usage: GPU_TEX_USAGE_TEXTURE_BINDING | GPU_TEX_USAGE_COPY_DST,
+    });
+    this.atlasSampler = device.createSampler({
+      magFilter: "nearest",
+      minFilter: "nearest",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
     const getLayout = (pipe: unknown) =>
       typeof (pipe as { getBindGroupLayout?: (i: number) => unknown })?.getBindGroupLayout === "function"
         ? (pipe as { getBindGroupLayout(i: number): unknown }).getBindGroupLayout(0)
@@ -181,6 +288,18 @@ export class WebGPUBackend implements GpuBackend {
       layout: getLayout(this.linePipeline),
       entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
     });
+    this.arcBindGroup = device.createBindGroup({
+      layout: getLayout(this.arcPipeline),
+      entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
+    });
+    this.glyphBindGroup = device.createBindGroup({
+      layout: getLayout(this.glyphPipeline),
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 1, resource: this.atlasSampler },
+        { binding: 2, resource: this.atlasTexture.createView() },
+      ],
+    });
   }
 
   resize(widthPx: number, heightPx: number, dpr: number): void {
@@ -189,16 +308,18 @@ export class WebGPUBackend implements GpuBackend {
     this.dpr = Math.max(1, dpr);
   }
 
-  private ensureBuffer(which: "rect" | "line", byteLength: number): void {
-    if (which === "rect" && byteLength > this.rectBufBytes) {
-      this.rectBuffer.destroy();
-      this.rectBufBytes = Math.max(byteLength, this.rectBufBytes * 2);
-      this.rectBuffer = this.device.createBuffer({ size: this.rectBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
-    } else if (which === "line" && byteLength > this.lineBufBytes) {
-      this.lineBuffer.destroy();
-      this.lineBufBytes = Math.max(byteLength, this.lineBufBytes * 2);
-      this.lineBuffer = this.device.createBuffer({ size: this.lineBufBytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
+  private growBuffer(
+    current: WebGpuBufferLike,
+    currentBytes: number,
+    neededBytes: number,
+  ): { buf: WebGpuBufferLike; bytes: number } {
+    if (neededBytes <= currentBytes) {
+      return { buf: current, bytes: currentBytes };
     }
+    current.destroy();
+    const bytes = Math.max(neededBytes, currentBytes * 2);
+    const buf = this.device.createBuffer({ size: bytes, usage: GPU_USAGE_VERTEX | GPU_USAGE_COPY_DST });
+    return { buf, bytes };
   }
 
   render(batches: readonly InstanceBatch[], clearColor: RgbaTuple): GpuFrameStats {
@@ -224,6 +345,7 @@ export class WebGPUBackend implements GpuBackend {
     let rectInstances = 0;
     let lineInstances = 0;
     let arcInstances = 0;
+    let glyphInstances = 0;
 
     for (const batch of batches) {
       batch.camera.writeUniform(this.uniformScratch, this.width, this.height, this.dpr);
@@ -241,7 +363,9 @@ export class WebGPUBackend implements GpuBackend {
 
       if (batch.rects > 0) {
         const data = batch.rectView();
-        this.ensureBuffer("rect", data.byteLength);
+        const grown = this.growBuffer(this.rectBuffer, this.rectBufBytes, data.byteLength);
+        this.rectBuffer = grown.buf;
+        this.rectBufBytes = grown.bytes;
         this.device.queue.writeBuffer(this.rectBuffer, 0, data);
         pass.setPipeline(this.rectPipeline);
         pass.setBindGroup(0, this.rectBindGroup);
@@ -253,7 +377,9 @@ export class WebGPUBackend implements GpuBackend {
 
       if (batch.lines > 0) {
         const data = batch.lineView();
-        this.ensureBuffer("line", data.byteLength);
+        const grown = this.growBuffer(this.lineBuffer, this.lineBufBytes, data.byteLength);
+        this.lineBuffer = grown.buf;
+        this.lineBufBytes = grown.bytes;
         this.device.queue.writeBuffer(this.lineBuffer, 0, data);
         pass.setPipeline(this.linePipeline);
         pass.setBindGroup(0, this.lineBindGroup);
@@ -263,7 +389,42 @@ export class WebGPUBackend implements GpuBackend {
         lineInstances += batch.lines;
       }
 
-      arcInstances += batch.arcs;
+      if (batch.arcs > 0) {
+        const data = batch.arcView();
+        const grown = this.growBuffer(this.arcBuffer, this.arcBufBytes, data.byteLength);
+        this.arcBuffer = grown.buf;
+        this.arcBufBytes = grown.bytes;
+        this.device.queue.writeBuffer(this.arcBuffer, 0, data);
+        pass.setPipeline(this.arcPipeline);
+        pass.setBindGroup(0, this.arcBindGroup);
+        pass.setVertexBuffer(0, this.arcBuffer);
+        pass.draw(6, batch.arcs);
+        drawCalls++;
+        arcInstances += batch.arcs;
+      }
+
+      if (batch.glyphs > 0) {
+        if (this.glyphAtlas.dirty) {
+          this.device.queue.writeTexture(
+            { texture: this.atlasTexture },
+            this.glyphAtlas.data,
+            { bytesPerRow: this.glyphAtlas.width, rowsPerImage: this.glyphAtlas.height },
+            { width: this.glyphAtlas.width, height: this.glyphAtlas.height },
+          );
+          this.glyphAtlas.markClean();
+        }
+        const data = batch.glyphView();
+        const grown = this.growBuffer(this.glyphBuffer, this.glyphBufBytes, data.byteLength);
+        this.glyphBuffer = grown.buf;
+        this.glyphBufBytes = grown.bytes;
+        this.device.queue.writeBuffer(this.glyphBuffer, 0, data);
+        pass.setPipeline(this.glyphPipeline);
+        pass.setBindGroup(0, this.glyphBindGroup);
+        pass.setVertexBuffer(0, this.glyphBuffer);
+        pass.draw(6, batch.glyphs);
+        drawCalls++;
+        glyphInstances += batch.glyphs;
+      }
     }
 
     pass.end();
@@ -274,6 +435,7 @@ export class WebGPUBackend implements GpuBackend {
       rectInstances,
       lineInstances,
       arcInstances,
+      glyphInstances,
       frameTimeMs: performance.now() - t0,
     };
   }
@@ -282,6 +444,9 @@ export class WebGPUBackend implements GpuBackend {
     this.uniformBuffer.destroy();
     this.rectBuffer.destroy();
     this.lineBuffer.destroy();
+    this.arcBuffer.destroy();
+    this.glyphBuffer.destroy();
+    this.atlasTexture.destroy();
     this.device.destroy?.();
   }
 }
@@ -304,6 +469,18 @@ interface WebGL2Like {
   ONE_MINUS_SRC_ALPHA: number;
   COLOR_BUFFER_BIT: number;
   SCISSOR_TEST: number;
+  TEXTURE_2D: number;
+  TEXTURE0: number;
+  TEXTURE_MIN_FILTER: number;
+  TEXTURE_MAG_FILTER: number;
+  TEXTURE_WRAP_S: number;
+  TEXTURE_WRAP_T: number;
+  NEAREST: number;
+  CLAMP_TO_EDGE: number;
+  UNPACK_ALIGNMENT: number;
+  R8: number;
+  RED: number;
+  UNSIGNED_BYTE: number;
   createShader(type: number): unknown;
   shaderSource(shader: unknown, src: string): void;
   compileShader(shader: unknown): void;
@@ -319,6 +496,7 @@ interface WebGL2Like {
   useProgram(prog: unknown): void;
   getUniformLocation(prog: unknown, name: string): unknown;
   uniform4f(loc: unknown, x: number, y: number, z: number, w: number): void;
+  uniform1i(loc: unknown, v: number): void;
   createVertexArray(): unknown;
   bindVertexArray(vao: unknown): void;
   deleteVertexArray(vao: unknown): void;
@@ -326,6 +504,23 @@ interface WebGL2Like {
   bindBuffer(target: number, buf: unknown): void;
   bufferData(target: number, data: ArrayBufferView | number, usage: number): void;
   deleteBuffer(buf: unknown): void;
+  createTexture(): unknown;
+  activeTexture(unit: number): void;
+  bindTexture(target: number, tex: unknown): void;
+  texParameteri(target: number, pname: number, param: number): void;
+  pixelStorei(pname: number, param: number): void;
+  texImage2D(
+    target: number,
+    level: number,
+    internalformat: number,
+    width: number,
+    height: number,
+    border: number,
+    format: number,
+    type: number,
+    pixels: ArrayBufferView | null,
+  ): void;
+  deleteTexture(tex: unknown): void;
   enableVertexAttribArray(idx: number): void;
   vertexAttribPointer(idx: number, size: number, type: number, norm: boolean, stride: number, offset: number): void;
   vertexAttribDivisor(idx: number, divisor: number): void;
@@ -347,9 +542,10 @@ interface GlPipeline {
   uCam1: unknown;
 }
 
-/** WebGL2 instanced SDF backend (automatic fallback for Safari/Firefox/older GPUs). */
+/** WebGL2 instanced SDF + glyph atlas backend (automatic fallback for Safari/Firefox/older GPUs). */
 export class WebGL2Backend implements GpuBackend {
   readonly kind: GpuBackendKind = "webgl2";
+  readonly glyphAtlas: GlyphAtlas;
   private width = 1;
   private height = 1;
   private dpr = 1;
@@ -357,13 +553,39 @@ export class WebGL2Backend implements GpuBackend {
   private rectPipe: GlPipeline;
   private linePipe: GlPipeline;
   private arcPipe: GlPipeline;
+  private glyphPipe: GlPipeline;
+  private glyphAtlasLoc: unknown;
+  private atlasTexture: unknown;
 
-  constructor(private readonly gl: WebGL2Like) {
+  constructor(private readonly gl: WebGL2Like, glyphAtlas: GlyphAtlas = new GlyphAtlas()) {
+    this.glyphAtlas = glyphAtlas;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     this.rectPipe = this.buildPipeline(GLSL300_RECT_VS, GLSL300_RECT_FS, RECT_STRIDE, [0, 16, 32, 48]);
     this.linePipe = this.buildPipeline(GLSL300_LINE_VS, GLSL300_LINE_FS, LINE_STRIDE, [0, 16, 32]);
     this.arcPipe = this.buildPipeline(GLSL300_ARC_VS, GLSL300_ARC_FS, ARC_STRIDE, [0, 16, 32]);
+    this.glyphPipe = this.buildPipeline(GLSL300_GLYPH_VS, GLSL300_GLYPH_FS, GLYPH_STRIDE, [0, 16, 32]);
+    this.glyphAtlasLoc = gl.getUniformLocation(this.glyphPipe.program, "uAtlas");
+
+    this.atlasTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.atlasTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.R8,
+      this.glyphAtlas.width,
+      this.glyphAtlas.height,
+      0,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      this.glyphAtlas.data,
+    );
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   private compileShader(type: number, src: string): unknown {
@@ -420,12 +642,15 @@ export class WebGL2Backend implements GpuBackend {
     this.dpr = Math.max(1, dpr);
   }
 
-  private drawPipe(pipe: GlPipeline, data: Float32Array, instanceCount: number): void {
+  private drawPipe(pipe: GlPipeline, data: Float32Array, instanceCount: number, bindAtlas = false): void {
     const gl = this.gl;
     const u = this.uniformScratch;
     gl.useProgram(pipe.program);
     gl.uniform4f(pipe.uCam0, u[0], u[1], u[2], u[3]);
     gl.uniform4f(pipe.uCam1, u[4], u[5], u[6], u[7]);
+    if (bindAtlas) {
+      gl.uniform1i(this.glyphAtlasLoc, 0);
+    }
     gl.bindVertexArray(pipe.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, pipe.vbo);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
@@ -447,6 +672,7 @@ export class WebGL2Backend implements GpuBackend {
     let rectInstances = 0;
     let lineInstances = 0;
     let arcInstances = 0;
+    let glyphInstances = 0;
 
     for (const batch of batches) {
       batch.camera.writeUniform(this.uniformScratch, this.width, this.height, this.dpr);
@@ -478,6 +704,28 @@ export class WebGL2Backend implements GpuBackend {
         drawCalls++;
         arcInstances += batch.arcs;
       }
+      if (batch.glyphs > 0) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.atlasTexture);
+        if (this.glyphAtlas.dirty) {
+          gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.R8,
+            this.glyphAtlas.width,
+            this.glyphAtlas.height,
+            0,
+            gl.RED,
+            gl.UNSIGNED_BYTE,
+            this.glyphAtlas.data,
+          );
+          this.glyphAtlas.markClean();
+        }
+        this.drawPipe(this.glyphPipe, batch.glyphView(), batch.glyphs, true);
+        drawCalls++;
+        glyphInstances += batch.glyphs;
+      }
     }
 
     gl.disable(gl.SCISSOR_TEST);
@@ -487,27 +735,34 @@ export class WebGL2Backend implements GpuBackend {
       rectInstances,
       lineInstances,
       arcInstances,
+      glyphInstances,
       frameTimeMs: performance.now() - t0,
     };
   }
 
   dispose(): void {
     const gl = this.gl;
-    for (const pipe of [this.rectPipe, this.linePipe, this.arcPipe]) {
+    for (const pipe of [this.rectPipe, this.linePipe, this.arcPipe, this.glyphPipe]) {
       gl.deleteBuffer(pipe.vbo);
       gl.deleteVertexArray(pipe.vao);
       gl.deleteProgram(pipe.program);
     }
+    gl.deleteTexture(this.atlasTexture);
   }
 }
 
 /** Deterministic zero-GPU backend for Node.js, SSR, and automated testing. */
 export class HeadlessNullBackend implements GpuBackend {
   readonly kind: GpuBackendKind = "headless";
+  readonly glyphAtlas: GlyphAtlas;
   lastWidth = 1;
   lastHeight = 1;
   lastDpr = 1;
   lastBatches: readonly InstanceBatch[] = [];
+
+  constructor(glyphAtlas: GlyphAtlas = new GlyphAtlas()) {
+    this.glyphAtlas = glyphAtlas;
+  }
 
   resize(widthPx: number, heightPx: number, dpr: number): void {
     this.lastWidth = Math.max(1, Math.floor(widthPx));
@@ -522,10 +777,12 @@ export class HeadlessNullBackend implements GpuBackend {
     let rectInstances = 0;
     let lineInstances = 0;
     let arcInstances = 0;
+    let glyphInstances = 0;
     for (const b of batches) {
       if (b.rects > 0) { drawCalls++; rectInstances += b.rects; }
       if (b.lines > 0) { drawCalls++; lineInstances += b.lines; }
       if (b.arcs > 0) { drawCalls++; arcInstances += b.arcs; }
+      if (b.glyphs > 0) { drawCalls++; glyphInstances += b.glyphs; }
     }
     return {
       backend: this.kind,
@@ -533,6 +790,7 @@ export class HeadlessNullBackend implements GpuBackend {
       rectInstances,
       lineInstances,
       arcInstances,
+      glyphInstances,
       frameTimeMs: performance.now() - t0,
     };
   }
@@ -546,6 +804,7 @@ export interface GpuSurfaceOptions {
   prefer?: "webgpu" | "webgl2" | "headless";
   clearColor?: RgbaTuple;
   dpr?: number;
+  glyphAtlas?: GlyphAtlas;
   navigatorGpu?: {
     requestAdapter(): Promise<{ requestDevice(): Promise<WebGpuDeviceLike> } | null>;
     getPreferredCanvasFormat?(): string;
@@ -554,10 +813,11 @@ export interface GpuSurfaceOptions {
 
 /**
  * Unified GPU Surface managing WebGPU -> WebGL2 -> Headless backend lifecycle,
- * DPI resize, dirty-frame RAF scheduling, and batch submission.
+ * shared GlyphAtlas, DPI resize, dirty-frame RAF scheduling, and batch submission.
  */
 export class GpuSurface {
   readonly backend: GpuBackend;
+  readonly glyphAtlas: GlyphAtlas;
   private clearColor: RgbaTuple;
   private width = 1;
   private height = 1;
@@ -575,6 +835,7 @@ export class GpuSurface {
     dpr: number,
   ) {
     this.backend = backend;
+    this.glyphAtlas = backend.glyphAtlas;
     this.clearColor = clearColor;
     this.dpr = Math.max(1, dpr);
   }
@@ -583,6 +844,7 @@ export class GpuSurface {
     const clearColor: RgbaTuple = options.clearColor ?? [1, 1, 1, 1];
     const dpr = options.dpr ?? (typeof globalThis.devicePixelRatio === "number" ? globalThis.devicePixelRatio : 1);
     const prefer = options.prefer ?? "webgpu";
+    const glyphAtlas = options.glyphAtlas ?? new GlyphAtlas();
 
     if (canvas && prefer !== "headless") {
       // 1. Try WebGPU primary backend
@@ -597,7 +859,7 @@ export class GpuSurface {
             const ctx = device ? (canvas.getContext("webgpu") as WebGpuContextLike | null) : null;
             if (device && ctx) {
               const fmt = navGpu.getPreferredCanvasFormat?.() ?? "bgra8unorm";
-              return new GpuSurface(canvas, new WebGPUBackend(device, ctx, fmt), clearColor, dpr);
+              return new GpuSurface(canvas, new WebGPUBackend(device, ctx, fmt, glyphAtlas), clearColor, dpr);
             }
           } catch {
             // Fall through to WebGL2
@@ -614,14 +876,14 @@ export class GpuSurface {
           powerPreference: "high-performance",
         }) as WebGL2Like | null;
         if (gl) {
-          return new GpuSurface(canvas, new WebGL2Backend(gl), clearColor, dpr);
+          return new GpuSurface(canvas, new WebGL2Backend(gl, glyphAtlas), clearColor, dpr);
         }
       } catch {
         // Fall through to HeadlessNullBackend
       }
     }
 
-    return new GpuSurface(canvas, new HeadlessNullBackend(), clearColor, dpr);
+    return new GpuSurface(canvas, new HeadlessNullBackend(glyphAtlas), clearColor, dpr);
   }
 
   get backendKind(): GpuBackendKind {
@@ -654,7 +916,15 @@ export class GpuSurface {
   /** Render batches immediately and return frame telemetry. */
   render(batches: readonly InstanceBatch[]): GpuFrameStats {
     if (this.disposed) {
-      return { backend: this.backend.kind, drawCalls: 0, rectInstances: 0, lineInstances: 0, arcInstances: 0, frameTimeMs: 0 };
+      return {
+        backend: this.backend.kind,
+        drawCalls: 0,
+        rectInstances: 0,
+        lineInstances: 0,
+        arcInstances: 0,
+        glyphInstances: 0,
+        frameTimeMs: 0,
+      };
     }
     this.dirty = false;
     this.lastStats = this.backend.render(batches, this.clearColor);

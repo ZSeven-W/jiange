@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { Document } from "@jiange/doc-sdk";
-import { DocViewController, createDocViewComponent, mountDocView } from "../src/index.js";
+import {
+  DocViewController,
+  createDocViewComponent,
+  defineDocElement,
+  mountDocView,
+  type JiangeDocElement,
+} from "../src/index.js";
+import { createDocViewComponent as createDocViewFromReactSubpath } from "../src/react.js";
 
 function makeDomNode(tag: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
@@ -53,6 +60,7 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     expect(onFocus).toHaveBeenCalled();
     const activeId = ctrl.getActiveBlockId()!;
     ctrl.reportBlockHeight(activeId, 88);
+    ctrl.reportBlockHeight("unknown-block-id", 64);
 
     // Edit, insert, delete, keyboard shortcuts, wheel scroll
     ctrl.updateActiveText("Updated Conclusion");
@@ -147,5 +155,83 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     const el = DocView({ document: doc }) as { type: string; props: { style: { width: string; height: string } } };
     expect(el.type).toBe("div");
     expect(el.props.style).toEqual({ width: "100%", height: "100%" });
+  });
+
+  it("defineDocElement is SSR-safe and registers <jiange-doc> lifecycle cleanly", () => {
+    expect(createDocViewFromReactSubpath).toBe(createDocViewComponent);
+    expect(defineDocElement()).toBe(false);
+
+    const origCustomElements = Object.getOwnPropertyDescriptor(globalThis, "customElements");
+    const origHtmlElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const registry = new Map<string, CustomElementConstructor>();
+    const fakeCustomElements = {
+      define: vi.fn((name: string, ctor: CustomElementConstructor) => { registry.set(name, ctor); }),
+      get: (name: string) => registry.get(name),
+    };
+    const fakeDoc = { createElement: (t: string) => makeDomNode(t) };
+
+    class FakeHTMLElement {
+      isConnected = false;
+      style: Record<string, string> = {};
+      children: unknown[] = [];
+      clientWidth = 760;
+      clientHeight = 400;
+      ownerDocument = fakeDoc;
+      private listeners = new Map<string, Set<(e: unknown) => void>>();
+      appendChild(c: unknown) { this.children.push(c); return c; }
+      addEventListener(ev: string, fn: (e: unknown) => void) {
+        let s = this.listeners.get(ev);
+        if (!s) { s = new Set(); this.listeners.set(ev, s); }
+        s.add(fn);
+      }
+      removeEventListener(ev: string, fn: (e: unknown) => void) { this.listeners.get(ev)?.delete(fn); }
+    }
+
+    try {
+      Object.defineProperty(globalThis, "customElements", { value: fakeCustomElements, configurable: true, writable: true });
+      expect(defineDocElement()).toBe(false);
+
+      Object.defineProperty(globalThis, "HTMLElement", { value: FakeHTMLElement, configurable: true, writable: true });
+      expect(defineDocElement()).toBe(true);
+      expect(defineDocElement()).toBe(true);
+      expect(fakeCustomElements.define).toHaveBeenCalledTimes(1);
+      expect(registry.has("jiange-doc")).toBe(true);
+
+      const Ctor = registry.get("jiange-doc")!;
+      const el = new Ctor() as unknown as JiangeDocElement & {
+        isConnected: boolean;
+        connectedCallback(): void;
+        disconnectedCallback(): void;
+      };
+      const doc = Document.fromMarkdown("# Hello\n\nBody", "WC");
+
+      el.isConnected = true;
+      el.connectedCallback();
+      expect(el.document).toBeNull();
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = false;
+      el.document = doc;
+      expect(el.document).toBe(doc);
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = true;
+      el.connectedCallback();
+      expect(el.mounted).not.toBeNull();
+
+      el.options = { readOnly: true };
+      expect(el.options).toEqual({ readOnly: true });
+      expect(el.mounted).not.toBeNull();
+
+      el.isConnected = false;
+      el.disconnectedCallback();
+      expect(el.mounted).toBeNull();
+      el.disconnectedCallback();
+    } finally {
+      if (origCustomElements) Object.defineProperty(globalThis, "customElements", origCustomElements);
+      else delete (globalThis as Record<string, unknown>).customElements;
+      if (origHtmlElement) Object.defineProperty(globalThis, "HTMLElement", origHtmlElement);
+      else delete (globalThis as Record<string, unknown>).HTMLElement;
+    }
   });
 });

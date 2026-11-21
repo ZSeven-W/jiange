@@ -384,34 +384,3 @@ export async function mountSlidesView(
     },
   };
 }
-
-export interface SlidesReactLike {
-  useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
-  useRef<T>(initial: T): { current: T };
-  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): unknown;
-}
-
-export function createSlidesViewComponent(React: SlidesReactLike) {
-  return function SlidesView(props: { presentation: Presentation; width?: number; height?: number } & SlidesViewOptions) {
-    const hostRef = React.useRef<HTMLElement | null>(null);
-    React.useEffect(() => {
-      let alive = true;
-      let mounted: MountedSlidesView | null = null;
-      const el = hostRef.current;
-      if (!el) return;
-      void mountSlidesView(el, props.presentation, props).then((v) => {
-        if (!alive) v.dispose();
-        else mounted = v;
-      });
-      return () => {
-        alive = false;
-        mounted?.dispose();
-      };
-    }, [props.presentation]);
-    return React.createElement("div", {
-      ref: hostRef,
-      tabIndex: 0,
-      style: { width: props.width ? `${props.width}px` : "100%", height: props.height ? `${props.height}px` : "100%" },
-    });
-  };
-}

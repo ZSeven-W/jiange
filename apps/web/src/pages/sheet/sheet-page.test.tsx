@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DocMeta, Me, SheetComment, SheetSnapshot, SheetWorksheet } from "@/lib/api";
-import { SheetPage } from "./sheet-page";
+import { buildSheetRowFenwick, computeSheetVirtualWindow, SheetPage } from "./sheet-page";
 
 const me: Me = {
   user: { id: 1, email: "owner@example.com", name: "Owner", createdAt: "2026-11-18T00:00:00Z" },
@@ -217,5 +217,32 @@ describe("SheetPage", () => {
     expect(html).toContain("data-resource-type-notice");
     expect(html).toContain('href="#/doc/7"');
     expect(html).not.toContain("data-sheet-page");
+  });
+
+  it("virtualizes large sheets via FenwickVirtualizer while preserving frozen rows and exact scroll height", () => {
+    const rowCount = 5000;
+    const visibleRows = Array.from({ length: rowCount }, (_, i) => i);
+    const rowHeights = Array.from({ length: rowCount }, (_, i) => (i % 50 === 0 ? 54 : 27));
+    const scrollable = visibleRows.slice(2);
+    const fenwick = buildSheetRowFenwick(scrollable, rowHeights);
+
+    // Small sheet or unmeasured viewport skips virtualization
+    const small = computeSheetVirtualWindow([0, 1, 2], [27, 27, 27], 1, 0, 600);
+    expect(small.virtualized).toBe(false);
+    expect(small.frozen).toEqual([0]);
+    expect(small.virtual).toEqual([1, 2]);
+    expect(small.topSpacer).toBe(0);
+    expect(small.bottomSpacer).toBe(0);
+
+    // Large sheet at mid-scroll virtualizes strictly to viewport + overscan
+    const mid = computeSheetVirtualWindow(visibleRows, rowHeights, 2, 27_000, 600, 5, fenwick);
+    expect(mid.virtualized).toBe(true);
+    expect(mid.frozen).toEqual([0, 1]);
+    expect(mid.virtual.length).toBeLessThan(60);
+    expect(mid.virtual[0]).toBeGreaterThan(900);
+    expect(mid.topSpacer).toBeGreaterThan(20_000);
+    expect(mid.bottomSpacer).toBeGreaterThan(50_000);
+    const virtualHeight = mid.virtual.reduce((sum, idx) => sum + rowHeights[idx], 0);
+    expect(mid.topSpacer + virtualHeight + mid.bottomSpacer).toBe(fenwick.totalSize);
   });
 });

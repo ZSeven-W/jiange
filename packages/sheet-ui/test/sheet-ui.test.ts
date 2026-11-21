@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { GpuSurface, type PoolableElement } from "@jiange/render-gpu";
 import { Workbook } from "@jiange/sheet-sdk";
-import { SheetGpuRenderer, SheetViewController, createSheetViewComponent, mountSheetView } from "../src/index.js";
+import {
+  SheetGpuRenderer,
+  SheetViewController,
+  createSheetViewComponent,
+  defineSheetElement,
+  mountSheetView,
+  type JiangeSheetElement,
+} from "../src/index.js";
+import { createSheetViewComponent as createSheetViewFromReactSubpath } from "../src/react.js";
 
 function makeFakeCell(): PoolableElement {
   return { style: { transform: "", width: "", height: "", display: "" }, textContent: "" };
@@ -424,5 +432,130 @@ describe("@jiange/sheet-ui (WebGPU/WebGL2 + Pooled Virtual Grid)", () => {
     expect(resizeSpy).not.toHaveBeenCalled();
 
     resizeCleanups.forEach((c) => c());
+  });
+
+  it("defineSheetElement is SSR-safe and registers <jiange-sheet> lifecycle cleanly", async () => {
+    expect(createSheetViewFromReactSubpath).toBe(createSheetViewComponent);
+    // In Node/SSR without customElements / HTMLElement, safely returns false
+    expect(defineSheetElement()).toBe(false);
+
+    const origCustomElements = Object.getOwnPropertyDescriptor(globalThis, "customElements");
+    const origHtmlElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+
+    const registry = new Map<string, CustomElementConstructor>();
+    const fakeCustomElements = {
+      define: vi.fn((name: string, ctor: CustomElementConstructor) => { registry.set(name, ctor); }),
+      get: (name: string) => registry.get(name),
+    };
+
+    const makeChildNode = (tag: string) => {
+      const listeners = new Map<string, Set<(e: unknown) => void>>();
+      return {
+        tagName: tag.toUpperCase(),
+        style: {} as Record<string, string>,
+        children: [] as unknown[],
+        textContent: "",
+        value: "",
+        type: "",
+        width: 0,
+        height: 0,
+        clientWidth: 640,
+        clientHeight: 400,
+        appendChild(c: unknown) { this.children.push(c); return c; },
+        remove: vi.fn(),
+        focus: vi.fn(),
+        getContext: () => null,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 400 }),
+        addEventListener(ev: string, fn: (e: unknown) => void) {
+          let s = listeners.get(ev);
+          if (!s) { s = new Set(); listeners.set(ev, s); }
+          s.add(fn);
+        },
+        removeEventListener(ev: string, fn: (e: unknown) => void) { listeners.get(ev)?.delete(fn); },
+      };
+    };
+    const fakeDoc = { createElement: (tag: string) => makeChildNode(tag) };
+
+    class FakeHTMLElement {
+      isConnected = false;
+      style: Record<string, string> = {};
+      children: unknown[] = [];
+      clientWidth = 640;
+      clientHeight = 400;
+      ownerDocument = fakeDoc;
+      private listeners = new Map<string, Set<(e: unknown) => void>>();
+      appendChild(c: unknown) { this.children.push(c); return c; }
+      getBoundingClientRect() { return { left: 0, top: 0, width: 640, height: 400 }; }
+      addEventListener(ev: string, fn: (e: unknown) => void) {
+        let s = this.listeners.get(ev);
+        if (!s) { s = new Set(); this.listeners.set(ev, s); }
+        s.add(fn);
+      }
+      removeEventListener(ev: string, fn: (e: unknown) => void) { this.listeners.get(ev)?.delete(fn); }
+    }
+
+    try {
+      // customElements defined but HTMLElement still undefined -> returns false
+      Object.defineProperty(globalThis, "customElements", { value: fakeCustomElements, configurable: true, writable: true });
+      expect(defineSheetElement()).toBe(false);
+
+      // Both defined -> registers <jiange-sheet> and is idempotent
+      Object.defineProperty(globalThis, "HTMLElement", { value: FakeHTMLElement, configurable: true, writable: true });
+      expect(defineSheetElement()).toBe(true);
+      expect(defineSheetElement()).toBe(true);
+      expect(fakeCustomElements.define).toHaveBeenCalledTimes(1);
+      expect(registry.has("jiange-sheet")).toBe(true);
+
+      const Ctor = registry.get("jiange-sheet")!;
+      const el = new Ctor() as unknown as JiangeSheetElement & {
+        isConnected: boolean;
+        connectedCallback(): void;
+        disconnectedCallback(): void;
+      };
+      const wb = Workbook.create({ sheets: [{ name: "WC", rows: 10, cols: 5 }] });
+
+      // Connected with null workbook -> no mount
+      el.isConnected = true;
+      el.connectedCallback();
+      expect(el.workbook).toBeNull();
+      expect(el.mounted).toBeNull();
+
+      // Disconnected with workbook -> no mount
+      el.isConnected = false;
+      el.workbook = wb;
+      expect(el.workbook).toBe(wb);
+      expect(el.mounted).toBeNull();
+
+      // Connected with workbook -> mounts asynchronously
+      el.isConnected = true;
+      el.connectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      // Updating options disposes previous mount and remounts
+      el.options = { gpu: { prefer: "headless" } };
+      expect(el.options).toEqual({ gpu: { prefer: "headless" } });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      // Disconnect while mounted, then disconnect again while already unmounted
+      el.isConnected = false;
+      el.disconnectedCallback();
+      expect(el.mounted).toBeNull();
+      el.disconnectedCallback();
+
+      // Race: disconnect before async mountSheetView resolves -> disposes resolved view
+      el.isConnected = true;
+      el.connectedCallback();
+      el.isConnected = false;
+      el.disconnectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).toBeNull();
+    } finally {
+      if (origCustomElements) Object.defineProperty(globalThis, "customElements", origCustomElements);
+      else delete (globalThis as Record<string, unknown>).customElements;
+      if (origHtmlElement) Object.defineProperty(globalThis, "HTMLElement", origHtmlElement);
+      else delete (globalThis as Record<string, unknown>).HTMLElement;
+    }
   });
 });

@@ -9,7 +9,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./whiteboard-view": "./src/whiteboard-view.ts"
+    "./whiteboard-view": "./src/whiteboard-view.ts",
+    "./react": "./src/react.ts"
   },
   "files": [
     "dist",
@@ -26,6 +27,10 @@
       "./whiteboard-view": {
         "types": "./dist/whiteboard-view.d.ts",
         "import": "./dist/whiteboard-view.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js"
       }
     }
   },

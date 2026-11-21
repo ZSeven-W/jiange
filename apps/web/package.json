@@ -11,8 +11,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@jiange/base-sdk": "workspace:*",
     "@jiange/collab": "workspace:*",
     "@jiange/doc-sdk": "workspace:*",
+    "@jiange/render-gpu": "workspace:*",
     "@jiange/sheet-sdk": "workspace:*",
     "@jiange/slides-sdk": "workspace:*",
     "@jiange/whiteboard-sdk": "workspace:*",

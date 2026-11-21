@@ -35,6 +35,7 @@ import { ResourceTypeNotice } from "@/pages/resource-type-notice";
 import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
 import { ChevronRight, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
+import { FenwickVirtualizer } from "@jiange/render-gpu";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
 import {
@@ -77,6 +78,61 @@ const DEFAULT_COL_WIDTH = 105;
 const DEFAULT_ROW_HEIGHT = 27;
 const ROW_HEADER_WIDTH = 44;
 const COL_HEADER_HEIGHT = 24;
+const VIRTUALIZE_ROW_THRESHOLD = 80;
+const VIRTUAL_ROW_OVERSCAN = 10;
+
+export interface SheetVirtualRowWindow {
+  frozen: number[];
+  virtual: number[];
+  topSpacer: number;
+  bottomSpacer: number;
+  virtualized: boolean;
+}
+
+export function buildSheetRowFenwick(scrollableRows: readonly number[], rowHeights: readonly number[]): FenwickVirtualizer {
+  const fenwick = new FenwickVirtualizer(scrollableRows.length, DEFAULT_ROW_HEIGHT);
+  for (let i = 0; i < scrollableRows.length; i++) {
+    const h = rowHeights[scrollableRows[i]] ?? DEFAULT_ROW_HEIGHT;
+    if (h !== DEFAULT_ROW_HEIGHT) fenwick.setSize(i, h);
+  }
+  return fenwick;
+}
+
+export function computeSheetVirtualWindow(
+  visibleRows: readonly number[],
+  rowHeights: readonly number[],
+  frozenRows: number,
+  scrollTop: number,
+  viewportHeight: number,
+  overscan = VIRTUAL_ROW_OVERSCAN,
+  fenwick?: FenwickVirtualizer,
+): SheetVirtualRowWindow {
+  const frozen: number[] = [];
+  const scrollable: number[] = [];
+  let frozenHeight = COL_HEADER_HEIGHT;
+  for (const rowIdx of visibleRows) {
+    if (rowIdx < frozenRows) {
+      frozen.push(rowIdx);
+      frozenHeight += rowHeights[rowIdx] ?? DEFAULT_ROW_HEIGHT;
+    } else {
+      scrollable.push(rowIdx);
+    }
+  }
+  if (viewportHeight <= 0 || scrollable.length <= VIRTUALIZE_ROW_THRESHOLD) {
+    return { frozen, virtual: scrollable, topSpacer: 0, bottomSpacer: 0, virtualized: false };
+  }
+  const tree = fenwick ?? buildSheetRowFenwick(scrollable, rowHeights);
+  const effectiveViewport = Math.max(200, viewportHeight - frozenHeight);
+  const range = tree.visibleRange(Math.max(0, scrollTop), effectiveViewport, overscan);
+  const virtual = range.end >= range.start ? scrollable.slice(range.start, range.end + 1) : [];
+  return {
+    frozen,
+    virtual,
+    topSpacer: range.startOffset,
+    bottomSpacer: Math.max(0, range.totalSize - range.endOffset),
+    virtualized: true,
+  };
+}
 
 type EditingState = {
   sheetId: number;
@@ -197,6 +253,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
   const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
   const [dropdownCell, setDropdownCell] = useState<{ sheetId: number; row: number; col: number } | null>(null);
+  const [gridScrollTop, setGridScrollTop] = useState(0);
+  const [gridViewportHeight, setGridViewportHeight] = useState(0);
 
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -399,6 +457,39 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     }
     return arr;
   }, [rowHeights]);
+
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const syncSize = () => setGridViewportHeight(el.clientHeight);
+    syncSize();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(syncSize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [activeSheet?.id]);
+
+  const scrollableVisibleRows = useMemo(
+    () => (activeSheet ? visibleRows.filter((rowIdx) => rowIdx >= activeSheet.frozenRows) : []),
+    [visibleRows, activeSheet?.frozenRows],
+  );
+  const rowFenwick = useMemo(
+    () => buildSheetRowFenwick(scrollableVisibleRows, rowHeights),
+    [scrollableVisibleRows, rowHeights],
+  );
+  const virtualRowWindow = useMemo(
+    () =>
+      computeSheetVirtualWindow(
+        visibleRows,
+        rowHeights,
+        activeSheet?.frozenRows ?? 0,
+        gridScrollTop / Math.max(0.25, zoom / 100),
+        gridViewportHeight / Math.max(0.25, zoom / 100),
+        VIRTUAL_ROW_OVERSCAN,
+        rowFenwick,
+      ),
+    [visibleRows, rowHeights, activeSheet?.frozenRows, gridScrollTop, gridViewportHeight, zoom, rowFenwick],
+  );
 
   const focusedCell = activeSheet ? gridMap.cellByKey.get(pointKey(selection.focus)) : undefined;
   const focusedStyle: SheetCellStyle = focusedCell?.style ?? {};
@@ -1873,6 +1964,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         aria-colcount={activeSheet.columns.length}
         tabIndex={0}
         data-sheet-grid
+        data-sheet-virtualized={virtualRowWindow.virtualized ? "true" : undefined}
+        onScroll={(e) => {
+          const nextTop = e.currentTarget.scrollTop;
+          if (Math.abs(nextTop - gridScrollTop) >= 1) setGridScrollTop(nextTop);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape" && dropdownCell) {
             setDropdownCell(null);
@@ -1993,20 +2089,21 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </div>
           )}
 
-          {/* Visible Rows */}
-          {visibleRows.map((rowIdx) => {
-            const rowAxis = activeSheet.rows[rowIdx];
-            const rh = rowHeights[rowIdx];
-            const isFrozenRow = rowIdx < activeSheet.frozenRows;
-            const b = selectionBounds(selection);
-            return (
-              <div
-                key={rowAxis.id}
-                role="row"
-                style={{
-                  height: rh,
-                  ...(isFrozenRow ? { position: "sticky", top: rowTopOffsets[rowIdx], zIndex: 25 } : {}),
-                }}
+          {/* Visible Rows (Fenwick-virtualized for large sheets; sticky frozen rows stay mounted) */}
+          {(() => {
+            const renderRow = (rowIdx: number) => {
+              const rowAxis = activeSheet.rows[rowIdx];
+              const rh = rowHeights[rowIdx];
+              const isFrozenRow = rowIdx < activeSheet.frozenRows;
+              const b = selectionBounds(selection);
+              return (
+                <div
+                  key={rowAxis.id}
+                  role="row"
+                  style={{
+                    height: rh,
+                    ...(isFrozenRow ? { position: "sticky", top: rowTopOffsets[rowIdx], zIndex: 25 } : {}),
+                  }}
                 className={`flex bg-white ${rowIdx === activeSheet.frozenRows - 1 ? "relative shadow-[0_2px_0_#9eb7f5]" : ""}`}
               >
                 {/* Row Header */}
@@ -2341,9 +2438,22 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              );
+            };
+            return (
+              <>
+                {virtualRowWindow.frozen.map(renderRow)}
+                {virtualRowWindow.topSpacer > 0 && (
+                  <div aria-hidden="true" data-sheet-virtual-spacer="top" style={{ height: virtualRowWindow.topSpacer }} />
+                )}
+                {virtualRowWindow.virtual.map(renderRow)}
+                {virtualRowWindow.bottomSpacer > 0 && (
+                  <div aria-hidden="true" data-sheet-virtual-spacer="bottom" style={{ height: virtualRowWindow.bottomSpacer }} />
+                )}
+              </>
             );
-          })}
+          })()}
           <SheetChartOverlay
             sheet={activeSheet}
             evalMap={activeEvalMap}

@@ -8,6 +8,8 @@ import {
   matchFillRule,
   type Base,
   type BaseCell,
+  type BaseField,
+  type BaseRecord,
   type FillRule,
   type QueryRecordsOptions,
 } from "@jiange/base-sdk";
@@ -61,6 +63,11 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
   private width = 960;
   private height = 560;
   private frozenCols: number;
+  private queryEpoch = 0;
+  private cachedVersion = -1;
+  private cachedEpoch = -1;
+  private cachedFields: BaseField[] = [];
+  private cachedRecords: BaseRecord[] = [];
 
   constructor(
     readonly base: Base,
@@ -88,6 +95,7 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
 
   setTable(tableId: number): BaseFrameResult {
     this.tableId = tableId;
+    this.queryEpoch++;
     this.scrollLeft = 0;
     this.scrollTop = 0;
     return this.render();
@@ -95,6 +103,7 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
 
   setQuery(query: QueryRecordsOptions): BaseFrameResult {
     this.queryOptions = { ...query };
+    this.queryEpoch++;
     return this.render();
   }
 
@@ -119,10 +128,19 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
     return this.render();
   }
 
+  private getViewData(): { fields: BaseField[]; records: BaseRecord[] } {
+    if (this.cachedVersion === this.base.version && this.cachedEpoch === this.queryEpoch) {
+      return { fields: this.cachedFields, records: this.cachedRecords };
+    }
+    this.cachedFields = this.base.getFields(this.tableId);
+    this.cachedRecords = this.base.query({ ...this.queryOptions, tableId: this.tableId }).records;
+    this.cachedVersion = this.base.version;
+    this.cachedEpoch = this.queryEpoch;
+    return { fields: this.cachedFields, records: this.cachedRecords };
+  }
+
   render(): BaseFrameResult {
-    const fields = this.base.getFields(this.tableId);
-    const result = this.base.query({ ...this.queryOptions, tableId: this.tableId });
-    const records = result.records;
+    const { fields, records } = this.getViewData();
     this.batch.reset();
 
     if (this.mode === "grid") {
@@ -426,35 +444,5 @@ export async function mountBaseView(
       canvas.remove();
       textLayer.remove();
     },
-  };
-}
-
-export interface BaseReactLike {
-  useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
-  useRef<T>(initial: T): { current: T };
-  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): unknown;
-}
-
-export function createBaseViewComponent(React: BaseReactLike) {
-  return function BaseView(props: { base: Base; width?: number; height?: number } & BaseViewOptions) {
-    const hostRef = React.useRef<HTMLElement | null>(null);
-    React.useEffect(() => {
-      let alive = true;
-      let mounted: MountedBaseView | null = null;
-      const el = hostRef.current;
-      if (!el) return;
-      void mountBaseView(el, props.base, props).then((v) => {
-        if (!alive) v.dispose();
-        else mounted = v;
-      });
-      return () => {
-        alive = false;
-        mounted?.dispose();
-      };
-    }, [props.base, props.tableId, props.mode]);
-    return React.createElement("div", {
-      ref: hostRef,
-      style: { width: props.width ? `${props.width}px` : "100%", height: props.height ? `${props.height}px` : "100%" },
-    });
   };
 }

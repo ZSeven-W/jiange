@@ -433,34 +433,3 @@ export async function mountWhiteboardView(
     },
   };
 }
-
-export interface WhiteboardReactLike {
-  useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
-  useRef<T>(initial: T): { current: T };
-  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): unknown;
-}
-
-export function createWhiteboardViewComponent(React: WhiteboardReactLike) {
-  return function WhiteboardView(props: { board: Board; width?: number; height?: number } & WhiteboardViewOptions) {
-    const hostRef = React.useRef<HTMLElement | null>(null);
-    React.useEffect(() => {
-      let alive = true;
-      let mounted: MountedWhiteboardView | null = null;
-      const el = hostRef.current;
-      if (!el) return;
-      void mountWhiteboardView(el, props.board, props).then((v) => {
-        if (!alive) v.dispose();
-        else mounted = v;
-      });
-      return () => {
-        alive = false;
-        mounted?.dispose();
-      };
-    }, [props.board]);
-    return React.createElement("div", {
-      ref: hostRef,
-      tabIndex: 0,
-      style: { width: props.width ? `${props.width}px` : "100%", height: props.height ? `${props.height}px` : "100%" },
-    });
-  };
-}

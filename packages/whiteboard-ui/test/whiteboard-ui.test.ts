@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { Board } from "@jiange/whiteboard-sdk";
-import { createWhiteboardViewComponent, mountWhiteboardView } from "../src/index.js";
+import {
+  createWhiteboardViewComponent,
+  defineWhiteboardElement,
+  mountWhiteboardView,
+  type JiangeWhiteboardElement,
+} from "../src/index.js";
+import { createWhiteboardViewComponent as createWhiteboardViewFromReactSubpath } from "../src/react.js";
 
 function makeDomNode(tag: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
@@ -223,5 +229,94 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
     raceCleanups.forEach((c) => c());
     await new Promise((r) => setTimeout(r, 10));
     expect((raceContainer.children[0] as ReturnType<typeof makeDomNode>).remove).toHaveBeenCalled();
+  });
+
+  it("defineWhiteboardElement is SSR-safe and registers <jiange-whiteboard> lifecycle cleanly", async () => {
+    expect(createWhiteboardViewFromReactSubpath).toBe(createWhiteboardViewComponent);
+    expect(defineWhiteboardElement()).toBe(false);
+
+    const origCustomElements = Object.getOwnPropertyDescriptor(globalThis, "customElements");
+    const origHtmlElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const registry = new Map<string, CustomElementConstructor>();
+    const fakeCustomElements = {
+      define: vi.fn((name: string, ctor: CustomElementConstructor) => { registry.set(name, ctor); }),
+      get: (name: string) => registry.get(name),
+    };
+    const fakeDoc = { createElement: (t: string) => makeDomNode(t) };
+
+    class FakeHTMLElement {
+      isConnected = false;
+      style: Record<string, string> = {};
+      children: unknown[] = [];
+      clientWidth = 960;
+      clientHeight = 600;
+      ownerDocument = fakeDoc;
+      private listeners = new Map<string, Set<(e: unknown) => void>>();
+      appendChild(c: unknown) { this.children.push(c); return c; }
+      getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 600 }; }
+      addEventListener(ev: string, fn: (e: unknown) => void) {
+        let s = this.listeners.get(ev);
+        if (!s) { s = new Set(); this.listeners.set(ev, s); }
+        s.add(fn);
+      }
+      removeEventListener(ev: string, fn: (e: unknown) => void) { this.listeners.get(ev)?.delete(fn); }
+    }
+
+    try {
+      Object.defineProperty(globalThis, "customElements", { value: fakeCustomElements, configurable: true, writable: true });
+      expect(defineWhiteboardElement()).toBe(false);
+
+      Object.defineProperty(globalThis, "HTMLElement", { value: FakeHTMLElement, configurable: true, writable: true });
+      expect(defineWhiteboardElement()).toBe(true);
+      expect(defineWhiteboardElement()).toBe(true);
+      expect(fakeCustomElements.define).toHaveBeenCalledTimes(1);
+      expect(registry.has("jiange-whiteboard")).toBe(true);
+
+      const Ctor = registry.get("jiange-whiteboard")!;
+      const el = new Ctor() as unknown as JiangeWhiteboardElement & {
+        isConnected: boolean;
+        connectedCallback(): void;
+        disconnectedCallback(): void;
+      };
+      const board = Board.create({ theme: "feishu" });
+
+      el.isConnected = true;
+      el.connectedCallback();
+      expect(el.board).toBeNull();
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = false;
+      el.board = board;
+      expect(el.board).toBe(board);
+      expect(el.mounted).toBeNull();
+
+      el.isConnected = true;
+      el.connectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      el.options = { gpu: { prefer: "headless" } };
+      expect(el.options).toEqual({ gpu: { prefer: "headless" } });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).not.toBeNull();
+
+      el.isConnected = false;
+      el.disconnectedCallback();
+      expect(el.mounted).toBeNull();
+      el.disconnectedCallback();
+
+      // Async mount race: disconnect before mountWhiteboardView resolves
+      el.isConnected = true;
+      el.connectedCallback();
+      el.isConnected = false;
+      el.disconnectedCallback();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(el.mounted).toBeNull();
+    } finally {
+      if (origCustomElements) Object.defineProperty(globalThis, "customElements", origCustomElements);
+      else delete (globalThis as Record<string, unknown>).customElements;
+      if (origHtmlElement) Object.defineProperty(globalThis, "HTMLElement", origHtmlElement);
+      else delete (globalThis as Record<string, unknown>).HTMLElement;
+    }
   });
 });
