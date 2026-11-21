@@ -48,6 +48,9 @@ func TestServerAllFeaturesAndAccessors(t *testing.T) {
 	if rec := req(http.MethodGet, "/healthz", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Fatalf("healthz failed: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := req(http.MethodGet, "/health", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("health alias failed: %d %s", rec.Code, rec.Body.String())
+	}
 	if rec := req(http.MethodPost, "/sheets", `{"id":"s1","title":"S1"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("sheet route failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -68,6 +71,21 @@ func TestServerAllFeaturesAndAccessors(t *testing.T) {
 	}
 	if rec := req(http.MethodPost, "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "sheet_inspect") {
 		t.Fatalf("mcp route failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := req(http.MethodGet, "/ai/tools", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "sheet_inspect") {
+		t.Fatalf("ai tools list failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := req(http.MethodPost, "/ai/tools/sheet_inspect", `{"id":"s1"}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("ai tool call failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := req(http.MethodPost, "/ai/tools/sheet_inspect", `{bad`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid json, got %d", rec.Code)
+	}
+	if rec := req(http.MethodPost, "/ai/tools/does_not_exist", `{}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown tool, got %d", rec.Code)
+	}
+	if rec := req(http.MethodPost, "/ai/tools/sheet_inspect", `{"id":"missing"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for tool execution error, got %d", rec.Code)
 	}
 	if whHits != 5 {
 		t.Fatalf("expected 5 webhook hits across domains, got %d", whHits)

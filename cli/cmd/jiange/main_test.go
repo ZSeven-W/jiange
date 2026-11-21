@@ -383,3 +383,150 @@ func TestRunBaseSubcommand(t *testing.T) {
 		t.Fatalf("expected save error")
 	}
 }
+
+func TestRunRemoteSubcommand(t *testing.T) {
+	outBuf, _ := setupIO(t)
+
+	var seenAuth string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"service":"jiange-backend"}`))
+	})
+	mux.HandleFunc("/api/v1/ai/tools", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tools":[{"name":"sheet_inspect"}]}`))
+	})
+	mux.HandleFunc("/api/v1/ai/tools/sheet_inspect", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"tool":"sheet_inspect"}`))
+	})
+	mux.HandleFunc("/api/v1/sheets/s1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"s1","method":"GET"}`))
+		case http.MethodPost:
+			_, _ = w.Write([]byte(`{"id":"s1","method":"POST"}`))
+		case http.MethodPatch:
+			_, _ = w.Write([]byte(`{"id":"s1","method":"PATCH"}`))
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	mux.HandleFunc("/api/v1/fail", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+	})
+	mux.HandleFunc("/custom/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"prefix":"custom"}`))
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Clear env fallbacks initially
+	t.Setenv("JIANGE_SERVER", "")
+	t.Setenv("JIANGE_TOKEN", "")
+
+	// Usage, flag error, missing server, unknown action
+	if err := run([]string{"remote"}); err == nil {
+		t.Fatalf("expected remote usage error")
+	}
+	if err := run([]string{"remote", "health", "--bad"}); err == nil {
+		t.Fatalf("expected remote flag error")
+	}
+	if err := run([]string{"remote", "health"}); err == nil {
+		t.Fatalf("expected missing server error")
+	}
+	if err := run([]string{"remote", "bogus", "--server", ts.URL}); err == nil {
+		t.Fatalf("expected unknown remote action error")
+	}
+
+	// Env variable fallbacks (JIANGE_SERVER, JIANGE_TOKEN)
+	t.Setenv("JIANGE_SERVER", ts.URL)
+	t.Setenv("JIANGE_TOKEN", "env-token")
+	outBuf.Reset()
+	if err := run([]string{"remote", "health"}); err != nil {
+		t.Fatalf("remote health via env failed: %v", err)
+	}
+	if seenAuth != "Bearer env-token" || !strings.Contains(outBuf.String(), `"service": "jiange-backend"`) {
+		t.Fatalf("unexpected health output/auth: auth=%q out=%s", seenAuth, outBuf.String())
+	}
+
+	// Custom prefix via --prefix flag and explicit --token override
+	outBuf.Reset()
+	if err := run([]string{"remote", "health", "--server", ts.URL, "--token", "flag-tok", "--prefix", "/custom"}); err != nil {
+		t.Fatalf("remote health custom prefix failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"prefix": "custom"`) {
+		t.Fatalf("unexpected custom prefix output: %s", outBuf.String())
+	}
+
+	// tools
+	outBuf.Reset()
+	if err := run([]string{"remote", "tools", "--server", ts.URL}); err != nil {
+		t.Fatalf("remote tools failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"sheet_inspect"`) {
+		t.Fatalf("unexpected tools output: %s", outBuf.String())
+	}
+
+	// call: missing --tool, invalid --args, valid call
+	if err := run([]string{"remote", "call", "--server", ts.URL}); err == nil {
+		t.Fatalf("expected missing --tool error")
+	}
+	if err := run([]string{"remote", "call", "--server", ts.URL, "--tool", "sheet_inspect", "--args", "{bad"}); err == nil {
+		t.Fatalf("expected invalid --args error")
+	}
+	outBuf.Reset()
+	if err := run([]string{"remote", "call", "--server", ts.URL, "--tool", "sheet_inspect", "--args", `{"id":"s1"}`}); err != nil {
+		t.Fatalf("remote call failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"tool": "sheet_inspect"`) {
+		t.Fatalf("unexpected call output: %s", outBuf.String())
+	}
+
+	// get, post, patch, delete: missing --path, invalid --body, empty body, valid body, remote HTTP error
+	if err := run([]string{"remote", "get", "--server", ts.URL}); err == nil {
+		t.Fatalf("expected missing --path error")
+	}
+	if err := run([]string{"remote", "post", "--server", ts.URL, "--path", "/sheets/s1", "--body", "{bad"}); err == nil {
+		t.Fatalf("expected invalid --body error")
+	}
+	outBuf.Reset()
+	if err := run([]string{"remote", "get", "--server", ts.URL, "--path", "/sheets/s1"}); err != nil {
+		t.Fatalf("remote get failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"method": "GET"`) {
+		t.Fatalf("unexpected get output: %s", outBuf.String())
+	}
+	outBuf.Reset()
+	if err := run([]string{"remote", "post", "--server", ts.URL, "--path", "/sheets/s1", "--body", `{"title":"Q1"}`}); err != nil {
+		t.Fatalf("remote post failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"method": "POST"`) {
+		t.Fatalf("unexpected post output: %s", outBuf.String())
+	}
+	outBuf.Reset()
+	if err := run([]string{"remote", "patch", "--server", ts.URL, "--path", "/sheets/s1", "--body", `{"title":"Q2"}`}); err != nil {
+		t.Fatalf("remote patch failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"method": "PATCH"`) {
+		t.Fatalf("unexpected patch output: %s", outBuf.String())
+	}
+	outBuf.Reset()
+	if err := run([]string{"remote", "delete", "--server", ts.URL, "--path", "/sheets/s1"}); err != nil {
+		t.Fatalf("remote delete failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), `"status": 204`) {
+		t.Fatalf("unexpected delete output: %s", outBuf.String())
+	}
+
+	// Propagated remote error
+	if err := run([]string{"remote", "get", "--server", ts.URL, "--path", "/fail"}); err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("expected forbidden error, got %v", err)
+	}
+}

@@ -270,7 +270,7 @@ func (d *DeckData) Verify() []SlideDiag {
 		if len([]rune(s.Body)) > 800 {
 			diags = append(diags, SlideDiag{
 				Code: "TEXT_OVERFLOW", Severity: "warning", SlideIndex: i,
-				Message: fmt.Sprintf("Slide %d body has %d characters and may overflow.", i+1, len([]rune(s.Body))),
+				Message:    fmt.Sprintf("Slide %d body has %d characters and may overflow.", i+1, len([]rune(s.Body))),
 				Suggestion: "Split dense text across multiple slides.",
 			})
 		}

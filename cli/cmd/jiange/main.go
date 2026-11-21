@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/ZSeven-W/jiange/cli/internal/engine"
 	"github.com/ZSeven-W/jiange/cli/internal/mcp"
+	"github.com/ZSeven-W/jiange/cli/internal/remote"
 )
 
 const version = "0.2.0"
@@ -50,8 +53,10 @@ func run(args []string) error {
 		return runBoard(args[1:])
 	case "base":
 		return runBase(args[1:])
+	case "remote":
+		return runRemote(args[1:])
 	default:
-		return fmt.Errorf("unknown command %q (try: sheet, doc, slides, board, base, mcp, version)", args[0])
+		return fmt.Errorf("unknown command %q (try: sheet, doc, slides, board, base, remote, mcp, version)", args[0])
 	}
 }
 
@@ -64,6 +69,7 @@ Usage:
   jiange slides <inspect|patch|verify|render>        <file> [flags]
   jiange board  <inspect|verify|render>              <file> [flags]
   jiange base   <inspect|query|patch|verify>         <file> [flags]
+  jiange remote <health|tools|call|get|post|patch|delete> --server <url> [flags]
   jiange mcp    [--transport stdio|http] [--addr 127.0.0.1:8787]
   jiange version`)
 }
@@ -341,4 +347,83 @@ func runBase(args []string) error {
 	default:
 		return fmt.Errorf("unknown base action %q", action)
 	}
+}
+
+func parseOptionalJSONBody(raw string) (any, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	var v any
+	if err := json.Unmarshal([]byte(trimmed), &v); err != nil {
+		return nil, fmt.Errorf("invalid --body JSON: %w", err)
+	}
+	return v, nil
+}
+
+func runRemote(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: jiange remote <health|tools|call|get|post|patch|delete> --server <url> [--token <tok>] [--prefix <p>] [--path <p>] [--tool <name>] [--args <json>] [--body <json>]")
+	}
+	action := args[0]
+	fs := flag.NewFlagSet("remote", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	serverURL := fs.String("server", os.Getenv("JIANGE_SERVER"), "remote Jiange backend URL (env: JIANGE_SERVER)")
+	token := fs.String("token", os.Getenv("JIANGE_TOKEN"), "Bearer auth token (env: JIANGE_TOKEN)")
+	prefix := fs.String("prefix", remote.DefaultPrefix, "API base prefix (default /api/v1)")
+	reqPath := fs.String("path", "", "API endpoint path (for get/post/patch/delete)")
+	toolName := fs.String("tool", "", "AI tool name (for call)")
+	toolArgsJSON := fs.String("args", "{}", "JSON object of tool arguments (for call)")
+	bodyJSON := fs.String("body", "", "JSON request body (for post/patch/delete)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*serverURL) == "" {
+		return fmt.Errorf("remote requires --server <url> or JIANGE_SERVER")
+	}
+
+	client := remote.NewClient(
+		*serverURL,
+		remote.WithToken(*token),
+		remote.WithPrefix(*prefix),
+	)
+	ctx := context.Background()
+
+	var (
+		res map[string]any
+		err error
+	)
+	switch action {
+	case "health":
+		res, err = client.Health(ctx)
+	case "tools":
+		res, err = client.ListAITools(ctx)
+	case "call":
+		if strings.TrimSpace(*toolName) == "" {
+			return fmt.Errorf("remote call requires --tool <name>")
+		}
+		var toolArgs map[string]any
+		if err = json.Unmarshal([]byte(*toolArgsJSON), &toolArgs); err != nil {
+			return fmt.Errorf("invalid --args JSON: %w", err)
+		}
+		res, err = client.CallAITool(ctx, *toolName, toolArgs)
+	case "get", "post", "patch", "delete":
+		if strings.TrimSpace(*reqPath) == "" {
+			return fmt.Errorf("remote %s requires --path <path>", action)
+		}
+		var body any
+		if action != "get" {
+			body, err = parseOptionalJSONBody(*bodyJSON)
+			if err != nil {
+				return err
+			}
+		}
+		res, err = client.RequestJSON(ctx, strings.ToUpper(action), *reqPath, body)
+	default:
+		return fmt.Errorf("unknown remote action %q (try: health, tools, call, get, post, patch, delete)", action)
+	}
+	if err != nil {
+		return err
+	}
+	return printJSON(res)
 }

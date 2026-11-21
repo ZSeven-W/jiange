@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/ZSeven-W/jiange/sdk/go/ai"
@@ -86,7 +88,7 @@ func New(cfg Config) *Server {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	healthHandler := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
@@ -94,7 +96,9 @@ func New(cfg Config) *Server {
 			"version":  version,
 			"features": features,
 		})
-	})
+	}
+	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /health", healthHandler)
 
 	var registrars []func(*ai.ToolRegistry) error
 
@@ -146,6 +150,30 @@ func New(cfg Config) *Server {
 	if features.MCP {
 		mcpServer = ai.NewServer(reg, name, version)
 		mux.Handle("/mcp", storage.AuthMiddleware(cfg.Auth, cfg.Authz, nil, storage.ActionWrite, mcpServer.HTTPHandler()))
+		mux.Handle("GET /ai/tools", storage.AuthMiddleware(cfg.Auth, cfg.Authz, nil, storage.ActionRead, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"tools": reg.List()})
+		})))
+		mux.Handle("POST /ai/tools/{name}", storage.AuthMiddleware(cfg.Auth, cfg.Authz, nil, storage.ActionWrite, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			args := map[string]any{}
+			if err := json.NewDecoder(r.Body).Decode(&args); err != nil && !errors.Is(err, io.EOF) {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid json body"})
+				return
+			}
+			res, err := reg.Call(r.Context(), r.PathValue("name"), args)
+			if err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, ai.ErrToolNotFound) {
+					status = http.StatusNotFound
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": res})
+		})))
 	}
 
 	return &Server{

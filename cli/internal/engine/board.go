@@ -219,7 +219,7 @@ func (b *BoardData) Verify() []BoardDiag {
 		if !nodeSet[e.From] || !nodeSet[e.To] {
 			diags = append(diags, BoardDiag{
 				Code: "DANGLING_EDGE", Severity: "error",
-				Message: fmt.Sprintf("Edge %s -> %s references missing node.", e.From, e.To),
+				Message:    fmt.Sprintf("Edge %s -> %s references missing node.", e.From, e.To),
 				Suggestion: "Remove the dangling edge or add the missing node.",
 			})
 			continue
@@ -232,7 +232,7 @@ func (b *BoardData) Verify() []BoardDiag {
 			if deg[n.ID] == 0 {
 				diags = append(diags, BoardDiag{
 					Code: "ISOLATED_NODE", Severity: "info", EntityID: n.ID,
-					Message: fmt.Sprintf("Node %q is disconnected.", n.ID),
+					Message:    fmt.Sprintf("Node %q is disconnected.", n.ID),
 					Suggestion: "Connect with an edge or remove unused node.",
 				})
 			}

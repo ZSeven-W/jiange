@@ -351,11 +351,11 @@ func TestParseXLSXEdgeCases(t *testing.T) {
 	sheet2XML := `<worksheet><sheetData><row r="1"><c r="A1"><v>99</v></c></row></sheetData></worksheet>`
 
 	rawZip := makeZip(t, map[string]string{
-		"xl/sharedStrings.xml":         sstXML,
-		"xl/workbook.xml":              wbXML,
-		"xl/_rels/workbook.xml.rels":   relsXML,
-		"xl/worksheets/sheet1.xml":     sheet1XML,
-		"xl/worksheets/sheet2.xml":     sheet2XML,
+		"xl/sharedStrings.xml":       sstXML,
+		"xl/workbook.xml":            wbXML,
+		"xl/_rels/workbook.xml.rels": relsXML,
+		"xl/worksheets/sheet1.xml":   sheet1XML,
+		"xl/worksheets/sheet2.xml":   sheet2XML,
 	})
 	wb, err := ParseXLSX(rawZip)
 	if err != nil {
@@ -420,8 +420,8 @@ func TestSheetFormulaAllBranches(t *testing.T) {
 				"D6":  {Row: 5, Col: 3, A1: "D6", Raw: "=AVERAGE()"},
 				"D7":  {Row: 6, Col: 3, A1: "D7", Raw: `=SUM("txt")`},
 				"D8":  {Row: 7, Col: 3, A1: "D8", Raw: "=SUM(1/0)"},
-				"D9":  {Row: 8, Col: 3, A1: "D9", Raw: "=SUM(B2:A1)"}, // reversed range r1>r2 and c1>c2
-				"D10": {Row: 9, Col: 3, A1: "D10", Raw: "=SUM(C1:C2)"}, // range error
+				"D9":  {Row: 8, Col: 3, A1: "D9", Raw: "=SUM(B2:A1)"},   // reversed range r1>r2 and c1>c2
+				"D10": {Row: 9, Col: 3, A1: "D10", Raw: "=SUM(C1:C2)"},  // range error
 				"D11": {Row: 10, Col: 3, A1: "D11", Raw: `=SUM("a:b")`}, // colon non-A1
 			},
 		}},

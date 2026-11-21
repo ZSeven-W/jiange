@@ -267,7 +267,7 @@ func (b *BaseData) Verify() []BaseDiag {
 			if names[k] {
 				diags = append(diags, BaseDiag{
 					Code: "DUPLICATE_FIELD_NAME", Severity: "error", TableID: t.ID,
-					Message: fmt.Sprintf("Duplicate field name %q in table %q.", f.Name, t.Name),
+					Message:    fmt.Sprintf("Duplicate field name %q in table %q.", f.Name, t.Name),
 					Suggestion: "Rename duplicate field so references stay unique.",
 				})
 			}

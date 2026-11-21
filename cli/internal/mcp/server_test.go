@@ -1,14 +1,18 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ZSeven-W/jiange/cli/internal/engine"
@@ -98,7 +102,7 @@ func TestMCPStdioAndHTTPTransports(t *testing.T) {
 		t.Fatalf("expected ServeStdio read error")
 	}
 
-	// 2. Test HTTP handler (/healthz, non-POST 405, bad JSON 400, notification 202, POST /mcp 200)
+	// 2. Test Streamable HTTP handler (/healthz, OPTIONS, POST, GET SSE, DELETE, unsupported 405)
 	ts := httptest.NewServer(srv.HTTPHandler())
 	defer ts.Close()
 
@@ -108,30 +112,66 @@ func TestMCPStdioAndHTTPTransports(t *testing.T) {
 	}
 	hResp.Body.Close()
 
-	getMCP, err := http.Get(ts.URL + "/mcp")
-	if err != nil || getMCP.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405 for GET /mcp, got %v %v", getMCP, err)
+	// OPTIONS /mcp -> 204 No Content + CORS headers
+	optReq, _ := http.NewRequest(http.MethodOptions, ts.URL+"/mcp", nil)
+	optResp, err := http.DefaultClient.Do(optReq)
+	if err != nil || optResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for OPTIONS /mcp, got %v %v", optResp, err)
 	}
-	getMCP.Body.Close()
+	if got := optResp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("unexpected Access-Control-Allow-Origin: %q", got)
+	}
+	if got := optResp.Header.Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
+		t.Fatalf("unexpected Access-Control-Allow-Methods: %q", got)
+	}
+	if got := optResp.Header.Get("Access-Control-Allow-Headers"); got != "Content-Type, Mcp-Session-Id, Authorization" {
+		t.Fatalf("unexpected Access-Control-Allow-Headers: %q", got)
+	}
+	optResp.Body.Close()
 
+	// Unsupported method (PUT /mcp) -> 405 Method Not Allowed
+	putReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/mcp", nil)
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil || putResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for PUT /mcp, got %v %v", putResp, err)
+	}
+	putResp.Body.Close()
+
+	// POST /mcp bad JSON -> 400 + deterministic Mcp-Session-Id
 	badResp, err := http.Post(ts.URL+"/mcp", "application/json", strings.NewReader("{bad"))
 	if err != nil || badResp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for bad JSON, got %v %v", badResp, err)
 	}
+	firstSession := badResp.Header.Get("Mcp-Session-Id")
+	if firstSession == "" || !srv.HasSession(firstSession) {
+		t.Fatalf("expected assigned session header tracked in server, got %q", firstSession)
+	}
 	badResp.Body.Close()
 
-	notifResp, err := http.Post(ts.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	// POST /mcp notification reusing session -> 202 Accepted + echoed Mcp-Session-Id
+	notifReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	notifReq.Header.Set("Content-Type", "application/json")
+	notifReq.Header.Set("Mcp-Session-Id", firstSession)
+	notifResp, err := http.DefaultClient.Do(notifReq)
 	if err != nil || notifResp.StatusCode != http.StatusAccepted {
 		t.Fatalf("expected 202 for notification, got %v %v", notifResp, err)
 	}
+	if echoed := notifResp.Header.Get("Mcp-Session-Id"); echoed != firstSession {
+		t.Fatalf("expected echoed session %q, got %q", firstSession, echoed)
+	}
 	notifResp.Body.Close()
 
+	// POST /mcp JSON-RPC request generating a second unique session ID
 	reqBody := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"sheet_verify","arguments":{"path":` + mustJSON(xlsxPath) + `}}}`
 	resp, err := http.Post(ts.URL+"/mcp", "application/json", strings.NewReader(reqBody))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /mcp failed: %v", err)
 	}
 	defer resp.Body.Close()
+	secondSession := resp.Header.Get("Mcp-Session-Id")
+	if secondSession == "" || secondSession == firstSession {
+		t.Fatalf("expected distinct generated session ID, got first=%q second=%q", firstSession, secondSession)
+	}
 	var rpcResp RPCResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
 		t.Fatalf("decode rpcResp: %v", err)
@@ -139,6 +179,103 @@ func TestMCPStdioAndHTTPTransports(t *testing.T) {
 	if rpcResp.Error != nil {
 		t.Fatalf("unexpected RPC error: %#v", rpcResp.Error)
 	}
+
+	// GET /mcp?once=1 -> SSE event-stream with initial ready event and deterministic exit
+	sseReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/mcp?once=1", nil)
+	sseReq.Header.Set("Mcp-Session-Id", firstSession)
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil || sseResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /mcp?once=1 failed: %v %v", sseResp, err)
+	}
+	if ct := sseResp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+	if cc := sseResp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("expected Cache-Control no-cache, got %q", cc)
+	}
+	if sid := sseResp.Header.Get("Mcp-Session-Id"); sid != firstSession {
+		t.Fatalf("expected echoed SSE session %q, got %q", firstSession, sid)
+	}
+	sseBody, err := io.ReadAll(sseResp.Body)
+	sseResp.Body.Close()
+	if err != nil {
+		t.Fatalf("read SSE body: %v", err)
+	}
+	wantSSE := "event: ready\ndata: {\"protocolVersion\":\"2024-11-05\",\"server\":\"jiange-mcp\"}\n\n"
+	if string(sseBody) != wantSSE {
+		t.Fatalf("SSE payload mismatch:\ngot:  %q\nwant: %q", string(sseBody), wantSSE)
+	}
+
+	// GET /mcp without once=1 -> flushes ready event, exits cleanly when context is cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	streamReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/mcp", nil)
+	streamResp, err := http.DefaultClient.Do(streamReq)
+	if err != nil || streamResp.StatusCode != http.StatusOK {
+		cancel()
+		t.Fatalf("GET /mcp stream failed: %v %v", streamResp, err)
+	}
+	streamSession := streamResp.Header.Get("Mcp-Session-Id")
+	reader := bufio.NewReader(streamResp.Body)
+	evLine, err := reader.ReadString('\n')
+	if err != nil || evLine != "event: ready\n" {
+		cancel()
+		streamResp.Body.Close()
+		t.Fatalf("expected SSE event line, got %q err=%v", evLine, err)
+	}
+	dataLine, err := reader.ReadString('\n')
+	if err != nil || dataLine != "data: {\"protocolVersion\":\"2024-11-05\",\"server\":\"jiange-mcp\"}\n" {
+		cancel()
+		streamResp.Body.Close()
+		t.Fatalf("expected SSE data line, got %q err=%v", dataLine, err)
+	}
+	cancel()
+	streamResp.Body.Close()
+
+	// DELETE /mcp without session header -> 204 No Content (no-op)
+	delEmptyReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mcp", nil)
+	delEmptyResp, err := http.DefaultClient.Do(delEmptyReq)
+	if err != nil || delEmptyResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for empty DELETE /mcp, got %v %v", delEmptyResp, err)
+	}
+	delEmptyResp.Body.Close()
+
+	// DELETE /mcp with session header -> deletes from active session map + 204 No Content
+	beforeCount := srv.ActiveSessions()
+	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mcp", nil)
+	delReq.Header.Set("Mcp-Session-Id", streamSession)
+	delResp, err := http.DefaultClient.Do(delReq)
+	if err != nil || delResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for DELETE /mcp, got %v %v", delResp, err)
+	}
+	delResp.Body.Close()
+	if srv.HasSession(streamSession) || srv.ActiveSessions() != beforeCount-1 {
+		t.Fatalf("expected session %q deleted; active=%d before=%d", streamSession, srv.ActiveSessions(), beforeCount)
+	}
+
+	// Concurrent POST/DELETE safety check for -race
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := http.Post(ts.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+			if err != nil {
+				t.Errorf("concurrent POST: %v", err)
+				return
+			}
+			sid := r.Header.Get("Mcp-Session-Id")
+			r.Body.Close()
+			dReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mcp", nil)
+			dReq.Header.Set("Mcp-Session-Id", sid)
+			dResp, err := http.DefaultClient.Do(dReq)
+			if err != nil {
+				t.Errorf("concurrent DELETE: %v", err)
+				return
+			}
+			dResp.Body.Close()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestExecuteAll19ToolsHappyAndErrorPaths(t *testing.T) {

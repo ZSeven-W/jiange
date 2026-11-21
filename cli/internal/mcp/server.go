@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/ZSeven-W/jiange/cli/internal/engine"
 )
@@ -42,9 +43,12 @@ type ToolDefinition struct {
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
-// Server serves Jiange's AI-Native Office tools over MCP (stdio or HTTP).
+// Server serves Jiange's AI-Native Office tools over MCP (stdio or Streamable HTTP).
 type Server struct {
-	Version string
+	Version     string
+	mu          sync.Mutex
+	nextSession uint64
+	sessions    map[string]struct{}
 }
 
 // NewServer constructs a native Go MCP Server.
@@ -475,7 +479,54 @@ func (s *Server) ServeStdio(r io.Reader, w io.Writer) error {
 	return scanner.Err()
 }
 
-// HTTPHandler exposes the MCP Server over HTTP (POST /mcp + GET /healthz).
+func (s *Server) ensureSession(incoming string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessions == nil {
+		s.sessions = make(map[string]struct{})
+	}
+	id := strings.TrimSpace(incoming)
+	if id == "" {
+		s.nextSession++
+		id = fmt.Sprintf("jiange-mcp-session-%d", s.nextSession)
+	}
+	s.sessions[id] = struct{}{}
+	return id
+}
+
+func (s *Server) deleteSession(sessionID string) {
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+}
+
+// ActiveSessions returns the number of currently active Streamable HTTP MCP sessions.
+func (s *Server) ActiveSessions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions)
+}
+
+// HasSession reports whether sessionID is tracked in the active HTTP session map.
+func (s *Server) HasSession(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.sessions[sessionID]
+	return ok
+}
+
+func setMCPCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization")
+	w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
+}
+
+// HTTPHandler exposes the MCP Server over Streamable HTTP (OPTIONS/POST/GET/DELETE /mcp + GET /healthz).
 func (s *Server) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -483,24 +534,44 @@ func (s *Server) HTTPHandler() http.Handler {
 		_, _ = w.Write([]byte(`{"ok":true,"service":"jiange-mcp"}`))
 	})
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req RPCRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024*1024)).Decode(&req); err != nil {
+		setMCPCORSHeaders(w)
+		switch r.Method {
+		case http.MethodOptions:
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			sessionID := s.ensureSession(r.Header.Get("Mcp-Session-Id"))
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			var req RPCRequest
+			if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024*1024)).Decode(&req); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", Error: &RPCError{Code: -32700, Message: err.Error()}})
+				return
+			}
+			resp := s.HandleRequest(req)
+			if resp == nil {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", Error: &RPCError{Code: -32700, Message: err.Error()}})
-			return
+			_ = json.NewEncoder(w).Encode(resp)
+		case http.MethodGet:
+			sessionID := s.ensureSession(r.Header.Get("Mcp-Session-Id"))
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			_, _ = fmt.Fprintf(w, "event: ready\ndata: {\"protocolVersion\":%q,\"server\":\"jiange-mcp\"}\n\n", ProtocolVersion)
+			_ = http.NewResponseController(w).Flush()
+			if r.URL.Query().Get("once") == "1" {
+				return
+			}
+			<-r.Context().Done()
+		case http.MethodDelete:
+			s.deleteSession(r.Header.Get("Mcp-Session-Id"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-		resp := s.HandleRequest(req)
-		if resp == nil {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
 	})
 	return mux
 }

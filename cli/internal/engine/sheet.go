@@ -18,12 +18,12 @@ import (
 
 // SheetCell holds a raw string (or formula starting with '=') and its evaluated result.
 type SheetCell struct {
-	Row     int     `json:"row"`
-	Col     int     `json:"col"`
-	A1      string  `json:"a1"`
-	Raw     string  `json:"raw"`
-	Value   any     `json:"value"`
-	Error   string  `json:"error,omitempty"`
+	Row   int    `json:"row"`
+	Col   int    `json:"col"`
+	A1    string `json:"a1"`
+	Raw   string `json:"raw"`
+	Value any    `json:"value"`
+	Error string `json:"error,omitempty"`
 }
 
 // SheetData represents a single worksheet in a workbook.
@@ -243,7 +243,7 @@ func ParseXLSX(data []byte) (*WorkbookData, error) {
 	var sharedStrings []string
 	if raw, ok := readEntry("xl/sharedStrings.xml"); ok {
 		type sstSI struct {
-			T string   `xml:"t"`
+			T string `xml:"t"`
 			R []struct {
 				T string `xml:"t"`
 			} `xml:"r"`
@@ -1022,10 +1022,10 @@ func (wb *WorkbookData) Inspect(detail string) map[string]any {
 		totalFormulas += formulas
 		totalErrors += errs
 		entry := map[string]any{
-			"name":         sh.Name,
+			"name":          sh.Name,
 			"nonEmptyCells": len(sh.Cells),
-			"formulaCells": formulas,
-			"errorCells":   errs,
+			"formulaCells":  formulas,
+			"errorCells":    errs,
 		}
 		if detail != "summary" {
 			entry["cells"] = sample
