@@ -6,7 +6,21 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const names = ['collab', 'ooxml', 'whiteboard-sdk', 'doc-sdk', 'slides-sdk', 'sheet-sdk'];
+const names = [
+  'collab',
+  'ooxml',
+  'whiteboard-sdk',
+  'doc-sdk',
+  'slides-sdk',
+  'sheet-sdk',
+  'base-sdk',
+  'render-gpu',
+  'sheet-ui',
+  'doc-ui',
+  'slides-ui',
+  'whiteboard-ui',
+  'base-ui',
+];
 const rootLicense = readFileSync(join(root, 'LICENSE'), 'utf8');
 const temp = mkdtempSync(join(tmpdir(), 'jiange-sdk-check-'));
 const consumer = join(temp, 'consumer');
@@ -36,10 +50,10 @@ import { captureColumnArchiveTarget, prepareColumnArchive, recoverColumnArchive,
 import { columnWeights as legacyColumnWidths } from '@jiange/doc-sdk/columnWidths';
 import { moveShapeOrder, slideLineEndpoints } from '@jiange/slides-sdk';
 import { exportSlidesToPptx, parsePptxToSlides } from '@jiange/slides-sdk/pptx';
-import { calculateSheet, translateSheetFormula, writeXlsx, readXlsx } from '@jiange/sheet-sdk';
+import { calculateSheet, translateSheetFormula, writeXlsx, writeXlsxAsync, readXlsx, Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from '@jiange/sheet-sdk';
 import { readXlsx as oldReadXlsx } from '@jiange/sheet-sdk/xlsxRead';
 import { readXlsx as newReadXlsx } from '@jiange/sheet-sdk/xlsx-read';
-import { listZip } from '@jiange/ooxml/zip';
+import { listZip, createZipAsync } from '@jiange/ooxml/zip';
 import { flowWrites, readFlow } from '@jiange/whiteboard-sdk';
 import { scaleInk as oldScaleInk } from '@jiange/whiteboard-sdk/inkGeometry';
 import { scaleInk as newScaleInk, scaleSelectionProportionally } from '@jiange/whiteboard-sdk/ink-geometry';
@@ -79,6 +93,16 @@ assert.equal(calculateSheet({'0:0':'2','0:1':'=A1*3'})['0:1'], 6);
 const xlsx = writeXlsx({sheets:[{name:'Sheet1',cells:[{row:0,col:0,value:'Hello'}]}]});
 assert.ok(listZip(xlsx).some(entry => entry.name === 'xl/workbook.xml'));
 assert.equal((await readXlsx(xlsx)).workbook.sheets[0].cells[0].value, 'Hello');
+const deflateXlsx = await writeXlsxAsync({sheets:[{name:'Sheet1',cells:[{row:0,col:0,value:'Compressed'.repeat(20)}]}]});
+assert.equal((await readXlsx(deflateXlsx)).workbook.sheets[0].cells[0].value, 'Compressed'.repeat(20));
+assert.ok(SUPPORTED_FORMULA_FUNCTIONS.length >= 125);
+const wb = Workbook.fromCsv('Item,Qty,Price\\nA,2,10\\nB,3,20\\n', 'Sales');
+const tools = createSheetTools(wb);
+const applied = tools.execute('sheet_apply', { ops: [{ op: 'setCells', sheet: 'Sales', cells: [{ a1: 'D2', raw: '=B2*C2' }, { a1: 'D3', raw: '=B3*C3' }, { a1: 'D4', raw: '=SUM(D2:D3)' }] }] });
+assert.equal(applied.ok, true);
+assert.equal(wb.sheet('Sales').getValue('D4'), 80);
+assert.equal(wb.verify().length, 0);
+assert.ok((await createZipAsync([{ name: 'a.txt', data: new TextEncoder().encode('hello'.repeat(50)) }])).length < 250);
 assert.equal(oldReadXlsx, newReadXlsx); assert.equal(oldScaleInk, newScaleInk);
 const graph = {theme:'feishu',nodes:[{id:'n',x:0,y:0,w:140,h:60,shape:'rect',text:'Start'}],edges:[]};
 assert.equal(readFlow(flowWrites({},graph)).nodes[0].text,'Start');
@@ -118,7 +142,51 @@ encodeFlowCommentAnchor(fcAnchor); void xmRes;
   execFileSync(process.execPath, [join(consumer, 'smoke.mjs')], { cwd: consumer, stdio: 'inherit' });
   const require = createRequire(join(root, 'packages/collab/package.json'));
   execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022', join(consumer, 'types.ts')], { cwd: consumer, stdio: 'inherit' });
-  console.log('Five packed headless SDKs and their shared OOXML library passed Node ESM and NodeNext type checks.');
+
+  // Verify strict single-package isolated installation:
+  // 1) @jiange/sheet-sdk needs ONLY @jiange/ooxml
+  // 2) @jiange/doc-sdk needs ONLY @jiange/collab + @jiange/ooxml (NO @jiange/whiteboard-sdk)
+  const verifyIsolated = (label, pkgs, script) => {
+    const iso = join(temp, `iso-${label}`);
+    mkdirSync(join(iso, 'node_modules', '@jiange'), { recursive: true });
+    writeFileSync(join(iso, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+    for (const pkg of pkgs) {
+      const dst = join(iso, 'node_modules', '@jiange', pkg);
+      mkdirSync(dst, { recursive: true });
+      execFileSync('tar', ['-xzf', join(temp, `${pkg}.tgz`), '--strip-components=1', '-C', dst]);
+    }
+    writeFileSync(join(iso, 'check.mjs'), script);
+    execFileSync(process.execPath, [join(iso, 'check.mjs')], { cwd: iso, stdio: 'inherit' });
+  };
+  verifyIsolated('sheet-only', ['ooxml', 'sheet-sdk'], `
+import assert from 'node:assert/strict';
+import { Workbook, createSheetTools } from '@jiange/sheet-sdk';
+const wb = Workbook.create({ sheets: [{ name: 'S1' }] });
+wb.sheet('S1').setCell('A1', 10).setCell('A2', '=A1*5');
+assert.equal(wb.sheet('S1').getValue('A2'), 50);
+assert.equal(createSheetTools(wb).tools.length, 6);
+`);
+  verifyIsolated('doc-without-whiteboard', ['ooxml', 'collab', 'doc-sdk'], `
+import assert from 'node:assert/strict';
+import { toMarkdown } from '@jiange/doc-sdk/markdown';
+const md = toMarkdown([{ type: 'flowchart', text: '', props: { 'fc.n.a': '{"shape":"rect","text":"Start"}' }, spans: [] }]);
+assert.ok(md.includes('flowchart TD'));
+`);
+  verifyIsolated('base-only', ['base-sdk'], `
+import assert from 'node:assert/strict';
+import { Base, createBaseTools } from '@jiange/base-sdk';
+const b = Base.create({ name: 'CRM' });
+b.addRecord(undefined, { Name: 'Acme' });
+assert.equal(b.getRecords().length, 1);
+assert.equal(createBaseTools(b).tools.length, 8);
+`);
+  verifyIsolated('render-gpu-only', ['render-gpu'], `
+import assert from 'node:assert/strict';
+import { FenwickVirtualizer, GpuSurface } from '@jiange/render-gpu';
+assert.equal(new FenwickVirtualizer(100000, 28).totalSize, 2800000);
+assert.equal((await GpuSurface.create(null)).backendKind, 'headless');
+`);
+  console.log('All 13 packed SDK & WebGPU/WebGL2 UI packages passed Node ESM, NodeNext type checks, and isolated single-package installs.');
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

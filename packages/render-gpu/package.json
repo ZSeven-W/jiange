@@ -1,0 +1,66 @@
+{
+  "name": "@jiange/render-gpu",
+  "version": "0.2.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fenwick": "./src/fenwick.ts",
+    "./virtual-pool": "./src/virtual-pool.ts",
+    "./spatial-index": "./src/spatial-index.ts",
+    "./instance-buffer": "./src/instance-buffer.ts",
+    "./shaders": "./src/shaders.ts",
+    "./gpu-surface": "./src/gpu-surface.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./fenwick": {
+        "types": "./dist/fenwick.d.ts",
+        "import": "./dist/fenwick.js"
+      },
+      "./virtual-pool": {
+        "types": "./dist/virtual-pool.d.ts",
+        "import": "./dist/virtual-pool.js"
+      },
+      "./spatial-index": {
+        "types": "./dist/spatial-index.d.ts",
+        "import": "./dist/spatial-index.js"
+      },
+      "./instance-buffer": {
+        "types": "./dist/instance-buffer.d.ts",
+        "import": "./dist/instance-buffer.js"
+      },
+      "./shaders": {
+        "types": "./dist/shaders.d.ts",
+        "import": "./dist/shaders.js"
+      },
+      "./gpu-surface": {
+        "types": "./dist/gpu-surface.d.ts",
+        "import": "./dist/gpu-surface.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

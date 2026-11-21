@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@jiange/sheet-sdk": ["../sheet-sdk/src/index.ts"],
+      "@jiange/sheet-sdk/*": ["../sheet-sdk/src/*.ts"],
+      "@jiange/render-gpu": ["../render-gpu/src/index.ts"],
+      "@jiange/render-gpu/*": ["../render-gpu/src/*.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

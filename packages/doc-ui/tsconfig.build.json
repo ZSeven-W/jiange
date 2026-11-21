@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [],
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@jiange/doc-sdk": ["../doc-sdk/dist/index.d.ts"],
+      "@jiange/doc-sdk/*": ["../doc-sdk/dist/*.d.ts"],
+      "@jiange/render-gpu": ["../render-gpu/dist/index.d.ts"],
+      "@jiange/render-gpu/*": ["../render-gpu/dist/*.d.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
