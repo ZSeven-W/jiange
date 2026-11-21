@@ -54,6 +54,7 @@ const ROW_FILL_COLORS: RgbaTuple[] = [
 export class BaseViewController<T extends PoolableElement = PoolableElement> {
   readonly grid: VirtualGrid2D<T>;
   private readonly batch = new InstanceBatch(1024, 1024, 128);
+  private readonly headerBatch = new InstanceBatch(8, 8, 1);
   private tableId: number | undefined;
   private mode: BaseRenderMode;
   private queryOptions: QueryRecordsOptions = {};
@@ -142,15 +143,18 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
   render(): BaseFrameResult {
     const { fields, records } = this.getViewData();
     this.batch.reset();
+    this.batch.scissor = null;
 
     if (this.mode === "grid") {
       this.grid.rows.setCount(records.length);
       this.grid.cols.setCount(fields.length);
       const headerH = 34;
 
-      // Header row backdrop
-      this.batch.pushRect({ x: 0, y: 0, w: this.width, h: headerH, fill: [0.96, 0.97, 0.99, 1] });
-      this.batch.pushLine({ x1: 0, y1: headerH, x2: this.width, y2: headerH, thickness: 1, color: [0.85, 0.88, 0.93, 1] });
+      // Scissor scrollable body rows strictly below header; paint header backdrop in headerBatch
+      this.batch.scissor = { x: 0, y: headerH, w: this.width, h: Math.max(1, this.height - headerH) };
+      this.headerBatch.reset();
+      this.headerBatch.pushRect({ x: 0, y: 0, w: this.width, h: headerH, fill: [0.96, 0.97, 0.99, 1] });
+      this.headerBatch.pushLine({ x1: 0, y1: headerH, x2: this.width, y2: headerH, thickness: 1, color: [0.85, 0.88, 0.93, 1] });
 
       const effectiveFrozenCols = Math.min(this.frozenCols, fields.length);
       const frozenW = this.grid.cols.indexToOffset(effectiveFrozenCols);
@@ -170,11 +174,14 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
           const field = fields[cell.col];
           el.textContent = formatCellText(rec.cells[String(field.id)]);
           el.style.transform = `translate3d(${cell.x}px, ${headerH + cell.y}px, 0)`;
+          const clipTop = Math.max(0, -cell.y);
           const clipLeft = cell.quadrant === "bottom-right" ? Math.max(0, frozenW - cell.x) : 0;
-          el.style.clipPath = clipLeft > 0 ? `inset(0px 0px 0px ${clipLeft}px)` : "";
+          el.style.clipPath = clipTop > 0 || clipLeft > 0 ? `inset(${clipTop}px 0px 0px ${clipLeft}px)` : "";
           el.style.zIndex = cell.quadrant === "bottom-left" ? "3" : "1";
         },
-        (_row, col) => col < effectiveFrozenCols || this.grid.cols.indexToOffset(col + 1) - this.scrollLeft > frozenW,
+        (row, col) =>
+          this.grid.rows.indexToOffset(row + 1) - this.scrollTop > 0 &&
+          (col < effectiveFrozenCols || this.grid.cols.indexToOffset(col + 1) - this.scrollLeft > frozenW),
       );
 
       const paintedRows = new Set<number>();
@@ -198,7 +205,7 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
         this.batch.pushLine({ x1: cell.x + cell.width, y1: sy, x2: cell.x + cell.width, y2: sy + cell.height, thickness: 1, color: [0.91, 0.93, 0.96, 1] });
       }
 
-      const gpu = this.surface.render([this.batch]);
+      const gpu = this.surface.render([this.batch, this.headerBatch]);
       return { mode: this.mode, gpu, recordCount: records.length, mountedElements: mounted };
     }
 

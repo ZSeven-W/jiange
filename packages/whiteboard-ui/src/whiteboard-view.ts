@@ -35,6 +35,20 @@ export interface WhiteboardFrameResult {
   zoom: number;
 }
 
+function edgeAnchor(node: FlowNode, tx: number, ty: number): { x: number; y: number } {
+  const cx = node.x + node.w / 2;
+  const cy = node.y + node.h / 2;
+  const dx = tx - cx;
+  const dy = ty - cy;
+  const hw = Math.max(1, node.w / 2);
+  const hh = Math.max(1, node.h / 2);
+  const scale = node.shape === "ellipse"
+    ? Math.hypot(dx / hw, dy / hh)
+    : Math.max(Math.abs(dx) / hw, Math.abs(dy) / hh);
+  if (scale <= 1) return { x: cx, y: cy };
+  return { x: cx + dx / scale, y: cy + dy / scale };
+}
+
 export class WhiteboardViewController<T extends PoolableElement = PoolableElement> {
   readonly camera = new Camera2D(0, 0, 1);
   readonly spatial = new SpatialIndex<string>(256);
@@ -147,12 +161,16 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
 
   dragSelected(dxScreen: number, dyScreen: number): boolean {
     if (this.selectedIds.size === 0) return false;
-    const dx = Math.round(dxScreen / this.camera.zoom);
-    const dy = Math.round(dyScreen / this.camera.zoom);
+    const dx = dxScreen / this.camera.zoom;
+    const dy = dyScreen / this.camera.zoom;
     const g = this.board.toGraph();
     const ops = g.nodes
       .filter((n) => this.selectedIds.has(n.id))
-      .map((n) => ({ op: "updateNode" as const, id: n.id, patch: { x: n.x + dx, y: n.y + dy } }));
+      .map((n) => ({
+        op: "updateNode" as const,
+        id: n.id,
+        patch: { x: Math.round((n.x + dx) * 100) / 100, y: Math.round((n.y + dy) * 100) / 100 },
+      }));
     if (ops.length === 0) return false;
     this.board.apply(ops);
     this.render();
@@ -199,18 +217,20 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
     this.batch.camera.zoom = this.camera.zoom;
     this.surface.setClearColor(packColorRGBA(theme.canvas));
 
-    // 1. Visible Edges (cull edges where neither endpoint is visible; draw behind nodes)
+    // 1. Visible Edges (cull edges where neither endpoint is visible; clip endpoints to node perimeters)
     const edgeColor = packColorRGBA(theme.edge);
     for (const e of g.edges) {
       if (!visibleIdSet.has(e.from) && !visibleIdSet.has(e.to)) continue;
       const a = nodesById.get(e.from);
       const b = nodesById.get(e.to);
       if (!a || !b) continue;
+      const p1 = edgeAnchor(a, b.x + b.w / 2, b.y + b.h / 2);
+      const p2 = edgeAnchor(b, a.x + a.w / 2, a.y + a.h / 2);
       this.edgeBatch.pushLine({
-        x1: a.x + a.w / 2,
-        y1: a.y + a.h / 2,
-        x2: b.x + b.w / 2,
-        y2: b.y + b.h / 2,
+        x1: p1.x,
+        y1: p1.y,
+        x2: p2.x,
+        y2: p2.y,
         thickness: 2,
         color: e.color ? packColorRGBA(e.color) : edgeColor,
         dashLen: e.dashed ? 6 : 0,
@@ -233,7 +253,21 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
       const fill = packColorRGBA(n.fill ?? theme.fill);
       const stroke = packColorRGBA(n.stroke ?? theme.stroke);
       if (n.shape === "ellipse") {
-        this.batch.pushArc({ cx: n.x + n.w / 2, cy: n.y + n.h / 2, rx: n.w / 2, ry: n.h / 2, color: fill, borderWidth: theme.strokeWidth });
+        const cx = n.x + n.w / 2;
+        const cy = n.y + n.h / 2;
+        const sw = theme.strokeWidth;
+        if (this.selectedIds.has(n.id)) {
+          this.batch.pushArc({ cx, cy, rx: n.w / 2 + 4, ry: n.h / 2 + 4, color: [0.2, 0.44, 1, 0.9] });
+          this.batch.pushArc({ cx, cy, rx: n.w / 2 + 2, ry: n.h / 2 + 2, color: packColorRGBA(theme.canvas) });
+        }
+        this.batch.pushArc({ cx, cy, rx: n.w / 2, ry: n.h / 2, color: stroke });
+        this.batch.pushArc({
+          cx,
+          cy,
+          rx: Math.max(1, n.w / 2 - sw),
+          ry: Math.max(1, n.h / 2 - sw),
+          color: fill,
+        });
       } else {
         const radius = n.shape === "terminator" ? n.h / 2 : n.shape === "round" ? 14 : theme.radius;
         this.batch.pushRect({
@@ -247,30 +281,38 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
           borderColor: stroke,
           rotationRad: ((n.rot ?? 0) * Math.PI) / 180,
         });
-      }
-
-      if (this.selectedIds.has(n.id)) {
-        this.batch.pushRect({
-          x: n.x - 3,
-          y: n.y - 3,
-          w: n.w + 6,
-          h: n.h + 6,
-          fill: [0.2, 0.44, 1, 0.08],
-          borderWidth: 2,
-          borderColor: [0.2, 0.44, 1, 1],
-          radius: 4,
-        });
+        if (this.selectedIds.has(n.id)) {
+          this.batch.pushRect({
+            x: n.x - 3,
+            y: n.y - 3,
+            w: n.w + 6,
+            h: n.h + 6,
+            fill: [0.2, 0.44, 1, 0.08],
+            borderWidth: 2,
+            borderColor: [0.2, 0.44, 1, 1],
+            radius: n.shape === "terminator" ? (n.h + 6) / 2 : 6,
+          });
+        }
       }
 
       if (n.text) {
         const screen = this.camera.worldToScreen(n.x, n.y);
+        const fontPx = Math.max(4, 13 * this.camera.zoom);
+        const padX = (6 * this.camera.zoom).toFixed(1);
+        const padY = (2 * this.camera.zoom).toFixed(1);
         labelItems.push({
           key: `n:${n.id}`,
           x: screen.x,
           y: screen.y,
           width: n.w * this.camera.zoom,
           height: n.h * this.camera.zoom,
-          render: (el) => { el.textContent = n.text; },
+          render: (el) => {
+            el.textContent = n.text;
+            el.style.fontSize = `${fontPx.toFixed(2)}px`;
+            el.style.lineHeight = "1.2";
+            el.style.padding = `${padY}px ${padX}px`;
+            el.style.color = theme.text;
+          },
         });
       }
     }
@@ -308,13 +350,19 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
           radius: 8,
         });
         const scr = this.camera.worldToScreen(item.x, item.y);
+        const mindFontPx = Math.max(4, 13 * this.camera.zoom);
         labelItems.push({
           key: `m:${item.topic.id}`,
           x: scr.x,
           y: scr.y,
           width: item.w * this.camera.zoom,
           height: item.h * this.camera.zoom,
-          render: (el) => { el.textContent = item.topic.text; },
+          render: (el) => {
+            el.textContent = item.topic.text;
+            el.style.fontSize = `${mindFontPx.toFixed(2)}px`;
+            el.style.lineHeight = "1.2";
+            el.style.color = isRoot ? "#ffffff" : "#1f2329";
+          },
         });
       }
     }
@@ -390,11 +438,17 @@ export async function mountWhiteboardView(
       el.style.justifyContent = "center";
       el.style.textAlign = "center";
       el.style.fontSize = "13px";
+      el.style.boxSizing = "border-box";
+      el.style.overflow = "hidden";
       labelLayer.appendChild(el);
       return el;
     },
     options,
   );
+
+  let dragMode: "none" | "node" | "pan" = "none";
+  let lastX = 0;
+  let lastY = 0;
 
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
@@ -407,7 +461,25 @@ export async function mountWhiteboardView(
   };
   const onPointerDown = (e: PointerEvent) => {
     const rect = container.getBoundingClientRect();
-    controller.handlePointerDown(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey);
+    const hit = controller.handlePointerDown(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey);
+    dragMode = hit ? "node" : "pan";
+    lastX = e.clientX;
+    lastY = e.clientY;
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    if (dragMode === "none") return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    if (dragMode === "node") {
+      controller.dragSelected(dx, dy);
+    } else {
+      controller.pan(dx, dy);
+    }
+  };
+  const onPointerUp = () => {
+    dragMode = "none";
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (controller.handleKeyDown(e.key, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })) {
@@ -417,6 +489,9 @@ export async function mountWhiteboardView(
 
   container.addEventListener("wheel", onWheel, { passive: false });
   container.addEventListener("pointerdown", onPointerDown);
+  container.addEventListener("pointermove", onPointerMove);
+  container.addEventListener("pointerup", onPointerUp);
+  container.addEventListener("pointerleave", onPointerUp);
   container.addEventListener("keydown", onKeyDown);
 
   controller.resize(container.clientWidth || 960, container.clientHeight || 600);
@@ -431,6 +506,9 @@ export async function mountWhiteboardView(
     dispose() {
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerup", onPointerUp);
+      container.removeEventListener("pointerleave", onPointerUp);
       container.removeEventListener("keydown", onKeyDown);
       controller.dispose();
       canvas.remove();

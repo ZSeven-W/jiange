@@ -730,6 +730,8 @@ body {
   pointer-events: none;
   z-index: 4;
   overflow: hidden;
+  background: #f5f7fb;
+  border-bottom: 1px solid #d9e0ec;
 }
 
 .base-col-header-cell {

@@ -20,6 +20,14 @@ export interface PoolableElement {
     willChange?: string;
     clipPath?: string;
     zIndex?: string;
+    opacity?: string;
+    fontSize?: string;
+    fontWeight?: string;
+    color?: string;
+    textAlign?: string;
+    lineHeight?: string;
+    padding?: string;
+    justifyContent?: string;
   };
   textContent: string | null;
   setAttribute?(name: string, value: string): void;
@@ -83,6 +91,7 @@ export class DomNodePool<T extends PoolableElement = PoolableElement> {
         slot.element.style.display = "none";
         slot.element.style.clipPath = "";
         slot.element.style.zIndex = "";
+        slot.element.style.opacity = "";
         this.free.push(slot.element);
         this.active.delete(key);
       }

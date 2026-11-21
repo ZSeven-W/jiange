@@ -68,22 +68,28 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
     expect(frame.totalNodes).toBe(3);
     expect(frame.visibleNodes).toBe(2); // "far" culled by SpatialIndex!
     expect(frame.visibleMindTopics).toBe(2);
-    expect(frame.gpu.arcInstances).toBe(1);
+    expect(frame.gpu.arcInstances).toBe(2);
     expect(frame.gpu.lineInstances).toBeGreaterThanOrEqual(3);
 
-    // Hit-test, select, shift-select, drag, delete, undo/redo
+    // Hit-test, select, interactive pointer drag, shift-select, pan, delete, undo/redo
+    container.dispatch("pointermove", { clientX: 50, clientY: 50 }); // idle no-op
     container.dispatch("pointerdown", { clientX: 80, clientY: 80, shiftKey: false });
     expect(ctrl.getSelectedIds()).toEqual(["n1"]);
     expect(onSel).toHaveBeenCalledWith(["n1"]);
-    expect(ctrl.dragSelected(20, 10)).toBe(true);
+    container.dispatch("pointermove", { clientX: 90, clientY: 85 });
+    container.dispatch("pointerup", {});
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.x).toBe(60);
+    expect(ctrl.dragSelected(10, 5)).toBe(true);
     expect(board.toGraph().nodes.find((n) => n.id === "n1")?.x).toBe(70);
 
     container.dispatch("pointerdown", { clientX: 310, clientY: 80, shiftKey: true });
     expect(ctrl.getSelectedIds()).toHaveLength(2);
-    // Toggle off via shift-click, then click empty canvas
+    // Toggle off via shift-click, then drag empty canvas to pan
     container.dispatch("pointerdown", { clientX: 310, clientY: 80, shiftKey: true });
     expect(ctrl.getSelectedIds()).toHaveLength(1);
     container.dispatch("pointerdown", { clientX: 700, clientY: 500, shiftKey: false });
+    container.dispatch("pointermove", { clientX: 715, clientY: 510 });
+    container.dispatch("pointerup", {});
     expect(ctrl.getSelectedIds()).toEqual([]);
     expect(ctrl.dragSelected(5, 5)).toBe(false);
     // Select both again and delete
@@ -138,6 +144,8 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
       edges: [
         // Solid edge with custom color
         { id: "e-solid", from: "r1", to: "t1", color: "#ff3366" },
+        // Self-loop exercises edgeAnchor(scale <= 1) fallback cleanly
+        { id: "e-self", from: "r1", to: "r1" },
         // Dangling edges (missing target & missing source)
         { id: "e-dangle-to", from: "r1", to: "missing-b" },
         { id: "e-dangle-from", from: "missing-a", to: "r1" },

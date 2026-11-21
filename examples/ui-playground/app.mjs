@@ -484,17 +484,17 @@ async function mountSheetTab(token) {
     if (inlineChartVisible) {
       ws.charts = [];
       proxy.addChart({
-        title: "Revenue by Product",
+        title: "Revenue & Margin by Product",
         type: "bar",
         top: 0,
-        left: 0,
-        bottom: stressMode ? 7 : 10,
-        right: stressMode ? 5 : 4,
+        left: stressMode ? 4 : 3,
+        bottom: stressMode ? 8 : 10,
+        right: stressMode ? 6 : 5,
         headerRow: true,
-        x: 24,
-        y: 24,
-        width: 320,
-        height: 200,
+        x: 16,
+        y: stressMode ? 320 : 356,
+        width: 460,
+        height: 210,
         showLegend: true,
       });
     } else {
@@ -1234,7 +1234,7 @@ async function mountWhiteboardTab(token) {
     el("div", { className: "btn-row" }, [zoomInBtn, zoomOutBtn, fitBtn, panLeftBtn, panRightBtn]),
     el("p", {
       className: "hint-text",
-      textContent: "Drag canvas to pan, scroll wheel to pan, Ctrl/Cmd + wheel to zoom around cursor.",
+      textContent: "Drag any node to reposition freely; drag empty canvas or wheel to pan; Ctrl/Cmd + wheel to zoom.",
     }),
   ]);
 
@@ -1323,30 +1323,21 @@ async function mountWhiteboardTab(token) {
     return diagnostics;
   }
 
-  // Smooth pointer drag-to-pan on empty canvas
+  // Telemetry & cursor sync (actual node dragging and canvas panning are handled natively by mountWhiteboardView)
   const onPointerDown = (e) => {
     if (!mounted || e.button !== 0) return;
-    const rect = host.getBoundingClientRect();
-    const hit = mounted.controller.hitTest(e.clientX - rect.left, e.clientY - rect.top);
-    if (!hit) {
-      dragging = true;
-      lastDragX = e.clientX;
-      lastDragY = e.clientY;
-      host.classList.add("dragging");
-    }
+    dragging = true;
+    host.classList.add("dragging");
   };
-  const onPointerMove = (e) => {
+  const onPointerMove = () => {
     if (!dragging || !mounted) return;
-    const dx = e.clientX - lastDragX;
-    const dy = e.clientY - lastDragY;
-    lastDragX = e.clientX;
-    lastDragY = e.clientY;
-    syncUi(mounted.controller.pan(dx, dy));
+    syncUi();
   };
   const onPointerUp = () => {
     if (dragging) {
       dragging = false;
       host.classList.remove("dragging");
+      if (mounted) syncUi();
     }
   };
   const onWheelSync = () => {

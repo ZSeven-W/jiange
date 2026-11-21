@@ -4,6 +4,7 @@
  */
 
 import {
+  DomNodePool,
   GpuSurface,
   InstanceBatch,
   VirtualList1D,
@@ -41,6 +42,7 @@ function isLineKind(kind: SlideShape["kind"]): boolean {
 
 export class SlidesViewController<T extends PoolableElement = PoolableElement> {
   readonly thumbnails: VirtualList1D<T>;
+  readonly textPool: DomNodePool<T>;
   private readonly batch = new InstanceBatch(512, 512, 128);
   private slideIndex = 0;
   private selectedShapeId: string | null = null;
@@ -54,10 +56,12 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
     readonly surface: GpuSurface,
     thumbFactory: () => T,
     private readonly options: SlidesViewOptions = {},
+    textFactory?: () => T,
   ) {
     this.slideIndex = Math.max(0, Math.min(Math.max(0, deck.slideCount - 1), options.initialSlide ?? 0));
     this.presenterMode = Boolean(options.presenterMode);
     this.thumbnails = new VirtualList1D<T>(deck.slideCount, 108, thumbFactory);
+    this.textPool = new DomNodePool<T>(textFactory ?? thumbFactory);
   }
 
   getSlideIndex(): number {
@@ -218,7 +222,56 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
       borderColor: [0.85, 0.88, 0.93, 1],
     });
 
+    const textItems: Array<{
+      key: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      render: (el: T, newlyBound: boolean) => void;
+    }> = [];
+    const scale = stage.w / 1280;
+
     if (page) {
+      if (page.layout !== "blank") {
+        if (page.title) {
+          textItems.push({
+            key: `slide-title:${this.slideIndex}`,
+            x: stage.x + stage.w * 0.06,
+            y: stage.y + stage.h * 0.07,
+            width: stage.w * 0.88,
+            height: stage.h * 0.14,
+            render: (el) => {
+              el.textContent = page.title;
+              el.style.fontSize = `${Math.max(8, 36 * scale).toFixed(2)}px`;
+              el.style.fontWeight = "700";
+              el.style.color = theme.textDark;
+              el.style.textAlign = "left";
+              el.style.justifyContent = "flex-start";
+              el.style.padding = "0";
+            },
+          });
+        }
+        if (page.body) {
+          textItems.push({
+            key: `slide-body:${this.slideIndex}`,
+            x: stage.x + stage.w * 0.06,
+            y: stage.y + stage.h * 0.24,
+            width: stage.w * 0.88,
+            height: stage.h * 0.16,
+            render: (el) => {
+              el.textContent = page.body;
+              el.style.fontSize = `${Math.max(7, 22 * scale).toFixed(2)}px`;
+              el.style.fontWeight = "400";
+              el.style.color = "#374151";
+              el.style.textAlign = "left";
+              el.style.justifyContent = "flex-start";
+              el.style.padding = "0";
+            },
+          });
+        }
+      }
+
       for (const s of page.shapes) {
         const x = stage.x + (s.x / 100) * stage.w;
         const y = stage.y + (s.y / 100) * stage.h;
@@ -228,14 +281,18 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
         const rotRad = ((s.rotation ?? 0) * Math.PI) / 180;
 
         if (isLineKind(s.kind)) {
-          this.batch.pushLine({
-            x1: x,
-            y1: y + h / 2,
-            x2: x + w,
-            y2: y + h / 2,
-            thickness: s.strokeWidth ?? 3,
-            color: col,
-          });
+          const midY = y + h / 2;
+          const thickness = Math.max(1.5, (s.strokeWidth ?? 3) * scale);
+          this.batch.pushLine({ x1: x, y1: midY, x2: x + w, y2: midY, thickness, color: col });
+          if (s.kind !== "line" && s.kind !== "line-dot") {
+            const ah = Math.max(5, 9 * scale);
+            this.batch.pushLine({ x1: x + w - ah, y1: midY - ah * 0.55, x2: x + w, y2: midY, thickness, color: col });
+            this.batch.pushLine({ x1: x + w - ah, y1: midY + ah * 0.55, x2: x + w, y2: midY, thickness, color: col });
+            if (s.kind === "line-double-arrow") {
+              this.batch.pushLine({ x1: x + ah, y1: midY - ah * 0.55, x2: x, y2: midY, thickness, color: col });
+              this.batch.pushLine({ x1: x + ah, y1: midY + ah * 0.55, x2: x, y2: midY, thickness, color: col });
+            }
+          }
         } else if (s.kind === "ellipse") {
           this.batch.pushArc({ cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2, color: col });
         } else if (s.kind === "table" && s.table) {
@@ -244,28 +301,91 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
           const cw = w / cols;
           const rh = h / rows;
           for (let r = 0; r < rows; r++) {
-            const fill = s.table.headerRow && r === 0 ? col : r % 2 === 1 ? [0.96, 0.97, 0.99, 1] as [number, number, number, number] : [1, 1, 1, 1] as [number, number, number, number];
+            const isHeader = Boolean(s.table.headerRow && r === 0);
+            const fill = isHeader ? col : r % 2 === 1 ? [0.96, 0.97, 0.99, 1] as [number, number, number, number] : [1, 1, 1, 1] as [number, number, number, number];
             this.batch.pushRect({ x, y: y + r * rh, w, h: rh, fill, borderWidth: 1, borderColor: [0.82, 0.84, 0.88, 1] });
+            for (let c = 0; c < cols; c++) {
+              const cellText = s.table.rows[r]?.[c] ?? "";
+              textItems.push({
+                key: `tbl:${s.id}:${r}:${c}`,
+                x: x + c * cw,
+                y: y + r * rh,
+                width: cw,
+                height: rh,
+                render: (el) => {
+                  el.textContent = cellText;
+                  el.style.fontSize = `${Math.max(4, 13 * scale).toFixed(2)}px`;
+                  el.style.fontWeight = isHeader ? "700" : "400";
+                  el.style.color = isHeader ? "#ffffff" : "#1f2329";
+                  el.style.textAlign = "left";
+                  el.style.justifyContent = "flex-start";
+                  el.style.padding = `0 ${Math.max(2, 6 * scale).toFixed(1)}px`;
+                },
+              });
+            }
           }
           for (let c = 1; c < cols; c++) {
             this.batch.pushLine({ x1: x + c * cw, y1: y, x2: x + c * cw, y2: y + h, thickness: 1, color: [0.82, 0.84, 0.88, 1] });
           }
         } else if (s.kind === "chart" && s.chart) {
           this.batch.pushRect({ x, y, w, h, fill: [0.97, 0.98, 1, 1], radius: 6, borderWidth: 1, borderColor: [0.86, 0.89, 0.94, 1] });
+          const chartTitle = s.chart.title;
+          const titleOffset = chartTitle ? 26 * scale : 10 * scale;
+          if (chartTitle) {
+            textItems.push({
+              key: `chart-title:${s.id}`,
+              x,
+              y: y + 4 * scale,
+              width: w,
+              height: 22 * scale,
+              render: (el) => {
+                el.textContent = chartTitle;
+                el.style.fontSize = `${Math.max(4, 15 * scale).toFixed(2)}px`;
+                el.style.fontWeight = "700";
+                el.style.color = "#1f2329";
+                el.style.textAlign = "center";
+                el.style.justifyContent = "center";
+                el.style.padding = "0 4px";
+              },
+            });
+          }
           const vals = s.chart.series[0]?.values ?? [];
           const maxV = Math.max(1, ...vals.map((v) => Math.abs(v)));
           const barW = vals.length ? (w - 24) / vals.length : 10;
+          const plotH = Math.max(8, h - titleOffset - 16);
           vals.forEach((v, i) => {
-            const bh = (Math.max(0, v) / maxV) * (h - 24);
+            const bh = (Math.max(0, v) / maxV) * plotH;
             this.batch.pushRect({ x: x + 12 + i * barW + 2, y: y + h - 12 - bh, w: Math.max(3, barW - 4), h: Math.max(2, bh), fill: col, radius: 2 });
           });
+        } else if (s.kind === "text") {
+          const textContent = s.text ?? "";
+          if (textContent) {
+            const align = s.align ?? "left";
+            const textColor = s.color || theme.textDark;
+            textItems.push({
+              key: `txt:${s.id}`,
+              x,
+              y,
+              width: w,
+              height: h,
+              render: (el) => {
+                el.textContent = textContent;
+                el.style.fontSize = `${Math.max(4, (s.fontSize ?? 24) * scale).toFixed(2)}px`;
+                el.style.fontWeight = s.bold ? "700" : "400";
+                el.style.color = textColor;
+                el.style.textAlign = align;
+                el.style.justifyContent = align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start";
+                el.style.padding = "0";
+              },
+            });
+          }
         } else {
           this.batch.pushRect({
             x,
             y,
             w,
             h,
-            fill: s.kind === "text" ? [0, 0, 0, 0] : col,
+            fill: col,
             radius: s.kind === "rounded-rectangle" ? Math.min(w, h) * 0.16 : 0,
             rotationRad: rotRad,
           });
@@ -290,6 +410,7 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
       }
     }
 
+    this.textPool.sync(textItems);
     const gpu = this.surface.render([this.batch]);
     this.thumbnails.sizes.setCount(this.deck.slideCount);
     const thumbFrame = this.thumbnails.update(this.thumbScrollTop, this.height, 152, (idx, el) => {
@@ -302,6 +423,7 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
   }
 
   dispose(): void {
+    this.textPool.clear();
     this.thumbnails.pool.clear();
     this.surface.dispose();
   }
@@ -338,6 +460,13 @@ export async function mountSlidesView(
   canvas.style.display = "block";
   stageHost.appendChild(canvas);
 
+  const textLayer = doc.createElement("div");
+  textLayer.style.position = "absolute";
+  textLayer.style.inset = "0";
+  textLayer.style.pointerEvents = "none";
+  textLayer.style.overflow = "hidden";
+  stageHost.appendChild(textLayer);
+
   const surface = await GpuSurface.create(canvas, options.gpu);
   const controller = new SlidesViewController<HTMLElement>(
     deck,
@@ -353,6 +482,17 @@ export async function mountSlidesView(
       return item;
     },
     options,
+    () => {
+      const el = doc.createElement("div");
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.style.boxSizing = "border-box";
+      el.style.overflow = "hidden";
+      el.style.whiteSpace = "nowrap";
+      el.style.textOverflow = "ellipsis";
+      textLayer.appendChild(el);
+      return el;
+    },
   );
 
   const onPointerDown = (e: PointerEvent) => {

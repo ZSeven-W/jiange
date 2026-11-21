@@ -61,7 +61,7 @@ export const DEFAULT_SHEET_THEME: SheetRenderTheme = {
   background: [1, 1, 1, 1],
   headerBg: [0.96, 0.97, 0.985, 1],
   gridLine: [0.89, 0.91, 0.94, 1],
-  frozenLine: [0.64, 0.72, 0.85, 1],
+  frozenLine: [0.82, 0.86, 0.91, 1],
   selectionFill: [0.2, 0.44, 1, 0.12],
   selectionBorder: [0.2, 0.44, 1, 1],
   defaultRowHeight: 28,
@@ -222,6 +222,12 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
 
     const frozenW = this.grid.cols.indexToOffset(Math.min(ws.frozenCols, ws.columns.length));
     const frozenH = this.grid.rows.indexToOffset(Math.min(ws.frozenRows, ws.rows.length));
+    const chartBoxes = (ws.charts ?? []).map((chart, idx) => ({
+      x: headerX + (chart.x ?? (24 + idx * 340)) - this.scrollLeft,
+      y: headerY + (chart.y ?? 24) - this.scrollTop,
+      w: chart.width ?? 320,
+      h: chart.height ?? 200,
+    }));
 
     const gridFrame = this.grid.sync(
       {
@@ -238,11 +244,17 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
         const ev = evalNumber(cell.row, cell.col);
         el.textContent = formatCellDisplay(rawCell?.raw ?? "", ev, rawCell?.style);
         // Shift recycled text slot by header offsets and clip against frozen panes so scrolled text never bleeds through
-        el.style.transform = `translate3d(${headerX + cell.x}px, ${headerY + cell.y}px, 0)`;
+        const sx = headerX + cell.x;
+        const sy = headerY + cell.y;
+        el.style.transform = `translate3d(${sx}px, ${sy}px, 0)`;
         const clipLeft = (cell.quadrant === "top-right" || cell.quadrant === "bottom-right") ? Math.max(0, frozenW - cell.x) : 0;
         const clipTop = (cell.quadrant === "bottom-left" || cell.quadrant === "bottom-right") ? Math.max(0, frozenH - cell.y) : 0;
         el.style.clipPath = clipTop > 0 || clipLeft > 0 ? `inset(${clipTop}px 0px 0px ${clipLeft}px)` : "";
         el.style.zIndex = cell.quadrant === "top-left" ? "4" : cell.quadrant === "bottom-right" ? "1" : "3";
+        const occludedByChart = chartBoxes.some(
+          (b) => sx + cell.width > b.x && sx < b.x + b.w && sy + cell.height > b.y && sy < b.y + b.h,
+        );
+        el.style.opacity = occludedByChart ? "0" : "";
       },
       (row, col) => {
         const isScrollCol = col >= ws.frozenCols;
@@ -308,10 +320,10 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
     this.overlayBatch.pushRect({ x: 0, y: 0, w: this.viewportWidth, h: headerY, fill: this.theme.headerBg });
     this.overlayBatch.pushRect({ x: 0, y: headerY, w: headerX, h: this.contentHeight, fill: this.theme.headerBg });
     if (fh > 0) {
-      this.overlayBatch.pushLine({ x1: 0, y1: headerY + fh, x2: this.viewportWidth, y2: headerY + fh, thickness: 2, color: this.theme.frozenLine });
+      this.overlayBatch.pushLine({ x1: 0, y1: headerY + fh, x2: this.viewportWidth, y2: headerY + fh, thickness: 1.5, color: this.theme.frozenLine });
     }
     if (fw > 0) {
-      this.overlayBatch.pushLine({ x1: headerX + fw, y1: 0, x2: headerX + fw, y2: this.viewportHeight, thickness: 2, color: this.theme.frozenLine });
+      this.overlayBatch.pushLine({ x1: headerX + fw, y1: 0, x2: headerX + fw, y2: this.viewportHeight, thickness: 1.5, color: this.theme.frozenLine });
     }
 
     // Active selection range highlight
@@ -365,16 +377,17 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
       }
       ws.charts.forEach((chart, idx) => {
         const model = extractChartDataset(ws, evalRecord, chart);
-        const cx = headerX + 24 + idx * 340 - this.scrollLeft;
-        const cy = headerY + 24 - this.scrollTop;
-        const cw = 320;
-        const ch = 200;
+        const box = chartBoxes[idx];
+        const cx = box.x;
+        const cy = box.y;
+        const cw = box.w;
+        const ch = box.h;
         this.overlayBatch.pushRect({
           x: cx,
           y: cy,
           w: cw,
           h: ch,
-          fill: [0.985, 0.99, 1, 0.96],
+          fill: [1, 1, 1, 0.98],
           borderWidth: 1,
           borderColor: [0.85, 0.88, 0.93, 1],
           radius: 8,

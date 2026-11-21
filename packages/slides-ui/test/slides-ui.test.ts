@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { GpuSurface } from "@jiange/render-gpu";
 import { Presentation } from "@jiange/slides-sdk";
 import {
+  SlidesViewController,
   createSlidesViewComponent,
   defineSlidesElement,
   mountSlidesView,
@@ -48,10 +50,16 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
         { id: "r1", kind: "rounded-rectangle", x: 10, y: 20, width: 25, height: 25, color: "#3370ff" },
         { id: "e1", kind: "ellipse", x: 40, y: 20, width: 15, height: 15, color: "#00b42a" },
         { id: "l1", kind: "line-arrow", x: 10, y: 55, width: 30, height: 4, color: "#1f2329" },
-        { id: "t1", kind: "table", x: 55, y: 20, width: 35, height: 25, color: "#3370ff", table: { headerRow: true, rows: [["A", "B"], ["1", "2"]] } },
-        { id: "c1", kind: "chart", x: 55, y: 55, width: 35, height: 30, color: "#ff7d00", chart: { type: "column", categories: ["Q1", "Q2"], series: [{ name: "S", values: [10, 25] }] } },
+        { id: "l2", kind: "line-double-arrow", x: 10, y: 62, width: 20, height: 4, color: "#3370ff" },
+        { id: "l3", kind: "line", x: 10, y: 68, width: 20, height: 4, color: "#64748b" },
+        { id: "t1", kind: "table", x: 55, y: 20, width: 35, height: 25, color: "#3370ff", table: { headerRow: true, rows: [["A", "B"], ["1"]] } },
+        { id: "c1", kind: "chart", x: 55, y: 55, width: 35, height: 30, color: "#ff7d00", chart: { type: "column", title: "Revenue", categories: ["Q1", "Q2"], series: [{ name: "S", values: [10, 25] }] } },
+        { id: "tx-l", kind: "text", x: 10, y: 74, width: 25, height: 8, text: "Left", color: "#1f2329", fontSize: 18, bold: true },
+        { id: "tx-c", kind: "text", x: 36, y: 74, width: 18, height: 8, text: "Center", color: "#3370ff", align: "center" },
+        { id: "tx-r", kind: "text", x: 36, y: 84, width: 18, height: 8, text: "Right", color: "", align: "right" },
       ],
     });
+    deck.addSlide({ title: "Blank", layout: "blank", shapes: [] });
 
     const fakeDoc = { createElement: (t: string) => makeDomNode(t) };
     const container = makeDomNode("div");
@@ -72,8 +80,15 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     expect(f2.slideIndex).toBe(1);
     expect(f2.gpu.rectInstances).toBeGreaterThan(5);
     expect(f2.gpu.arcInstances).toBe(1);
-    expect(f2.visibleThumbnails).toBe(2);
+    expect(f2.visibleThumbnails).toBe(3);
     expect(onSlide).toHaveBeenCalledWith(1);
+    // Blank slide skips auto-title/body & direct controller without textFactory uses thumbFactory fallback
+    ctrl.goToSlide(2);
+    ctrl.goToSlide(1);
+    const directSurface = await GpuSurface.create(null);
+    const directCtrl = new SlidesViewController(deck, directSurface, () => makeDomNode("div") as unknown as HTMLElement);
+    directCtrl.render();
+    directCtrl.dispose();
 
     // Hit-test & move shape & delete & undo
     const stage = ctrl.getStageRect();
