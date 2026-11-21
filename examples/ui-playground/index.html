@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jiange AI-Native UI SDK Playground</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "@jiange/base-sdk": "/packages/base-sdk/dist/index.js",
+        "@jiange/base-sdk/types": "/packages/base-sdk/dist/types.js",
+        "@jiange/base-sdk/formula": "/packages/base-sdk/dist/formula.js",
+        "@jiange/base-sdk/query": "/packages/base-sdk/dist/query.js",
+        "@jiange/base-sdk/dashboard": "/packages/base-sdk/dist/dashboard.js",
+        "@jiange/base-sdk/csv": "/packages/base-sdk/dist/csv.js",
+        "@jiange/base-sdk/base": "/packages/base-sdk/dist/base.js",
+        "@jiange/base-sdk/ai-tools": "/packages/base-sdk/dist/ai-tools.js",
+
+        "@jiange/base-ui": "/packages/base-ui/dist/index.js",
+        "@jiange/base-ui/base-view": "/packages/base-ui/dist/base-view.js",
+        "@jiange/base-ui/react": "/packages/base-ui/dist/react.js",
+
+        "@jiange/collab": "/packages/collab/dist/index.js",
+        "@jiange/collab/table": "/packages/collab/dist/table.js",
+        "@jiange/collab/ws": "/packages/collab/dist/ws.js",
+        "@jiange/collab/storage": "/packages/collab/dist/storage.js",
+        "@jiange/collab/ai-agent": "/packages/collab/dist/ai-agent.js",
+
+        "@jiange/doc-sdk": "/packages/doc-sdk/dist/index.js",
+        "@jiange/doc-sdk/model": "/packages/doc-sdk/dist/model.js",
+        "@jiange/doc-sdk/tableCells": "/packages/doc-sdk/dist/table-cells.js",
+        "@jiange/doc-sdk/blockStyles": "/packages/doc-sdk/dist/block-styles.js",
+        "@jiange/doc-sdk/columnWidths": "/packages/doc-sdk/dist/column-widths.js",
+        "@jiange/doc-sdk/columnMove": "/packages/doc-sdk/dist/column-move.js",
+        "@jiange/doc-sdk/docx": "/packages/doc-sdk/dist/docx.js",
+        "@jiange/doc-sdk/markdown": "/packages/doc-sdk/dist/markdown.js",
+        "@jiange/doc-sdk/html": "/packages/doc-sdk/dist/html.js",
+        "@jiange/doc-sdk/document": "/packages/doc-sdk/dist/document.js",
+        "@jiange/doc-sdk/ai-tools": "/packages/doc-sdk/dist/ai-tools.js",
+        "@jiange/doc-sdk/zip": "/packages/doc-sdk/dist/zip.js",
+        "@jiange/doc-sdk/xml": "/packages/doc-sdk/dist/xml.js",
+        "@jiange/doc-sdk/table-cells": "/packages/doc-sdk/dist/table-cells.js",
+        "@jiange/doc-sdk/block-styles": "/packages/doc-sdk/dist/block-styles.js",
+        "@jiange/doc-sdk/column-widths": "/packages/doc-sdk/dist/column-widths.js",
+        "@jiange/doc-sdk/column-move": "/packages/doc-sdk/dist/column-move.js",
+        "@jiange/doc-sdk/column-archive-experimental": "/packages/doc-sdk/dist/column-archive-experimental.js",
+
+        "@jiange/doc-ui": "/packages/doc-ui/dist/index.js",
+        "@jiange/doc-ui/doc-view": "/packages/doc-ui/dist/doc-view.js",
+        "@jiange/doc-ui/react": "/packages/doc-ui/dist/react.js",
+
+        "@jiange/ooxml": "/packages/ooxml/dist/index.js",
+        "@jiange/ooxml/xml": "/packages/ooxml/dist/xml.js",
+        "@jiange/ooxml/zip": "/packages/ooxml/dist/zip.js",
+
+        "@jiange/render-gpu": "/packages/render-gpu/dist/index.js",
+        "@jiange/render-gpu/fenwick": "/packages/render-gpu/dist/fenwick.js",
+        "@jiange/render-gpu/virtual-pool": "/packages/render-gpu/dist/virtual-pool.js",
+        "@jiange/render-gpu/spatial-index": "/packages/render-gpu/dist/spatial-index.js",
+        "@jiange/render-gpu/instance-buffer": "/packages/render-gpu/dist/instance-buffer.js",
+        "@jiange/render-gpu/glyph-atlas": "/packages/render-gpu/dist/glyph-atlas.js",
+        "@jiange/render-gpu/shaders": "/packages/render-gpu/dist/shaders.js",
+        "@jiange/render-gpu/gpu-surface": "/packages/render-gpu/dist/gpu-surface.js",
+
+        "@jiange/sheet-sdk": "/packages/sheet-sdk/dist/index.js",
+        "@jiange/sheet-sdk/types": "/packages/sheet-sdk/dist/types.js",
+        "@jiange/sheet-sdk/grid": "/packages/sheet-sdk/dist/grid.js",
+        "@jiange/sheet-sdk/formula": "/packages/sheet-sdk/dist/formula.js",
+        "@jiange/sheet-sdk/formula-ast": "/packages/sheet-sdk/dist/formula-ast.js",
+        "@jiange/sheet-sdk/formula-functions": "/packages/sheet-sdk/dist/formula-functions.js",
+        "@jiange/sheet-sdk/formula-engine": "/packages/sheet-sdk/dist/formula-engine.js",
+        "@jiange/sheet-sdk/numfmt": "/packages/sheet-sdk/dist/numfmt.js",
+        "@jiange/sheet-sdk/csv": "/packages/sheet-sdk/dist/csv.js",
+        "@jiange/sheet-sdk/tsv": "/packages/sheet-sdk/dist/tsv.js",
+        "@jiange/sheet-sdk/clipboard": "/packages/sheet-sdk/dist/clipboard.js",
+        "@jiange/sheet-sdk/rules": "/packages/sheet-sdk/dist/rules.js",
+        "@jiange/sheet-sdk/analytics": "/packages/sheet-sdk/dist/analytics.js",
+        "@jiange/sheet-sdk/collab": "/packages/sheet-sdk/dist/collab.js",
+        "@jiange/sheet-sdk/xlsx": "/packages/sheet-sdk/dist/xlsx.js",
+        "@jiange/sheet-sdk/xlsxRead": "/packages/sheet-sdk/dist/xlsx-read.js",
+        "@jiange/sheet-sdk/xlsx-read": "/packages/sheet-sdk/dist/xlsx-read.js",
+        "@jiange/sheet-sdk/workbook-xlsx": "/packages/sheet-sdk/dist/workbook-xlsx.js",
+        "@jiange/sheet-sdk/workbook": "/packages/sheet-sdk/dist/workbook.js",
+        "@jiange/sheet-sdk/ai-tools": "/packages/sheet-sdk/dist/ai-tools.js",
+        "@jiange/sheet-sdk/worker": "/packages/sheet-sdk/dist/worker.js",
+
+        "@jiange/sheet-ui": "/packages/sheet-ui/dist/index.js",
+        "@jiange/sheet-ui/renderer": "/packages/sheet-ui/dist/sheet-renderer.js",
+        "@jiange/sheet-ui/controller": "/packages/sheet-ui/dist/controller.js",
+        "@jiange/sheet-ui/mount": "/packages/sheet-ui/dist/mount.js",
+        "@jiange/sheet-ui/react": "/packages/sheet-ui/dist/react.js",
+
+        "@jiange/slides-sdk": "/packages/slides-sdk/dist/index.js",
+        "@jiange/slides-sdk/shape-state": "/packages/slides-sdk/dist/shape-state.js",
+        "@jiange/slides-sdk/shape-order": "/packages/slides-sdk/dist/shape-order.js",
+        "@jiange/slides-sdk/shape-resize": "/packages/slides-sdk/dist/shape-resize.js",
+        "@jiange/slides-sdk/line-endpoints": "/packages/slides-sdk/dist/line-endpoints.js",
+        "@jiange/slides-sdk/order": "/packages/slides-sdk/dist/order.js",
+        "@jiange/slides-sdk/layout": "/packages/slides-sdk/dist/layout.js",
+        "@jiange/slides-sdk/visibility": "/packages/slides-sdk/dist/visibility.js",
+        "@jiange/slides-sdk/zoom": "/packages/slides-sdk/dist/zoom.js",
+        "@jiange/slides-sdk/pptx": "/packages/slides-sdk/dist/pptx.js",
+        "@jiange/slides-sdk/svg": "/packages/slides-sdk/dist/svg.js",
+        "@jiange/slides-sdk/deck": "/packages/slides-sdk/dist/deck.js",
+        "@jiange/slides-sdk/ai-tools": "/packages/slides-sdk/dist/ai-tools.js",
+
+        "@jiange/slides-ui": "/packages/slides-ui/dist/index.js",
+        "@jiange/slides-ui/slides-view": "/packages/slides-ui/dist/slides-view.js",
+        "@jiange/slides-ui/react": "/packages/slides-ui/dist/react.js",
+
+        "@jiange/whiteboard-sdk": "/packages/whiteboard-sdk/dist/index.js",
+        "@jiange/whiteboard-sdk/model": "/packages/whiteboard-sdk/dist/model.js",
+        "@jiange/whiteboard-sdk/mindmap": "/packages/whiteboard-sdk/dist/mindmap.js",
+        "@jiange/whiteboard-sdk/history": "/packages/whiteboard-sdk/dist/history.js",
+        "@jiange/whiteboard-sdk/viewport": "/packages/whiteboard-sdk/dist/viewport.js",
+        "@jiange/whiteboard-sdk/inkGeometry": "/packages/whiteboard-sdk/dist/ink-geometry.js",
+        "@jiange/whiteboard-sdk/ink-geometry": "/packages/whiteboard-sdk/dist/ink-geometry.js",
+        "@jiange/whiteboard-sdk/xmind": "/packages/whiteboard-sdk/dist/xmind.js",
+        "@jiange/whiteboard-sdk/comment-anchor": "/packages/whiteboard-sdk/dist/comment-anchor.js",
+        "@jiange/whiteboard-sdk/mermaid": "/packages/whiteboard-sdk/dist/mermaid.js",
+        "@jiange/whiteboard-sdk/svg": "/packages/whiteboard-sdk/dist/svg.js",
+        "@jiange/whiteboard-sdk/board": "/packages/whiteboard-sdk/dist/board.js",
+        "@jiange/whiteboard-sdk/ai-tools": "/packages/whiteboard-sdk/dist/ai-tools.js",
+
+        "@jiange/whiteboard-ui": "/packages/whiteboard-ui/dist/index.js",
+        "@jiange/whiteboard-ui/whiteboard-view": "/packages/whiteboard-ui/dist/whiteboard-view.js",
+        "@jiange/whiteboard-ui/react": "/packages/whiteboard-ui/dist/react.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-row">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="2.5" y="2.5" width="8.5" height="8.5" rx="2.2" fill="#3370ff" />
+              <rect x="13" y="2.5" width="8.5" height="8.5" rx="2.2" fill="#3370ff" fill-opacity="0.35" />
+              <rect x="2.5" y="13" width="8.5" height="8.5" rx="2.2" fill="#3370ff" fill-opacity="0.6" />
+              <circle cx="17.25" cy="17.25" r="4.25" fill="#00b42a" />
+            </svg>
+          </div>
+          <div class="brand-copy">
+            <h1>Jiange AI-Native UI SDK Playground</h1>
+            <span class="brand-sub">Zero-Bundler Native ESM &middot; WebGPU / WebGL2 SDF Engine</span>
+          </div>
+        </div>
+
+        <div class="telemetry-bar" role="status" aria-live="polite">
+          <span class="pill pill-backend" id="pill-backend" data-telemetry="backend">
+            <span class="dot"></span>
+            <span class="pill-label">Backend</span>
+            <strong id="val-backend">init</strong>
+          </span>
+          <span class="pill" id="pill-draws" data-telemetry="draw-calls">
+            <span class="pill-label">Draws</span>
+            <strong id="val-draws">0</strong>
+          </span>
+          <span class="pill" id="pill-instances" data-telemetry="instances">
+            <span class="pill-label">Instances</span>
+            <strong id="val-instances">0</strong>
+          </span>
+          <span class="pill" id="pill-frame" data-telemetry="frame-ms">
+            <span class="pill-label">Frame</span>
+            <strong id="val-frame">0.00 ms</strong>
+          </span>
+          <span class="badge-zero-2d" id="badge-zero-canvas2d" title="Strictly zero Canvas 2D getContext('2d') calls across @jiange/render-gpu and all @jiange/*-ui packages">
+            Zero Canvas 2D
+          </span>
+        </div>
+      </div>
+
+      <nav class="tabbar" role="tablist" aria-label="Jiange UI SDK Demos">
+        <button class="tab-btn active" role="tab" aria-selected="true" data-tab="sheet">Sheet (GPU + Virtual2D)</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="doc">Doc (Virtual1D)</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="slides">Slides (GPU Stage)</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="whiteboard">Whiteboard (GPU Canvas)</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="base">Base (Grid/Kanban/Gantt/Dash)</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="glyph-lab">GPU GlyphAtlas Lab</button>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <section id="stage" class="stage" aria-label="Interactive SDK Stage"></section>
+      <aside id="controls" class="controls" aria-label="Controls and AI Tool Drawer"></aside>
+    </main>
+  </div>
+
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>
