@@ -124,7 +124,9 @@ const { FenwickVirtualizer, SpatialIndex, InstanceBatch } = await import(join(ro
   const readMs = performance.now() - tRead0;
 
   assert.equal(parsed.workbook.sheets[0].cells.length, 50_000);
-  console.log(`  [PASS] 50k-cell XLSX DEFLATE write: ${writeMs.toFixed(1)} ms (${(bytes.length / 1024).toFixed(1)} KB), read: ${readMs.toFixed(1)} ms`);
+  console.log(`  [PASS] 50k-cell XLSX DEFLATE write: ${writeMs.toFixed(1)} ms (${(bytes.length / 1024).toFixed(1)} KB, SLA < 500 ms), read: ${readMs.toFixed(1)} ms (SLA < 400 ms)`);
+  assert.ok(writeMs < 500, `XLSX write exceeded 500ms SLA: ${writeMs.toFixed(1)}ms`);
+  assert.ok(readMs < 400, `XLSX read exceeded 400ms SLA: ${readMs.toFixed(1)}ms`);
 }
 
 // Benchmark C: 1,000,000-row FenwickVirtualizer (1,000 random variable-height scroll frames)
@@ -173,7 +175,7 @@ const { FenwickVirtualizer, SpatialIndex, InstanceBatch } = await import(join(ro
   assert.ok(perFrameMs < 2, `Spatial cull + GPU pack exceeded 2ms/frame: ${perFrameMs}`);
 }
 
-// Benchmark E: 10,000-row Workbook.inspect({ detail: "summary" })
+// Benchmark E: 10,000-row Workbook.inspect({ detail: "summary", maxTokens: 1500 })
 {
   const wb = Workbook.create({ sheets: [{ name: "Big", rows: 10005, cols: 5 }] });
   const sh = wb.sheet("Big");
@@ -181,14 +183,16 @@ const { FenwickVirtualizer, SpatialIndex, InstanceBatch } = await import(join(ro
   for (let r = 0; r < 10_000; r++) rows.push([`Row${r}`, r, r * 2, r * 3, "Active"]);
   sh.setRange("A1", rows);
   const t0 = performance.now();
-  const summary = wb.inspect({ detail: "summary" });
+  const summary = wb.inspect({ detail: "summary", maxTokens: 1500 });
   const elapsedMs = performance.now() - t0;
   assert.equal(summary.summary.totalCells, 50_000);
-  console.log(`  [PASS] 10k-row (50k cells) Workbook.inspect summary: ${elapsedMs.toFixed(2)} ms`);
+  assert.ok(summary.estimatedTokens <= 1500, `inspect exceeded 1500 tokens: ${summary.estimatedTokens}`);
+  console.log(`  [PASS] 10k-row (50k cells) Workbook.inspect summary: ${elapsedMs.toFixed(2)} ms (SLA < 15 ms, tokens=${summary.estimatedTokens})`);
+  assert.ok(elapsedMs < 15, `Workbook.inspect exceeded 15ms SLA: ${elapsedMs.toFixed(2)}ms`);
 }
 
 // ---------------------------------------------------------------------------
-// 3. Isolated Single-Package Install Verification (ALL 13 packages!)
+// 3. Isolated Single-Package Install Verification & UI Benchmarks (ALL 13 packages!)
 // ---------------------------------------------------------------------------
 
 console.log("=== 3. Isolated Single-Package Install Verification ===");
@@ -277,10 +281,15 @@ try {
 
   runIsolated("render-gpu-only", ["render-gpu"], `
     import assert from 'node:assert/strict';
-    import { FenwickVirtualizer, GpuSurface } from '@jiange/render-gpu';
+    import { FenwickVirtualizer, GpuSurface, InstanceBatch } from '@jiange/render-gpu';
+    import { GlyphAtlas } from '@jiange/render-gpu/glyph-atlas';
     const v = new FenwickVirtualizer(100000, 28);
     assert.equal(v.totalSize, 2800000);
     const s = await GpuSurface.create(null);
+    const atlas = new GlyphAtlas();
+    const batch = new InstanceBatch();
+    batch.pushText(atlas, 'Jiange', 0, 0, 14, [0, 0, 0, 1]);
+    assert.equal(s.render([batch]).glyphInstances, 6);
     assert.equal(s.backendKind, 'headless');
   `);
 
@@ -288,7 +297,10 @@ try {
     import assert from 'node:assert/strict';
     import { Workbook } from '@jiange/sheet-sdk';
     import { GpuSurface } from '@jiange/render-gpu';
-    import { SheetGpuRenderer, SheetViewController } from '@jiange/sheet-ui';
+    import { SheetGpuRenderer, SheetViewController, defineSheetElement } from '@jiange/sheet-ui';
+    import { createSheetViewComponent } from '@jiange/sheet-ui/react';
+    assert.equal(typeof createSheetViewComponent, 'function');
+    assert.equal(defineSheetElement(), false);
     const wb = Workbook.create();
     const ctrl = new SheetViewController(wb, new SheetGpuRenderer(await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' })));
     assert.equal(ctrl.render().gpu.backend, 'headless');
@@ -296,17 +308,41 @@ try {
 
   runIsolated("doc-ui-only", ["ooxml", "collab", "doc-sdk", "render-gpu", "doc-ui"], `
     import assert from 'node:assert/strict';
+    import { performance } from 'node:perf_hooks';
     import { Document } from '@jiange/doc-sdk';
-    import { DocViewController } from '@jiange/doc-ui';
-    const ctrl = new DocViewController(Document.fromMarkdown('# Hi'), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
-    assert.equal(ctrl.render().visibleCount, 1);
+    import { DocViewController, defineDocElement } from '@jiange/doc-ui';
+    import { createDocViewComponent } from '@jiange/doc-ui/react';
+    assert.equal(typeof createDocViewComponent, 'function');
+    assert.equal(defineDocElement(), false);
+    const lines = [];
+    for (let i = 0; i < 5000; i++) {
+      lines.push(i % 50 === 0 ? \`# Section \${i / 50}\` : \`Paragraph \${i}: lightweight virtual list benchmark line.\`);
+    }
+    const doc = Document.fromMarkdown(lines.join('\\n\\n'), 'BigDoc');
+    let poolCreated = 0;
+    const ctrl = new DocViewController(doc, () => {
+      poolCreated++;
+      return { style: { transform: '', width: '', height: '', display: '' }, textContent: '' };
+    });
+    ctrl.resize(800, 720);
+    const t0 = performance.now();
+    const first = ctrl.render();
+    const firstFrameMs = performance.now() - t0;
+    for (let s = 1; s <= 50; s++) ctrl.setScrollTop(s * 1200);
+    assert.ok(first.visibleCount > 0 && first.visibleCount < 120, 'Doc mounted too many blocks: ' + first.visibleCount);
+    assert.ok(poolCreated < 120, 'Doc DOM pool exceeded 120 nodes: ' + poolCreated);
+    console.log(\`    [PASS] 5k-block Doc virtual list: first frame \${firstFrameMs.toFixed(2)} ms (SLA < 40 ms), DOM pool=\${poolCreated} (< 120)\`);
+    assert.ok(firstFrameMs < 40, 'Doc first frame exceeded 40ms SLA: ' + firstFrameMs.toFixed(2));
   `);
 
   runIsolated("slides-ui-only", ["ooxml", "slides-sdk", "render-gpu", "slides-ui"], `
     import assert from 'node:assert/strict';
     import { Presentation } from '@jiange/slides-sdk';
     import { GpuSurface } from '@jiange/render-gpu';
-    import { SlidesViewController } from '@jiange/slides-ui';
+    import { SlidesViewController, defineSlidesElement } from '@jiange/slides-ui';
+    import { createSlidesViewComponent } from '@jiange/slides-ui/react';
+    assert.equal(typeof createSlidesViewComponent, 'function');
+    assert.equal(defineSlidesElement(), false);
     const ctrl = new SlidesViewController(Presentation.create({ title: 'Hi' }), await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
     assert.equal(ctrl.render().slideIndex, 0);
   `);
@@ -315,18 +351,45 @@ try {
     import assert from 'node:assert/strict';
     import { Board } from '@jiange/whiteboard-sdk';
     import { GpuSurface } from '@jiange/render-gpu';
-    import { WhiteboardViewController } from '@jiange/whiteboard-ui';
+    import { WhiteboardViewController, defineWhiteboardElement } from '@jiange/whiteboard-ui';
+    import { createWhiteboardViewComponent } from '@jiange/whiteboard-ui/react';
+    assert.equal(typeof createWhiteboardViewComponent, 'function');
+    assert.equal(defineWhiteboardElement(), false);
     const ctrl = new WhiteboardViewController(Board.fromMermaid('flowchart TD\\n A --> B'), await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
     assert.equal(ctrl.render().totalNodes, 2);
   `);
 
   runIsolated("base-ui-only", ["base-sdk", "render-gpu", "base-ui"], `
     import assert from 'node:assert/strict';
+    import { performance } from 'node:perf_hooks';
     import { Base } from '@jiange/base-sdk';
     import { GpuSurface } from '@jiange/render-gpu';
-    import { BaseViewController } from '@jiange/base-ui';
-    const ctrl = new BaseViewController(Base.create({ name: 'B' }), await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
+    import { BaseViewController, defineBaseElement } from '@jiange/base-ui';
+    import { createBaseViewComponent } from '@jiange/base-ui/react';
+    assert.equal(typeof createBaseViewComponent, 'function');
+    assert.equal(defineBaseElement(), false);
+    const records = new Array(100_000);
+    for (let i = 0; i < 100_000; i++) {
+      records[i] = { id: i + 1, baseId: 1, tableId: 1, position: i, cells: { '1': \`Lead \${i}\`, '2': i * 10 } };
+    }
+    const base = Base.fromJSON({
+      name: 'ScaleBase',
+      tables: [{ id: 1, baseId: 1, name: 'Leads', position: 0, isDefault: true }],
+      fields: [
+        { id: 1, tableId: 1, name: 'Name', type: 'text', isPrimary: true, position: 0 },
+        { id: 2, tableId: 1, name: 'Value', type: 'number', position: 1 },
+      ],
+      views: [{ id: 1, baseId: 1, tableId: 1, type: 'grid', name: 'Grid', config: {}, pos: 0 }],
+      records,
+    });
+    const ctrl = new BaseViewController(base, await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
+    ctrl.resize(1024, 640);
     assert.equal(ctrl.render().mode, 'grid');
+    const t0 = performance.now();
+    for (let f = 0; f < 50; f++) ctrl.scrollBy(0, 600);
+    const perFrameMs = (performance.now() - t0) / 50;
+    console.log(\`    [PASS] 100k-record Base virtual grid scroll: \${perFrameMs.toFixed(3)} ms/frame (SLA < 4 ms/frame)\`);
+    assert.ok(perFrameMs < 4, 'Base 100k scroll exceeded 4ms/frame SLA: ' + perFrameMs.toFixed(3));
   `);
 
   console.log("\nALL 13 PACKAGES PASSED BUNDLE AUDIT, BENCHMARKS & ISOLATED INSTALLS!");

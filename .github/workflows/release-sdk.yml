@@ -1,0 +1,94 @@
+name: Release SDKs & Go CLI
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+      - "cli-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ts-sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm test:sdk:pack
+      - run: node benchmarks/run-benchmarks.mjs
+      - name: Pack all 13 SDK tarballs
+        run: |
+          mkdir -p release-tarballs
+          for pkg in ooxml collab sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk render-gpu sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
+            pnpm --filter "@jiange/${pkg}" pack --pack-destination ../../release-tarballs
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jiange-npm-sdks
+          path: release-tarballs/*.tgz
+
+  build-go-cli:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+      - run: go test -count=1 -race ./...
+      - name: Cross-compile static binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/jiange-${GOOS}-${GOARCH}${EXT}" ./cmd/jiange
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jiange-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: cli/dist/
+
+  verify-go-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -count=1 -race -cover ./...

@@ -17,12 +17,18 @@ importers:
 
   apps/web:
     dependencies:
+      '@jiange/base-sdk':
+        specifier: workspace:*
+        version: link:../../packages/base-sdk
       '@jiange/collab':
         specifier: workspace:*
         version: link:../../packages/collab
       '@jiange/doc-sdk':
         specifier: workspace:*
         version: link:../../packages/doc-sdk
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../../packages/render-gpu
       '@jiange/sheet-sdk':
         specifier: workspace:*
         version: link:../../packages/sheet-sdk
@@ -97,6 +103,34 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
+  packages/base-sdk:
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
+  packages/base-ui:
+    dependencies:
+      '@jiange/base-sdk':
+        specifier: workspace:*
+        version: link:../base-sdk
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../render-gpu
+      react:
+        specifier: '>=18'
+        version: 19.3.1
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
   packages/collab:
     devDependencies:
       tsx:
@@ -117,9 +151,25 @@ importers:
       '@jiange/ooxml':
         specifier: workspace:*
         version: link:../ooxml
-      '@jiange/whiteboard-sdk':
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
+  packages/doc-ui:
+    dependencies:
+      '@jiange/doc-sdk':
         specifier: workspace:*
-        version: link:../whiteboard-sdk
+        version: link:../doc-sdk
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../render-gpu
+      react:
+        specifier: '>=18'
+        version: 19.3.1
     devDependencies:
       typescript:
         specifier: ~5.6.3
@@ -129,6 +179,15 @@ importers:
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
   packages/ooxml:
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
+  packages/render-gpu:
     devDependencies:
       typescript:
         specifier: ~5.6.3
@@ -150,6 +209,25 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
+  packages/sheet-ui:
+    dependencies:
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../render-gpu
+      '@jiange/sheet-sdk':
+        specifier: workspace:*
+        version: link:../sheet-sdk
+      react:
+        specifier: '>=18'
+        version: 19.3.1
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
   packages/slides-sdk:
     dependencies:
       '@jiange/ooxml':
@@ -163,11 +241,49 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
+  packages/slides-ui:
+    dependencies:
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../render-gpu
+      '@jiange/slides-sdk':
+        specifier: workspace:*
+        version: link:../slides-sdk
+      react:
+        specifier: '>=18'
+        version: 19.3.1
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
   packages/whiteboard-sdk:
     dependencies:
       '@jiange/ooxml':
         specifier: workspace:*
         version: link:../ooxml
+    devDependencies:
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
+
+  packages/whiteboard-ui:
+    dependencies:
+      '@jiange/render-gpu':
+        specifier: workspace:*
+        version: link:../render-gpu
+      '@jiange/whiteboard-sdk':
+        specifier: workspace:*
+        version: link:../whiteboard-sdk
+      react:
+        specifier: '>=18'
+        version: 19.3.1
     devDependencies:
       typescript:
         specifier: ~5.6.3

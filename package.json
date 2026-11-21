@@ -11,7 +11,10 @@
     "gen:vectors": "pnpm --filter @jiange/collab gen:vectors",
     "test:sdk:pack": "node scripts/verify-headless-sdks.mjs",
     "test:xlsx:interop": "node scripts/verify-xlsx-interop.mjs",
-    "test:sdk:coverage": "pnpm --filter @jiange/collab --filter @jiange/doc-sdk --filter @jiange/sheet-sdk --filter @jiange/slides-sdk --filter @jiange/whiteboard-sdk exec vitest run --coverage --coverage.include 'src/**/*.ts' --coverage.reporter=text --coverage.thresholds.statements=85 --coverage.thresholds.lines=85 --coverage.thresholds.branches=75 --coverage.thresholds.functions=80",
+    "test:sdk:coverage": "pnpm --filter @jiange/ooxml --filter @jiange/collab --filter @jiange/doc-sdk --filter @jiange/sheet-sdk --filter @jiange/slides-sdk --filter @jiange/whiteboard-sdk --filter @jiange/base-sdk --filter @jiange/render-gpu --filter @jiange/sheet-ui --filter @jiange/doc-ui --filter @jiange/slides-ui --filter @jiange/whiteboard-ui --filter @jiange/base-ui exec vitest run --coverage --coverage.include 'src/**/*.ts' --coverage.reporter=text --coverage.thresholds.statements=100 --coverage.thresholds.lines=100 --coverage.thresholds.branches=100 --coverage.thresholds.functions=100",
+    "bench": "node benchmarks/run-benchmarks.mjs",
+    "test:cli": "cd cli && go test -count=1 -race -cover ./...",
+    "test:sdk:go": "cd sdk/go && go test -count=1 -race -cover ./...",
     "lint:names": "node scripts/check-file-names.mjs"
   },
   "devDependencies": {
