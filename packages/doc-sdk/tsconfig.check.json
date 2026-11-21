@@ -7,9 +7,6 @@
       "@jiange/collab": [
         "../collab/src/index.ts"
       ],
-      "@jiange/whiteboard-sdk/model": [
-        "../whiteboard-sdk/src/model.ts"
-      ],
       "@jiange/ooxml/*": [
         "../ooxml/src/*.ts"
       ]

@@ -29,7 +29,7 @@ export function captureTableTextSelection(table: ExperimentalTable, row: OpId, c
   const chars: Character[] = [];
   for (const char of rich.slice(start, end)) {
     const marks = {} as Record<TableMarkKey, TableMarkState>;
-    for (const key of KEYS) { const state = table.cellMark(row, column, char.id, key); if (!state) return null; marks[key] = copyState(state); }
+    for (const key of KEYS) marks[key] = copyState(table.cellMark(row, column, char.id, key)!);
     chars.push({ id: copyId(char.id), text: char.text, marks });
   }
   const selection: TableTextSelection = Object.freeze({ length: chars.length });
@@ -68,16 +68,15 @@ function makePlan(table: ExperimentalTable, row: OpId, column: OpId, key: TableM
     const clone = table.fork(), ops: Extract<TableOp, { kind: "text-mark" }>[] = [], entries: PlanEntry[] = [];
     for (const change of changes) {
       const op: Extract<TableOp, { kind: "text-mark" }> = { kind: "text-mark", id: copyId(change.id), row: copyId(row), column: copyId(column), target: copyId(change.target), key, value: change.value };
-      if (!clone.apply(op)) return { status: "conflict" };
-      const after = clone.cellMark(row, column, change.target, key);
-      if (!after || after.value !== change.value || !after.version || !eqId(after.version, op.id)) return { status: "conflict" };
+      clone.apply(op);
+      const after = clone.cellMark(row, column, change.target, key)!;
       entries.push({ target: copyId(change.target), before: copyState(change.before), after: copyState(after) });
       Object.freeze(op.id); Object.freeze(op.row); Object.freeze(op.column); Object.freeze(op.target); ops.push(Object.freeze(op));
     }
     const plan: TableMarkPlan = Object.freeze({ ops: Object.freeze(ops) });
     plans.set(plan, { table, row: copyId(row), column: copyId(column), key, base, entries });
     return { status: "ready", plan };
-  } catch (error) { return { status: error instanceof RangeError ? "limit" : "conflict" }; }
+  } catch { return { status: "limit" }; }
 }
 
 /** Prepare explicit formatting on only the originally selected characters. */
@@ -117,20 +116,17 @@ export function prepareTableTextMarkInverse(table: ExperimentalTable, previous: 
 export function tableMarkPlanIsCurrent(table: ExperimentalTable, plan: TableMarkPlan): boolean {
   const data = plans.get(plan);
   if (!data || data.table !== table) return false;
-  try { return table.snapshot() === data.base; } catch { return false; }
+  return table.snapshot() === data.base;
 }
 
 /** Wrap a current plan in document table frames without exposing mutable plan state. */
 export function tableMarkPlanFrames(table: ExperimentalTable, plan: TableMarkPlan, block: OpId): Extract<Op, { t: "ttable" }>[] | null {
   if (!block || !Number.isSafeInteger(block.client) || block.client < 0 || !Number.isSafeInteger(block.clock) || block.clock <= 0 || !tableMarkPlanIsCurrent(table, plan)) return null;
   const encoder = new TextEncoder(), frames: Extract<Op, { t: "ttable" }>[] = [];
-  let total = 0;
   for (const op of plan.ops) {
     if (eqId(op.id, block)) return null;
     const payload = encoder.encode(JSON.stringify(op));
-    total += payload.length;
-    if (!payload.length || payload.length > 512 || total > (2 << 20)) return null;
     frames.push({ t: "ttable", id: copyId(op.id), block: copyId(block), payload });
   }
-  return frames.length ? frames : null;
+  return frames;
 }

@@ -1,7 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { flowIntentWrites, flowWrites, readFlow, toMermaid, type FlowGraph } from "../src/model.js";
 import { appliedFlowHistory } from "../src/history.js";
-import { layoutMindTopics, normalizeMindTopic, type MindTopic } from "../src/mindmap.js";
+import {
+  canonicalMindDescription,
+  canonicalMindDescriptionStyle,
+  canonicalMindPaint,
+  canonicalMindStyle,
+  canonicalMindTextFormat,
+  canonicalMindTopic,
+  layoutMindTopics,
+  mindCollapseIntent,
+  mindDefaultTextColor,
+  mindDescriptionIntent,
+  mindDescriptionLines,
+  mindDescriptionStyleIntent,
+  mindIntentWrites,
+  mindPaintIntent,
+  mindStyleIntent,
+  mindTextFormatIntent,
+  normalizeMindDescriptionStyle,
+  normalizeMindPaint,
+  normalizeMindStyle,
+  normalizeMindTextFormat,
+  normalizeMindTopic,
+  readMindDescriptionStyles,
+  readMindDescriptions,
+  readMindPaints,
+  readMindStyles,
+  readMindTextFormats,
+  readMindTopics,
+  type MindTopic,
+} from "../src/mindmap.js";
 
 const blank: FlowGraph = { nodes: [], edges: [], theme: "feishu" };
 const root: MindTopic = { id: "r", parent: null, order: 0, text: "主题", x: 10, y: 20 };
@@ -183,5 +212,284 @@ describe("mind map paint", () => {
     const desired: FlowGraph = { ...base, mindStyles: { ...base.mindStyles, s: { shape: "oval" } }, mindPaints: { ...base.mindPaints, s: { stroke: "#79c968" } } };
     const conflict = flowIntentWrites(remote, base, desired);
     expect(conflict.conflicts).toContain("fc.mp.s"); expect(conflict.writes["fc.ms.s"]).toBeUndefined(); expect(conflict.writes["fc.mp.s"]).toBeUndefined();
+  });
+});
+
+describe("mind map structural edits, validation, descriptions, text formats, and layout edge cases", () => {
+  const root2: MindTopic = { id: "r2", parent: null, order: 1, text: "根二", x: 10, y: 200 };
+  const c1: MindTopic = { id: "c1", parent: "r", order: 0, text: "一" };
+  const c2: MindTopic = { id: "c2", parent: "r", order: 1, text: "二" };
+  const gc: MindTopic = { id: "gc", parent: "c1", order: 0, text: "孙" };
+
+  it("computes root default text color for default fill, light/dark fills, none fill, and low fillOpacity", () => {
+    expect(mindDefaultTextColor(false, "rect")).toBe("#1f2329");
+    expect(mindDefaultTextColor(true, "text")).toBe("#1f2329");
+    expect(mindDefaultTextColor(true, "rect")).toBe("#ffffff");
+    expect(mindDefaultTextColor(true, "rect", { fill: "none" })).toBe("#1f2329");
+    expect(mindDefaultTextColor(true, "rect", { fill: "#111111", fillOpacity: 30 })).toBe("#1f2329");
+    expect(mindDefaultTextColor(true, "rect", { fill: "#ffffff", fillOpacity: 80 })).toBe("#1f2329");
+    expect(mindDefaultTextColor(true, "rect", { fill: "#112233", fillOpacity: 100 })).toBe("#ffffff");
+  });
+
+  it("validates topics, filters cycles & deep chains in readMindTopics, wraps descriptions, and ties sibling layout", () => {
+    expect(normalizeMindTopic(null)).toBeNull();
+    expect(normalizeMindTopic([])).toBeNull();
+    expect(canonicalMindTopic({ id: "bad!", parent: null, order: 0, text: "x", x: 0, y: 0 })).toBeNull();
+
+    // Cycles and depth > 32 dropped by readMindTopics
+    const cyclicProps: Record<string, string> = {
+      "fc.m.a": JSON.stringify({ parent: "b", order: 0, text: "A" }),
+      "fc.m.b": JSON.stringify({ parent: "a", order: 0, text: "B" }),
+      "fc.m.r": JSON.stringify({ parent: null, order: 0, text: "R", x: 0, y: 0 }),
+    };
+    for (let i = 1; i <= 34; i++) {
+      cyclicProps[`fc.m.d${i}`] = JSON.stringify({ parent: i === 1 ? "r" : `d${i - 1}`, order: 0, text: `D${i}` });
+    }
+    const read = readMindTopics(cyclicProps);
+    expect(read.some((t) => t.id === "a" || t.id === "b")).toBe(false);
+    expect(read.some((t) => t.id === "d32")).toBe(true);
+    expect(read.some((t) => t.id === "d33")).toBe(false);
+
+    // Description line wrapping & layout tie-breaking + root without x/y
+    expect(mindDescriptionLines("w".repeat(80), 12).length).toBeGreaterThan(1);
+    const laid = layoutMindTopics([
+      { id: "r0", parent: null, order: 0, text: "NoCoords" },
+      { id: "b", parent: "r0", order: 0, text: "B" },
+      { id: "a", parent: "r0", order: 0, text: "A" },
+    ]);
+    expect(laid.map((p) => p.topic.id)).toEqual(["r0", "a", "b"]);
+  });
+
+  it("handles reordering, reparenting, ancestry/sibling checks, deletion with reparented child, and blocked parent propagation", () => {
+    const base = [root, root2, c1, c2, gc];
+    const props = flowWrites({}, { ...blank, mind: base });
+
+    // Clean reorder + reparent (including moving c1+gc under root2)
+    const reparented = [root, root2, { ...c1, parent: "r2", order: 0 }, { ...c2, order: 0 }, gc];
+    const ok = mindIntentWrites(props, base, reparented);
+    expect(ok.conflicts).toEqual([]);
+    expect(ok.writes["fc.m.c1"]).toBeTruthy();
+
+    // Reparenting when props already matches desired (no-op structural)
+    const alreadyDone = flowWrites({}, { ...blank, mind: reparented });
+    expect(mindIntentWrites(alreadyDone, base, reparented)).toEqual({ writes: {}, conflicts: [] });
+
+    // Structural edit rejected when sibling set changed remotely
+    const remoteAddedSibling = flowWrites({}, { ...blank, mind: [...base, { id: "c3", parent: "r", order: 2, text: "远端" }] });
+    const reorderConflict = mindIntentWrites(remoteAddedSibling, base, [root, root2, { ...c1, order: 1 }, { ...c2, order: 0 }, gc]);
+    expect(reorderConflict.conflicts).toEqual(expect.arrayContaining(["fc.m.c1", "fc.m.c2"]));
+
+    // Structural edit rejected when ancestry changed remotely (c1 moved under r2 remotely, locally moving gc)
+    const remoteReparented = flowWrites({}, { ...blank, mind: [root, root2, { ...c1, parent: "r2", order: 0 }, c2, gc] });
+    const ancestryConflict = mindIntentWrites(remoteReparented, base, [root, root2, c1, c2, { ...gc, parent: "c2", order: 0 }]);
+    expect(ancestryConflict.conflicts).toContain("fc.m.gc");
+
+    // Same-ancestry with newly planned cyclic parent & newly planned colliding parent
+    const plannedCycle = mindIntentWrites(props, base, [
+      ...base.filter((t) => t.id !== "gc"),
+      { id: "px", parent: "py", order: 0, text: "X" },
+      { id: "py", parent: "px", order: 0, text: "Y" },
+      { ...gc, parent: "px", order: 0 },
+    ]);
+    expect(plannedCycle.conflicts).toContain("fc.m.gc");
+
+    const collidingProps = { ...props, "fc.m.newp": JSON.stringify({ parent: "r", order: 9, text: "Remote" }) };
+    const plannedCollide = mindIntentWrites(collidingProps, base, [
+      ...base.filter((t) => t.id !== "gc"),
+      { id: "newp", parent: "r", order: 5, text: "Local" },
+      { ...gc, parent: "newp", order: 0 },
+    ]);
+    expect(plannedCollide.conflicts).toContain("fc.m.gc");
+
+    // Reparenting under a brand-new valid parent (hits !was -> planned -> id = planned.parent -> root)
+    const validNewParent = mindIntentWrites(props, base, [
+      ...base.filter((t) => t.id !== "gc"),
+      { id: "np", parent: "r2", order: 0, text: "NewParent" },
+      { ...gc, parent: "np", order: 0 },
+    ]);
+    expect(validNewParent.conflicts).toEqual([]);
+
+    // Trying to demote root to child or promote child to root conflicts (L81), as does invalid prior/target
+    expect(mindIntentWrites(props, base, [{ ...root, parent: "r2" }, root2, c1, c2, gc]).conflicts).toContain("fc.m.r");
+    expect(mindIntentWrites(props, base, [root, root2, { ...c1, parent: null, x: 0, y: 0 }, c2, gc]).conflicts).toContain("fc.m.c1");
+    expect(mindIntentWrites(props, base, [root, root2, { ...c1, order: -1 }, c2, gc]).conflicts).toContain("fc.m.c1");
+
+    // Deletion blocked when description or description style differs/corrupt in props
+    const descProps = { ...props, "fc.md.c2": JSON.stringify("remote desc"), "fc.mds.c2": JSON.stringify({ size: 16 }) };
+    const delDescConflict = mindIntentWrites(descProps, base, [root, root2, c1, gc], {}, {});
+    expect(delDescConflict.conflicts).toEqual(expect.arrayContaining(["fc.m.c2", "fc.md.c2"]));
+    const delStyleConflict = mindIntentWrites(
+      { ...props, "fc.mds.c2": "{" },
+      base,
+      [root, root2, c1, gc],
+      undefined,
+      {},
+    );
+    expect(delStyleConflict.conflicts).toEqual(expect.arrayContaining(["fc.m.c2", "fc.mds.c2"]));
+
+    // Deleting parent c1 while simultaneously reparenting its child gc to c2 succeeds (L118 safe delete)
+    const delParentMoveChild = mindIntentWrites(props, base, [root, root2, c2, { ...gc, parent: "c2", order: 0 }]);
+    expect(delParentMoveChild.conflicts).toEqual([]);
+    expect(delParentMoveChild.writes["fc.m.c1"]).toBe("");
+    expect(delParentMoveChild.writes["fc.m.gc"]).toBeTruthy();
+
+    // Multi-node addition group rollback when child conflicts (L110) + adding new child under blocked parent (L115)
+    const addGroupConflict = mindIntentWrites(
+      { ...props, "fc.m.nb": JSON.stringify({ parent: "r", order: 9, text: "Conflict" }) },
+      base,
+      [
+        ...base,
+        { id: "na", parent: "r", order: 2, text: "NewA" },
+        { id: "nb", parent: "na", order: 0, text: "NewB" },
+        { id: "nc", parent: "r", order: 3, text: "UnderBlockedParent" },
+      ],
+    );
+    expect(addGroupConflict.conflicts).toEqual(expect.arrayContaining(["fc.m.na", "fc.m.nb", "fc.m.nc"]));
+
+    // Blocked parent chain expansion across structural moves (L113-L114):
+    // c1 conflicts on r -> blocks r -> blocks moving c2 from r to r2 (blocks r2!) -> blocks moving gc2 under r2
+    const c2b: MindTopic = { id: "c2b", parent: "r2", order: 0, text: "R2Child" };
+    const baseChain = [root, root2, c1, c2, gc, c2b];
+    const propsChain = {
+      ...flowWrites({}, { ...blank, mind: baseChain }),
+      "fc.m.c1": JSON.stringify({ parent: "r", order: 0, text: "RemoteC1" }),
+    };
+    const chainConflict = mindIntentWrites(propsChain, baseChain, [
+      root,
+      root2,
+      { ...c1, order: 5 },
+      { ...c2, parent: "r2", order: 1 },
+      gc,
+      { ...c2b, parent: "gc", order: 0 },
+    ]);
+    expect(chainConflict.conflicts).toEqual(expect.arrayContaining(["fc.m.c1", "fc.m.c2", "fc.m.c2b"]));
+
+    // Reparenting checks (L131-137):
+    // 1. Orphan/malformed stored topic blocks reparent
+    const orphanProps = { ...props, "fc.m.ghost": JSON.stringify({ parent: "nonexistent", order: 0, text: "Ghost" }) };
+    expect(mindIntentWrites(orphanProps, base, [root, root2, { ...c1, parent: "r2", order: 0 }, c2, gc]).conflicts).toContain("fc.m.c1");
+    // 2. Reparenting c1 under its own descendant gc creates a cycle in projected tree
+    expect(mindIntentWrites(props, base, [root, root2, { ...c1, parent: "gc", order: 0 }, c2, gc]).conflicts).toContain("fc.m.c1");
+    // 3. Reparenting c1 (with child gc) under a depth-32 chain exceeds max depth 32 for descendant gc
+    const deepChain: MindTopic[] = [root, root2, c1, gc];
+    for (let i = 1; i <= 31; i++) {
+      deepChain.push({ id: `dp${i}`, parent: i === 1 ? "r2" : `dp${i - 1}`, order: 0, text: `D${i}` });
+    }
+    const deepProps = flowWrites({}, { ...blank, mind: deepChain });
+    const tooDeepReparent = mindIntentWrites(deepProps, deepChain, deepChain.map((t) => (t.id === "c1" ? { ...t, parent: "dp31", order: 0 } : t)));
+    expect(tooDeepReparent.conflicts).toContain("fc.m.c1");
+    // 4. Reparenting gc while deleting target parent c2 in the same batch hits projected.delete + !cursor
+    expect(mindIntentWrites(props, base, [root, root2, c1, { ...gc, parent: "c2", order: 0 }]).conflicts).toContain("fc.m.gc");
+  });
+
+  it("covers description, descriptionStyle, style, paint, textFormat, and collapse validators & intents", () => {
+    // Validators: null/array/unknown keys/out-of-range/bad hex/corrupt JSON
+    expect(canonicalMindDescription("a".repeat(2001))).toBeNull();
+    expect(canonicalMindDescription("a\0b")).toBeNull();
+    expect(canonicalMindDescription("x\n".repeat(130))).toBeNull();
+    expect(normalizeMindDescriptionStyle(null)).toBeNull();
+    expect(normalizeMindDescriptionStyle([])).toBeNull();
+    expect(normalizeMindDescriptionStyle({ unknown: 1 })).toBeNull();
+    expect(normalizeMindDescriptionStyle({ size: 10 })).toBeNull();
+    expect(normalizeMindDescriptionStyle({ color: "red" })).toBeNull();
+    expect(normalizeMindDescriptionStyle({ highlight: "red" })).toBeNull();
+    expect(canonicalMindDescriptionStyle({})).toBe("");
+
+    expect(normalizeMindStyle(null)).toBeNull();
+    expect(normalizeMindStyle({ shape: "bad" })).toBeNull();
+    expect(normalizeMindStyle({ size: 999 })).toBeNull();
+    expect(normalizeMindStyle({ color: "red" })).toBeNull();
+    expect(canonicalMindStyle({})).toBe("");
+
+    expect(normalizeMindPaint(null)).toBeNull();
+    expect(normalizeMindPaint({ stroke: "bad" })).toBeNull();
+    expect(normalizeMindPaint({ line: "wavy" })).toBeNull();
+    expect(normalizeMindPaint({ width: 9 })).toBeNull();
+    expect(normalizeMindPaint({ opacity: 200 })).toBeNull();
+    expect(canonicalMindPaint({})).toBe("");
+
+    expect(normalizeMindTextFormat(null)).toBeNull();
+    expect(normalizeMindTextFormat({ extra: true })).toBeNull();
+    expect(normalizeMindTextFormat({ bold: false })).toBeNull();
+    expect(normalizeMindTextFormat({ highlight: "bad" })).toBeNull();
+    expect(normalizeMindTextFormat({ align: "justify" })).toBeNull();
+    expect(canonicalMindTextFormat(undefined)).toBe("");
+    expect(canonicalMindTextFormat({})).toBe("");
+    expect(canonicalMindTextFormat({ bold: false } as never)).toBeNull();
+
+    // Corrupt JSON ignored by readers
+    const corruptProps: Record<string, string> = {
+      "fc.ms.c": "{bad",
+      "fc.mp.c": "{bad",
+      "fc.mt.c": "{bad",
+      "fc.md.c": "{bad",
+      "fc.mds.c": "{bad",
+    };
+    expect(readMindStyles(corruptProps, [child])).toEqual({});
+    expect(readMindPaints(corruptProps, [child])).toEqual({});
+    expect(readMindTextFormats(corruptProps, [child])).toEqual({});
+    expect(readMindDescriptions(corruptProps, [child])).toEqual({});
+    expect(readMindDescriptionStyles(corruptProps, [child])).toEqual({});
+
+    const topics = [root, child];
+    const baseProps = flowWrites({}, { ...blank, mind: topics });
+
+    // Style & paint intent corrupt JSON
+    expect(mindStyleIntent({ ...baseProps, "fc.ms.c": "{bad" }, {}, { c: { size: 16 } }, topics, topics, {}).conflicts).toContain("fc.ms.c");
+    expect(mindPaintIntent({ ...baseProps, "fc.mp.c": "{bad" }, {}, { c: { width: 2 } }, topics, topics, {}).conflicts).toContain("fc.mp.c");
+
+    // TextFormat intent: unchanged skip, corrupt JSON, remote conflict, write, already-matching no-op
+    expect(mindTextFormatIntent(baseProps, { c: { bold: true } }, { c: { bold: true } }, topics, topics, {})).toEqual({ writes: {}, conflicts: [] });
+    expect(mindTextFormatIntent({ ...baseProps, "fc.mt.c": "{bad" }, {}, { c: { bold: true } }, topics, topics, {}).conflicts).toContain("fc.mt.c");
+    expect(mindTextFormatIntent({ ...baseProps, "fc.mt.c": JSON.stringify({ italic: true }) }, {}, { c: { bold: true } }, topics, topics, {}).conflicts).toContain("fc.mt.c");
+    expect(mindTextFormatIntent(baseProps, {}, { c: { bold: true, highlight: "#FFEEAA", align: "left" } }, topics, topics, {}).writes["fc.mt.c"]).toBeTruthy();
+    expect(mindTextFormatIntent({ ...baseProps, "fc.mt.c": JSON.stringify({ bold: true }) }, {}, { c: { bold: true } }, topics, topics, {}).writes).toEqual({});
+
+    // Description intent: unchanged skip, remote conflict, new topic conflict, corrupt/invalid style, size-induced >128 lines, normal write, no-op
+    expect(mindDescriptionIntent(baseProps, { c: "same" }, { c: "same" }, topics, topics, {})).toEqual({ writes: {}, conflicts: [] });
+    expect(mindDescriptionIntent({ ...baseProps, "fc.md.c": JSON.stringify("remote") }, {}, { c: "local" }, topics, topics, {}).conflicts).toContain("fc.md.c");
+    const newTopic: MindTopic = { id: "nt", parent: "r", order: 2, text: "New" };
+    const newTopicWrites = { "fc.m.nt": canonicalMindTopic(newTopic)! };
+    expect(mindDescriptionIntent({ ...baseProps, "fc.md.nt": JSON.stringify("stale") }, {}, { nt: "fresh" }, topics, [...topics, newTopic], newTopicWrites).conflicts).toContain("fc.md.nt");
+    expect(mindDescriptionIntent({ ...baseProps, "fc.mds.c": "{bad" }, {}, { c: "hello" }, topics, topics, {}).conflicts).toContain("fc.md.c");
+    expect(mindDescriptionIntent(baseProps, {}, { c: "hello" }, topics, topics, {}, { c: { size: 5 } }).conflicts).toContain("fc.md.c");
+    // Large size makes a medium description exceed 128 wrapped lines
+    const mediumDesc = "中".repeat(400);
+    expect(
+      mindDescriptionIntent(
+        { ...baseProps, "fc.mds.c": JSON.stringify({ color: "#112233" }) },
+        {},
+        { c: mediumDesc },
+        topics,
+        topics,
+        {},
+        { c: { size: 96 } },
+      ).conflicts,
+    ).toContain("fc.md.c");
+    expect(
+      mindDescriptionIntent(
+        { ...baseProps, "fc.mds.c": JSON.stringify({ size: 24 }) },
+        {},
+        { c: "short" },
+        topics,
+        topics,
+        {},
+        { c: { color: "#112233" } },
+      ).writes["fc.md.c"],
+    ).toBe(JSON.stringify("short"));
+    expect(mindDescriptionIntent({ ...baseProps, "fc.md.c": JSON.stringify("ok") }, {}, { c: "ok" }, topics, topics, {}).writes).toEqual({});
+
+    // DescriptionStyle intent: unchanged skip, remote conflict, new topic conflict, corrupt/invalid desc, >128 lines with big size, normal write, no-op
+    expect(mindDescriptionStyleIntent(baseProps, { c: { size: 16 } }, { c: { size: 16 } }, topics, topics, {})).toEqual({ writes: {}, conflicts: [] });
+    expect(mindDescriptionStyleIntent({ ...baseProps, "fc.mds.c": JSON.stringify({ size: 18 }) }, {}, { c: { size: 20 } }, topics, topics, {}).conflicts).toContain("fc.mds.c");
+    expect(mindDescriptionStyleIntent({ ...baseProps, "fc.mds.nt": JSON.stringify({ size: 18 }) }, {}, { nt: { size: 20 } }, topics, [...topics, newTopic], newTopicWrites).conflicts).toContain("fc.mds.nt");
+    expect(mindDescriptionStyleIntent({ ...baseProps, "fc.md.c": "{bad" }, {}, { c: { size: 16 } }, topics, topics, {}).conflicts).toContain("fc.mds.c");
+    expect(mindDescriptionStyleIntent({ ...baseProps, "fc.md.c": JSON.stringify(mediumDesc) }, {}, { c: { size: 96 } }, topics, topics, {}).conflicts).toContain("fc.mds.c");
+    expect(mindDescriptionStyleIntent(baseProps, {}, { c: { color: "#112233", highlight: "#ffeeaa" } }, topics, topics, {}, { c: "short" }).writes["fc.mds.c"]).toBeTruthy();
+    expect(mindDescriptionStyleIntent({ ...baseProps, "fc.mds.c": JSON.stringify({ size: 16 }) }, {}, { c: { size: 16 } }, topics, topics, {}).writes).toEqual({});
+
+    // Collapse intent: unchanged skip + remotely deleted topic conflict
+    expect(mindCollapseIntent(baseProps, ["c"], ["c"], topics, topics, {})).toEqual({ writes: {}, conflicts: [] });
+    expect(mindCollapseIntent({ ...baseProps, "fc.m.c": "" }, [], ["c"], topics, topics, {}).conflicts).toContain("fc.mc.c");
   });
 });

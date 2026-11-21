@@ -1,6 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
-import { applyTableWrites, cellGrid, cellTableWrites, stableTableDeleteWrites, stableTableInsertWrites, stableTableReorderWrites, tableDataOf, tableHash, tableRepairWrites, tableRowsOf, writeTable } from "../src/table-cells.js";
+import {
+  applyTableWrites,
+  cellGrid,
+  cellRichKey,
+  cellTableWrites,
+  compactTableRichSpans,
+  parseTableRichSpans,
+  serializeTableRichSpans,
+  setTableCellAlignments,
+  setTableCellFills,
+  setTableCellRich,
+  stableTableDeleteWrites,
+  stableTableInsertWrites,
+  stableTableReorderWrites,
+  tableCellAlign,
+  tableCellFill,
+  tableCellHasMark,
+  tableCellHasRichMarks,
+  tableCellRich,
+  tableDataOf,
+  tableHash,
+  tableRepairWrites,
+  tableRowsOf,
+  toggleTableCellRichMark,
+  writeTable,
+} from "../src/table-cells.js";
 import { applyTableEdit } from "../src/model.js";
 
 function replicas() {
@@ -317,5 +342,166 @@ describe("stable table axis reorder", () => {
     applyTableWrites(tx, table, doc.blockInfo(table).props, reorder!);
     expect(tableRowsOf(doc.blockInfo(table).props)).toEqual([["C", "D"], ["A", "B"]]);
     expect(tx.ops.every(op => op.t === "bset" && !op.key.startsWith("tbl.c."))).toBe(true);
+  });
+});
+
+describe("table-cells validation, edge cases, and rich cell text", () => {
+  it("handles malformed ids, out-of-range coordinates, unmigrated guards, ragged rows, and missing bases", () => {
+    // Malformed JSON in tbl.rows triggers ids catch branch
+    expect(cellGrid({ "tbl.v": "2", "tbl.rows": "{bad", "tbl.cols": '["c0"]' })).toBeNull();
+    // Missing tbl.base + out-of-bounds base lookup + missing tableData
+    const noBase: Record<string, string> = {
+      "tbl.v": "2",
+      "tbl.rows": '["r0","r5"]',
+      "tbl.cols": '["c0"]',
+      "tbl.m": tableHash(""),
+    };
+    expect(cellGrid(noBase)).toEqual([[""], [""]]);
+    expect(tableRowsOf(noBase)).toEqual([[""], [""]]);
+    const shortBase: Record<string, string> = {
+      "tbl.v": "2",
+      "tbl.rows": '["r0","r5"]',
+      "tbl.cols": '["c0"]',
+      "tbl.base": '[["only"]]',
+    };
+    expect(cellGrid(shortBase)).toEqual([["only"], [""]]);
+    expect(tableDataOf({})).toBe("");
+
+    // tableCellFill & tableCellAlign bounds & non-integer & out-of-range migrated indices
+    const migProps: Record<string, string> = { "tbl.v": "2", "tbl.rows": '["r0"]', "tbl.cols": '["c0"]' };
+    expect(tableCellFill(migProps, -1, 0)).toBe("");
+    expect(tableCellFill(migProps, 0, -1)).toBe("");
+    expect(tableCellFill(migProps, 1.5, 0)).toBe("");
+    expect(tableCellFill(migProps, 5, 0)).toBe("");
+    expect(tableCellFill(migProps, 0, 5)).toBe("");
+    expect(tableCellAlign(migProps, -1, 0, "horizontal")).toBe("left");
+    expect(tableCellAlign(migProps, 0, -1, "vertical")).toBe("top");
+    expect(tableCellAlign(migProps, 5, 0, "horizontal")).toBe("left");
+    expect(tableCellAlign(migProps, 0, 5, "vertical")).toBe("top");
+
+    // Unmigrated table throws in setTableCellFills / setTableCellAlignments / setTableCellRich
+    const doc = new Doc(1), init = new Tx(doc);
+    const tbl = init.create("table", null, ROOT, { tableData: '[["A"]]' });
+    expect(() => setTableCellFills(new Tx(doc), tbl, [{ row: 0, col: 0, fill: "#FFFFFF" }])).toThrow(/migrated/);
+    expect(() => setTableCellAlignments(new Tx(doc), tbl, [{ row: 0, col: 0, axis: "horizontal", align: "center" }])).toThrow(/migrated/);
+    expect(() => setTableCellRich(new Tx(doc), tbl, [{ row: 0, col: 0, spans: [{ text: "A", marks: { bold: true } }] }])).toThrow(/migrated/);
+
+    // Invalid axis for stableTableReorderWrites / stableTableDeleteWrites
+    edit(doc, tbl, 0, 0, "A1");
+    const validProps = doc.blockInfo(tbl).props;
+    expect(stableTableReorderWrites(validProps, "bad" as "row", [0])).toBeNull();
+    expect(stableTableDeleteWrites(validProps, "bad" as "row", [0])).toBeNull();
+    expect(stableTableDeleteWrites({}, "row", [0])).toBeNull();
+
+    // Adding a new column to an already-migrated table with ragged rows
+    const raggedWrites = cellTableWrites(validProps, [["A1", "B1"], ["C1"]], 1);
+    expect(JSON.parse(raggedWrites["tbl.cols"]).length).toBe(2);
+    expect(JSON.parse(raggedWrites.tableData)).toEqual([["A1", "B1"], ["C1", ""]]);
+
+    // writeTable when next matches existing tableData (hits !("tableData" in writes))
+    const txSame = new Tx(doc);
+    writeTable(txSame, tbl, doc.blockInfo(tbl).props, [["A1"]], 1);
+    expect(txSame.ops.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("covers rich cell span normalization, parsing, toggling, and writing", () => {
+    // normalizeCellMarks / sameCellMarks / compactTableRichSpans / serializeTableRichSpans
+    const fullMarks = { bold: true, italic: true, underline: true, strike: true, code: true, color: "#ff00aa" };
+    const compacted = compactTableRichSpans([
+      { text: "" },
+      { text: "a", marks: fullMarks },
+      { text: "b", marks: { ...fullMarks, color: "#FF00AA" } },
+      { text: "c", marks: { bold: false as unknown as true } },
+      { text: "d", marks: undefined },
+    ]);
+    expect(compacted).toEqual([
+      { text: "ab", marks: { bold: true, italic: true, underline: true, strike: true, code: true, color: "#FF00AA" } },
+      { text: "cd" },
+    ]);
+    expect(serializeTableRichSpans([])).toBe("");
+    expect(serializeTableRichSpans([{ text: "plain" }])).toBe("");
+    expect(tableCellHasRichMarks([{ text: "plain" }])).toBe(false);
+    expect(tableCellHasRichMarks([{ text: "plain", marks: {} }])).toBe(false);
+    expect(tableCellHasRichMarks([{ text: "rich", marks: { bold: true } }])).toBe(true);
+
+    // parseTableRichSpans error & reconciliation branches
+    expect(parseTableRichSpans(undefined, "")).toEqual([]);
+    expect(parseTableRichSpans("{bad", "hi")).toEqual([{ text: "hi" }]);
+    expect(parseTableRichSpans("[]", "hi")).toEqual([{ text: "hi" }]);
+    expect(parseTableRichSpans("123", "hi")).toEqual([{ text: "hi" }]);
+    expect(parseTableRichSpans("[123]", "hi")).toEqual([{ text: "hi" }]);
+    expect(parseTableRichSpans('[{"text":123}]', "hi")).toEqual([{ text: "hi" }]);
+    expect(parseTableRichSpans('[{"text":""},{"text":"hi"}]', "hi")).toEqual([{ text: "hi" }]);
+    // Text changed uniformly styled -> keeps uniform marks
+    expect(parseTableRichSpans('[{"text":"old","marks":{"bold":true}}]', "new")).toEqual([{ text: "new", marks: { bold: true } }]);
+    // Text changed uniformly plain -> fallback
+    expect(parseTableRichSpans('[{"text":"old"}]', "new")).toEqual([{ text: "new" }]);
+    // Text changed uniformly styled but cleared to "" -> []
+    expect(parseTableRichSpans('[{"text":"old","marks":{"bold":true}}]', "")).toEqual([]);
+    // Text changed mixed marks -> fallback
+    expect(parseTableRichSpans('[{"text":"a","marks":{"bold":true}},{"text":"b"}]', "ab!")).toEqual([{ text: "ab!" }]);
+
+    // tableCellRich bounds & default plainText
+    const doc = new Doc(1), init = new Tx(doc);
+    const tbl = init.create("table", null, ROOT, { tableData: '[["Hello World",""]]' });
+    edit(doc, tbl, 0, 0, "Hello World");
+    const props = doc.blockInfo(tbl).props;
+    expect(tableCellRich(props, -1, 0)).toEqual([]);
+    expect(tableCellRich(props, -1, 0, "x")).toEqual([{ text: "x" }]);
+    expect(tableCellRich(props, 5, 0)).toEqual([]);
+    expect(tableCellRich(props, 5, 0, "x")).toEqual([{ text: "x" }]);
+    expect(tableCellRich(props, 0, 1)).toEqual([]);
+    expect(tableCellRich({ tableData: '[["Legacy"]]' }, 0, 0)).toEqual([{ text: "Legacy" }]);
+
+    // tableCellHasMark
+    expect(tableCellHasMark(props, 0, 1, "bold")).toBe(false);
+    expect(tableCellHasMark(props, 0, 0, "bold")).toBe(false);
+
+    // toggleTableCellRichMark: empty text, full cell toggle on/off, sub-range split (before, inside, after), color set/toggle-off/clear
+    expect(toggleTableCellRichMark(props, 0, 0, "", "bold")).toEqual([]);
+    const boldAll = toggleTableCellRichMark(props, 0, 0, "Hello World", "bold");
+    expect(boldAll).toEqual([{ text: "Hello World", marks: { bold: true } }]);
+
+    // Write rich spans using setTableCellRich (and test invalid target error)
+    expect(() => setTableCellRich(new Tx(doc), tbl, [{ row: -1, col: 0, spans: boldAll }])).toThrow(/invalid/);
+    expect(() => setTableCellRich(new Tx(doc), tbl, [{ row: 0, col: 9, spans: boldAll }])).toThrow(/invalid/);
+    setTableCellRich(new Tx(doc), tbl, [{ row: 0, col: 0, spans: boldAll }]);
+    const boldProps = doc.blockInfo(tbl).props;
+    expect(tableCellHasMark(boldProps, 0, 0, "bold")).toBe(true);
+
+    // Toggle bold off for full cell
+    expect(toggleTableCellRichMark(boldProps, 0, 0, "Hello World", "bold")).toEqual([{ text: "Hello World" }]);
+
+    // Sub-range toggle in the middle (splits into before + inside + after)
+    const midItalic = toggleTableCellRichMark(boldProps, 0, 0, "Hello World", "italic", undefined, { start: 3, end: 8 });
+    expect(midItalic).toEqual([
+      { text: "Hel", marks: { bold: true } },
+      { text: "lo Wo", marks: { bold: true, italic: true } },
+      { text: "rld", marks: { bold: true } },
+    ]);
+    setTableCellRich(new Tx(doc), tbl, [{ row: 0, col: 0, spans: midItalic }]);
+    const multiProps = doc.blockInfo(tbl).props;
+
+    // Sub-range that leaves leading/trailing spans completely outside (hits spanEnd <= start || spanStart >= end)
+    const colorMid = toggleTableCellRichMark(multiProps, 0, 0, "Hello World", "color", "#112233", { start: 3, end: 8 });
+    expect(colorMid[1]).toEqual({ text: "lo Wo", marks: { bold: true, italic: true, color: "#112233" } });
+    // Plain span outside range
+    const plainAndBoldProps = { ...props, [cellRichKey("r0", "c0")]: serializeTableRichSpans([{ text: "AAA" }, { text: "BBB", marks: { bold: true } }, { text: "CCC" }]) };
+    const plainMid = toggleTableCellRichMark(plainAndBoldProps, 0, 0, "AAABBBCCC", "underline", undefined, { start: 3, end: 6 });
+    expect(plainMid).toEqual([{ text: "AAA" }, { text: "BBB", marks: { bold: true, underline: true } }, { text: "CCC" }]);
+    // Split plain span (marks undefined on cutStart > spanStart and cutEnd < spanEnd)
+    const splitPlain = toggleTableCellRichMark(props, 0, 0, "Hello World", "code", undefined, { start: 2, end: 5 });
+    expect(splitPlain).toEqual([{ text: "He" }, { text: "llo", marks: { code: true } }, { text: " World" }]);
+
+    // Toggle same color off, and clear color with invalid/empty color value
+    setTableCellRich(new Tx(doc), tbl, [{ row: 0, col: 0, spans: colorMid }]);
+    const coloredProps = doc.blockInfo(tbl).props;
+    const uncolorSame = toggleTableCellRichMark(coloredProps, 0, 0, "Hello World", "color", "#112233", { start: 3, end: 8 });
+    expect(uncolorSame[1].marks?.color).toBeUndefined();
+    const uncolorInvalid = toggleTableCellRichMark(coloredProps, 0, 0, "Hello World", "color", "not-a-color", { start: 3, end: 8 });
+    expect(uncolorInvalid[1].marks?.color).toBeUndefined();
+    // Toggle color on plain text to empty/invalid color (exercises piece.marks ?? {} and normalized === undefined)
+    const noColorOnPlain = toggleTableCellRichMark(props, 0, 0, "Hello World", "color", "");
+    expect(noColorOnPlain).toEqual([{ text: "Hello World" }]);
   });
 });

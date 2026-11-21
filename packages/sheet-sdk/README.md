@@ -1,14 +1,22 @@
 # @jiange/sheet-sdk
 
-Headless spreadsheet primitives shared with Jiange's experimental sheet preview: TSV, cell/selection operations, a bounded formula subset, same-page copy translation, and basic XLSX import/export. `readXlsx` and `writeXlsx` accept/return byte arrays and do not require a DOM. Rows and columns use zero-based indices. The in-app preview remains limited to 100 rows × 26 columns and is not connected to the workbook store.
+Lightweight, zero-DOM, AI-native headless spreadsheet SDK for Node.js, Edge runtimes, Web Workers, and browsers. Depends only on `@jiange/ooxml` (zero third-party runtime dependencies).
 
-XLSX currently supports multiple ordinary worksheets, text, finite numbers, booleans, common error values, formulas and optional cached results. Import returns `warnings` when styles, rich text formatting, layout or other metadata are not preserved; callers must surface them before replacing data. Shared/array/data-table formulas, ISO date cells, macro-enabled workbooks and non-worksheet sheets are rejected rather than silently discarded. External relationships are never fetched. The SDK does not evaluate imported formulas; exported workbooks request recalculation by the spreadsheet application. It is not yet a complete Excel-compatible SDK and does not provide styles, merged cells, persistence, permissions, or realtime collaboration.
+## Capabilities
 
-Import is limited to a 20 MiB archive, 20 MiB per XML part, 64 MiB expanded XML, 100 sheets and 50,000 cells. Export has corresponding sheet/cell limits, a bounded XML budget and a 20 MiB output limit. Empty-string formula caches are ambiguous across spreadsheet tools: omit the cached value and let the target application recalculate. DEFLATE-compressed input requires a host providing `DecompressionStream("deflate-raw")`.
+- **AI-Native `Workbook` Facade (`@jiange/sheet-sdk/workbook`, `@jiange/sheet-sdk/ai-tools`)**:
+  - `Workbook.create()`, `Workbook.fromSnapshot()`, `Workbook.fromXlsx()`, `Workbook.fromCsv()`, `Workbook.fromTsv()`.
+  - Token-budgeted semantic inspection (`wb.inspect({ detail, maxTokens, focus, cursor })`), targeted queries (`wb.query`), declarative atomic batch patching with dry-run & diff (`wb.apply(ops, { dryRun })`), deterministic auditing (`wb.verify()`), and built-in undo/redo.
+  - Self-describing JSON Schema tool definitions and executor (`createSheetTools(wb)`) ready for OpenAI, Gemini, Anthropic, and MCP tool calling.
+- **Incremental AST + DAG Formula Engine (`@jiange/sheet-sdk/formula-engine`, `/formula-ast`, `/formula-functions`, `/worker`)**:
+  - 130+ Excel functions across math, statistics, conditional aggregations (`SUMIFS`, `COUNTIFS`, `AVERAGEIFS`, `MAXIFS`, `MINIFS`, `SUMPRODUCT`), lookup & reference (`VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `XMATCH`, `OFFSET`, `INDIRECT`, `TRANSPOSE`), logic, text, date/time, financial (`PMT`, `PV`, `FV`, `NPV`, `IRR`, `RATE`, `NPER`), and dynamic arrays (`FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`) with `#SPILL!` tracking.
+  - Whole-column/row references (`A:A`, `1:1`), named ranges (`definedNames`), custom function registration (`registerFunction`), bidirectional precedent/dependent graph with range watchers for dirty-subgraph incremental recalculation, and a runtime-agnostic Worker protocol (`createFormulaWorkerHost` / `FormulaWorkerClient`).
+- **Rules, Analytics & Collaboration Primitives (`@jiange/sheet-sdk/rules`, `/analytics`, `/collab`)**:
+  - Data validation, 10-operator conditional formatting, protected range checks, chart dataset extraction, multi-dimensional pivot table computation & materialization, field-level style patches, remote delta patching, and conflict resolution helpers.
+- **Bounded OOXML XLSX, CSV & TSV I/O (`@jiange/sheet-sdk/xlsx`, `/xlsx-read`, `/workbook-xlsx`, `/csv`, `/tsv`)**:
+  - Sync `writeXlsx` (STORE) and async `writeXlsxAsync` (DEFLATE + `sharedStrings.xml` deduplication), multi-sheet cells, formulas, shared-formula expansion on read, ISO dates, styles, number formats (`numfmt`), merges, frozen panes, column widths, row heights, defined names, data validations, hyperlinks, configurable safety limits, and explicit format-loss `warnings`.
 
-Build `@jiange/ooxml` first, then `pnpm --filter @jiange/sheet-sdk build`; `pnpm pack` emits ESM and TypeScript declarations. The package remains private.
-
-`readXlsx` returns `{ workbook, warnings }`. Warning codes include `styles_not_preserved`, `cell_formatting_not_preserved`, `rich_text_formatting_not_preserved`, `worksheet_features_not_preserved`, `workbook_metadata_not_preserved`, `package_parts_not_preserved`, and `empty_formula_cache_not_preserved`; other `*_not_preserved` codes identify additional ignored metadata. Callers should surface warnings before saving a result that may lose information. The SDK itself never overwrites files.
+Build `@jiange/ooxml` first, then `pnpm --filter @jiange/sheet-sdk build`; `pnpm pack` emits ESM and TypeScript declarations.
 
 ## License
 

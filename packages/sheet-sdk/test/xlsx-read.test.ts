@@ -58,11 +58,53 @@ describe("XLSX import", () => {
   });
   it("accepts equivalent namespace prefixes, reads merges and warns about unsupported worksheet features", async () => {
     const base = writeXlsx({sheets:[{name:"Sheet1",cells:[{row:0,col:0,value:1}]}]});
-    const bytes = await replacePart(base,"xl/worksheets/sheet1.xml",(xml) => xml.replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"','xmlns:ss="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace(/<(\/?)(worksheet|sheetData|row|c|v)(?=[\s>])/g,'<$1ss:$2').replace('</ss:worksheet>','<ss:mergeCells><ss:mergeCell ref="A1:B1"/></ss:mergeCells><ss:dataValidations count="0"/></ss:worksheet>'));
+    const bytes = await replacePart(base,"xl/worksheets/sheet1.xml",(xml) => xml.replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"','xmlns:ss="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace(/<(\/?)(worksheet|sheetData|row|c|v)(?=[\s>])/g,'<$1ss:$2').replace('</ss:worksheet>','<ss:mergeCells><ss:mergeCell ref="A1:B1"/></ss:mergeCells><ss:sheetProtection sheet="1"/></ss:worksheet>'));
     const result = await readXlsx(bytes);
     expect(result.workbook.sheets[0].cells).toEqual([{row:0,col:0,value:1}]);
     expect(result.workbook.sheets[0].merges).toEqual([{top:0,left:0,bottom:0,right:1}]);
     expect(result.warnings).toContain("worksheet_features_not_preserved");
+  });
+
+  it("round-trips DEFLATE writeXlsxAsync with sharedStrings, colWidths, rowHeights, validations, hyperlinks, definedNames, and expands shared formulas", async () => {
+    const { writeXlsxAsync } = await import("../src/xlsx.js");
+    const workbook = {
+      definedNames: [{ name: "TaxRate", ref: "Sheet1!$B$1" }],
+      sheets: [{
+        name: "Sheet1",
+        colWidths: { 0: 24, 1: 14.5 },
+        rowHeights: { 0: 28 },
+        validations: [
+          { id: "dv-1", top: 1, left: 0, bottom: 5, right: 0, type: "list" as const, options: ["Open", "Done"], strict: true, hint: "Choose status" },
+          { id: "dv-2", top: 1, left: 1, bottom: 5, right: 1, type: "number" as const, min: "0", max: "100", strict: false },
+        ],
+        hyperlinks: [{ row: 0, col: 0, target: "https://jiange.dev", tooltip: "Home" }],
+        cells: Array.from({ length: 40 }, (_, r) => ({ row: r, col: 0, value: r === 0 ? "Status" : "Repeated Label Text" })),
+      }],
+    };
+    const stored = writeXlsx(workbook);
+    const compressed = await writeXlsxAsync(workbook);
+    expect(compressed.length).toBeLessThan(stored.length);
+    expect(listZip(compressed).some((e) => e.name === "xl/sharedStrings.xml")).toBe(true);
+
+    const imported = await readXlsx(compressed);
+    expect(imported.warnings).toEqual([]);
+    expect(imported.workbook.definedNames).toEqual([{ name: "TaxRate", ref: "Sheet1!$B$1" }]);
+    expect(imported.workbook.sheets[0].colWidths).toEqual({ 0: 24, 1: 14.5 });
+    expect(imported.workbook.sheets[0].rowHeights).toEqual({ 0: 28 });
+    expect(imported.workbook.sheets[0].validations).toHaveLength(2);
+    expect(imported.workbook.sheets[0].hyperlinks).toEqual([{ row: 0, col: 0, target: "https://jiange.dev", tooltip: "Home" }]);
+
+    // Test shared formula expansion + ISO date cell (t="d").
+    const base = writeXlsx({ sheets: [{ name: "Calc", cells: [{ row: 0, col: 0, value: 2 }, { row: 1, col: 0, value: 3 }, { row: 0, col: 1, formula: "=A1*10" }, { row: 1, col: 1, formula: "=A2*10" }] }] });
+    const withShared = await replacePart(base, "xl/worksheets/sheet1.xml", (xml) =>
+      xml
+        .replace('<c r="B1"><f>A1*10</f></c>', '<c r="B1"><f t="shared" ref="B1:B2" si="0">A1*10</f><v>20</v></c>')
+        .replace('<c r="B2"><f>A2*10</f></c>', '<c r="B2"><f t="shared" si="0"/><v>30</v></c><c r="C2" t="d"><v>2026-11-21</v></c>'),
+    );
+    const parsedShared = await readXlsx(withShared);
+    expect(parsedShared.workbook.sheets[0].cells).toContainEqual({ row: 0, col: 1, formula: "=A1*10", value: 20 });
+    expect(parsedShared.workbook.sheets[0].cells).toContainEqual({ row: 1, col: 1, formula: "=A2*10", value: 30 });
+    expect(parsedShared.workbook.sheets[0].cells).toContainEqual({ row: 1, col: 2, value: "2026-11-21" });
   });
   it("rejects shared formulas, external targets, ambiguous entries and oversized input", async () => {
     const base = writeXlsx({sheets:[{name:"Sheet1",cells:[{row:0,col:0,formula:"=1+1"}]}]});

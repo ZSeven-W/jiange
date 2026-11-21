@@ -144,4 +144,41 @@ describe("multi-selection proportional scaling", () => {
     expect(clamped.scale).toBe(2);
     expect(clamped.strokes[0].points).toEqual([{ x: 19900, y: 0 }, { x: 20000, y: 100 }]);
   });
+
+  it("handles empty selections, degenerate bounds, negative-delta scaling, vertical strokes, and collinear/zero-length eraser checks", () => {
+    expect(selectionBounds([], [])).toBeNull();
+    const dotStroke = { id: "dot", points: [{ x: 10, y: 10 }], color: "#000000", width: 2 };
+    expect(scaleSelectionProportionally([], [], { x: 0, y: 0 }, 2)).toEqual({ scale: 1, nodes: [], strokes: [] });
+    expect(scaleSelectionProportionally([], [dotStroke], { x: 0, y: 0 }, 2).scale).toBe(1);
+    const boxNode = { id: "n1", shape: "rect" as const, text: "A", x: -19950, y: -19950, w: 40, h: 40 };
+    expect(scaleSelectionProportionally([boxNode], [], { x: 0, y: 0 }, Number.NaN).scale).toBe(1);
+    expect(scaleSelectionProportionally([boxNode], [], { x: 0, y: 0 }, 0).scale).toBe(1);
+
+    // Anchor to the right/bottom triggers negative delta clamping against -20000
+    const negScaled = scaleSelectionProportionally([boxNode], [], { x: -19900, y: -19900 }, 5);
+    expect(negScaled.scale).toBe(2);
+    expect(negScaled.nodes[0].x).toBe(-20000);
+    expect(negScaled.nodes[0].y).toBe(-20000);
+
+    // Vertical stroke (box.w === 0) and non-finite requested scale in scaleInk
+    const vertical = { id: "v", points: [{ x: 10, y: 0 }, { x: 10, y: 50 }], color: "#000000", width: 2 };
+    expect(scaleInk(vertical, 2).points).toEqual([{ x: 10, y: 0 }, { x: 10, y: 100 }]);
+    expect(scaleInk(vertical, Number.NaN)).toBe(vertical);
+
+    // Zero-length segment in pointSegmentDistance (eraser tap without drag)
+    const seg = { id: "l", points: [{ x: 0, y: 0 }, { x: 100, y: 0 }], color: "#000000", width: 2 };
+    expect(inkHitByEraser(seg, { x: 50, y: 0 }, { x: 50, y: 0 }, 1)).toBe(true);
+    expect(inkHitByEraser({ ...seg, points: [{ x: 0, y: 0 }, { x: 0, y: 0 }] }, { x: 20, y: 0 }, { x: 30, y: 0 }, 1)).toBe(false);
+
+    // Collinear segments: overlapping vs non-overlapping horizontally vs non-overlapping vertically
+    expect(inkHitByEraser(seg, { x: 20, y: 0 }, { x: 60, y: 0 }, 0)).toBe(true);
+    expect(inkHitByEraser(seg, { x: 120, y: 0 }, { x: 150, y: 0 }, 0)).toBe(false);
+    const vSeg = { id: "vl", points: [{ x: 0, y: 0 }, { x: 0, y: 100 }], color: "#000000", width: 2 };
+    expect(inkHitByEraser(vSeg, { x: 0, y: 120 }, { x: 0, y: 150 }, 0)).toBe(false);
+
+    // Crossing in opposite orientation (abC > 0, abD < 0 and cdA > 0, cdB < 0)
+    expect(inkHitByEraser(seg, { x: 50, y: 30 }, { x: 50, y: -30 }, 0)).toBe(true);
+    // Straddling line AB but not intersecting segment AB (cdA > 0, cdB > 0)
+    expect(inkHitByEraser(seg, { x: 150, y: 30 }, { x: 150, y: -30 }, 0)).toBe(false);
+  });
 });

@@ -1,13 +1,18 @@
 {
   "name": "@jiange/collab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./table": "./src/table.ts",
+    "./ws": "./src/ws.ts",
+    "./storage": "./src/storage.ts",
+    "./ai-agent": "./src/ai-agent.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -31,6 +36,22 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./table": {
+        "types": "./dist/table.d.ts",
+        "import": "./dist/table.js"
+      },
+      "./ws": {
+        "types": "./dist/ws.d.ts",
+        "import": "./dist/ws.js"
+      },
+      "./storage": {
+        "types": "./dist/storage.d.ts",
+        "import": "./dist/storage.js"
+      },
+      "./ai-agent": {
+        "types": "./dist/ai-agent.d.ts",
+        "import": "./dist/ai-agent.js"
       }
     }
   }

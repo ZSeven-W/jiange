@@ -1096,7 +1096,7 @@ export interface SheetBorders {
   color?: string;
 }
 
-export type SheetNumFmt = "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date";
+export type SheetNumFmt = "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date" | (string & {});
 
 export interface SheetCellStyle {
   bold?: boolean;
@@ -1311,7 +1311,7 @@ export interface SheetStylePatch {
   wrap?: boolean;
   borders?: SheetBorders;
   clearBorders?: boolean;
-  numFmt?: "" | "general" | "currency" | "percent" | "decimal2" | "decimal1" | "integer" | "date";
+  numFmt?: SheetNumFmt;
 }
 
 export interface SheetCellWrite {

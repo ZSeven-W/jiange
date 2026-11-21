@@ -9,7 +9,7 @@
  * - Imports BOTH modern XMind (`content.json`) and legacy XMind 8 (`content.xml`).
  */
 
-import { createZip, listZip, readZipEntry, ZipError, type ZipEntry } from "@jiange/ooxml/zip";
+import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@jiange/ooxml/zip";
 import { child, children, parseXml, textContent, XmlError, type XmlElement } from "@jiange/ooxml/xml";
 import {
   mindDescriptionAt,
@@ -132,18 +132,17 @@ function clampDescription(raw: string): string | undefined {
   const clean = raw.replace(/\0/g, "").replace(/\r\n/g, "\n").trim();
   if (!clean) return undefined;
   let text = clean.slice(0, 2000);
-  while (text && mindDescriptionLines(text).length > 128) {
+  while (mindDescriptionLines(text).length > 128) {
     text = text.slice(0, Math.floor(text.length * 0.85));
   }
-  return text || undefined;
+  return text;
 }
 
 function makeTopicId(prefix: string, seq: number): string {
   return `xm${prefix}_${seq.toString(36)}`;
 }
 
-/** Export Jiange Mind Map topics into a standard XMind ZEN `.xmind` archive. */
-export function exportMindMapToXmind(graph: XmindExportInput, options: XmindExportOptions = {}): Uint8Array {
+function buildXmindEntries(graph: XmindExportInput, options: XmindExportOptions): { entries: ZipEntryInput[]; modified: Date } {
   const topics = graph.mind ?? [];
   const roots = topics.filter((t) => t.parent === null).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   if (roots.length === 0) {
@@ -222,7 +221,7 @@ export function exportMindMapToXmind(graph: XmindExportInput, options: XmindExpo
   const metadata = {
     creator: { name: "Jiange", version: "1.0.0" },
     dataStructureVersion: "2",
-    activeSheetId: sheets[0]?.id ?? "sheet-1",
+    activeSheetId: sheets[0].id,
     createdAt: modified.toISOString(),
   };
   const manifest = {
@@ -239,15 +238,30 @@ export function exportMindMapToXmind(graph: XmindExportInput, options: XmindExpo
     `<file-entry full-path="manifest.json" media-type="application/json"/>` +
     `</manifest>`;
 
-  return createZip(
-    [
+  return {
+    modified,
+    entries: [
       { name: "content.json", data: utf8(JSON.stringify(sheets, null, 2)) },
       { name: "metadata.json", data: utf8(JSON.stringify(metadata, null, 2)) },
       { name: "manifest.json", data: utf8(JSON.stringify(manifest, null, 2)) },
       { name: "META-INF/manifest.xml", data: utf8(manifestXml) },
     ],
-    modified,
-  );
+  };
+}
+
+/** Export Jiange Mind Map topics into a standard XMind ZEN `.xmind` archive. */
+export function exportMindMapToXmind(graph: XmindExportInput, options: XmindExportOptions = {}): Uint8Array {
+  const { entries, modified } = buildXmindEntries(graph, options);
+  return createZip(entries, modified);
+}
+
+/** Export Jiange Mind Map topics into a DEFLATE-compressed XMind ZEN `.xmind` archive. */
+export async function exportMindMapToXmindAsync(
+  graph: XmindExportInput,
+  options: XmindExportOptions = {},
+): Promise<Uint8Array> {
+  const { entries, modified } = buildXmindEntries(graph, options);
+  return createZipAsync(entries, { modified });
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,10 @@
 # @jiange/ooxml
 
-Internal headless ZIP and XML utilities shared by the document and spreadsheet SDKs. ZIP reading enforces entry limits and checks CRC; XML rejects DTDs. These primitives do not implement a complete Office document format. DEFLATE input requires a host providing `DecompressionStream("deflate-raw")`. The package is private and is not published.
+Internal headless ZIP and XML utilities shared by Jiange's OOXML-capable SDKs (`@jiange/doc-sdk`, `@jiange/sheet-sdk`, `@jiange/slides-sdk`, `@jiange/whiteboard-sdk`).
+
+- **ZIP**: synchronous `createZip` (STORE) and asynchronous `createZipAsync` (raw DEFLATE via `CompressionStream("deflate-raw")` with automatic STORE fallback when smaller or unsupported). Reading (`listZip` / `readZipEntry`) supports STORE and DEFLATE via `DecompressionStream("deflate-raw")`, checks CRC-32, and enforces caller-supplied inflated byte limits.
+- **XML**: bounded, DTD-rejecting XML parser (`parseXml`) and safe XML escaping (`escapeXml`).
+- **Zero third-party runtime dependencies**, pure ES2022 TypeScript.
 
 ## License
 

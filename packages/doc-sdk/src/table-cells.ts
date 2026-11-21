@@ -152,8 +152,8 @@ export function tableDataOf(props: Record<string, string>): string {
 function stableTableSnapshot(props: Record<string, string>): { rows: string[]; cols: string[]; grid: string[][] } | null {
   const rows = ids(props[TBL_ROWS]), cols = ids(props[TBL_COLS]);
   if (props[TBL_VERSION] !== "2" || !rows || !cols || !mirrorTrusted(props) || new Set(rows).size !== rows.length || new Set(cols).size !== cols.length || rows.length > 200 || cols.length > 50 || rows.length * cols.length > 5000) return null;
-  const grid = cellGrid(props);
-  return grid ? { rows, cols, grid } : null;
+  const base = baseOf(props);
+  return { rows, cols, grid: rows.map((r) => cols.map((c) => cellValue(props, base, r, c))) };
 }
 
 export function stableTableReorderWrites(props: Record<string, string>, axis: "row" | "column", order: readonly number[]): Record<string, string> | null {
@@ -247,7 +247,7 @@ export function applyTableWrites(tx: Tx, block: OpId, props: Record<string, stri
 export function writeTable(tx: Tx, block: OpId, props: Record<string, string>, next: string[][], client: number): void {
   const writes = cellTableWrites(props, next, client);
   // Ensure the tableData register always advances so version-based history checks see the write.
-  if (!("tableData" in writes)) writes.tableData = props.tableData ?? JSON.stringify(next);
+  if (!("tableData" in writes)) writes.tableData = props.tableData!;
   applyTableWrites(tx, block, props, writes);
 }
 
@@ -388,7 +388,6 @@ export function toggleTableCellRichMark(
   }
 
   const targetPieces = pieces.filter((p) => p.inside && p.text.length > 0);
-  if (!targetPieces.length) return base;
 
   const isColor = mark === "color";
   const colorVal = isColor && typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : "";

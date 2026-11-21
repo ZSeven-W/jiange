@@ -8,3 +8,6 @@ export * from "./layout.js";
 export * from "./visibility.js";
 export * from "./zoom.js";
 export * from "./pptx.js";
+export * from "./svg.js";
+export * from "./deck.js";
+export * from "./ai-tools.js";

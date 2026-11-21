@@ -488,11 +488,10 @@ const pointNode = (p: Pt): FlowNode => ({ id: "_", shape: "rect", text: "", x: p
 function halfway(pts: Pt[]): Pt {
   const lens = pts.slice(1).map((p, i) => Math.hypot(p.x - pts[i].x, p.y - pts[i].y));
   let left = lens.reduce((s, v) => s + v, 0) / 2;
-  for (let i = 0; i < lens.length; i++) {
-    if (left <= lens[i] || i === lens.length - 1) { const t = lens[i] ? Math.min(1, left / lens[i]) : 0; return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t }; }
-    left -= lens[i];
-  }
-  return pts[0];
+  let i = 0;
+  while (i < lens.length - 1 && left > lens[i]) { left -= lens[i]; i++; }
+  const t = lens[i] ? Math.min(1, left / lens[i]) : 0;
+  return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
 }
 
 /** Route through user waypoints (Feishu: 拖动连线添加拐点). */
@@ -563,7 +562,7 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
   const adj = new Map(ids.map((id) => [id, graph.edges.filter((e) => e.from === id)]));
   const visit = (id: string) => {
     state.set(id, 1);
-    for (const e of adj.get(id) ?? []) {
+    for (const e of adj.get(id)!) {
       if (!out.has(e.to) || e.to === id) continue;
       if (state.get(e.to) === 1) continue;
       forward.push(e);
@@ -572,7 +571,7 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
     state.set(id, 2);
   };
   for (const id of ids) if (!state.get(id)) visit(id);
-  for (const e of forward) { out.get(e.from)!.push(e.to); indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1); }
+  for (const e of forward) { out.get(e.from)!.push(e.to); indeg.set(e.to, indeg.get(e.to)! + 1); }
   const rank = new Map<string, number>();
   const queue = ids.filter((id) => !indeg.get(id));
   for (const id of queue) rank.set(id, 0);
@@ -580,12 +579,11 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
   while (queue.length) {
     const id = queue.shift()!;
     for (const to of out.get(id)!) {
-      rank.set(to, Math.max(rank.get(to) ?? 0, (rank.get(id) ?? 0) + 1));
-      remaining.set(to, (remaining.get(to) ?? 1) - 1);
+      rank.set(to, Math.max(rank.get(to) ?? 0, rank.get(id)! + 1));
+      remaining.set(to, remaining.get(to)! - 1);
       if (!remaining.get(to)) queue.push(to);
     }
   }
-  for (const id of ids) if (!rank.has(id)) rank.set(id, 0);
   const layers: string[][] = [];
   for (const id of ids) (layers[rank.get(id)!] ??= []).push(id);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -594,7 +592,7 @@ export function autoLayout(graph: FlowGraph, opts: { direction?: "TB" | "LR"; ga
   const placed = new Map<string, { x: number; y: number }>();
   let offset = 0;
   layers.forEach((layer, li) => {
-    layer.sort((a, b) => avg(parents(a).map((p) => pos.get(p) ?? 0)) - avg(parents(b).map((p) => pos.get(p) ?? 0)));
+    layer.sort((a, b) => avg(parents(a).map((p) => pos.get(p)!)) - avg(parents(b).map((p) => pos.get(p)!)));
     const sizes = layer.map((id) => (direction === "TB" ? byId.get(id)!.w : byId.get(id)!.h));
     const total = sizes.reduce((s, v) => s + v, 0) + gapX * (layer.length - 1);
     let cursor = -total / 2;

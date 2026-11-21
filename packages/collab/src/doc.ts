@@ -495,12 +495,10 @@ export class Doc {
     const target = b.chars.get(idKey(a.char));
     const ord = this.order(b);
     if (!target) return ord.filter((c) => !c.deleted).length;
+    const i = ord.indexOf(target);
     let n = 0;
-    for (const c of ord) {
-      if (c === target) return n + (!c.deleted && a.side === 1 ? 1 : 0);
-      if (!c.deleted) n++;
-    }
-    return n;
+    for (let j = 0; j < i; j++) if (!ord[j].deleted) n++;
+    return n + (!target.deleted && a.side === 1 ? 1 : 0);
   }
 
   /** Drops buffered ops that can never apply (used after resync). Returns how many were dropped. */
@@ -660,9 +658,7 @@ export class Doc {
   view(): DocView {
     const rootKey = idKey(ROOT);
     // resolve effective parent: hidden if parent missing/deleted; cycles attach to root
-    const eff = new Map<string, string | null>();
     const resolve = (k: string): string | null => {
-      if (eff.has(k)) return eff.get(k)!;
       const b = this.blocks.get(k)!;
       // detect cycle
       const visited = new Set<string>([k]);
@@ -681,7 +677,6 @@ export class Doc {
         }
         cur = idKey(pb.loc.value.parent);
       }
-      eff.set(k, result);
       return result;
     };
     const kids = new Map<string, Block[]>();

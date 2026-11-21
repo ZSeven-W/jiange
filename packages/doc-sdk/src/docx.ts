@@ -10,7 +10,7 @@ import { exportableTableMerges, exportableTableWidths, type TableMerge } from ".
  */
 import { CALLOUT_COLORS } from "./block-styles.js";
 import { markdownTableRows, type MdBlock, type MdSpan } from "./markdown.js";
-import { createZip, listZip, readZipEntry, ZipError, type ZipEntry } from "./zip.js";
+import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "./zip.js";
 import { child, children, escapeXml, XmlError, type XmlElement } from "./xml.js";
 import { parseDocxXml } from "./docx-xml.js";
 
@@ -256,7 +256,6 @@ class DocxWriter {
   }
 
   run(text: string, marks: Record<string, string>, extraRPr = "", link = false): string {
-    if (!text) return "";
     let rPr = "";
     if (marks.code) rPr += `<w:rStyle w:val="JiangeInlineCode"/>`;
     else if (link) rPr += `<w:rStyle w:val="Hyperlink"/>`;
@@ -380,7 +379,7 @@ function columnsTableXml(colBlock: DocxExportBlock, allBlocks: DocxExportBlock[]
   if (directCols.length === 0) return "";
   const collectSubtree = (root: DocxExportBlock): DocxExportBlock[] => {
     const res: DocxExportBlock[] = [root];
-    if (root.id) consumed.add(root.id);
+    consumed.add(root.id!);
     for (const candidate of allBlocks) {
       if (candidate.id && candidate.parent === root.id && !consumed.has(candidate.id)) {
         res.push(...collectSubtree(candidate));
@@ -597,8 +596,7 @@ function footerXml(text: string | undefined, includePageNumbers: boolean): strin
 <w:ftr xmlns:w="${NS_W}"><w:p><w:pPr><w:jc w:val="center"/><w:pBdr><w:top w:val="single" w:sz="4" w:space="4" w:color="E5E6EB"/></w:pBdr></w:pPr>${runs.join("")}</w:p></w:ftr>`;
 }
 
-/** Build a .docx package from a document view (title block included as the Word title). */
-export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExportOptions = {}): Uint8Array {
+function buildDocxEntries(view: { blocks: DocxExportBlock[] }, options: DocxExportOptions = {}): ZipEntryInput[] {
   const w = new DocxWriter(options);
   const blocks = view.blocks.some((b) => b.type === "title") || !options.title
     ? view.blocks
@@ -632,7 +630,7 @@ export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExpo
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Jiange</Application></Properties>`;
   const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:settings xmlns:w="${NS_W}"><w:defaultTabStop w:val="420"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
-  const entries = [
+  return [
     { name: "[Content_Types].xml", data: encoder.encode(contentTypes) },
     { name: "_rels/.rels", data: encoder.encode(rootRels) },
     { name: "docProps/core.xml", data: encoder.encode(core) },
@@ -647,7 +645,16 @@ export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExpo
     ...(w.footerRelId ? [{ name: "word/footer1.xml", data: encoder.encode(footerXml(options.footerText, !!options.includePageNumbers)) }] : []),
     ...w.media.map((m) => ({ name: `word/media/${m.name}`, data: m.data })),
   ];
-  return createZip(entries, options.now);
+}
+
+/** Build a .docx package synchronously (STORE ZIP). */
+export function buildDocx(view: { blocks: DocxExportBlock[] }, options: DocxExportOptions = {}): Uint8Array {
+  return createZip(buildDocxEntries(view, options), options.now);
+}
+
+/** Build a DEFLATE-compressed .docx package asynchronously. */
+export async function buildDocxAsync(view: { blocks: DocxExportBlock[] }, options: DocxExportOptions = {}): Promise<Uint8Array> {
+  return createZipAsync(buildDocxEntries(view, options), { modified: options.now, compression: "deflate" });
 }
 
 // ---------------------------------------------------------------- import
@@ -855,8 +862,7 @@ const HIGHLIGHT: Record<string, string> = {
 
 const MONO = /^(consolas|courier|courier new|menlo|monaco|source code pro|fira code|jetbrains mono|sf mono|lucida console|monospace)$/i;
 
-function on(element: XmlElement | undefined): boolean {
-  if (!element) return false;
+function on(element: XmlElement): boolean {
   const value = element.attrs["w:val"];
   return value === undefined || !/^(0|false|off|none)$/i.test(value);
 }
@@ -961,7 +967,6 @@ class DocxReader {
     private footnotesMap: Map<string, string>,
     private endnotesMap: Map<string, string>,
     private commentsMap: Map<string, RawDocxComment>,
-    private importImages: boolean,
   ) {}
 
   buildImportedComments(): DocxImportedComment[] {
@@ -969,8 +974,7 @@ class DocxReader {
     const seen = new Set<string>();
     const add = (id: string) => {
       if (seen.has(id)) return;
-      const raw = this.commentsMap.get(id);
-      if (!raw) return;
+      const raw = this.commentsMap.get(id)!;
       seen.add(id);
       const quote = this.commentQuotes.get(id)?.trim() || undefined;
       const blockIndex = this.commentBlocks.get(id);
@@ -1339,11 +1343,7 @@ class DocxReader {
           this.inline(c, out);
           if (out.commentRefs.length) commentRefs.push(...out.commentRefs);
           if (out.images.length) {
-            if (this.importImages) {
-              for (const img of out.images) cellImages.push({ id: img.id, name: img.name, width: img.width });
-            } else {
-              this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
-            }
+            for (const img of out.images) cellImages.push({ id: img.id, name: img.name, width: img.width });
           } else if (out.image) {
             this.warnings.add("表格单元格中的图片暂不支持导入，已跳过");
           }
@@ -1352,7 +1352,6 @@ class DocxReader {
           for (const s of out.spans) {
             const marks: TableCellMarks = {};
             for (const [k, v] of Object.entries(s.marks)) {
-              if (!v) continue;
               if (k === "bold") { if (!header) marks.bold = true; }
               else if (k === "italic") marks.italic = true;
               else if (k === "underline") marks.underline = true;
@@ -1370,7 +1369,7 @@ class DocxReader {
             plainLine = plainLine ? `${plainLine}\n${tbText}` : tbText;
             lineRich.push({ text: (lineRich.length ? "\n" : "") + tbText });
           }
-          if (this.importImages && out.images.length) {
+          if (out.images.length) {
             const markers = out.images.map((img) => `[图片：${img.name}]`).join(" ");
             if (plainLine) {
               plainLine += "\n" + markers;
@@ -1675,7 +1674,6 @@ export async function parseDocx(bytes: Uint8Array, options: { images?: boolean }
     footnotesMap,
     endnotesMap,
     commentsMap,
-    !!options.images,
   );
   const blocks: MdBlock[] = [];
   if (body) reader.body(body, blocks, { lastCode: false });

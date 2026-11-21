@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, serializeInline, toMarkdown, viewToMarkdown, type MdSpan } from "../src/markdown.js";
+import { markdownTableRows, parseInline, parseMarkdown, serializeInline, toMarkdown, viewToMarkdown, type MdSpan } from "../src/markdown.js";
+import { tableHash } from "../src/table-cells.js";
 
 const SAMPLE = `# 发布计划
 
@@ -208,5 +209,137 @@ describe("markdown blocks", () => {
     const source = '{"bad":"保留"}';
     const markdown = toMarkdown([{ type: "table", text: "", props: { tableData: source }, spans: [] }]);
     expect(parseMarkdown(markdown)[0]).toMatchObject({ type: "code", text: source, props: { lang: "json" } });
+  });
+
+  it("exports flowchart and mindmap blocks to Mermaid without depending on whiteboard-sdk", () => {
+    const props = {
+      "fc.n.a": JSON.stringify({ shape: "terminator", text: "开始", z: 1 }),
+      "fc.n.b": JSON.stringify({ shape: "diamond", text: "通过?", z: 2 }),
+      "fc.e.e1": JSON.stringify({ from: "a", to: "b", label: "进入", dashed: true }),
+      "fc.e.dangling": JSON.stringify({ from: "a", to: "missing" }),
+      "fc.m.r": JSON.stringify({ parent: null, text: "中心主题", order: 1 }),
+      "fc.m.c": JSON.stringify({ parent: "r", text: "分支", order: 2 }),
+      "fc.n.bad": "{broken",
+    };
+    const md = toMarkdown([{ type: "flowchart", text: "", props, spans: [] }]);
+    expect(md).toContain("```mermaid");
+    expect(md).toContain('N1(["开始"])');
+    expect(md).toContain('N2{"通过?"}');
+    expect(md).toContain('N1 -.->|"进入"| N2');
+    expect(md).toContain('M1["中心主题"]');
+    expect(md).toContain("M1 --- M2");
+    expect(md).not.toContain("missing");
+
+    const custom = viewToMarkdown(
+      { blocks: [{ type: "flowchart", props, spans: [] }] },
+      { renderFlowchart: () => "graph LR\n  A --> B" },
+    );
+    expect(custom).toContain("graph LR\n  A --> B");
+  });
+
+  it("covers all flowchart shapes/arrows/defaults, inline edge cases, rich table cells, math, file, embed, and reminder", () => {
+    // Flowchart edge cases: empty value, non-object JSON, missing fields, unknown shape, image shape, same z/order tie-break, all arrow/dashed/label combos
+    const fcProps: Record<string, string> = {
+      "fc.n.emptyVal": "",
+      "fc.n.nonObj": "42",
+      "fc.n.nullVal": "null",
+      "fc.n.a": JSON.stringify({}),
+      "fc.n.b": JSON.stringify({ shape: "customShape", text: "", z: 0 }),
+      "fc.n.img": JSON.stringify({ shape: "image", text: "" }),
+      "fc.m.m2": JSON.stringify({}),
+      "fc.m.m1": JSON.stringify({ parent: "m2" }),
+      "fc.e.e1": JSON.stringify({ from: "a", to: "b", arrow: "none", dashed: true }),
+      "fc.e.e2": JSON.stringify({ from: "a", to: "b", arrow: "none", dashed: false }),
+      "fc.e.e3": JSON.stringify({ from: "a", to: "b", arrow: "both", dashed: true }),
+      "fc.e.e4": JSON.stringify({ from: "a", to: "b", arrow: "both", dashed: false }),
+      "fc.e.e5": JSON.stringify({ from: "a", to: "b", dashed: false }),
+    };
+    const fcMd = toMarkdown([{ type: "flowchart", text: "", props: fcProps, spans: [] }]);
+    expect(fcMd).toContain('"图片"');
+    expect(fcMd).toContain("-.-");
+    expect(fcMd).toContain("---");
+    expect(fcMd).toContain("<-.->");
+    expect(fcMd).toContain("<-->");
+    expect(fcMd).toContain("-->");
+
+    // Inline edge cases: unclosed delimiter (-1), empty delimiter (****), balanced parens in URL, empty/space URL in link, adjacent same marks via nested bold
+    expect(parseInline("****")).toEqual([{ text: "****", marks: {} }]);
+    expect(parseInline("*unclosed")).toEqual([{ text: "*unclosed", marks: {} }]);
+    expect(parseInline("**a __b__**")).toEqual([{ text: "a b", marks: { bold: "1" } }]);
+    const inlineMd = parseMarkdown(
+      "[wiki](https://en.wikipedia.org/wiki/Foo_(bar)) and [bad]() and [bad2](a b) and [a [b](x y)",
+    );
+    expect(inlineMd[0].spans.some((s) => s.marks.link === "https://en.wikipedia.org/wiki/Foo_(bar)")).toBe(true);
+
+    // Code span padding edge cases in serializeInline (" a " padded, "   " not padded, " a" not padded)
+    const codeSerialized = toMarkdown([
+      {
+        type: "paragraph",
+        text: "",
+        props: {},
+        spans: [
+          { text: " a ", marks: { code: "1" } },
+          { text: "   ", marks: { code: "1" } },
+          { text: " a", marks: { code: "1" } },
+        ],
+      },
+    ]);
+    expect(codeSerialized).toContain("`  a  `");
+
+    // Table edge cases: markdownTableRows undefined/empty/ragged/non-string, invalid codepoint entity in table cell, short body row padding, rich table cell marks
+    const shortRowAndSurrogate = parseMarkdown("| A | B |\n| --- | --- |\n| &#xD800; &#9999999; |\n");
+    expect(JSON.parse(shortRowAndSurrogate[0].props.tableData)).toEqual([["A", "B"], ["&#xD800; &#9999999;", ""]]);
+
+    const richTableProps: Record<string, string> = {
+      "tbl.v": "2",
+      "tbl.rows": '["r0","r1"]',
+      "tbl.cols": '["c0"]',
+      "tbl.c.r0.c0": "Header",
+      "tbl.c.r1.c0": "PlainRich",
+      "tbl.fmt.r1.c0": JSON.stringify([
+        { text: "Plain" },
+        { text: "Rich", marks: { code: true, strike: true, italic: true, bold: true, underline: true } },
+      ]),
+      tableData: '[["Header"],["PlainRich"]]',
+    };
+    richTableProps["tbl.m"] = tableHash(richTableProps.tableData);
+    const richTableMd = toMarkdown([{ type: "table", text: "", props: richTableProps, spans: [] }]);
+    expect(richTableMd).toContain("Plain<u>***~~`Rich`~~***</u>");
+
+    // Multiline math starting with content on opening $$ line + anonymous image
+    const mathAndImg = parseMarkdown("$$a + b\nc + d\n$$\n\n![](https://example.com/x.png)\n");
+    expect(mathAndImg[0]).toMatchObject({ type: "math", text: "a + b\nc + d" });
+    expect(mathAndImg[1]).toMatchObject({ type: "image", props: { url: "https://example.com/x.png", name: "图片" } });
+
+    // markdownTableRows defaults and invalid shapes + file, embed, reminder, and fallback image serialization
+    expect(markdownTableRows(undefined)).toEqual([["列 1", "列 2", "列 3"], ["", "", ""]]);
+    expect(markdownTableRows("")).toEqual([["列 1", "列 2", "列 3"], ["", "", ""]]);
+    expect(markdownTableRows('[["a"],["b","c"]]')).toBeNull();
+    expect(markdownTableRows('[["a"],[1]]')).toBeNull();
+
+    const miscMd = toMarkdown([
+      { type: "image", text: "", props: {}, spans: [] },
+      { type: "file", text: "doc.pdf", props: { name: "Report.pdf", url: "https://a.test/r.pdf" }, spans: [] },
+      { type: "file", text: "fallback-name", props: {}, spans: [] },
+      { type: "file", text: "", props: {}, spans: [] },
+      { type: "embed", text: "", props: { resourceKind: "sheet", resourceId: "s1", title: "Budget" }, spans: [] },
+      { type: "embed", text: "", props: { resourceKind: "base", resourceId: "b1" }, spans: [] },
+      { type: "embed", text: "", props: { resourceKind: "survey", resourceId: "q1" }, spans: [] },
+      { type: "embed", text: "", props: { resourceKind: "slides", resourceId: "p1" }, spans: [] },
+      { type: "embed", text: "", props: {}, spans: [] },
+      { type: "reminder", text: "", props: { date: "2026-11-21", time: "09:00", label: "Standup", done: "true" }, spans: [] },
+      { type: "reminder", text: "", props: {}, spans: [] },
+    ]);
+    expect(miscMd).toContain("![图片]()");
+    expect(miscMd).toContain("[Report.pdf](https://a.test/r.pdf)");
+    expect(miscMd).toContain("[fallback-name]()");
+    expect(miscMd).toContain("[附件]()");
+    expect(miscMd).toContain("[嵌入电子表格：Budget](#/sheet/s1)");
+    expect(miscMd).toContain("[嵌入多维表格：#b1](#/base/b1)");
+    expect(miscMd).toContain("[嵌入问卷：#q1](#/survey/q1)");
+    expect(miscMd).toContain("[嵌入幻灯片：#p1](#/slides/p1)");
+    expect(miscMd).toContain("[嵌入资源：资源]");
+    expect(miscMd).toContain("- [x] ⏰ 2026-11-21 09:00 Standup");
+    expect(miscMd).toContain("- [ ] ⏰ 日期提醒");
   });
 });

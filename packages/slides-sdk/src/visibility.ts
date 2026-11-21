@@ -19,7 +19,7 @@ export function presentationKeyTarget(pages: readonly SlidesPage[], currentId: n
   const visible = playableSlides(pages), index = visible.findIndex((page) => page.id === currentId);
   if (index < 0) return null;
   if (key === "Home") return visible[0];
-  if (key === "End") return visible.at(-1) ?? null;
+  if (key === "End") return visible[visible.length - 1];
   if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(key)) return visible[Math.min(index + 1, visible.length - 1)];
   if (["ArrowLeft", "ArrowUp", "PageUp"].includes(key)) return visible[Math.max(index - 1, 0)];
   return null;

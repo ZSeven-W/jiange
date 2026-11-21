@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
-import { bodyBlocks, clipText, copyRange, createBlankTable, deleteRange, isSourceBlock, joinBackward, joinForward, markdownShortcut, parseText, pasteBlocks, setBlockType, splitBlock, toggleMark, type Sel } from "../src/model.js";
+import { activeMarks, applyTableEdit, bodyBlocks, clipText, cmpPos, collapsed, copyRange, createBlankTable, deleteRange, isColumnText, isSourceBlock, joinBackward, joinForward, markdownShortcut, mathSpans, normalize, orderMap, parseTableData, parseText, pasteBlocks, selectionContainsColumns, setBlockType, snapMathPos, splitBlock, toggleMark, type Sel } from "../src/model.js";
 
 function setup(...lines: string[]) {
   const d = new Doc(1);
@@ -150,8 +150,6 @@ describe("formula and diagram blocks", () => {
   });
 });
 
-import { applyTableEdit, parseTableData } from "../src/model.js";
-
 describe("table block transforms", () => {
   it("creates a bounded rectangular grid with independent rows", () => {
     const rows = createBlankTable(2, 3)!;
@@ -187,5 +185,165 @@ describe("Feishu Enter in an empty quote", () => {
     expect(after).toEqual(next);
     expect(d.blockInfo(next.b).type).toBe("paragraph");
     expect(bodyBlocks(d)).toHaveLength(2);
+  });
+});
+
+describe("model edge cases: math spans, columns, join/split, activeMarks, shortcuts, and paste", () => {
+  it("handles math spans, snapMathPos, expandMathSelection, cmpPos, collapsed, and unknown block fallbacks", () => {
+    const { d, blocks } = setup("ab1234cd", "ef5678gh");
+    const tx = new Tx(d);
+    tx.format(blocks[0], 2, 6, "math", "x^2");
+    tx.format(blocks[0], 2, 6, "mathId", "m1");
+    tx.format(blocks[1], 2, 6, "math", "y^2");
+    tx.format(blocks[1], 2, 6, "mathId", "m2");
+
+    expect(mathSpans(d, blocks[0])).toEqual([{ start: 2, end: 6, math: "x^2", id: "m1" }]);
+    // snapMathPos: offset 0, after end, closer to start, closer to end
+    expect(snapMathPos(d, { b: blocks[0], o: 0 })).toEqual({ b: blocks[0], o: 0 });
+    expect(snapMathPos(d, { b: blocks[0], o: 6 })).toEqual({ b: blocks[0], o: 6 });
+    expect(snapMathPos(d, { b: blocks[0], o: 3 })).toEqual({ b: blocks[0], o: 2 });
+    expect(snapMathPos(d, { b: blocks[0], o: 5 })).toEqual({ b: blocks[0], o: 6 });
+
+    // normalize: backward single-block, collapsed, cross-block with end.o=0, expanding start & end inside math, and unknown block IDs
+    const backNorm = normalize(d, { a: { b: blocks[0], o: 5 }, f: { b: blocks[0], o: 3 } });
+    expect(backNorm.start.o).toBe(2);
+    expect(backNorm.end.o).toBe(6);
+    const colNorm = normalize(d, { a: { b: blocks[0], o: 3 }, f: { b: blocks[0], o: 3 } });
+    expect(colNorm.start.o).toBe(3);
+    expect(collapsed({ a: { b: blocks[0], o: 3 }, f: { b: blocks[0], o: 3 } })).toBe(true);
+    expect(collapsed({ a: { b: blocks[0], o: 3 }, f: { b: blocks[0], o: 4 } })).toBe(false);
+    const zeroEndNorm = normalize(d, { a: { b: blocks[0], o: 0 }, f: { b: blocks[1], o: 0 } });
+    expect(zeroEndNorm.end.o).toBe(0);
+    const unknownA = { client: 99, clock: 1 };
+    const unknownB = { client: 99, clock: 2 };
+    const ord = orderMap(blocks);
+    expect(cmpPos(ord, { b: unknownA, o: 1 }, { b: unknownB, o: 4 })).toBe(-3);
+    // Non-root blocks (column children) are real blocks not in bodyBlocks(d), exercising ord.get(...) ?? 0
+    const colsParent = tx.create("columns", null, ROOT);
+    const childA = tx.create("paragraph", null, colsParent);
+    const childB = tx.create("paragraph", childA, colsParent);
+    expect(normalize(d, { a: { b: childA, o: 0 }, f: { b: childB, o: 0 } }).blocks.length).toBeGreaterThanOrEqual(1);
+    expect(isColumnText(d, unknownA)).toBe(false);
+
+    // deleteRange single-block
+    const delTx = new Tx(d);
+    expect(deleteRange(delTx, { a: { b: blocks[0], o: 0 }, f: { b: blocks[0], o: 2 } })).toEqual({ b: blocks[0], o: 0 });
+    expect(d.text(blocks[0])).toBe("1234cd");
+
+    // Copy & paste math chars assigns fresh mathId
+    const clip = copyRange(d, { a: { b: blocks[0], o: 0 }, f: { b: blocks[0], o: 4 } });
+    const pastedEnd = pasteBlocks(new Tx(d), { b: blocks[1], o: 0 }, clip);
+    expect(pastedEnd.o).toBe(4);
+    expect(mathSpans(d, blocks[1]).length).toBe(2);
+  });
+
+  it("handles columns, indented lists, textless joinBackward/joinForward, shortcuts, activeMarks, and clippable paste", () => {
+    const d = new Doc(1);
+    const tx = new Tx(d);
+    const cols = tx.create("columns", null, ROOT);
+    const col1 = tx.create("paragraph", null, cols);
+    const col2 = tx.create("paragraph", col1, cols);
+    tx.insert(col1, 0, "c1");
+    tx.insert(col2, 0, "c2");
+    const p1 = tx.create("paragraph", cols, ROOT);
+    tx.insert(p1, 0, "hello");
+    const div = tx.create("divider", p1, ROOT);
+    const p2 = tx.create("paragraph", div, ROOT);
+    tx.insert(p2, 0, "world");
+    const p3 = tx.create("paragraph", p2, ROOT);
+
+    expect(selectionContainsColumns(d, { a: { b: cols, o: 0 }, f: { b: p1, o: 2 } })).toBe(true);
+    expect(selectionContainsColumns(d, { a: { b: p1, o: 0 }, f: { b: p1, o: 2 } })).toBe(false);
+
+    // Column text guards in deleteRange, splitBlock, joinBackward, joinForward
+    expect(deleteRange(tx, { a: { b: col1, o: 0 }, f: { b: col2, o: 1 } })).toEqual({ b: col1, o: 0 });
+    expect(splitBlock(tx, { b: col1, o: 2 })).toEqual({ b: col1, o: 3 });
+    expect(joinBackward(tx, col1)).toEqual({ b: col1, o: 0 });
+    expect(joinForward(tx, col1)).toEqual({ b: col1, o: 3 });
+
+    // deleteRange starting on textless (columns) with a following text block vs all textless
+    const resWithText = deleteRange(tx, { a: { b: cols, o: 0 }, f: { b: p1, o: 2 } });
+    expect(resWithText).toEqual({ b: p1, o: 0 });
+    const resOnlyTextless = deleteRange(tx, { a: { b: cols, o: 0 }, f: { b: cols, o: 0 } });
+    expect(resOnlyTextless).toEqual({ b: cols, o: 0 });
+
+    // joinBackward: first block, indented block, non-paragraph block, prev is divider (deleted)
+    const d2 = new Doc(1), t2 = new Tx(d2);
+    const first = t2.create("paragraph", null, ROOT);
+    const div2 = t2.create("divider", first, ROOT);
+    const ind = t2.create("bullet", div2, ROOT, { indent: "1" });
+    t2.insert(ind, 0, "item");
+    expect(joinBackward(t2, first)).toEqual({ b: first, o: 0 });
+    // splitBlock on non-empty indented list inherits indent; on empty indented list decrements indent
+    const splitInd = splitBlock(t2, { b: ind, o: 4 });
+    expect(d2.blockInfo(splitInd.b).props.indent).toBe("1");
+    splitBlock(t2, splitInd);
+    expect(d2.blockInfo(splitInd.b).props.indent).toBe("0");
+    // joinBackward on indented bullet decrements indent -> then converts bullet to paragraph -> then deletes divider!
+    joinBackward(t2, ind);
+    expect(d2.blockInfo(ind).props.indent).toBe("0");
+    joinBackward(t2, ind);
+    expect(d2.blockInfo(ind).type).toBe("paragraph");
+    joinBackward(t2, ind);
+    expect(d2.hasBlock(div2)).toBe(false);
+
+    // joinForward: last block, next is columns, next is divider, next is normal paragraph (with text and empty)
+    expect(joinForward(tx, p3)).toEqual({ b: p3, o: 0 });
+    const d3 = new Doc(1), t3 = new Tx(d3);
+    const a = t3.create("paragraph", null, ROOT); t3.insert(a, 0, "A");
+    const div3 = t3.create("divider", a, ROOT);
+    const b = t3.create("paragraph", div3, ROOT); t3.insert(b, 0, "B");
+    const cEmpty = t3.create("paragraph", b, ROOT);
+    const colAfter = t3.create("columns", cEmpty, ROOT);
+    joinForward(t3, a); // deletes divider
+    expect(d3.hasBlock(div3)).toBe(false);
+    joinForward(t3, a); // pulls B into A
+    expect(d3.text(a)).toBe("AB");
+    joinForward(t3, a); // pulls empty cEmpty into A
+    expect(d3.hasBlock(cEmpty)).toBe(false);
+    expect(joinForward(t3, a)).toEqual({ b: a, o: 2 }); // stops before columns
+    expect(d3.hasBlock(colAfter)).toBe(true);
+
+    // markdownShortcut: [x] sets checked prop, code block returns null
+    const d4 = new Doc(1), t4 = new Tx(d4);
+    const todoP = t4.create("paragraph", null, ROOT); t4.insert(todoP, 0, "[x] ");
+    markdownShortcut(t4, { b: todoP, o: 4 }, " ");
+    expect(d4.blockInfo(todoP)).toMatchObject({ type: "todo", props: { checked: "true" } });
+    const codeP = t4.create("code", todoP, ROOT); t4.insert(codeP, 0, "**x** ");
+    expect(markdownShortcut(t4, { b: codeP, o: 6 }, " ")).toBeNull();
+
+    // activeMarks: empty selection, common + differing marks, skips source block
+    const d5 = new Doc(1), t5 = new Tx(d5);
+    const m1 = t5.create("paragraph", null, ROOT); t5.insert(m1, 0, "ab");
+    t5.format(m1, 0, 2, "bold", "1");
+    t5.format(m1, 0, 1, "italic", "1");
+    const mathB = t5.create("math", m1, ROOT); t5.insert(mathB, 0, "x");
+    const m2 = t5.create("paragraph", mathB, ROOT); t5.insert(m2, 0, "cd");
+    t5.format(m2, 0, 2, "bold", "1");
+    expect(activeMarks(d5, { a: { b: m1, o: 0 }, f: { b: m1, o: 0 } })).toEqual({});
+    expect(activeMarks(d5, { a: { b: m1, o: 0 }, f: { b: m2, o: 2 } })).toEqual({ bold: "1" });
+
+    // pasteBlocks: empty clip, single clippable on empty paragraph (with "type" key in props) & on non-empty paragraph, single plain clip, multi-block onto start of paragraph with h1 first & empty type second
+    const d6 = new Doc(1), t6 = new Tx(d6);
+    const emptyP = t6.create("paragraph", null, ROOT);
+    expect(pasteBlocks(t6, { b: emptyP, o: 0 }, [])).toEqual({ b: emptyP, o: 0 });
+    const afterImg1 = pasteBlocks(t6, { b: emptyP, o: 0 }, [{ type: "image", props: { type: "ignored", url: "https://a.test/1.png" }, chars: [] }]);
+    expect(d6.blockInfo(emptyP).type).toBe("image");
+    t6.insert(afterImg1.b, 0, "text");
+    const afterImg2 = pasteBlocks(t6, { b: afterImg1.b, o: 4 }, [{ type: "divider", props: {}, chars: [] }]);
+    expect(afterImg2.o).toBe(0);
+    // Single inline clip
+    const afterSingle = pasteBlocks(t6, afterImg2, parseText("hi"));
+    expect(afterSingle.o).toBe(2);
+    // Multi-block paste at offset 0 of paragraph with non-paragraph first & "" second type
+    const freshP = t6.create("paragraph", afterSingle.b, ROOT);
+    pasteBlocks(t6, { b: freshP, o: 0 }, [
+      { type: "h2", props: {}, chars: [{ ch: "H", marks: {} }] },
+      { type: "", props: {}, chars: [] },
+    ]);
+    expect(d6.blockInfo(freshP).type).toBe("h2");
+
+    // applyTableEdit on empty rows
+    expect(applyTableEdit([], -1, 0, "")).toEqual([["", "", ""], ["", "", ""], ["", "", ""]]);
   });
 });

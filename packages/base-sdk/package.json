@@ -1,0 +1,71 @@
+{
+  "name": "@jiange/base-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./formula": "./src/formula.ts",
+    "./query": "./src/query.ts",
+    "./dashboard": "./src/dashboard.ts",
+    "./csv": "./src/csv.ts",
+    "./base": "./src/base.ts",
+    "./ai-tools": "./src/ai-tools.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./types": {
+        "types": "./dist/types.d.ts",
+        "import": "./dist/types.js"
+      },
+      "./formula": {
+        "types": "./dist/formula.d.ts",
+        "import": "./dist/formula.js"
+      },
+      "./query": {
+        "types": "./dist/query.d.ts",
+        "import": "./dist/query.js"
+      },
+      "./dashboard": {
+        "types": "./dist/dashboard.d.ts",
+        "import": "./dist/dashboard.js"
+      },
+      "./csv": {
+        "types": "./dist/csv.d.ts",
+        "import": "./dist/csv.js"
+      },
+      "./base": {
+        "types": "./dist/base.d.ts",
+        "import": "./dist/base.js"
+      },
+      "./ai-tools": {
+        "types": "./dist/ai-tools.d.ts",
+        "import": "./dist/ai-tools.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-sdk-dist.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

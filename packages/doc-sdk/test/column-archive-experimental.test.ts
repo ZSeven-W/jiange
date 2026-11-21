@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
 import { captureColumnMove } from "../src/column-move.js";
-import { archiveColumn, prepareColumnArchive, prepareColumnArchiveTransition, preparedColumnArchiveIsCurrent, recoverColumnArchive, serializeColumnArchive, toggleArchivedColumn } from "../src/column-archive-experimental.js";
+import { archiveColumn, captureColumnArchiveTarget, prepareColumnArchive, prepareColumnArchiveTransition, preparedColumnArchiveIsCurrent, recoverColumnArchive, serializeColumnArchive, toggleArchivedColumn } from "../src/column-archive-experimental.js";
 
 function setup() {
   const doc = new Doc(1), tx = new Tx(doc), parent = tx.create("columns", null, ROOT);
@@ -155,5 +155,121 @@ describe("experimental reversible column archive", () => {
     const snapshot = captureColumnMove(x.doc, x.parent, x.middle)!, before = x.doc.encodeState(), tx = new Tx(x.doc);
     expect(archiveColumn(tx, snapshot)).toBeNull(); expect(tx.ops).toHaveLength(0);
     expect(x.doc.encodeState()).toEqual(before);
+  });
+
+  it("handles oversized states, thrown encode errors, mismatched replicas, tampered metadata, and clock exhaustion", () => {
+    const x = setup();
+
+    // prepareColumnArchive: state > MAX_PLAN_STATE_BYTES
+    const bigSpy = vi.spyOn(x.doc, "encodeState").mockReturnValueOnce(new Uint8Array((8 << 20) + 1));
+    expect(prepareColumnArchive(x.doc, 19, x.parent, x.middle)).toBeNull();
+    bigSpy.mockRestore();
+
+    // prepareColumnArchive: encodeState throws -> catch returns null
+    const throwSpy = vi.spyOn(x.doc, "encodeState").mockImplementationOnce(() => { throw new Error("boom"); });
+    expect(prepareColumnArchive(x.doc, 19, x.parent, x.middle)).toBeNull();
+    throwSpy.mockRestore();
+
+    // prepareColumnArchive: cloned doc fails capture check (Doc.fromState returns empty doc)
+    const fromSpy = vi.spyOn(Doc, "fromState").mockReturnValueOnce(new Doc(19));
+    expect(prepareColumnArchive(x.doc, 19, x.parent, x.middle)).toBeNull();
+    fromSpy.mockRestore();
+
+    // prepareColumnArchive: archiveColumn returns null inside copy due to clock exhaustion
+    const exhausted = setup();
+    exhausted.doc.apply({ t: "bcreate", id: { client: 99, clock: Number.MAX_SAFE_INTEGER - 1 }, parent: ROOT, pos: "Z", type: "paragraph" });
+    expect(prepareColumnArchive(exhausted.doc, 19, exhausted.parent, exhausted.middle)).toBeNull();
+
+    // Prepare a valid plan and test preparedColumnArchiveIsCurrent edge cases
+    const plan = prepareColumnArchive(x.doc, 19, x.parent, x.middle)!;
+    expect(preparedColumnArchiveIsCurrent(plan, new Doc(5))).toBe(false);
+    const curThrow = vi.spyOn(x.doc, "encodeState").mockImplementationOnce(() => { throw new Error("fail"); });
+    expect(preparedColumnArchiveIsCurrent(plan, x.doc)).toBe(false);
+    curThrow.mockRestore();
+
+    // Apply archive and test prepareColumnArchiveTransition edge cases
+    for (const op of plan.ops) x.doc.apply(op);
+    const handle = recoverColumnArchive(x.doc, plan.recovery)!;
+    expect(prepareColumnArchiveTransition(handle, x.doc.client)).toBeNull();
+
+    const bigTransSpy = vi.spyOn(x.doc, "encodeState").mockReturnValueOnce(new Uint8Array((8 << 20) + 1));
+    expect(prepareColumnArchiveTransition(handle, 20)).toBeNull();
+    bigTransSpy.mockRestore();
+
+    const emptyTransSpy = vi.spyOn(Doc, "fromState").mockReturnValueOnce(new Doc(20));
+    expect(prepareColumnArchiveTransition(handle, 20)).toBeNull();
+    emptyTransSpy.mockRestore();
+
+    const throwTransSpy = vi.spyOn(x.doc, "encodeState").mockImplementationOnce(() => { throw new Error("boom"); });
+    expect(prepareColumnArchiveTransition(handle, 20)).toBeNull();
+    throwTransSpy.mockRestore();
+
+    // Clock exhaustion during prepareColumnArchiveTransition & toggleArchivedColumn
+    const exDoc = Doc.fromState(1, x.doc.encodeState());
+    exDoc.apply({ t: "bcreate", id: { client: 99, clock: Number.MAX_SAFE_INTEGER }, parent: ROOT, pos: "Z", type: "paragraph" });
+    const exHandle = recoverColumnArchive(exDoc, plan.recovery)!;
+    expect(prepareColumnArchiveTransition(exHandle, 20)).toBeNull();
+    expect(toggleArchivedColumn(new Tx(exDoc), exHandle)).toBeNull();
+
+    // recoverColumnArchive edge cases: oversized raw, non-object JSON
+    expect(recoverColumnArchive(x.doc, "x".repeat(1_000_001))).toBeNull();
+    expect(recoverColumnArchive(x.doc, "null")).toBeNull();
+    expect(recoverColumnArchive(x.doc, "[]")).toBeNull();
+
+    // Tampered _column_archive_v1 metadata
+    const metaDoc = Doc.fromState(1, x.doc.encodeState());
+    const metaHandle = recoverColumnArchive(metaDoc, plan.recovery)!;
+    metaDoc.setProp(x.middle, "_column_archive_v1", "tampered");
+    expect(toggleArchivedColumn(new Tx(metaDoc), metaHandle)).toBeNull();
+
+    // Missing parent and wrong parent type in siblingGuard
+    const missingParentDoc = Doc.fromState(1, x.doc.encodeState());
+    const mpHandle = recoverColumnArchive(missingParentDoc, plan.recovery)!;
+    missingParentDoc.deleteBlock(x.parent);
+    expect(toggleArchivedColumn(new Tx(missingParentDoc), mpHandle)).toBeNull();
+
+    const wrongTypeDoc = Doc.fromState(1, x.doc.encodeState());
+    const wtHandle = recoverColumnArchive(wrongTypeDoc, plan.recovery)!;
+    wrongTypeDoc.setProp(x.parent, "type", "paragraph");
+    expect(toggleArchivedColumn(new Tx(wrongTypeDoc), wtHandle)).toBeNull();
+
+    // Missing typeVersion fallback in siblingGuard
+    const pvDoc = Doc.fromState(1, x.doc.encodeState());
+    const pvSpy = vi.spyOn(pvDoc, "propVersion").mockReturnValueOnce(null);
+    expect(recoverColumnArchive(pvDoc, plan.recovery)).toBeNull();
+    pvSpy.mockRestore();
+
+    // Root archive edge cases
+    const r = setup();
+    expect(captureColumnArchiveTarget(r.doc, ROOT, { client: 99, clock: 99 })).toBeNull();
+
+    // > 10000 root children in siblingGuard
+    const hugeKids = vi.spyOn(r.doc, "children").mockReturnValueOnce(Array(10001).fill(r.parent));
+    expect(captureColumnArchiveTarget(r.doc, ROOT, r.parent)).toBeNull();
+    hugeKids.mockRestore();
+
+    // Duplicate root positions in siblingGuard
+    const dupDoc = setup();
+    const sib = new Tx(dupDoc.doc).create("paragraph", dupDoc.parent, ROOT);
+    dupDoc.doc.apply({ t: "bmove", id: dupDoc.doc.allocateOpIds()[0], block: sib, parent: ROOT, pos: dupDoc.doc.blockLocation(dupDoc.parent).pos });
+    expect(captureColumnArchiveTarget(dupDoc.doc, ROOT, dupDoc.parent)).toBeNull();
+
+    // ids does not include block in captureColumnArchiveTarget
+    const origChildren = r.doc.children.bind(r.doc);
+    let cCall = 0;
+    const omitSpy = vi.spyOn(r.doc, "children").mockImplementation((p) => {
+      cCall++;
+      // 1st call inside siblingGuard succeeds; 2nd call inside captureColumnArchiveTarget omits block
+      return cCall === 2 ? [] : origChildren(p);
+    });
+    expect(captureColumnArchiveTarget(r.doc, ROOT, r.parent)).toBeNull();
+    omitSpy.mockRestore();
+
+    // Root archived block whose type was changed away from "columns" fails validArchiveState L167
+    const rootPlan = prepareColumnArchive(r.doc, 29, ROOT, r.parent)!;
+    for (const op of rootPlan.ops) r.doc.apply(op);
+    const rootHandle = recoverColumnArchive(r.doc, rootPlan.recovery)!;
+    r.doc.setProp(r.parent, "type", "paragraph");
+    expect(toggleArchivedColumn(new Tx(r.doc), rootHandle)).toBeNull();
   });
 });

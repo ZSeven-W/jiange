@@ -45,4 +45,62 @@ describe("flowchart undo history", () => {
     expect(entry.before.theme).toBe(original.theme);
     expect(entry.after).toBe(after);
   });
+
+  it("restores mindmap text formats, descriptions, description styles, strokes, and partial optional fields", () => {
+    const before: FlowGraph = {
+      nodes: [],
+      edges: [],
+      theme: "feishu",
+      strokes: [{ id: "s1", points: [{ x: 0, y: 0 }], color: "#000000", width: 2 }],
+      mind: [{ id: "r", parent: null, order: 0, text: "Root", x: 0, y: 0 }],
+      mindCollapsed: ["r"],
+      mindStyles: { r: { size: 18 } },
+      mindPaints: { r: { fill: "#ffffff" } },
+      mindTextFormats: { r: { bold: true } },
+      mindDescriptions: { r: "Old desc" },
+      mindDescriptionStyles: { r: { size: 14, color: "#112233" } },
+    };
+    const afterEmpty: FlowGraph = {
+      nodes: [],
+      edges: [],
+      theme: "feishu",
+    };
+
+    // Removing strokes & mind topic (and all its associated metadata) restores everything in `before`
+    const removed = appliedFlowHistory(before, afterEmpty, ["fc.s.s1", "fc.m.r"])!;
+    expect(removed.before.strokes).toEqual(before.strokes);
+    expect(removed.before.mind).toEqual(before.mind);
+    expect(removed.before.mindCollapsed).toEqual(["r"]);
+    expect(removed.before.mindStyles).toEqual({ r: { size: 18 } });
+    expect(removed.before.mindPaints).toEqual({ r: { fill: "#ffffff" } });
+    expect(removed.before.mindTextFormats).toEqual({ r: { bold: true } });
+    expect(removed.before.mindDescriptions).toEqual({ r: "Old desc" });
+    expect(removed.before.mindDescriptionStyles).toEqual({ r: { size: 14, color: "#112233" } });
+
+    // Dedicated metadata keys (fc.mt., fc.md., fc.mds.) restore prior values and delete newly added values
+    const updated: FlowGraph = {
+      ...before,
+      mindTextFormats: { r: { italic: true }, c: { bold: true } },
+      mindDescriptions: { r: "New desc", c: "Added desc" },
+      mindDescriptionStyles: { r: { size: 20 }, c: { color: "#445566" } },
+    };
+    const metaStep = appliedFlowHistory(before, updated, [
+      "fc.mt.r",
+      "fc.mt.c",
+      "fc.md.r",
+      "fc.md.c",
+      "fc.mds.r",
+      "fc.mds.c",
+    ])!;
+    expect(metaStep.before.mindTextFormats).toEqual({ r: { bold: true } });
+    expect(metaStep.before.mindDescriptions).toEqual({ r: "Old desc" });
+    expect(metaStep.before.mindDescriptionStyles).toEqual({ r: { size: 14, color: "#112233" } });
+
+    // Adding a brand-new mind topic (before had none) clears metadata on undo
+    const added = appliedFlowHistory(afterEmpty, updated, ["fc.m.r", "fc.mt.c", "fc.md.c", "fc.mds.c"])!;
+    expect(added.before.mind).toEqual([]);
+    expect(added.before.mindTextFormats).toEqual({});
+    expect(added.before.mindDescriptions).toEqual({});
+    expect(added.before.mindDescriptionStyles).toEqual({});
+  });
 });

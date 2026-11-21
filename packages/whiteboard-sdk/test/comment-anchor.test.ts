@@ -66,4 +66,56 @@ describe("whiteboard comment anchor codec and resolver", () => {
     const ptPos = resolveFlowCommentPosition({ kind: "point", x: 99, y: 88 }, graph);
     expect(ptPos).toEqual({ x: 99, y: 88, orphaned: false });
   });
+
+  it("handles invalid coordinates, malformed anchors, unknown prefixes, and orphaned/collapsed mind topics", () => {
+    expect(isFlowCommentAnchor(undefined)).toBe(false);
+    expect(isFlowCommentAnchor("other:1")).toBe(false);
+
+    // Non-finite coords clamp to 0; invalid target ids fall back to point anchor
+    expect(encodeFlowCommentAnchor({ kind: "point", x: Number.NaN, y: Infinity })).toEqual({
+      startChar: "fc:p:0,0",
+      endChar: "0,0",
+    });
+    expect(encodeFlowCommentAnchor({ kind: "node", targetId: "bad id!", x: 25000, y: -25000 })).toEqual({
+      startChar: "fc:p:20000,-20000",
+      endChar: "20000,-20000",
+    });
+    expect(encodeFlowCommentAnchor({ kind: "mind", targetId: "", x: 10, y: 20 })).toEqual({
+      startChar: "fc:p:10,20",
+      endChar: "10,20",
+    });
+
+    // Parsing malformed / unknown anchors
+    expect(parseFlowCommentAnchor("plain", "10,20")).toBeNull();
+    expect(parseFlowCommentAnchor("fc:n:bad id!", "10,20")).toBeNull();
+    expect(parseFlowCommentAnchor("fc:m:bad id!", "10,20")).toBeNull();
+    expect(parseFlowCommentAnchor("fc:x:unknown", "10,20")).toBeNull();
+    // Invalid endChar falls back to { x: 0, y: 0 }
+    expect(parseFlowCommentAnchor("fc:n:n_box", "not-a-pair")).toEqual({ kind: "node", targetId: "n_box", x: 0, y: 0 });
+    expect(parseFlowCommentAnchor("fc:m:m_child", "NaN,10")).toEqual({ kind: "mind", targetId: "m_child", x: 0, y: 0 });
+    expect(parseFlowCommentAnchor("fc:m:m_child", "10,Infinity")).toEqual({ kind: "mind", targetId: "m_child", x: 0, y: 0 });
+    // Point anchor with bad coord in startChar falls back to endChar
+    expect(parseFlowCommentAnchor("fc:p:invalid", "30,40")).toEqual({ kind: "point", x: 30, y: 40 });
+
+    // Orphaned mind topic: missing topic, collapsed parent, or graph without mind topics
+    expect(resolveFlowCommentPosition({ kind: "mind", targetId: "m_missing", x: 11, y: 22 }, graph)).toEqual({
+      x: 11,
+      y: 22,
+      orphaned: true,
+    });
+    expect(
+      resolveFlowCommentPosition({ kind: "mind", targetId: "m_child", x: 33, y: 44 }, graph, new Set(["m_root"])),
+    ).toEqual({
+      x: 33,
+      y: 44,
+      orphaned: true,
+    });
+    expect(
+      resolveFlowCommentPosition({ kind: "mind", targetId: "m_child", x: 55, y: 66 }, { nodes: [], edges: [], theme: "feishu" }),
+    ).toEqual({
+      x: 55,
+      y: 66,
+      orphaned: true,
+    });
+  });
 });

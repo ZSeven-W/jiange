@@ -5,3 +5,7 @@ export * from "./viewport.js";
 export * from "./ink-geometry.js";
 export * from "./comment-anchor.js";
 export * from "./xmind.js";
+export * from "./mermaid.js";
+export * from "./svg.js";
+export * from "./board.js";
+export * from "./ai-tools.js";

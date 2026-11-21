@@ -5,5 +5,8 @@ export * from "./column-widths.js";
 export * from "./column-move.js";
 export * from "./docx.js";
 export * from "./markdown.js";
+export * from "./html.js";
+export * from "./document.js";
+export * from "./ai-tools.js";
 export * from "./zip.js";
 export * from "./xml.js";

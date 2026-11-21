@@ -8,6 +8,14 @@ describe("flowchart pinch", () => {
     expect(next).toEqual({ x: 250, y: 100, zoom: 2 });
     expect(next.x + 400 / (2 * next.zoom)).toBe(view.x + 1000 / (2 * view.zoom));
   });
+  it("returns the original viewport when zoom or dimensions are non-positive", () => {
+    const view = { x: 10, y: 20, zoom: 1 };
+    expect(resizeViewportCenter({ ...view, zoom: 0 }, { w: 100, h: 100 }, { w: 200, h: 200 })).toEqual({ x: 10, y: 20, zoom: 0 });
+    expect(resizeViewportCenter(view, { w: 0, h: 100 }, { w: 200, h: 200 })).toBe(view);
+    expect(resizeViewportCenter(view, { w: 100, h: 0 }, { w: 200, h: 200 })).toBe(view);
+    expect(resizeViewportCenter(view, { w: 100, h: 100 }, { w: 0, h: 200 })).toBe(view);
+    expect(resizeViewportCenter(view, { w: 100, h: 100 }, { w: 200, h: 0 })).toBe(view);
+  });
   it("keeps the touched point anchored while zooming and moving", () => {
     const initial = { x: 100, y: 50, zoom: 1 };
     const result = pinchViewport(initial, { x: 80, y: 100 }, { x: 110, y: 120 }, 100, 200);
@@ -43,6 +51,10 @@ describe("mind map menu", () => {
     const pos = placeMindMenu({ x: 190, y: 8 }, { w: 390, h: 844 }, obstacles);
     expect(pos.maxHeight).toBeLessThan(454);
     expect(obstacles.every((box) => pos.left + 192 <= box.x || pos.left >= box.x + box.w || pos.top + pos.maxHeight <= box.y || pos.top >= box.y + box.h)).toBe(true);
+  });
+  it("places near the anchor when there are no obstacles", () => {
+    const pos = placeMindMenu({ x: 100, y: 120 }, { w: 800, h: 600 }, []);
+    expect(pos).toEqual({ left: 100, top: 120, maxHeight: 454 });
   });
 });
 

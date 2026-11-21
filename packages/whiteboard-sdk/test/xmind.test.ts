@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createZip, listZip } from "@jiange/ooxml/zip";
 import { exportMindMapToXmind, parseXmindToMindMap, XmindError } from "../src/xmind.js";
 import type { FlowGraph } from "../src/model.js";
@@ -93,9 +93,166 @@ describe("whiteboard-sdk .xmind export and import", () => {
   });
 
   it("rejects empty export and invalid archives cleanly with XmindError", async () => {
+    expect(() => exportMindMapToXmind({})).toThrow(XmindError);
     expect(() => exportMindMapToXmind({ mind: [] })).toThrow(XmindError);
     await expect(parseXmindToMindMap(new Uint8Array([0, 1, 2]))).rejects.toThrow(XmindError);
+    await expect(parseXmindToMindMap(null as unknown as Uint8Array)).rejects.toThrow("无法解析 XMind 文件");
     const missing = createZip([{ name: "readme.txt", data: new TextEncoder().encode("hi") }]);
     await expect(parseXmindToMindMap(missing)).rejects.toThrow(XmindError);
+  });
+
+  it("handles color shorthands, extra shapes, tie-break sorting, combined text decorations, detached/untitled topics, and description clamping", async () => {
+    // Export edge cases: equal orders (id tie-break), empty root titles (fallback to options.title and 画布 N), underline+strike
+    const graph: FlowGraph = {
+      theme: "feishu",
+      nodes: [],
+      edges: [],
+      mind: [
+        { id: "r_b", parent: null, order: 1000, text: "   ", x: 0, y: 0 },
+        { id: "r_a", parent: null, order: 1000, text: "", x: 0, y: 200 },
+        { id: "c_b", parent: "r_a", order: 1000, text: "Child B" },
+        { id: "c_a", parent: "r_a", order: 1000, text: "Child A" },
+      ],
+      mindTextFormats: {
+        c_a: { underline: true, strike: true },
+      },
+    };
+    const withTitle = exportMindMapToXmind(graph, { title: "自定义画布" });
+    const withoutTitle = exportMindMapToXmind(graph);
+    expect(withTitle.length).toBeGreaterThan(0);
+    expect(withoutTitle.length).toBeGreaterThan(0);
+
+    // Import JSON single-sheet object (non-array), 3-digit & invalid hex colors, lowercase rect/diamond/parallelogram/unknown shapes,
+    // detached children, missing/non-string titles, whitespace-only notes, and >128-line clamped notes
+    const longNote = Array.from({ length: 150 }, (_, i) => `L${i}`).join("\n");
+    const singleSheet = {
+      id: "s1",
+      rootTopic: {
+        id: "t0",
+        // omit title to test fallback "主题"
+        notes: { plain: { content: "   \0  " } },
+        style: {
+          properties: {
+            "shape-class": "org.xmind.topicShape.rect",
+            "fo:color": "#abc",
+            "svg:fill": "not-a-color",
+          },
+        },
+        children: {
+          attached: [
+            {
+              id: "t1",
+              title: "Diamond",
+              notes: { plain: { content: longNote } },
+              style: { properties: { "shape-class": "org.xmind.topicShape.diamond" } },
+            },
+            {
+              id: "t2",
+              title: "Parallelogram",
+              style: { properties: { "shape-class": "org.xmind.topicShape.parallelogram" } },
+            },
+          ],
+          detached: [
+            {
+              id: "t3",
+              title: "UnknownShape",
+              style: { properties: { "shape-class": "org.xmind.topicShape.cloud" } },
+            },
+          ],
+        },
+      },
+    };
+    const jsonZip = createZip([{ name: "content.json", data: new TextEncoder().encode(JSON.stringify(singleSheet)) }]);
+    const parsedJson = await parseXmindToMindMap(jsonZip);
+    expect(parsedJson.topicCount).toBe(4);
+    const root = parsedJson.mind.find((m) => m.parent === null)!;
+    expect(root.text).toBe("主题");
+    expect(parsedJson.mindStyles[root.id]).toEqual({ shape: "rect", color: "#aabbcc" });
+    expect(parsedJson.mindPaints[root.id]).toBeUndefined();
+    expect(parsedJson.mindDescriptions[root.id]).toBeUndefined();
+    const diamond = parsedJson.mind.find((m) => m.text === "Diamond")!;
+    expect(parsedJson.mindStyles[diamond.id]).toEqual({ shape: "rect" });
+    expect(parsedJson.mindDescriptions[diamond.id]!.split("\n").length).toBeLessThanOrEqual(128);
+    const para = parsedJson.mind.find((m) => m.text === "Parallelogram")!;
+    expect(parsedJson.mindStyles[para.id]).toEqual({ shape: "rect" });
+    const unknown = parsedJson.mind.find((m) => m.text === "UnknownShape")!;
+    expect(parsedJson.mindStyles[unknown.id]).toBeUndefined();
+
+    // Legacy XML topic without <title> falls back to "主题"
+    const untitledXml = `<?xml version="1.0" encoding="UTF-8"?><xmap-content><sheet id="s1"><topic id="t1"/></sheet></xmap-content>`;
+    const xmlZip = createZip([{ name: "content.xml", data: new TextEncoder().encode(untitledXml) }]);
+    const parsedXml = await parseXmindToMindMap(xmlZip);
+    expect(parsedXml.mind[0].text).toBe("主题");
+  });
+
+  it("reports corrupt JSON/XML/ZIP entries, empty sheets, topic limit, and depth limit warnings", async () => {
+    // Corrupt JSON
+    const badJsonZip = createZip([{ name: "content.json", data: new TextEncoder().encode("{broken") }]);
+    await expect(parseXmindToMindMap(badJsonZip)).rejects.toThrow("XMind content.json 格式损坏");
+
+    // Corrupt ZIP checksum for content.json (triggers ZipError on readZipEntry)
+    const validJsonBytes = createZip([
+      { name: "content.json", data: new TextEncoder().encode(JSON.stringify([{ id: "s1", rootTopic: { id: "t1", title: "A" } }])) },
+    ]);
+    const corruptedJsonZip = new Uint8Array(validJsonBytes);
+    corruptedJsonZip[45] ^= 0xff; // flip a byte inside content.json payload so CRC fails
+    await expect(parseXmindToMindMap(corruptedJsonZip)).rejects.toThrow("读取 content.json 失败");
+
+    // Unexpected non-ZipError while reading content.json
+    const sliceSpyJson = vi.spyOn(Uint8Array.prototype, "slice").mockImplementationOnce(() => {
+      throw new Error("boom json");
+    });
+    await expect(parseXmindToMindMap(validJsonBytes)).rejects.toThrow("读取 XMind 内容失败");
+    sliceSpyJson.mockRestore();
+
+    // Corrupt XML (triggers XmlError)
+    const badXmlZip = createZip([{ name: "content.xml", data: new TextEncoder().encode("<xmap-content><unclosed>") }]);
+    await expect(parseXmindToMindMap(badXmlZip)).rejects.toThrow("解析 content.xml 失败");
+
+    // Unexpected non-Zip/Xml error while reading content.xml
+    const validXmlBytes = createZip([
+      { name: "content.xml", data: new TextEncoder().encode(`<xmap-content><sheet id="s1"><topic id="t1"><title>Ok</title></topic></sheet></xmap-content>`) },
+    ]);
+    const sliceSpyXml = vi.spyOn(Uint8Array.prototype, "slice").mockImplementationOnce(() => {
+      throw new Error("boom xml");
+    });
+    await expect(parseXmindToMindMap(validXmlBytes)).rejects.toThrow("解析 XMind XML 失败");
+    sliceSpyXml.mockRestore();
+
+    // Empty sheets (no roots)
+    const emptyJsonZip = createZip([{ name: "content.json", data: new TextEncoder().encode("[]") }]);
+    await expect(parseXmindToMindMap(emptyJsonZip)).rejects.toThrow("未包含任何思维导图主题");
+
+    // existingCount at limit (maxAllowed === 0)
+    await expect(parseXmindToMindMap(validJsonBytes, { existingCount: 500 })).rejects.toThrow("已达上限");
+
+    // Truncation across topics within a sheet AND across multiple sheets
+    const multiSheet = [
+      {
+        id: "s1",
+        rootTopic: {
+          id: "r1",
+          title: "Sheet 1",
+          children: { attached: [{ id: "c1", title: "C1" }, { id: "c2", title: "C2" }] },
+        },
+      },
+      { id: "s2", rootTopic: { id: "r2", title: "Sheet 2" } },
+    ];
+    const multiZip = createZip([{ name: "content.json", data: new TextEncoder().encode(JSON.stringify(multiSheet)) }]);
+    const truncTopics = await parseXmindToMindMap(multiZip, { existingCount: 498 });
+    expect(truncTopics.topicCount).toBe(2);
+    expect(truncTopics.warnings.some((w) => w.includes("超过上限"))).toBe(true);
+
+    // Depth limit (>32)
+    let deep: Record<string, unknown> = { id: "leaf", title: "TooDeep" };
+    for (let d = 33; d >= 0; d--) {
+      deep = { id: `d${d}`, title: `D${d}`, children: { attached: [deep] } };
+    }
+    const deepZip = createZip([
+      { name: "content.json", data: new TextEncoder().encode(JSON.stringify([{ id: "s1", rootTopic: deep }])) },
+    ]);
+    const truncDepth = await parseXmindToMindMap(deepZip);
+    expect(truncDepth.topicCount).toBe(33);
+    expect(truncDepth.warnings.some((w) => w.includes("超过 32 层"))).toBe(true);
   });
 });

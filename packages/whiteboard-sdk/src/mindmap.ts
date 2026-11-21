@@ -265,9 +265,9 @@ export function layoutMindTopics(topics: readonly MindTopic[], collapsed: Readon
   const place = (topic: MindTopic, x: number, centerY: number, depth: number) => {
     const { w, h } = dimensions(topic);
     out.push({ topic, x, y: centerY - h / 2, w, h });
-    const group = collapsed.has(topic.id) ? [] : children.get(topic.id) ?? [], height = group.reduce((total, child) => total + (sizes.get(child.id) ?? 40), 0) + Math.max(0, group.length - 1) * 12;
+    const group = collapsed.has(topic.id) ? [] : children.get(topic.id) ?? [], height = group.reduce((total, child) => total + sizes.get(child.id)!, 0) + Math.max(0, group.length - 1) * 12;
     let y = centerY - height / 2;
-    for (const child of group) { const childH = sizes.get(child.id) ?? 40; place(child, x + w + 60, y + childH / 2, depth + 1); y += childH + 12; }
+    for (const child of group) { const childH = sizes.get(child.id)!; place(child, x + w + 60, y + childH / 2, depth + 1); y += childH + 12; }
   };
   for (const root of topics.filter((topic) => topic.parent === null)) { subtree(root); place(root, root.x ?? 0, (root.y ?? 0) + dimensions(root).h / 2, 0); }
   return out;
@@ -402,9 +402,6 @@ export function mindCollapseIntent(props: Record<string, string>, before: readon
     if (oldTopics.has(id) && was === desired) continue;
     if (raw !== "" && raw !== "1") { conflicts.push(key); continue; }
     if (!storedMindTopic(props[mindKey(id)], id) && !topicWrites[mindKey(id)]) { conflicts.push(key); continue; }
-    // A newly created id may carry an old tombstone. Reset it to the intended state;
-    // an existing topic must still match the user's base or intended value.
-    if (oldTopics.has(id) && raw !== was && raw !== desired) { conflicts.push(key); continue; }
     if (raw !== desired) writes[key] = desired;
   }
   return { writes, conflicts };

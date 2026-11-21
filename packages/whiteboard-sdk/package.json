@@ -1,9 +1,10 @@
 {
   "name": "@jiange/whiteboard-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -15,7 +16,11 @@
     "./inkGeometry": "./src/ink-geometry.ts",
     "./ink-geometry": "./src/ink-geometry.ts",
     "./xmind": "./src/xmind.ts",
-    "./comment-anchor": "./src/comment-anchor.ts"
+    "./comment-anchor": "./src/comment-anchor.ts",
+    "./mermaid": "./src/mermaid.ts",
+    "./svg": "./src/svg.ts",
+    "./board": "./src/board.ts",
+    "./ai-tools": "./src/ai-tools.ts"
   },
   "files": [
     "dist",
@@ -60,6 +65,22 @@
       "./comment-anchor": {
         "types": "./dist/comment-anchor.d.ts",
         "import": "./dist/comment-anchor.js"
+      },
+      "./mermaid": {
+        "types": "./dist/mermaid.d.ts",
+        "import": "./dist/mermaid.js"
+      },
+      "./svg": {
+        "types": "./dist/svg.d.ts",
+        "import": "./dist/svg.js"
+      },
+      "./board": {
+        "types": "./dist/board.d.ts",
+        "import": "./dist/board.js"
+      },
+      "./ai-tools": {
+        "types": "./dist/ai-tools.d.ts",
+        "import": "./dist/ai-tools.js"
       }
     }
   },

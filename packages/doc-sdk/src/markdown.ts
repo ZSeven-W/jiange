@@ -1,4 +1,3 @@
-import { readFlow, toMermaid } from "@jiange/whiteboard-sdk/model";
 import { tableCellHasRichMarks, tableCellRich, tableDataOf, type TableRichSpan } from "./table-cells.js";
 /**
  * Markdown import/export for Jiange documents (P6).
@@ -8,6 +7,80 @@ import { tableCellHasRichMarks, tableCellRich, tableDataOf, type TableRichSpan }
  * attachment links. Export escapes text that would re-parse as markup, which
  * keeps md → doc → md idempotent.
  */
+
+export interface MarkdownExportOptions {
+  /** Optional custom flowchart-props → Mermaid renderer (defaults to built-in zero-dep converter). */
+  renderFlowchart?: (props: Record<string, string>) => string;
+}
+
+const MERMAID_WRAP: Record<string, [string, string]> = {
+  rect: ["[", "]"],
+  round: ["(", ")"],
+  terminator: ["([", "])"],
+  diamond: ["{", "}"],
+  parallelogram: ["[/", "/]"],
+  ellipse: ["((", "))"],
+  cylinder: ["[(", ")]"],
+  hexagon: ["{{", "}}"],
+  actor: ["((", "))"],
+};
+
+/** Lightweight zero-dep flowchart/mindmap props → Mermaid serializer so doc-sdk does not depend on whiteboard-sdk. */
+function flowchartPropsToMermaid(props: Record<string, string>): string {
+  const q = (s: string) => `"${s.replace(/"/g, "'").replace(/\n/g, "<br/>")}"`;
+  const nodes: { id: string; shape: string; text: string; z: number }[] = [];
+  const edges: { id: string; from: string; to: string; label?: string; dashed?: boolean; arrow?: string }[] = [];
+  const mind: { id: string; parent: string | null; text: string; order: number }[] = [];
+  for (const [key, value] of Object.entries(props)) {
+    if (!value) continue;
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object") continue;
+      if (key.startsWith("fc.n.")) {
+        nodes.push({
+          id: key.slice(5),
+          shape: typeof parsed.shape === "string" ? parsed.shape : "rect",
+          text: typeof parsed.text === "string" ? parsed.text : "",
+          z: typeof parsed.z === "number" && Number.isFinite(parsed.z) ? parsed.z : 0,
+        });
+      } else if (key.startsWith("fc.e.") && typeof parsed.from === "string" && typeof parsed.to === "string") {
+        edges.push({
+          id: key.slice(5),
+          from: parsed.from,
+          to: parsed.to,
+          label: typeof parsed.label === "string" ? parsed.label : undefined,
+          dashed: parsed.dashed === true,
+          arrow: typeof parsed.arrow === "string" ? parsed.arrow : undefined,
+        });
+      } else if (key.startsWith("fc.m.")) {
+        mind.push({
+          id: key.slice(5),
+          parent: typeof parsed.parent === "string" ? parsed.parent : null,
+          text: typeof parsed.text === "string" ? parsed.text : "",
+          order: typeof parsed.order === "number" && Number.isFinite(parsed.order) ? parsed.order : 0,
+        });
+      }
+    } catch { /* ignore malformed flowchart entry */ }
+  }
+  nodes.sort((a, b) => a.z - b.z || a.id.localeCompare(b.id));
+  edges.sort((a, b) => a.id.localeCompare(b.id));
+  mind.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const ids = new Map(nodes.map((n, i) => [n.id, `N${i + 1}`]));
+  const lines = ["flowchart TD"];
+  for (const n of nodes) {
+    const [a, b] = MERMAID_WRAP[n.shape] ?? ["[", "]"];
+    lines.push(`  ${ids.get(n.id)}${a}${q(n.text || (n.shape === "image" ? "图片" : " "))}${b}`);
+  }
+  const mindIds = new Map(mind.map((t, i) => [t.id, `M${i + 1}`]));
+  for (const t of mind) lines.push(`  ${mindIds.get(t.id)}[${q(t.text || " ")}]`);
+  for (const t of mind) if (t.parent && mindIds.has(t.parent)) lines.push(`  ${mindIds.get(t.parent)} --- ${mindIds.get(t.id)}`);
+  for (const e of edges) {
+    if (!ids.has(e.from) || !ids.has(e.to)) continue;
+    const arrow = e.arrow === "none" ? (e.dashed ? "-.-" : "---") : e.arrow === "both" ? (e.dashed ? "<-.->" : "<-->") : e.dashed ? "-.->" : "-->";
+    lines.push(`  ${ids.get(e.from)} ${arrow}${e.label ? `|${q(e.label)}|` : ""} ${ids.get(e.to)}`);
+  }
+  return lines.join("\n");
+}
 
 export interface MdSpan {
   text: string;
@@ -47,25 +120,19 @@ function closingDelimiter(text: string, from: number, delimiter: string): number
 }
 
 /** Parse a link with escaped brackets and balanced URL parentheses. */
-function linkAt(text: string, start: number, close: number, cache: Map<number, { url: string; end: number } | null>): { label: string; url: string; end: number } | null {
-  if (close < 0 || text[close + 1] !== "(") return null;
-  if (cache.has(close)) {
-    const destination = cache.get(close);
-    return destination ? { label: text.slice(start + 1, close), ...destination } : null;
-  }
+function linkAt(text: string, start: number, close: number, failed: Set<number>): { label: string; url: string; end: number } | null {
+  if (close < 0 || text[close + 1] !== "(" || failed.has(close)) return null;
   let depth = 1;
   for (let i = close + 2; i < text.length; i++) {
     if (text[i] === "\\" && i + 1 < text.length && ESCAPABLE.test(text[i + 1])) { i++; continue; }
     if (text[i] === "(") depth++;
     else if (text[i] === ")" && --depth === 0) {
       const url = text.slice(close + 2, i);
-      if (!url || /\s/.test(url)) { cache.set(close, null); return null; }
-      const destination = { url: unescapeMarkdown(url), end: i + 1 };
-      cache.set(close, destination);
-      return { label: text.slice(start + 1, close), ...destination };
+      if (!url || /\s/.test(url)) { failed.add(close); return null; }
+      return { label: text.slice(start + 1, close), url: unescapeMarkdown(url), end: i + 1 };
     }
   }
-  cache.set(close, null);
+  failed.add(close);
   return null;
 }
 
@@ -100,11 +167,9 @@ export function parseInline(line: string): MdSpan[] {
     if (previous && JSON.stringify(previous.marks) === JSON.stringify(marks)) previous.text += text;
     else spans.push({ text, marks: { ...marks } });
   };
-  const parse = (text: string, marks: Record<string, string>, depth: number) => {
-    // Keep pathological nesting bounded. Remaining text remains literal.
-    if (depth > 32) { append(unescapeMarkdown(text), marks); return; }
+  const parse = (text: string, marks: Record<string, string>) => {
     const closers = text.includes("[") ? linkClosers(text) : null;
-    const linkCache = new Map<number, { url: string; end: number } | null>();
+    const failedLinks = new Set<number>();
     let plain = "";
     const flush = () => { append(plain, marks); plain = ""; };
     for (let i = 0; i < text.length;) {
@@ -124,11 +189,11 @@ export function parseInline(line: string): MdSpan[] {
         }
       }
       if (text[i] === "[") {
-        const link = linkAt(text, i, closers![i + 1], linkCache);
+        const link = linkAt(text, i, closers![i + 1], failedLinks);
         if (link && link.label) {
           flush();
           const internal = link.url.startsWith("#/doc/") || /^#\/(s|p)\/[A-Za-z0-9_-]{1,256}$/.test(link.url);
-          parse(link.label, internal ? { ...marks, link: link.url, linkKind: "text" } : { ...marks, link: link.url }, depth + 1);
+          parse(link.label, internal ? { ...marks, link: link.url, linkKind: "text" } : { ...marks, link: link.url });
           i = link.end; continue;
         }
       }
@@ -144,14 +209,14 @@ export function parseInline(line: string): MdSpan[] {
         if (!text.startsWith(delimiter, i)) continue;
         const end = closingDelimiter(text, i + delimiter.length, delimiter);
         if (end <= i + delimiter.length) continue;
-        flush(); parse(text.slice(i + delimiter.length, end), { ...marks, ...extra }, depth + 1);
+        flush(); parse(text.slice(i + delimiter.length, end), { ...marks, ...extra });
         i = end + delimiter.length; found = true; break;
       }
       if (!found) { plain += text[i]; i++; }
     }
     flush();
   };
-  parse(line, {}, 0);
+  parse(line, {});
   return spans;
 }
 
@@ -238,7 +303,7 @@ function tableCellFromMarkdown(cell: string): string {
       const codepoint = Number.parseInt(match.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
       result += codepoint >= 0 && codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff)
         ? String.fromCodePoint(codepoint) : match;
-    } else result += entities[match.toLowerCase()] ?? match;
+    } else result += entities[match.toLowerCase()];
     i += match.length;
   }
   return result;
@@ -406,7 +471,7 @@ export function parseMarkdown(md: string): MdBlock[] {
 
 // ---------- block serialization ----------
 
-export function toMarkdown(blocks: MdBlock[]): string {
+export function toMarkdown(blocks: MdBlock[], options: MarkdownExportOptions = {}): string {
   const out: string[] = [];
   let orderedNo = 0;
   for (let k = 0; k < blocks.length; k++) {
@@ -453,7 +518,7 @@ export function toMarkdown(blocks: MdBlock[]): string {
         orderedNo = 0;
         {
           // 可编辑流程图以 Mermaid 文本导出（布局、颜色与风格不保留）。
-          const mermaid = toMermaid(readFlow(b.props));
+          const mermaid = (options.renderFlowchart ?? flowchartPropsToMermaid)(b.props);
           out.push("```mermaid", mermaid, "```");
         }
         break;
@@ -518,10 +583,14 @@ export function toMarkdown(blocks: MdBlock[]): string {
 }
 
 /** DocView blocks (from the collab model) → MdBlocks, skipping the title. */
-export function viewToMarkdown(view: { blocks: { type: string; props: Record<string, string>; spans: MdSpan[] }[] }): string {
+export function viewToMarkdown(
+  view: { blocks: { type: string; props: Record<string, string>; spans: MdSpan[] }[] },
+  options: MarkdownExportOptions = {},
+): string {
   return toMarkdown(
     view.blocks
       .filter((b) => b.type !== "title")
       .map((b) => ({ type: b.type, text: b.spans.map((s) => s.text).join(""), props: b.props, spans: b.spans })),
+    options,
   );
 }

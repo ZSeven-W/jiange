@@ -1,8 +1,8 @@
 # @jiange/slides-sdk
 
-Headless types and operations used by Jiange slides: page ordering, visibility, layout, zoom, shape geometry, ordering and line endpoints. It does not contain UI, transport, realtime collaboration, PPTX import/export, or the slide draft queue. These are not yet a complete PowerPoint-compatible SDK.
+Headless types, geometry, and OOXML PresentationML (`.pptx`) utilities used by Jiange slides: page ordering, visibility, layout, zoom, shape geometry, ordering, line endpoints, and bounded `.pptx` export/import (`exportSlidesToPptx`, `parsePptxToSlides` over `@jiange/ooxml`). It does not contain UI, transport, realtime collaboration, animations, or embedded media/chart PPTX fidelity.
 
-Build with `pnpm --filter @jiange/slides-sdk build`; `pnpm pack` emits ESM and TypeScript declarations. The package remains private.
+Build `@jiange/ooxml` first, then `pnpm --filter @jiange/slides-sdk build`; `pnpm pack` emits ESM and TypeScript declarations. The package remains private.
 
 ## License
 

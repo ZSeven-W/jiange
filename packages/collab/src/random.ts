@@ -27,9 +27,8 @@ export function randomSession(seed: number, replicas = 3, steps = 200): { ops: O
   const docs = Array.from({ length: replicas }, (_, i) => new Doc(i + 1));
   const log: Op[] = [];
   const inbox: Op[][] = docs.map(() => []);
-  const emit = (from: number, ops: (Op | null)[]) => {
+  const emit = (from: number, ops: Op[]) => {
     for (const op of ops) {
-      if (!op) continue;
       log.push(op);
       inbox.forEach((q, i) => i !== from && q.push(op));
     }
@@ -57,7 +56,7 @@ export function randomSession(seed: number, replicas = 3, steps = 200): { ops: O
       emit(i, [d.createBlock(pick(TYPES), parent, Math.floor(r() * 4))]);
     } else if (x < 0.5) {
       const b = pick(blocks);
-      emit(i, [d.insertText(b.id, Math.floor(r() * (b.len + 1)), pick(WORDS))]);
+      emit(i, [d.insertText(b.id, Math.floor(r() * (b.len + 1)), pick(WORDS))!]);
     } else if (x < 0.68) {
       const b = pick(blocks);
       if (b.len) {
@@ -69,7 +68,7 @@ export function randomSession(seed: number, replicas = 3, steps = 200): { ops: O
       if (b.len) {
         const from = Math.floor(r() * b.len);
         const to = from + 1 + Math.floor(r() * (b.len - from));
-        emit(i, [d.format(b.id, from, to, pick(["bold", "italic", "color"]), r() < 0.25 ? null : pick(["1", "red", "blue"]))]);
+        emit(i, [d.format(b.id, from, to, pick(["bold", "italic", "color"]), r() < 0.25 ? null : pick(["1", "red", "blue"]))!]);
       }
     } else if (x < 0.88) {
       const b = pick(blocks);

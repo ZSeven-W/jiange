@@ -8,9 +8,9 @@
  * rotation, colors, font size, bold, alignment), and speaker notes.
  */
 
-import { createZip, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@jiange/ooxml/zip";
+import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@jiange/ooxml/zip";
 import { child, children, escapeXml, parseXml, textContent, XmlError, type XmlElement } from "@jiange/ooxml/xml";
-import type { SlideLayout, SlideShape, SlidesPage } from "./model.js";
+import type { SlideLayout, SlideMediaAsset, SlideShape, SlideTableData, SlideTextParagraph, SlideTheme, SlidesPage } from "./model.js";
 
 const SLIDE_CX = 12192000; // 13.333 in (16:9 widescreen) in EMUs
 const SLIDE_CY = 6858000;  // 7.5 in in EMUs
@@ -34,6 +34,7 @@ const REL_SLIDE_LAYOUT = "http://schemas.openxmlformats.org/officeDocument/2006/
 const REL_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const REL_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 const REL_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const REL_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const REL_CORE_PROPS = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
 export type PptxSlideInput = Pick<
@@ -55,11 +56,14 @@ export interface PptxImportResult {
   pages: ImportedSlidePage[];
   shapeCount: number;
   warnings: string[];
+  media?: Record<string, SlideMediaAsset>;
 }
 
 export interface ExportPptxOptions {
   title?: string;
   modified?: Date;
+  media?: Record<string, SlideMediaAsset>;
+  theme?: Partial<SlideTheme>;
 }
 
 export class PptxError extends Error {
@@ -202,12 +206,12 @@ function ooxmlToAlign(algn: string | undefined): "left" | "center" | "right" {
 
 function buildParagraphsXml(
   text: string,
-  opts: { fontSizePt: number; bold?: boolean; colorHex: string; align?: "l" | "ctr" | "r" },
+  opts: { fontSizePt: number; bold?: boolean; colorHex: string; align: "l" | "ctr" | "r" },
 ): string {
   const lines = text.split(/\r?\n/);
   const sz = Math.round(clamp(opts.fontSizePt, 8, 120) * 100);
   const bAttr = opts.bold ? ` b="1"` : "";
-  const algnAttr = opts.align ? ` algn="${opts.align}"` : "";
+  const algnAttr = ` algn="${opts.align}"`;
   return lines
     .map((line) => {
       const content = line
@@ -248,8 +252,82 @@ function buildPlaceholderShapeXml(
   );
 }
 
-function buildSlideShapeXml(id: number, shape: SlideShape): string {
-  if (shape.kind === "image") return "";
+function buildRichParagraphsXml(
+  paragraphs: readonly SlideTextParagraph[],
+  defaults: { fontSizePt: number; bold?: boolean; colorHex: string; align: "l" | "ctr" | "r" },
+): string {
+  return paragraphs
+    .map((p) => {
+      const algn = p.align ? alignToOoxml(p.align) : defaults.align;
+      const lvlAttr = p.level && p.level > 0 ? ` lvl="${clamp(Math.floor(p.level), 0, 8)}"` : "";
+      const buXml = p.bullet ? `<a:buChar char="•"/>` : "";
+      const runsXml = p.runs
+        .map((r) => {
+          const sz = Math.round(clamp(r.fontSize ?? defaults.fontSizePt, 8, 120) * 100);
+          const bAttr = (r.bold ?? defaults.bold) ? ` b="1"` : "";
+          const iAttr = r.italic ? ` i="1"` : "";
+          const uAttr = r.underline ? ` u="sng"` : "";
+          const colorHex = normalizeHex6(r.color) ?? defaults.colorHex;
+          return `<a:r><a:rPr lang="zh-CN" sz="${sz}"${bAttr}${iAttr}${uAttr} dirty="0"><a:solidFill><a:srgbClr val="${colorHex}"/></a:solidFill></a:rPr><a:t>${escapeXml(r.text)}</a:t></a:r>`;
+        })
+        .join("");
+      const body = runsXml || `<a:endParaRPr lang="zh-CN" sz="${Math.round(clamp(defaults.fontSizePt, 8, 120) * 100)}"/>`;
+      return `<a:p><a:pPr algn="${algn}"${lvlAttr}>${buXml}</a:pPr>${body}</a:p>`;
+    })
+    .join("");
+}
+
+function buildTableGraphicFrameXml(
+  id: number,
+  shape: SlideShape,
+  table: SlideTableData,
+  rect: { x: number; y: number; cx: number; cy: number },
+): string {
+  const rows = table.rows.length > 0 ? table.rows : [[""]];
+  const colCount = Math.max(1, ...rows.map((r) => r.length));
+  const colWidth = Math.max(1, Math.round(rect.cx / colCount));
+  const rowHeight = Math.max(1, Math.round(rect.cy / rows.length));
+  const headerFill = normalizeHex6(table.headerFill) ?? "3370FF";
+  const gridCols = Array.from({ length: colCount }, () => `<a:gridCol w="${colWidth}"/>`).join("");
+  const trs = rows
+    .map((row, rIdx) => {
+      const isHeader = Boolean(table.headerRow && rIdx === 0);
+      const tcs = Array.from({ length: colCount }, (_, cIdx) => {
+        const cellText = row[cIdx] ?? "";
+        const fillXml = isHeader
+          ? `<a:solidFill><a:srgbClr val="${headerFill}"/></a:solidFill>`
+          : rIdx % 2 === 1
+            ? `<a:solidFill><a:srgbClr val="F5F7FB"/></a:solidFill>`
+            : `<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>`;
+        const txtColor = isHeader ? "FFFFFF" : "1F2329";
+        return (
+          `<a:tc>` +
+          `<a:txBody><a:bodyPr/><a:lstStyle/>${buildParagraphsXml(cellText, { fontSizePt: 14, bold: isHeader, colorHex: txtColor, align: "l" })}</a:txBody>` +
+          `<a:tcPr>${fillXml}</a:tcPr>` +
+          `</a:tc>`
+        );
+      }).join("");
+      return `<a:tr h="${rowHeight}">${tcs}</a:tr>`;
+    })
+    .join("");
+
+  return (
+    `<p:graphicFrame>` +
+    `<p:nvGraphicFramePr><p:cNvPr id="${id}" name="${escapeXml(shape.id)}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="${rect.x}" y="${rect.y}"/><a:ext cx="${rect.cx}" cy="${rect.cy}"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+    `<a:tbl><a:tblPr firstRow="${table.headerRow ? "1" : "0"}" bandRow="1"/><a:tblGrid>${gridCols}</a:tblGrid>${trs}</a:tbl>` +
+    `</a:graphicData></a:graphic>` +
+    `</p:graphicFrame>`
+  );
+}
+
+interface SlideMediaCollector {
+  media?: Record<string, SlideMediaAsset>;
+  addImage(asset: SlideMediaAsset): string;
+}
+
+function buildSlideShapeXml(id: number, shape: SlideShape, mediaCollector?: SlideMediaCollector): string {
   const wPct = clamp(shape.width ?? 16, 5, 100);
   const hPct = clamp(shape.height ?? 20, 5, 100);
   const xPct = clamp(shape.x, 0, 100 - wPct);
@@ -261,6 +339,34 @@ function buildSlideShapeXml(id: number, shape: SlideShape): string {
   const rotDeg = ((Math.round(shape.rotation ?? 0) % 360) + 360) % 360;
   const rotAttr = rotDeg !== 0 ? ` rot="${rotDeg * 60000}"` : "";
   const colorHex = normalizeHex6(shape.color) ?? "3370FF";
+
+  if (shape.kind === "image") {
+    const asset = shape.mediaId ? mediaCollector?.media?.[shape.mediaId] : undefined;
+    if (!asset || !mediaCollector) return "";
+    const rId = mediaCollector.addImage(asset);
+    return (
+      `<p:pic>` +
+      `<p:nvPicPr><p:cNvPr id="${id}" name="${escapeXml(shape.id)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm${rotAttr}><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `</p:pic>`
+    );
+  }
+
+  if (shape.kind === "table" && shape.table) {
+    return buildTableGraphicFrameXml(id, shape, shape.table, { x, y, cx, cy });
+  }
+
+  if (shape.kind === "chart" && shape.chart) {
+    const chartRows: string[][] = [
+      [shape.chart.title || "Category", ...shape.chart.series.map((s) => s.name)],
+      ...shape.chart.categories.map((cat, idx) => [
+        cat,
+        ...shape.chart!.series.map((s) => String(s.values[idx] ?? 0)),
+      ]),
+    ];
+    return buildTableGraphicFrameXml(id, shape, { rows: chartRows, headerRow: true, headerFill: colorHex }, { x, y, cx, cy });
+  }
 
   if (isLineKind(shape.kind)) {
     const headEnd = shape.kind === "line-double-arrow" ? `<a:headEnd type="arrow" w="med" len="med"/>` : "";
@@ -287,11 +393,14 @@ function buildSlideShapeXml(id: number, shape: SlideShape): string {
   if (shape.kind === "text") {
     const align = alignToOoxml(shape.align) as "l" | "ctr" | "r";
     const fontSizePt = clamp(shape.fontSize ?? 24, 12, 96);
+    const bodyXml = shape.paragraphs && shape.paragraphs.length > 0
+      ? buildRichParagraphsXml(shape.paragraphs, { fontSizePt, bold: Boolean(shape.bold), colorHex, align })
+      : buildParagraphsXml(shape.text ?? "", { fontSizePt, bold: Boolean(shape.bold), colorHex, align });
     return (
       `<p:sp>` +
       `<p:nvSpPr><p:cNvPr id="${id}" name="${escapeXml(shape.id)}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +
       `<p:spPr><a:xfrm${rotAttr}><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
-      `<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/>${buildParagraphsXml(shape.text ?? "", { fontSizePt, bold: Boolean(shape.bold), colorHex, align })}</p:txBody>` +
+      `<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/>${bodyXml}</p:txBody>` +
       `</p:sp>`
     );
   }
@@ -311,7 +420,7 @@ function buildSlideShapeXml(id: number, shape: SlideShape): string {
   );
 }
 
-function buildSlideXml(page: PptxSlideInput): string {
+function buildSlideXml(page: PptxSlideInput, mediaCollector?: SlideMediaCollector): string {
   const bgHex = normalizeHex6(page.background);
   const dark = bgHex ? isDarkHex(bgHex) : false;
   const titleColor = dark ? "FFFFFF" : "1F2329";
@@ -400,7 +509,7 @@ function buildSlideXml(page: PptxSlideInput): string {
   }
 
   for (const shape of page.shapes ?? []) {
-    const xml = buildSlideShapeXml(nextId++, shape);
+    const xml = buildSlideShapeXml(nextId++, shape, mediaCollector);
     if (xml) nodes.push(xml);
   }
 
@@ -435,18 +544,24 @@ function buildNotesSlideXml(notes: string): string {
   );
 }
 
-function buildThemeXml(): string {
+function buildThemeXml(theme?: Partial<SlideTheme>): string {
+  const dk1 = normalizeHex6(theme?.textDark) ?? "1F2329";
+  const lt1 = normalizeHex6(theme?.background) ?? "FFFFFF";
+  const accent1 = normalizeHex6(theme?.primary) ?? "3370FF";
+  const accent2 = normalizeHex6(theme?.secondary) ?? "00B42A";
+  const accent3 = normalizeHex6(theme?.accent) ?? "FF7D00";
+  const themeName = escapeXml(theme?.name ?? "Jiange Theme");
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<a:theme xmlns:a="${NS_A}" name="Jiange Theme">` +
+    `<a:theme xmlns:a="${NS_A}" name="${themeName}">` +
     `<a:themeElements>` +
     `<a:clrScheme name="Jiange">` +
-    `<a:dk1><a:srgbClr val="1F2329"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>` +
+    `<a:dk1><a:srgbClr val="${dk1}"/></a:dk1><a:lt1><a:srgbClr val="${lt1}"/></a:lt1>` +
     `<a:dk2><a:srgbClr val="374151"/></a:dk2><a:lt2><a:srgbClr val="F5F7FB"/></a:lt2>` +
-    `<a:accent1><a:srgbClr val="3370FF"/></a:accent1><a:accent2><a:srgbClr val="00B42A"/></a:accent2>` +
-    `<a:accent3><a:srgbClr val="FF7D00"/></a:accent3><a:accent4><a:srgbClr val="F53F3F"/></a:accent4>` +
+    `<a:accent1><a:srgbClr val="${accent1}"/></a:accent1><a:accent2><a:srgbClr val="${accent2}"/></a:accent2>` +
+    `<a:accent3><a:srgbClr val="${accent3}"/></a:accent3><a:accent4><a:srgbClr val="F53F3F"/></a:accent4>` +
     `<a:accent5><a:srgbClr val="722ED1"/></a:accent5><a:accent6><a:srgbClr val="14C9C9"/></a:accent6>` +
-    `<a:hlink><a:srgbClr val="3370FF"/></a:hlink><a:folHlink><a:srgbClr val="722ED1"/></a:folHlink>` +
+    `<a:hlink><a:srgbClr val="${accent1}"/></a:hlink><a:folHlink><a:srgbClr val="722ED1"/></a:folHlink>` +
     `</a:clrScheme>` +
     `<a:fontScheme name="Jiange"><a:majorFont><a:latin typeface="Calibri"/><a:ea typeface="PingFang SC"/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface="PingFang SC"/><a:cs typeface=""/></a:minorFont></a:fontScheme>` +
     `<a:fmtScheme name="Jiange"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="25400"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="38100"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme>` +
@@ -455,8 +570,28 @@ function buildThemeXml(): string {
   );
 }
 
-/** Export Jiange Slides pages into a standard 16:9 OOXML `.pptx` byte array. */
-export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: ExportPptxOptions = {}): Uint8Array {
+function mediaExtForMime(mime: SlideMediaAsset["mimeType"]): { ext: string; contentType: string } {
+  switch (mime) {
+    case "image/jpeg":
+      return { ext: "jpeg", contentType: "image/jpeg" };
+    case "image/svg+xml":
+      return { ext: "svg", contentType: "image/svg+xml" };
+    case "image/webp":
+      return { ext: "webp", contentType: "image/webp" };
+    default:
+      return { ext: "png", contentType: "image/png" };
+  }
+}
+
+function mimeForMediaExt(path: string): SlideMediaAsset["mimeType"] {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/png";
+}
+
+function buildPptxEntries(pages: readonly PptxSlideInput[], options: ExportPptxOptions): { entries: ZipEntryInput[]; modified: Date } {
   const safePages: PptxSlideInput[] =
     pages.length > 0
       ? [...pages]
@@ -466,6 +601,10 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
   const isoNow = modified.toISOString();
 
   const entries: ZipEntryInput[] = [];
+  const ctDefaults = new Map<string, string>([
+    ["rels", "application/vnd.openxmlformats-package.relationships+xml"],
+    ["xml", "application/xml"],
+  ]);
   const ctOverrides: string[] = [
     `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>`,
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>`,
@@ -478,6 +617,8 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
     `<Relationship Id="rId1" Type="${REL_SLIDE_MASTER}" Target="slideMasters/slideMaster1.xml"/>`,
   ];
   const sldIdLst: string[] = [];
+  let mediaSeq = 0;
+  const writtenMedia = new Map<string, string>();
 
   for (let i = 0; i < safePages.length; i++) {
     const idx = i + 1;
@@ -490,14 +631,15 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
       `<Override PartName="/ppt/slides/slide${idx}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
     );
 
-    entries.push({ name: `ppt/slides/slide${idx}.xml`, data: utf8(buildSlideXml(page)) });
-
     const slideRels: string[] = [
       `<Relationship Id="rId1" Type="${REL_SLIDE_LAYOUT}" Target="../slideLayouts/slideLayout1.xml"/>`,
     ];
+    let nextSlideRelId = 2;
+
     if (page.notes && page.notes.trim() !== "") {
+      const notesRelId = `rId${nextSlideRelId++}`;
       slideRels.push(
-        `<Relationship Id="rId2" Type="${REL_NOTES_SLIDE}" Target="../notesSlides/notesSlide${idx}.xml"/>`,
+        `<Relationship Id="${notesRelId}" Type="${REL_NOTES_SLIDE}" Target="../notesSlides/notesSlide${idx}.xml"/>`,
       );
       ctOverrides.push(
         `<Override PartName="/ppt/notesSlides/notesSlide${idx}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`,
@@ -516,6 +658,27 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
         ),
       });
     }
+
+    const mediaCollector: SlideMediaCollector = {
+      media: options.media,
+      addImage(asset: SlideMediaAsset): string {
+        let targetRel = writtenMedia.get(asset.id);
+        if (!targetRel) {
+          mediaSeq++;
+          const { ext, contentType } = mediaExtForMime(asset.mimeType);
+          ctDefaults.set(ext, contentType);
+          const fileName = `image${mediaSeq}.${ext}`;
+          entries.push({ name: `ppt/media/${fileName}`, data: asset.data });
+          targetRel = `../media/${fileName}`;
+          writtenMedia.set(asset.id, targetRel);
+        }
+        const relId = `rId${nextSlideRelId++}`;
+        slideRels.push(`<Relationship Id="${relId}" Type="${REL_IMAGE}" Target="${targetRel}"/>`);
+        return relId;
+      },
+    };
+
+    entries.push({ name: `ppt/slides/slide${idx}.xml`, data: utf8(buildSlideXml(page, mediaCollector)) });
     entries.push({
       name: `ppt/slides/_rels/slide${idx}.xml.rels`,
       data: utf8(
@@ -525,14 +688,17 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
     });
   }
 
+  const defaultTags = [...ctDefaults.entries()]
+    .map(([ext, ct]) => `<Default Extension="${ext}" ContentType="${ct}"/>`)
+    .join("");
+
   entries.unshift(
     {
       name: "[Content_Types].xml",
       data: utf8(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
           `<Types xmlns="${NS_CT}">` +
-          `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
-          `<Default Extension="xml" ContentType="application/xml"/>` +
+          defaultTags +
           ctOverrides.join("") +
           `</Types>`,
       ),
@@ -619,11 +785,26 @@ export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: Ex
     },
     {
       name: "ppt/theme/theme1.xml",
-      data: utf8(buildThemeXml()),
+      data: utf8(buildThemeXml(options.theme)),
     },
   );
 
+  return { entries, modified };
+}
+
+/** Export Jiange Slides pages into a standard 16:9 OOXML `.pptx` byte array (STORE ZIP). */
+export function exportSlidesToPptx(pages: readonly PptxSlideInput[], options: ExportPptxOptions = {}): Uint8Array {
+  const { entries, modified } = buildPptxEntries(pages, options);
   return createZip(entries, modified);
+}
+
+/** Export Jiange Slides pages into a DEFLATE-compressed 16:9 OOXML `.pptx` byte array. */
+export async function exportSlidesToPptxAsync(
+  pages: readonly PptxSlideInput[],
+  options: ExportPptxOptions = {},
+): Promise<Uint8Array> {
+  const { entries, modified } = buildPptxEntries(pages, options);
+  return createZipAsync(entries, { modified });
 }
 
 // ---------------------------------------------------------------------------
@@ -711,28 +892,7 @@ function parseXfrmRect(
   slideCx: number,
   slideCy: number,
 ): { x: number; y: number; width: number; height: number; rotation: number } | null {
-  const xfrm = child(spPr, "a:xfrm");
-  const off = child(xfrm, "a:off");
-  const ext = child(xfrm, "a:ext");
-  if (!off || !ext) return null;
-  const rawX = Number(off.attrs["x"]);
-  const rawY = Number(off.attrs["y"]);
-  const rawCx = Number(ext.attrs["cx"]);
-  const rawCy = Number(ext.attrs["cy"]);
-  if (!Number.isFinite(rawX) || !Number.isFinite(rawY) || !Number.isFinite(rawCx) || !Number.isFinite(rawCy)) {
-    return null;
-  }
-  const width = round2(clamp((rawCx / slideCx) * 100, 5, 100));
-  const height = round2(clamp((rawCy / slideCy) * 100, 5, 100));
-  let x = round2(clamp((rawX / slideCx) * 100, 0, Math.max(0, 100 - width)));
-  let y = round2(clamp((rawY / slideCy) * 100, 0, Math.max(0, 100 - height)));
-  // Guard against floating-point edge exceeding 100.0
-  if (x + width > 100) x = Math.max(0, Math.floor((100 - width) * 100) / 100);
-  if (y + height > 100) y = Math.max(0, Math.floor((100 - height) * 100) / 100);
-
-  const rawRot = Number(xfrm?.attrs["rot"] ?? "0");
-  const rotation = Number.isFinite(rawRot) ? ((Math.round(rawRot / 60000) % 360) + 360) % 360 : 0;
-  return { x, y, width, height, rotation };
+  return parseXfrmElement(child(spPr, "a:xfrm"), slideCx, slideCy);
 }
 
 function parseConnectorKind(ln: XmlElement | undefined): SlideShape["kind"] {
@@ -747,12 +907,37 @@ function parseConnectorKind(ln: XmlElement | undefined): SlideShape["kind"] {
   return "line";
 }
 
+function parseXfrmElement(
+  xfrm: XmlElement | undefined,
+  slideCx: number,
+  slideCy: number,
+): { x: number; y: number; width: number; height: number; rotation: number } | null {
+  const off = child(xfrm, "a:off");
+  const ext = child(xfrm, "a:ext");
+  if (!off || !ext) return null;
+  const rawX = Number(off.attrs["x"]);
+  const rawY = Number(off.attrs["y"]);
+  const rawCx = Number(ext.attrs["cx"]);
+  const rawCy = Number(ext.attrs["cy"]);
+  if (!Number.isFinite(rawX) || !Number.isFinite(rawY) || !Number.isFinite(rawCx) || !Number.isFinite(rawCy)) {
+    return null;
+  }
+  const width = round2(clamp((rawCx / slideCx) * 100, 5, 100));
+  const height = round2(clamp((rawCy / slideCy) * 100, 5, 100));
+  const x = round2(clamp((rawX / slideCx) * 100, 0, Math.max(0, 100 - width)));
+  const y = round2(clamp((rawY / slideCy) * 100, 0, Math.max(0, 100 - height)));
+  const rawRot = Number(xfrm?.attrs["rot"] ?? "0");
+  const rotation = Number.isFinite(rawRot) ? ((Math.round(rawRot / 60000) % 360) + 360) % 360 : 0;
+  return { x, y, width, height, rotation };
+}
+
 function parseSlideElement(
   sld: XmlElement,
   slideCx: number,
   slideCy: number,
   slideNum: number,
   notes: string,
+  slideImageRels?: Map<string, string>,
 ): { page: ImportedSlidePage; skippedMedia: number } {
   const hidden = sld.attrs["show"] === "0" || sld.attrs["show"] === "false";
   const cSld = child(sld, "p:cSld");
@@ -771,8 +956,65 @@ function parseSlideElement(
   let shapeSeq = 0;
 
   for (const node of children(spTree)) {
-    if (node.name === "p:pic" || node.name === "p:graphicFrame") {
-      skippedMedia++;
+    if (node.name === "p:pic") {
+      const blipFill = child(node, "p:blipFill");
+      const blip = child(blipFill, "a:blip");
+      const embedId = blip?.attrs["r:embed"];
+      const mediaId = embedId ? slideImageRels?.get(embedId) : undefined;
+      const rect = parseXfrmRect(child(node, "p:spPr"), slideCx, slideCy);
+      if (mediaId && rect && shapes.length < MAX_IMPORT_SHAPES_PER_SLIDE) {
+        shapeSeq++;
+        shapes.push({
+          id: `imp-${slideNum}-img-${shapeSeq}`,
+          kind: "image",
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          rotation: rect.rotation,
+          color: "#ffffff",
+          mediaId,
+        });
+      } else {
+        skippedMedia++;
+      }
+      continue;
+    }
+    if (node.name === "p:graphicFrame") {
+      const graphic = child(node, "a:graphic");
+      const graphicData = child(graphic, "a:graphicData");
+      const tbl = child(graphicData, "a:tbl");
+      const rect = parseXfrmElement(child(node, "p:xfrm"), slideCx, slideCy);
+      if (tbl && rect && shapes.length < MAX_IMPORT_SHAPES_PER_SLIDE) {
+        const tblPr = child(tbl, "a:tblPr");
+        const headerRow = tblPr?.attrs["firstRow"] === "1" || tblPr?.attrs["firstRow"] === "true";
+        const rows: string[][] = [];
+        let headerFill: string | undefined;
+        for (const tr of children(tbl, "a:tr")) {
+          const cells: string[] = [];
+          for (const tc of children(tr, "a:tc")) {
+            if (rows.length === 0 && !headerFill) {
+              headerFill = extractSolidColor(child(tc, "a:tcPr")) ?? undefined;
+            }
+            cells.push(extractTxBodyText(child(tc, "a:txBody")).text);
+          }
+          rows.push(cells);
+        }
+        shapeSeq++;
+        shapes.push({
+          id: `imp-${slideNum}-tbl-${shapeSeq}`,
+          kind: "table",
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          rotation: rect.rotation,
+          color: headerFill ?? "#3370ff",
+          table: { rows, headerRow, headerFill },
+        });
+      } else {
+        skippedMedia++;
+      }
       continue;
     }
     if (node.name === "p:cxnSp") {
@@ -954,8 +1196,8 @@ export async function parsePptxToSlides(bytes: Uint8Array): Promise<PptxImportRe
     slidePaths = [...byName.keys()]
       .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
       .sort((a, b) => {
-        const na = Number.parseInt(a.match(/(\d+)\.xml$/)?.[1] ?? "0", 10);
-        const nb = Number.parseInt(b.match(/(\d+)\.xml$/)?.[1] ?? "0", 10);
+        const na = Number.parseInt(a.match(/(\d+)\.xml$/i)![1], 10);
+        const nb = Number.parseInt(b.match(/(\d+)\.xml$/i)![1], 10);
         return na - nb;
       });
   }
@@ -970,20 +1212,28 @@ export async function parsePptxToSlides(bytes: Uint8Array): Promise<PptxImportRe
   }
 
   const pages: ImportedSlidePage[] = [];
+  const media: Record<string, SlideMediaAsset> = {};
+  const mediaByPath = new Map<string, string>();
+  let mediaCount = 0;
   let totalShapes = 0;
   let totalSkippedMedia = 0;
 
   for (let i = 0; i < slidePaths.length; i++) {
     const slidePath = slidePaths[i];
-    const sldXml = await readXml(slidePath);
-    if (!sldXml) continue;
+    const sldXml = (await readXml(slidePath))!;
 
-    // Resolve optional speaker notes via slide relationships
+    // Resolve optional speaker notes and embedded images via slide relationships
     let notesText = "";
+    const slideImageRels = new Map<string, string>();
     const slideRelsXml = await readXml(relsPathFor(slidePath));
     for (const rel of children(slideRelsXml, "Relationship")) {
-      if (rel.attrs["Type"]?.endsWith("/notesSlide") && rel.attrs["Target"]) {
-        const notesPath = resolveRelTarget(slidePath, rel.attrs["Target"]);
+      const relType = rel.attrs["Type"] ?? "";
+      const target = rel.attrs["Target"];
+      const rId = rel.attrs["Id"];
+      if (!target) continue;
+
+      if (relType.endsWith("/notesSlide")) {
+        const notesPath = resolveRelTarget(slidePath, target);
         const notesXml = await readXml(notesPath);
         if (notesXml) {
           const nSpTree = child(child(notesXml, "p:cSld"), "p:spTree");
@@ -996,22 +1246,43 @@ export async function parsePptxToSlides(bytes: Uint8Array): Promise<PptxImportRe
           }
           notesText = parts.join("\n");
         }
-        break;
+      } else if (relType.endsWith("/image") && rId) {
+        const mediaPath = resolveRelTarget(slidePath, target);
+        const mediaEntry = byName.get(mediaPath);
+        if (mediaEntry) {
+          let mediaId = mediaByPath.get(mediaPath);
+          if (!mediaId) {
+            try {
+              const raw = await readZipEntry(bytes, mediaEntry, 10 * 1024 * 1024);
+              mediaCount++;
+              mediaId = `media-${mediaCount}`;
+              mediaByPath.set(mediaPath, mediaId);
+              media[mediaId] = {
+                id: mediaId,
+                mimeType: mimeForMediaExt(mediaPath),
+                data: raw,
+                name: mediaPath.split("/").pop(),
+              };
+            } catch {
+              continue;
+            }
+          }
+          slideImageRels.set(rId, mediaId);
+        }
       }
     }
 
-    const { page, skippedMedia } = parseSlideElement(sldXml, slideCx, slideCy, i + 1, notesText);
+    const { page, skippedMedia } = parseSlideElement(sldXml, slideCx, slideCy, i + 1, notesText, slideImageRels);
     totalSkippedMedia += skippedMedia;
     totalShapes += page.shapes.length;
     pages.push(page);
   }
 
-  if (pages.length === 0) {
-    throw new PptxError("未能从 PPTX 中读取有效页面");
-  }
   if (totalSkippedMedia > 0) {
     warnings.push(`已跳过 ${totalSkippedMedia} 个嵌入图片、图表或 SmartArt 元素（当前支持文本、基础图形、连接线与备注导入）`);
   }
 
-  return { pages, shapeCount: totalShapes, warnings };
+  return Object.keys(media).length > 0
+    ? { pages, shapeCount: totalShapes, warnings, media }
+    : { pages, shapeCount: totalShapes, warnings };
 }

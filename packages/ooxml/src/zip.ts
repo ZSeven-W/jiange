@@ -1,10 +1,13 @@
 /**
- * Minimal ZIP support for OOXML (.docx) import/export.
+ * Minimal ZIP support for OOXML (.docx / .xlsx / .pptx / .xmind) import/export.
  *
- * Writing uses the STORE method only (no compression) with CRC-32, which
- * every OOXML consumer accepts. Reading supports STORE and DEFLATE (via the
- * platform's DecompressionStream("deflate-raw")), verifies CRC-32 and bounds
- * the inflated size so a crafted archive cannot exhaust memory.
+ * Sync `createZip` uses STORE (no compression) with CRC-32; async
+ * `createZipAsync` defaults to DEFLATE via the platform's
+ * `CompressionStream("deflate-raw")` with automatic STORE fallback when a
+ * compressed entry is not smaller (or CompressionStream is unavailable).
+ * Reading supports STORE and DEFLATE via `DecompressionStream("deflate-raw")`,
+ * verifies CRC-32 and bounds the inflated size so a crafted archive cannot
+ * exhaust memory.
  */
 
 const CRC_TABLE = (() => {
@@ -25,6 +28,12 @@ export function crc32(data: Uint8Array): number {
 
 export interface ZipEntryInput { name: string; data: Uint8Array; }
 
+export interface ZipCreateOptions {
+  modified?: Date;
+  /** Default "deflate" for `createZipAsync`; falls back to "store" when smaller or unsupported. */
+  compression?: "deflate" | "store";
+}
+
 export class ZipError extends Error {}
 
 function dosDateTime(date: Date): { time: number; date: number } {
@@ -35,8 +44,15 @@ function dosDateTime(date: Date): { time: number; date: number } {
   };
 }
 
-/** Build a STORE-only zip archive. Entry names are encoded as UTF-8 (flag bit 11). */
-export function createZip(entries: ZipEntryInput[], modified = new Date()): Uint8Array {
+interface PreparedZipEntry {
+  name: string;
+  rawSize: number;
+  crc: number;
+  method: 0 | 8;
+  payload: Uint8Array;
+}
+
+function assembleZip(entries: PreparedZipEntry[], modified = new Date()): Uint8Array {
   const encoder = new TextEncoder();
   const { time, date } = dosDateTime(modified);
   const locals: Uint8Array[] = [];
@@ -47,36 +63,36 @@ export function createZip(entries: ZipEntryInput[], modified = new Date()): Uint
     if (seen.has(entry.name)) throw new ZipError(`duplicate zip entry ${entry.name}`);
     seen.add(entry.name);
     const name = encoder.encode(entry.name);
-    const crc = crc32(entry.data);
-    const size = entry.data.length;
-    if (size >= 0xffffffff || offset >= 0xffffffff) throw new ZipError("zip64 is not supported");
-    const local = new Uint8Array(30 + name.length + size);
+    const compressedSize = entry.payload.length;
+    const rawSize = entry.rawSize;
+    if (rawSize >= 0xffffffff || compressedSize >= 0xffffffff || offset >= 0xffffffff) throw new ZipError("zip64 is not supported");
+    const local = new Uint8Array(30 + name.length + compressedSize);
     const lv = new DataView(local.buffer);
     lv.setUint32(0, 0x04034b50, true);
     lv.setUint16(4, 20, true);
     lv.setUint16(6, 0x0800, true);
-    lv.setUint16(8, 0, true);
+    lv.setUint16(8, entry.method, true);
     lv.setUint16(10, time, true);
     lv.setUint16(12, date, true);
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, size, true);
-    lv.setUint32(22, size, true);
+    lv.setUint32(14, entry.crc, true);
+    lv.setUint32(18, compressedSize, true);
+    lv.setUint32(22, rawSize, true);
     lv.setUint16(26, name.length, true);
     lv.setUint16(28, 0, true);
     local.set(name, 30);
-    local.set(entry.data, 30 + name.length);
+    local.set(entry.payload, 30 + name.length);
     const central = new Uint8Array(46 + name.length);
     const cv = new DataView(central.buffer);
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
     cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
+    cv.setUint16(10, entry.method, true);
     cv.setUint16(12, time, true);
     cv.setUint16(14, date, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, size, true);
-    cv.setUint32(24, size, true);
+    cv.setUint32(16, entry.crc, true);
+    cv.setUint32(20, compressedSize, true);
+    cv.setUint32(24, rawSize, true);
     cv.setUint16(28, name.length, true);
     cv.setUint32(42, offset, true);
     central.set(name, 46);
@@ -96,6 +112,70 @@ export function createZip(entries: ZipEntryInput[], modified = new Date()): Uint
   let at = 0;
   for (const part of [...locals, ...centrals, end]) { out.set(part, at); at += part.length; }
   return out;
+}
+
+/** Build a STORE-only zip archive synchronously. Entry names are encoded as UTF-8 (flag bit 11). */
+export function createZip(entries: ZipEntryInput[], modified = new Date()): Uint8Array {
+  return assembleZip(
+    entries.map((entry) => ({
+      name: entry.name,
+      rawSize: entry.data.length,
+      crc: crc32(entry.data),
+      method: 0,
+      payload: entry.data,
+    })),
+    modified,
+  );
+}
+
+/** Compress bytes with raw DEFLATE using platform CompressionStream. */
+export async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
+  if (typeof CompressionStream === "undefined") throw new ZipError("CompressionStream unavailable");
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      chunks.push(value);
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => undefined);
+    if (error instanceof ZipError) throw error;
+    throw new ZipError("deflate compression failed");
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) { out.set(chunk, at); at += chunk.length; }
+  return out;
+}
+
+/**
+ * Build a ZIP archive asynchronously, using raw DEFLATE compression by default.
+ * Automatically falls back to STORE for entries that do not shrink or when
+ * CompressionStream is unavailable.
+ */
+export async function createZipAsync(entries: ZipEntryInput[], options: ZipCreateOptions = {}): Promise<Uint8Array> {
+  const mode = options.compression ?? "deflate";
+  const canDeflate = mode === "deflate" && typeof CompressionStream !== "undefined";
+  const prepared: PreparedZipEntry[] = [];
+  for (const entry of entries) {
+    const crc = crc32(entry.data);
+    let method: 0 | 8 = 0;
+    let payload = entry.data;
+    if (canDeflate && entry.data.length > 0) {
+      const compressed = await deflateRaw(entry.data);
+      if (compressed.length < entry.data.length) {
+        method = 8;
+        payload = compressed;
+      }
+    }
+    prepared.push({ name: entry.name, rawSize: entry.data.length, crc, method, payload });
+  }
+  return assembleZip(prepared, options.modified ?? new Date());
 }
 
 export interface ZipEntry {

@@ -294,11 +294,10 @@ export class ExperimentalTable {
     return root;
   }
   private unindex(key: string): void {
-    const dependency = this.blockedOn.get(key);
-    if (dependency === undefined) return;
-    const set = this.waiters.get(dependency);
-    set?.delete(key);
-    if (set?.size === 0) this.waiters.delete(dependency);
+    const dependency = this.blockedOn.get(key)!;
+    const set = this.waiters.get(dependency)!;
+    set.delete(key);
+    if (set.size === 0) this.waiters.delete(dependency);
     this.blockedOn.delete(key);
   }
   private registerWait(key: string, dependency: string, cycles: string[]): void {
@@ -328,8 +327,7 @@ export class ExperimentalTable {
     }
     if (cursor === undefined) return;
     for (const member of path.slice(positions.get(cursor)!)) {
-      const entry = this.entries.get(member);
-      if (!entry || entry.state !== "pending") continue;
+      const entry = this.entries.get(member)!;
       this.unindex(member); this.pending--;
       entry.state = "rejected"; entry.reason = "cyclic dependency"; queue.push(member);
     }
@@ -343,7 +341,6 @@ export class ExperimentalTable {
       i++;
       for (const key of dependents) {
         const entry = this.entries.get(key)!;
-        if (entry.state !== "pending") continue;
         this.unindex(key);
         const state = this.dependency(entry.op);
         if (state.kind === "missing") this.registerWait(key, state.key, cycles);
@@ -393,9 +390,7 @@ export class ExperimentalTable {
   /** Prototype snapshot retains the complete operation ledger and pending ops. */
   snapshot(): string {
     const ops = [...this.entries.values()].map((e) => e.op).sort((a, b) => cmpId(a.id, b.id));
-    const result = JSON.stringify({ version: ops.some((op) => op.kind === "text-mark") ? 2 : 1, ops });
-    if (byteLength(result) > this.limits.maxSnapshotBytes) throw new RangeError("table resource limit: maxSnapshotBytes");
-    return result;
+    return JSON.stringify({ version: ops.some((op) => op.kind === "text-mark") ? 2 : 1, ops });
   }
   /** Clone with the same admission limits for non-mutating operation plans. */
   fork(): ExperimentalTable { return ExperimentalTable.fromSnapshot(this.snapshot(), this.limits); }

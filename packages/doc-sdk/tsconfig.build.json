@@ -18,9 +18,6 @@
       "@jiange/collab": [
         "../collab/dist/index.d.ts"
       ],
-      "@jiange/whiteboard-sdk/model": [
-        "../whiteboard-sdk/dist/model.d.ts"
-      ],
       "@jiange/ooxml/*": [
         "../ooxml/dist/*.d.ts"
       ]

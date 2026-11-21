@@ -23,9 +23,8 @@ export function parseTableSnapshotJson(text: string, maxArrayItems = Number.MAX_
       i++;
     }
     if (!closed) return fail();
-    let value: unknown;
-    try { value = JSON.parse(text.slice(start, i)); } catch { return fail(); }
-    if (typeof value !== "string") return fail();
+    let value: string;
+    try { value = JSON.parse(text.slice(start, i)) as string; } catch { return fail(); }
     for (let j = 0; j < value.length; j++) {
       const c = value.charCodeAt(j);
       if (c >= 0xd800 && c <= 0xdbff) {
@@ -79,5 +78,5 @@ export function parseTableSnapshotJson(text: string, maxArrayItems = Number.MAX_
   };
   value(0); space();
   if (i !== text.length) return fail();
-  try { return JSON.parse(text); } catch { return fail(); }
+  return JSON.parse(text);
 }
