@@ -220,6 +220,9 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
       return ev;
     };
 
+    const frozenW = this.grid.cols.indexToOffset(Math.min(ws.frozenCols, ws.columns.length));
+    const frozenH = this.grid.rows.indexToOffset(Math.min(ws.frozenRows, ws.rows.length));
+
     const gridFrame = this.grid.sync(
       {
         scrollLeft: this.scrollLeft,
@@ -234,10 +237,18 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
         const rawCell = cellByKey.get(`${cell.row}:${cell.col}`);
         const ev = evalNumber(cell.row, cell.col);
         el.textContent = formatCellDisplay(rawCell?.raw ?? "", ev, rawCell?.style);
-        // Shift recycled text slot by header offsets
+        // Shift recycled text slot by header offsets and clip against frozen panes so scrolled text never bleeds through
         el.style.transform = `translate3d(${headerX + cell.x}px, ${headerY + cell.y}px, 0)`;
+        const clipLeft = (cell.quadrant === "top-right" || cell.quadrant === "bottom-right") ? Math.max(0, frozenW - cell.x) : 0;
+        const clipTop = (cell.quadrant === "bottom-left" || cell.quadrant === "bottom-right") ? Math.max(0, frozenH - cell.y) : 0;
+        el.style.clipPath = clipTop > 0 || clipLeft > 0 ? `inset(${clipTop}px 0px 0px ${clipLeft}px)` : "";
+        el.style.zIndex = cell.quadrant === "top-left" ? "4" : cell.quadrant === "bottom-right" ? "1" : "3";
       },
       (row, col) => {
+        const isScrollCol = col >= ws.frozenCols;
+        const isScrollRow = row >= ws.frozenRows;
+        if (isScrollCol && this.grid.cols.indexToOffset(col + 1) - this.scrollLeft <= frozenW) return false;
+        if (isScrollRow && this.grid.rows.indexToOffset(row + 1) - this.scrollTop <= frozenH) return false;
         const rawCell = cellByKey.get(`${row}:${col}`);
         const ev = evalNumber(row, col);
         return Boolean((rawCell && rawCell.raw !== "") || (ev && ev.kind !== "empty"));

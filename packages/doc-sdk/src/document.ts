@@ -199,9 +199,8 @@ export class Document {
     const instance = new Document(doc, options.title ?? "");
     if (options.blocks?.length) {
       const tx = new Tx(doc);
-      let after: OpId | null = null;
       for (const b of options.blocks) {
-        after = instance.appendMdBlock(tx, b, after);
+        instance.appendMdBlock(tx, b, null, true);
       }
     }
     return instance;
@@ -797,8 +796,9 @@ export class Document {
     }
   }
 
-  private appendMdBlock(tx: Tx, b: MdBlock, after: OpId | null): OpId {
-    const id = tx.create(b.type || "paragraph", after, ROOT);
+  private appendMdBlock(tx: Tx, b: MdBlock, after: OpId | null, appendEnd = false): OpId {
+    const type = b.type || "paragraph";
+    const id = appendEnd ? this.doc.createBlock(type, ROOT).id : tx.create(type, after, ROOT);
     for (const [k, v] of Object.entries(b.props ?? {})) {
       if (k !== "type" && v !== undefined) tx.setProp(id, k, v);
     }

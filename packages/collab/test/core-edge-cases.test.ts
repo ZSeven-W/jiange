@@ -319,5 +319,6 @@ describe("tx edge cases", () => {
     tx.move(b2, { client: b1.client, clock: b1.clock }, ROOT); // already right after b1 (eqId match)
     tx.move(b2, b2, ROOT); // moving after itself
     expect(tx.items.length).toBe(itemsBefore);
+    expect(doc.children(b1)).toEqual([]);
   });
 });

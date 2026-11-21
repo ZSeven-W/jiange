@@ -209,8 +209,8 @@ export class WebGPUBackend implements GpuBackend {
             stepMode: "instance",
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x4" },
-              { shaderLocation: 1, offset: 20, format: "float32x4" },
-              { shaderLocation: 2, offset: 36, format: "float32x3" },
+              { shaderLocation: 1, offset: 16, format: "float32x4" },
+              { shaderLocation: 2, offset: 32, format: "float32x4" },
             ],
           },
         ],

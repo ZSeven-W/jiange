@@ -39,6 +39,7 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
   readonly camera = new Camera2D(0, 0, 1);
   readonly spatial = new SpatialIndex<string>(256);
   readonly labelPool: DomNodePool<T>;
+  private readonly edgeBatch = new InstanceBatch(1, 2048, 1);
   private readonly batch = new InstanceBatch(2048, 2048, 256);
   private width = 960;
   private height = 600;
@@ -188,20 +189,24 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
     );
     const nodesById = new Map<string, FlowNode>(g.nodes.map((n) => [n.id, n]));
 
+    this.edgeBatch.reset();
+    this.edgeBatch.camera.x = this.camera.x;
+    this.edgeBatch.camera.y = this.camera.y;
+    this.edgeBatch.camera.zoom = this.camera.zoom;
     this.batch.reset();
     this.batch.camera.x = this.camera.x;
     this.batch.camera.y = this.camera.y;
     this.batch.camera.zoom = this.camera.zoom;
     this.surface.setClearColor(packColorRGBA(theme.canvas));
 
-    // 1. Visible Edges (cull edges where neither endpoint is visible)
+    // 1. Visible Edges (cull edges where neither endpoint is visible; draw behind nodes)
     const edgeColor = packColorRGBA(theme.edge);
     for (const e of g.edges) {
       if (!visibleIdSet.has(e.from) && !visibleIdSet.has(e.to)) continue;
       const a = nodesById.get(e.from);
       const b = nodesById.get(e.to);
       if (!a || !b) continue;
-      this.batch.pushLine({
+      this.edgeBatch.pushLine({
         x1: a.x + a.w / 2,
         y1: a.y + a.h / 2,
         x2: b.x + b.w / 2,
@@ -281,7 +286,7 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
         if (item.topic.parent) {
           const parentPos = posById.get(item.topic.parent);
           if (parentPos) {
-            this.batch.pushLine({
+            this.edgeBatch.pushLine({
               x1: parentPos.x + parentPos.w,
               y1: parentPos.y + parentPos.h / 2,
               x2: item.x,
@@ -330,7 +335,7 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
     }
 
     this.labelPool.sync(labelItems);
-    const gpu = this.surface.render([this.batch]);
+    const gpu = this.surface.render([this.edgeBatch, this.batch]);
     return {
       gpu,
       visibleNodes: visibleIdSet.size,

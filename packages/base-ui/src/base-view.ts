@@ -152,6 +152,8 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
       this.batch.pushRect({ x: 0, y: 0, w: this.width, h: headerH, fill: [0.96, 0.97, 0.99, 1] });
       this.batch.pushLine({ x1: 0, y1: headerH, x2: this.width, y2: headerH, thickness: 1, color: [0.85, 0.88, 0.93, 1] });
 
+      const effectiveFrozenCols = Math.min(this.frozenCols, fields.length);
+      const frozenW = this.grid.cols.indexToOffset(effectiveFrozenCols);
       let mounted = 0;
       const frame = this.grid.sync(
         {
@@ -160,7 +162,7 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
           viewportWidth: this.width,
           viewportHeight: Math.max(1, this.height - headerH),
           frozenRows: 0,
-          frozenCols: Math.min(this.frozenCols, fields.length),
+          frozenCols: effectiveFrozenCols,
         },
         (cell, el) => {
           mounted++;
@@ -168,7 +170,11 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
           const field = fields[cell.col];
           el.textContent = formatCellText(rec.cells[String(field.id)]);
           el.style.transform = `translate3d(${cell.x}px, ${headerH + cell.y}px, 0)`;
+          const clipLeft = cell.quadrant === "bottom-right" ? Math.max(0, frozenW - cell.x) : 0;
+          el.style.clipPath = clipLeft > 0 ? `inset(0px 0px 0px ${clipLeft}px)` : "";
+          el.style.zIndex = cell.quadrant === "bottom-left" ? "3" : "1";
         },
+        (_row, col) => col < effectiveFrozenCols || this.grid.cols.indexToOffset(col + 1) - this.scrollLeft > frozenW,
       );
 
       const paintedRows = new Set<number>();

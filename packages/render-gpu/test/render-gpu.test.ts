@@ -678,5 +678,15 @@ describe("@jiange/render-gpu", () => {
       if (origCancelRafDesc) Object.defineProperty(globalThis, "cancelAnimationFrame", origCancelRafDesc);
       else delete (globalThis as Record<string, unknown>).cancelAnimationFrame;
     }
+
+    // DomNodePool preserves custom initial display (e.g. display: flex) across initial mount and recycle
+    const flexPool = new DomNodePool(() => ({
+      style: { transform: "", width: "", height: "", display: "flex" },
+      textContent: "",
+    }));
+    const firstBind = flexPool.sync([{ key: "k1", x: 0, y: 0, width: 100, height: 40, render: () => {} }]);
+    expect(firstBind.get("k1")?.element.style.display).toBe("flex");
+    const recycledBind = flexPool.sync([{ key: "k2", x: 10, y: 10, width: 100, height: 40, render: () => {} }]);
+    expect(recycledBind.get("k2")?.element.style.display).toBe("flex");
   });
 });

@@ -329,10 +329,7 @@ export class Doc {
 
   /** Visible children of a block, in order. */
   children(parent: OpId): OpId[] {
-    return this.view().blocks.filter((b) => b.parent === idKey(parent)).map((b) => {
-      const [c, k] = b.id.split(":");
-      return { client: Number(c), clock: Number(k) };
-    });
+    return (this.buildChildrenMap().get(idKey(parent)) ?? []).map((b) => ({ ...b.id }));
   }
 
   private childPositions(parent: OpId): string[] {
@@ -345,6 +342,15 @@ export class Doc {
   }
 
   private posAt(parent: OpId, index: number): string {
+    if (index === Number.MAX_SAFE_INTEGER) {
+      const rootBlock = this.blocks.get(idKey(ROOT));
+      let maxPos = "";
+      for (const b of this.blocks.values()) {
+        if (b === rootBlock || b.deleted) continue;
+        if (eqId(b.loc.value.parent, parent) && b.loc.value.pos > maxPos) maxPos = b.loc.value.pos;
+      }
+      return keyBetween(maxPos, "");
+    }
     const ps = this.childPositions(parent);
     const i = Math.max(0, Math.min(index, ps.length));
     const lo = i > 0 ? ps[i - 1] : "";
@@ -474,10 +480,16 @@ export class Doc {
 
   /** Visible block ids in document order. */
   blockIds(): OpId[] {
-    return this.view().blocks.map((b) => {
-      const [c, k] = b.id.split(":");
-      return { client: Number(c), clock: Number(k) };
-    });
+    const kids = this.buildChildrenMap();
+    const out: OpId[] = [];
+    const walk = (pk: string) => {
+      for (const b of kids.get(pk) ?? []) {
+        out.push({ ...b.id });
+        walk(idKey(b.id));
+      }
+    };
+    walk(idKey(ROOT));
+    return out;
   }
 
   /** Stable position for a caret at visible `index` (survives concurrent edits). */
@@ -654,8 +666,7 @@ export class Doc {
 
   /* ------------------------------------------------------------ view */
 
-  /** Deterministic materialized view; identical across replicas once converged. */
-  view(): DocView {
+  private buildChildrenMap(): Map<string, Block[]> {
     const rootKey = idKey(ROOT);
     // resolve effective parent: hidden if parent missing/deleted; cycles attach to root
     const resolve = (k: string): string | null => {
@@ -694,6 +705,12 @@ export class Doc {
         return cmpId(x.id, y.id);
       });
     }
+    return kids;
+  }
+
+  /** Deterministic materialized view; identical across replicas once converged. */
+  view(): DocView {
+    const kids = this.buildChildrenMap();
     const out: BlockView[] = [];
     const walk = (pk: string) => {
       for (const b of kids.get(pk) ?? []) {
@@ -703,14 +720,20 @@ export class Doc {
         walk(k);
       }
     };
-    walk(rootKey);
+    walk(idKey(ROOT));
     return { blocks: out };
   }
 
   private blockView(b: Block, parentKey: string): BlockView {
     const props: Record<string, string> = {};
     for (const k of [...b.props.keys()].sort()) if (k !== "type") props[k] = b.props.get(k)!.value;
+    const type = b.props.get("type")?.value ?? "";
     const ord = this.order(b);
+    if (b.marks.length === 0) {
+      let text = "";
+      for (const c of ord) if (!c.deleted) text += c.ch;
+      return { id: idKey(b.id), parent: parentKey, type, props, spans: text ? [{ text, marks: {} }] : [] };
+    }
     const idx = new Map<string, number>();
     ord.forEach((c, i) => idx.set(idKey(c.id), i));
     const slot = (a: Anchor) =>
@@ -728,7 +751,7 @@ export class Doc {
       if (last && JSON.stringify(last.marks) === JSON.stringify(mk)) last.text += c.ch;
       else spans.push({ text: c.ch, marks: mk });
     });
-    return { id: idKey(b.id), parent: parentKey, type: b.props.get("type")?.value ?? "", props, spans };
+    return { id: idKey(b.id), parent: parentKey, type, props, spans };
   }
 
   /** Reports live character and tombstone counts across all non-root blocks. */

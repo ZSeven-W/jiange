@@ -131,12 +131,15 @@ function renderTableSvg(table: SlideTableData, rect: { x: number; y: number; w: 
       const cy = rect.y + r * rh;
       const fill = isHeader ? headerFill : r % 2 === 1 ? "#f5f7fb" : "#ffffff";
       const txtColor = isHeader ? "#ffffff" : "#1f2329";
-      const cellVal = rows[r]?.[c] ?? "";
+      const rawVal = rows[r]?.[c] ?? "";
+      const cellFont = Math.min(13, Math.max(10, Math.floor((cw - 12) / 7.2)));
+      const maxChars = Math.max(4, Math.floor((cw - 16) / (cellFont * 0.6)));
+      const cellVal = rawVal.length > maxChars ? `${rawVal.slice(0, maxChars - 1)}…` : rawVal;
       parts.push(
         `<rect x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" width="${cw.toFixed(1)}" height="${rh.toFixed(1)}" fill="${escapeXml(fill)}" stroke="${escapeXml(border)}" stroke-width="1"/>`,
       );
       parts.push(
-        `<text x="${(cx + 8).toFixed(1)}" y="${(cy + rh * 0.62).toFixed(1)}" font-family="${escapeXml(fontFamily)}" font-size="14" font-weight="${isHeader ? "700" : "400"}" fill="${txtColor}">${escapeXml(cellVal)}</text>`,
+        `<text x="${(cx + 8).toFixed(1)}" y="${(cy + rh * 0.62).toFixed(1)}" font-family="${escapeXml(fontFamily)}" font-size="${cellFont}" font-weight="${isHeader ? "700" : "400"}" fill="${txtColor}">${escapeXml(cellVal)}</text>`,
       );
     }
   }
@@ -383,7 +386,7 @@ export function renderSlideToSvg(
         ),
       );
     }
-  } else {
+  } else if (layout !== "blank") {
     if (page.title) {
       nodes.push(
         renderTextBlock(

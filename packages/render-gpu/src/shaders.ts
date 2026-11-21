@@ -17,10 +17,10 @@ struct CameraUniform {
 @group(0) @binding(0) var<uniform> uCam: CameraUniform;
 
 struct RectIn {
-  @location(0) rect: vec4<f32>,       // x, y, w, h
-  @location(1) fill: vec4<f32>,       // r, g, b, a
-  @location(2) style: vec4<f32>,      // radius, borderW, rotRad, flags
-  @location(3) borderColor: vec4<f32> // br, bg, bb, ba
+  @location(0) rect: vec4<f32>,   // x, y, w, h
+  @location(1) fill: vec4<f32>,   // r, g, b, a
+  @location(2) style0: vec4<f32>, // radius, borderW, br, bg
+  @location(3) style1: vec4<f32>, // bb, ba, rotRad, flags
 };
 
 struct VsOut {
@@ -43,8 +43,8 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: RectIn) -> VsOut {
   let size = inst.rect.zw;
   let center = inst.rect.xy + size * 0.5;
   let local = (uv - vec2<f32>(0.5, 0.5)) * size;
-  let c = cos(inst.style.z);
-  let s = sin(inst.style.z);
+  let c = cos(inst.style1.z);
+  let s = sin(inst.style1.z);
   let rotLocal = vec2<f32>(local.x * c - local.y * s, local.x * s + local.y * c);
   let world = center + rotLocal;
   let screen = (world - uCam.camPos) * uCam.zoom;
@@ -57,9 +57,9 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: RectIn) -> VsOut {
   out.localPx = local * uCam.zoom;
   out.halfSize = size * 0.5 * uCam.zoom;
   out.fill = inst.fill;
-  out.borderColor = inst.borderColor;
-  out.radius = inst.style.x * uCam.zoom;
-  out.borderW = inst.style.y * uCam.zoom;
+  out.borderColor = vec4<f32>(inst.style0.zw, inst.style1.xy);
+  out.radius = inst.style0.x * uCam.zoom;
+  out.borderW = inst.style0.y * uCam.zoom;
   return out;
 }
 
@@ -93,9 +93,9 @@ struct CameraUniform {
 @group(0) @binding(0) var<uniform> uCam: CameraUniform;
 
 struct LineIn {
-  @location(0) endpoints: vec4<f32>, // x1, y1, x2, y2
-  @location(1) color: vec4<f32>,     // r, g, b, a
-  @location(2) params: vec4<f32>,    // thickness, dashLen, gapLen, flags
+  @location(0) endpoints: vec4<f32>,  // x1, y1, x2, y2
+  @location(1) colorThick: vec4<f32>, // thickness, r, g, b
+  @location(2) params: vec4<f32>,     // a, dashLen, gapLen, flags
 };
 
 struct VsOut {
@@ -120,7 +120,7 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: LineIn) -> VsOut {
   let segLen = max(length(delta), 0.0001);
   let dir = delta / segLen;
   let normal = vec2<f32>(-dir.y, dir.x);
-  let thick = max(inst.params.x * uCam.zoom, 1.0);
+  let thick = max(inst.colorThick.x * uCam.zoom, 1.0);
   let screen = p1 + dir * (uv.x * segLen) + normal * (uv.y * thick);
   let ndc = vec2<f32>(
     (screen.x / uCam.viewport.x) * 2.0 - 1.0,
@@ -128,9 +128,9 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: LineIn) -> VsOut {
   );
   var out: VsOut;
   out.pos = vec4<f32>(ndc, 0.0, 1.0);
-  out.color = inst.color;
+  out.color = vec4<f32>(inst.colorThick.yzw, inst.params.x);
   out.along = uv.x * segLen;
-  out.across = abs(uv.y * 2.0);
+  out.across = uv.y * 2.0;
   out.dashLen = inst.params.y * uCam.zoom;
   out.gapLen = inst.params.z * uCam.zoom;
   return out;
@@ -143,8 +143,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let phase = in.along - floor(in.along / period) * period;
     if (phase > in.dashLen) { discard; }
   }
-  let aa = max(fwidth(in.across), 0.1);
-  let alpha = (1.0 - smoothstep(1.0 - aa, 1.0, in.across)) * in.color.a;
+  let dist = abs(in.across);
+  let aa = max(fwidth(dist), 0.15);
+  let alpha = (1.0 - smoothstep(1.0 - aa, 1.0, dist)) * in.color.a;
   return vec4<f32>(in.color.rgb * alpha, alpha);
 }
 `;
@@ -369,7 +370,7 @@ void main() {
   gl_Position = vec4(ndc, 0.0, 1.0);
   vColor = vec4(aColorThick.yzw, aParams.x);
   vAlong = uv.x * segLen;
-  vAcross = abs(uv.y * 2.0);
+  vAcross = uv.y * 2.0;
   vDash = aParams.y * uCamera1.x;
   vGap = aParams.z * uCamera1.x;
 }
@@ -389,8 +390,9 @@ void main() {
     float phase = mod(vAlong, period);
     if (phase > vDash) discard;
   }
-  float aa = max(fwidth(vAcross), 0.1);
-  float a = (1.0 - smoothstep(1.0 - aa, 1.0, vAcross)) * vColor.a;
+  float dist = abs(vAcross);
+  float aa = max(fwidth(dist), 0.15);
+  float a = (1.0 - smoothstep(1.0 - aa, 1.0, dist)) * vColor.a;
   outColor = vec4(vColor.rgb * a, a);
 }
 `;

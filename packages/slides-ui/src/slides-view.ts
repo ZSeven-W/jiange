@@ -292,7 +292,7 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
 
     const gpu = this.surface.render([this.batch]);
     this.thumbnails.sizes.setCount(this.deck.slideCount);
-    const thumbFrame = this.thumbnails.update(this.thumbScrollTop, this.height, 160, (idx, el) => {
+    const thumbFrame = this.thumbnails.update(this.thumbScrollTop, this.height, 152, (idx, el) => {
       const p = this.deck.getSlide(idx);
       el.textContent = `${idx + 1}. ${p?.title || "Untitled"}`;
       el.setAttribute?.("data-slide-index", String(idx));
@@ -346,6 +346,9 @@ export async function mountSlidesView(
       const item = doc.createElement("div");
       item.style.padding = "8px";
       item.style.boxSizing = "border-box";
+      item.style.overflow = "hidden";
+      item.style.whiteSpace = "nowrap";
+      item.style.textOverflow = "ellipsis";
       rail.appendChild(item);
       return item;
     },

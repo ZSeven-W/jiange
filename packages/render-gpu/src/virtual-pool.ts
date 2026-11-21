@@ -18,6 +18,8 @@ export interface PoolableElement {
     left?: string;
     contain?: string;
     willChange?: string;
+    clipPath?: string;
+    zIndex?: string;
   };
   textContent: string | null;
   setAttribute?(name: string, value: string): void;
@@ -39,6 +41,7 @@ export interface PooledSlot<T extends PoolableElement = PoolableElement> {
 export class DomNodePool<T extends PoolableElement = PoolableElement> {
   private active = new Map<string, PooledSlot<T>>();
   private free: T[] = [];
+  private baseDisplay = new WeakMap<T, string>();
   private created = 0;
   private recycled = 0;
 
@@ -78,6 +81,8 @@ export class DomNodePool<T extends PoolableElement = PoolableElement> {
     for (const [key, slot] of this.active) {
       if (!nextKeys.has(key)) {
         slot.element.style.display = "none";
+        slot.element.style.clipPath = "";
+        slot.element.style.zIndex = "";
         this.free.push(slot.element);
         this.active.delete(key);
       }
@@ -92,17 +97,20 @@ export class DomNodePool<T extends PoolableElement = PoolableElement> {
         let el: T;
         if (this.free.length > 0) {
           el = this.free.pop()!;
+          el.style.display = this.baseDisplay.get(el)!;
           this.recycled++;
         } else {
           el = this.factory();
+          const initialDisplay = el.style.display && el.style.display !== "none" ? el.style.display : "";
+          this.baseDisplay.set(el, initialDisplay);
           el.style.position = "absolute";
           el.style.top = "0px";
           el.style.left = "0px";
           el.style.contain = "strict";
           el.style.willChange = "transform";
+          el.style.display = initialDisplay;
           this.created++;
         }
-        el.style.display = "";
         slot = { key: item.key, element: el, x: NaN, y: NaN, width: NaN, height: NaN };
         this.active.set(item.key, slot);
       }

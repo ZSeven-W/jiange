@@ -17,9 +17,11 @@ describe("whiteboard-sdk Board Facade, Mermaid parser, SVG renderer & AI tools",
         Cache --- Audit{{Audit Log}}
         Input[/Payload/] --> Check
         Round(Service) --> Input
+        DB -.fallback.-> Audit
     `);
     expect(flow.nodes.length).toBe(7);
-    expect(flow.edges.length).toBe(7);
+    expect(flow.edges.length).toBe(8);
+    expect(flow.edges.find((e) => e.from === "DB" && e.to === "Audit")).toMatchObject({ dashed: true, label: "fallback" });
     expect(flow.nodes.find((n) => n.id === "Start")?.shape).toBe("terminator");
     expect(flow.nodes.find((n) => n.id === "Check")?.shape).toBe("diamond");
     expect(flow.nodes.find((n) => n.id === "DB")?.shape).toBe("cylinder");

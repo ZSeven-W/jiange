@@ -148,7 +148,7 @@ export function fromMermaid(code: string, options: FromMermaidOptions = {}): Flo
   };
 
   const edgeRegex =
-    /^(.+?)\s+(<-?\.->|<-->|-\.->|-->|-\.-|---|==>|--\s+([^->]+?)\s+-->)\s*(?:\|([^|]+)\|)?\s*(.+)$/;
+    /^(.+?)\s+(<-?\.->|<-->|-\.->|-->|-\.-|---|==>|--\s+([^->]+?)\s+-->|-\.\s*([^.]+?)\s*\.->)\s*(?:\|([^|]+)\|)?\s*(.+)$/;
 
   for (let i = startIdx; i < nonEmpty.length; i++) {
     const line = nonEmpty[i].trim().replace(/;$/, "");
@@ -158,9 +158,9 @@ export function fromMermaid(code: string, options: FromMermaidOptions = {}): Flo
     if (match) {
       const fromToken = match[1];
       const op = match[2].trim();
-      const inlineLabel = match[3];
-      const pipeLabel = match[4];
-      const toToken = match[5];
+      const inlineLabel = match[3] ?? match[4];
+      const pipeLabel = match[5];
+      const toToken = match[6];
 
       const fromId = ensureNode(fromToken);
       const toId = ensureNode(toToken);

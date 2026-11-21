@@ -749,5 +749,31 @@ describe("@jiange/slides-sdk PPTX exporter & importer full branch coverage", () 
     } finally {
       spy.mockRestore();
     }
+
+    // 7. Blank layout skips auto-title/body overlay and table cells truncate long text with ellipsis
+    const blankSvg = renderSlideToSvg(
+      makePage({
+        title: "Hidden Blank Title",
+        body: "Hidden Blank Body",
+        layout: "blank",
+        shapes: [
+          {
+            id: "tbl-trunc",
+            kind: "table",
+            x: 10,
+            y: 20,
+            width: 25,
+            height: 30,
+            color: "#3370ff",
+            table: {
+              headerRow: true,
+              rows: [["Col", "VeryLongUnbreakableHeaderLabelValue"], ["A", "AnotherExtremelyLongTableCellTextValue"]],
+            },
+          },
+        ],
+      }),
+    );
+    expect(blankSvg).not.toContain("Hidden Blank Title");
+    expect(blankSvg).toContain("…");
   });
 });
