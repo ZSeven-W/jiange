@@ -13,8 +13,10 @@ import (
 // flag converts stored cells (single → [n], [a, b…] → a) and drops defaults
 // that no longer fit.
 
-func TestPersonMultipleLifecycle(t *testing.T)       { checkPersonMultiple(t, store.NewMemory()) }
-func TestPostgresPersonMultipleLifecycle(t *testing.T) { checkPersonMultiple(t, postgresBaseSecurityStore(t)) }
+func TestPersonMultipleLifecycle(t *testing.T) { checkPersonMultiple(t, store.NewMemory()) }
+func TestPostgresPersonMultipleLifecycle(t *testing.T) {
+	checkPersonMultiple(t, postgresBaseSecurityStore(t))
+}
 
 func checkPersonMultiple(t *testing.T, st store.Store) {
 	t.Helper()
@@ -102,8 +104,10 @@ func checkPersonMultiple(t *testing.T, st store.Store) {
 	}
 }
 
-func TestPersonMultipleQuery(t *testing.T)        { checkPersonMultipleQuery(t, store.NewMemory()) }
-func TestPostgresPersonMultipleQuery(t *testing.T) { checkPersonMultipleQuery(t, postgresBaseSecurityStore(t)) }
+func TestPersonMultipleQuery(t *testing.T) { checkPersonMultipleQuery(t, store.NewMemory()) }
+func TestPostgresPersonMultipleQuery(t *testing.T) {
+	checkPersonMultipleQuery(t, postgresBaseSecurityStore(t))
+}
 
 func checkPersonMultipleQuery(t *testing.T, st store.Store) {
 	t.Helper()

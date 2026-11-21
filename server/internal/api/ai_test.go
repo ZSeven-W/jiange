@@ -106,7 +106,9 @@ func TestPersonalAISettingsAndDocAI(t *testing.T) {
 }
 
 func TestAIBlocksPrivateAddresses(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`)) }))
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
 	defer provider.Close()
 	mem := store.NewMemory()
 	s := &Server{Store: mem, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionTTL: time.Hour, Iterations: 1000, AISecret: AISecretFromEnv("k"), AIAllowHTTP: true}

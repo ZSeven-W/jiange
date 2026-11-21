@@ -26,9 +26,10 @@ func (w *writer) uvar(v uint64) {
 	w.b = append(w.b, byte(v))
 }
 func (w *writer) str(s string) { w.uvar(uint64(len(s))); w.b = append(w.b, s...) }
+
 // blob writes length-prefixed raw bytes.
 func (w *writer) blob(b []byte) { w.uvar(uint64(len(b))); w.b = append(w.b, b...) }
-func (w *writer) id(id OpID)   { w.uvar(id.Client); w.uvar(id.Clock) }
+func (w *writer) id(id OpID)    { w.uvar(id.Client); w.uvar(id.Clock) }
 
 type reader struct {
 	b []byte

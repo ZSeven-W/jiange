@@ -60,19 +60,26 @@ func TestLegacyPipelinedWriteIsNotAcknowledgedAfterRejection(t *testing.T) {
 	orphan := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: c.clientID, Clock: 500}, Block: paragraph, Parent: collab.OpID{Client: 77, Clock: 1}, Side: 1, Text: "missing"}
 	valid := collab.Op{T: collab.TTextInsert, ID: collab.OpID{Client: c.clientID, Clock: 600}, Block: paragraph, Parent: collab.Root, Side: 1, Text: "later"}
 	first, err := collab.EncodeOps([]collab.Op{orphan})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := collab.EncodeOps([]collab.Op{valid})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	c.write(collab.EncodeClientOps(first))
 	c.write(collab.EncodeClientOps(second))
 	select {
 	case <-c.done:
-	case <-time.After(5 * time.Second): t.Fatal("connection remained open after rejection")
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection remained open after rejection")
 	}
 	if head, err := st.Head(context.Background(), docID); err != nil || head != 2 {
 		t.Fatalf("later legacy batch was processed after rejected batch: head=%d err=%v", head, err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.errors) != 1 || c.errors[0] != "not_ready" { t.Fatalf("unexpected errors: %v", c.errors) }
+	if len(c.errors) != 1 || c.errors[0] != "not_ready" {
+		t.Fatalf("unexpected errors: %v", c.errors)
+	}
 }

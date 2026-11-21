@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-ts-sdks:
@@ -24,12 +25,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm test:sdk:pack
+      - run: pnpm test:sdk:coverage
       - run: node benchmarks/run-benchmarks.mjs
       - name: Pack all 13 SDK tarballs
         run: |
           mkdir -p release-tarballs
-          for pkg in ooxml collab sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk render-gpu sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
+          for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
             pnpm --filter "@jiange/${pkg}" pack --pack-destination ../../release-tarballs
+          done
+      - name: Publish npm packages on sdk-v* tags (when NPM_TOKEN is configured)
+        if: startsWith(github.ref, 'refs/tags/sdk-v') && env.NODE_AUTH_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
+            pnpm --filter "@jiange/${pkg}" publish --access public --no-git-checks --provenance
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -64,12 +74,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: cli/go.mod
-      - run: go test -count=1 -race ./...
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -count=1 -race -cover ./...
       - name: Cross-compile static binary
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          EXT: ${{ matrix.ext }}
         run: |
           mkdir -p dist
           go build -trimpath -ldflags="-s -w" -o "dist/jiange-${GOOS}-${GOARCH}${EXT}" ./cmd/jiange
@@ -79,16 +92,42 @@ jobs:
           name: jiange-cli-${{ matrix.goos }}-${{ matrix.goarch }}
           path: cli/dist/
 
-  verify-go-sdk:
+  verify-go-sdks:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdk/go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: sdk/go/go.mod
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test -count=1 -race -cover ./...
+      - working-directory: sdk/go
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -count=1 -race -cover ./...
+      - working-directory: sdk/go-pgstore
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -count=1 -race -cover ./...
+
+  publish-github-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-ts-sdks, build-go-cli, verify-go-sdks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SHA256 checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "${TAG}" release-assets/* \
+            --title "Jiange ${TAG}" \
+            --generate-notes

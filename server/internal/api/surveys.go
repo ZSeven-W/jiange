@@ -259,16 +259,16 @@ func (s *Server) setSurveyStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type surveyQuestionStat struct {
-	QuestionID  string                    `json:"questionId"`
-	Title       string                    `json:"title"`
-	Type        string                    `json:"type"`
-	Answered    int                       `json:"answered"`
-	OptionCounts map[string]int           `json:"optionCounts,omitempty"`
-	Average     float64                   `json:"average,omitempty"`
-	RatingDist  map[string]int            `json:"ratingDist,omitempty"`
+	QuestionID   string                    `json:"questionId"`
+	Title        string                    `json:"title"`
+	Type         string                    `json:"type"`
+	Answered     int                       `json:"answered"`
+	OptionCounts map[string]int            `json:"optionCounts,omitempty"`
+	Average      float64                   `json:"average,omitempty"`
+	RatingDist   map[string]int            `json:"ratingDist,omitempty"`
 	MatrixCounts map[string]map[string]int `json:"matrixCounts,omitempty"`
-	RankAvg     map[string]float64        `json:"rankAvg,omitempty"`
-	TextSamples []string                  `json:"textSamples,omitempty"`
+	RankAvg      map[string]float64        `json:"rankAvg,omitempty"`
+	TextSamples  []string                  `json:"textSamples,omitempty"`
 }
 
 func (s *Server) getSurveyStats(w http.ResponseWriter, r *http.Request) {

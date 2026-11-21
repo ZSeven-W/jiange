@@ -227,11 +227,11 @@ type fieldInput struct {
 	TargetTableID *int64    `json:"targetTableId"`
 	Name          *string   `json:"name"`
 	Type          *string   `json:"type"`
-	Options      *[]string `json:"options"`
-	OptionColors *[]int    `json:"optionColors"`
-	Description  *string   `json:"description"`
-	Formula      *string   `json:"formula"`
-	Position     *float64  `json:"position"`
+	Options       *[]string `json:"options"`
+	OptionColors  *[]int    `json:"optionColors"`
+	Description   *string   `json:"description"`
+	Formula       *string   `json:"formula"`
+	Position      *float64  `json:"position"`
 	// OptionRenames maps old→new select option names so a rename keeps the
 	// records that held the old value (otherwise removed options are cleared).
 	OptionRenames map[string]string `json:"optionRenames"`

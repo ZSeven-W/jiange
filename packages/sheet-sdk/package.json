@@ -1,7 +1,6 @@
 {
   "name": "@jiange/sheet-sdk",
   "version": "0.2.0",
-  "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "sideEffects": false,
@@ -32,33 +31,98 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
+    "access": "public",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
-      ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-      "./types": { "types": "./dist/types.d.ts", "import": "./dist/types.js" },
-      "./grid": { "types": "./dist/grid.d.ts", "import": "./dist/grid.js" },
-      "./formula": { "types": "./dist/formula.d.ts", "import": "./dist/formula.js" },
-      "./formula-ast": { "types": "./dist/formula-ast.d.ts", "import": "./dist/formula-ast.js" },
-      "./formula-functions": { "types": "./dist/formula-functions.d.ts", "import": "./dist/formula-functions.js" },
-      "./formula-engine": { "types": "./dist/formula-engine.d.ts", "import": "./dist/formula-engine.js" },
-      "./numfmt": { "types": "./dist/numfmt.d.ts", "import": "./dist/numfmt.js" },
-      "./csv": { "types": "./dist/csv.d.ts", "import": "./dist/csv.js" },
-      "./tsv": { "types": "./dist/tsv.d.ts", "import": "./dist/tsv.js" },
-      "./clipboard": { "types": "./dist/clipboard.d.ts", "import": "./dist/clipboard.js" },
-      "./rules": { "types": "./dist/rules.d.ts", "import": "./dist/rules.js" },
-      "./analytics": { "types": "./dist/analytics.d.ts", "import": "./dist/analytics.js" },
-      "./collab": { "types": "./dist/collab.d.ts", "import": "./dist/collab.js" },
-      "./xlsx": { "types": "./dist/xlsx.d.ts", "import": "./dist/xlsx.js" },
-      "./xlsxRead": { "types": "./dist/xlsx-read.d.ts", "import": "./dist/xlsx-read.js" },
-      "./xlsx-read": { "types": "./dist/xlsx-read.d.ts", "import": "./dist/xlsx-read.js" },
-      "./workbook-xlsx": { "types": "./dist/workbook-xlsx.d.ts", "import": "./dist/workbook-xlsx.js" },
-      "./workbook": { "types": "./dist/workbook.d.ts", "import": "./dist/workbook.js" },
-      "./ai-tools": { "types": "./dist/ai-tools.d.ts", "import": "./dist/ai-tools.js" },
-      "./worker": { "types": "./dist/worker.d.ts", "import": "./dist/worker.js" }
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./types": {
+        "types": "./dist/types.d.ts",
+        "import": "./dist/types.js"
+      },
+      "./grid": {
+        "types": "./dist/grid.d.ts",
+        "import": "./dist/grid.js"
+      },
+      "./formula": {
+        "types": "./dist/formula.d.ts",
+        "import": "./dist/formula.js"
+      },
+      "./formula-ast": {
+        "types": "./dist/formula-ast.d.ts",
+        "import": "./dist/formula-ast.js"
+      },
+      "./formula-functions": {
+        "types": "./dist/formula-functions.d.ts",
+        "import": "./dist/formula-functions.js"
+      },
+      "./formula-engine": {
+        "types": "./dist/formula-engine.d.ts",
+        "import": "./dist/formula-engine.js"
+      },
+      "./numfmt": {
+        "types": "./dist/numfmt.d.ts",
+        "import": "./dist/numfmt.js"
+      },
+      "./csv": {
+        "types": "./dist/csv.d.ts",
+        "import": "./dist/csv.js"
+      },
+      "./tsv": {
+        "types": "./dist/tsv.d.ts",
+        "import": "./dist/tsv.js"
+      },
+      "./clipboard": {
+        "types": "./dist/clipboard.d.ts",
+        "import": "./dist/clipboard.js"
+      },
+      "./rules": {
+        "types": "./dist/rules.d.ts",
+        "import": "./dist/rules.js"
+      },
+      "./analytics": {
+        "types": "./dist/analytics.d.ts",
+        "import": "./dist/analytics.js"
+      },
+      "./collab": {
+        "types": "./dist/collab.d.ts",
+        "import": "./dist/collab.js"
+      },
+      "./xlsx": {
+        "types": "./dist/xlsx.d.ts",
+        "import": "./dist/xlsx.js"
+      },
+      "./xlsxRead": {
+        "types": "./dist/xlsx-read.d.ts",
+        "import": "./dist/xlsx-read.js"
+      },
+      "./xlsx-read": {
+        "types": "./dist/xlsx-read.d.ts",
+        "import": "./dist/xlsx-read.js"
+      },
+      "./workbook-xlsx": {
+        "types": "./dist/workbook-xlsx.d.ts",
+        "import": "./dist/workbook-xlsx.js"
+      },
+      "./workbook": {
+        "types": "./dist/workbook.d.ts",
+        "import": "./dist/workbook.js"
+      },
+      "./ai-tools": {
+        "types": "./dist/ai-tools.d.ts",
+        "import": "./dist/ai-tools.js"
+      },
+      "./worker": {
+        "types": "./dist/worker.d.ts",
+        "import": "./dist/worker.js"
+      }
     }
   },
   "scripts": {
@@ -72,5 +136,24 @@
   },
   "dependencies": {
     "@jiange/ooxml": "workspace:*"
-  }
+  },
+  "homepage": "https://github.com/ZSeven-W/jiange#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZSeven-W/jiange.git",
+    "directory": "packages/sheet-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/ZSeven-W/jiange/issues"
+  },
+  "keywords": [
+    "jiange",
+    "spreadsheet",
+    "excel",
+    "xlsx",
+    "formula-engine",
+    "csv",
+    "ai-tools",
+    "headless"
+  ]
 }

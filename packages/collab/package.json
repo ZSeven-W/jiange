@@ -1,7 +1,6 @@
 {
   "name": "@jiange/collab",
   "version": "0.2.0",
-  "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "sideEffects": false,
@@ -27,9 +26,11 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
+    "access": "public",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
@@ -54,5 +55,23 @@
         "import": "./dist/ai-agent.js"
       }
     }
-  }
+  },
+  "homepage": "https://github.com/ZSeven-W/jiange#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZSeven-W/jiange.git",
+    "directory": "packages/collab"
+  },
+  "bugs": {
+    "url": "https://github.com/ZSeven-W/jiange/issues"
+  },
+  "keywords": [
+    "jiange",
+    "crdt",
+    "collaboration",
+    "sync",
+    "undo",
+    "realtime",
+    "ai-agent"
+  ]
 }

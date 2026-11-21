@@ -33,12 +33,12 @@ type Server struct {
 	EnableConditionalCancel bool
 	Iterations              int // PBKDF2 iterations; tests lower this
 	Now                     func() time.Time
-	Hub                     *syncsrv.Hub   // nil disables /api/sync
+	Hub                     *syncsrv.Hub    // nil disables /api/sync
 	BtHub                   *btsync.Hub     // nil disables base realtime
 	SheetHub                *sheetsync.Hub  // nil disables sheet realtime
 	SlidesHub               *slidessync.Hub // nil disables slides realtime
 	Blobs                   blob.Store      // nil disables attachments
-	WebUI                   http.Handler   // embedded frontend; nil serves nothing at /
+	WebUI                   http.Handler    // embedded frontend; nil serves nothing at /
 	// PreviewAllow overrides the link-preview address check (tests only).
 	PreviewAllow func(netip.Addr) bool
 	// AISecret (32 bytes, from JIANGE_SECRET_KEY) encrypts saved AI API keys; nil disables saving.
@@ -279,39 +279,39 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/sheets/{id}/comments/{cid}":      s.deleteSheetComment,
 
 		// 企业组织架构（成员角色 / 部门 / 用户组）
-		"GET /api/workspaces/{wsId}/org":                          s.getWorkspaceOrg,
-		"POST /api/workspaces/{wsId}/members":                     s.upsertWorkspaceMember,
-		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":    s.revokeWorkspaceInvitation,
-		"GET /api/invitations":                                    s.listMyInvitations,
-		"POST /api/invitations/{inviteId}/accept":                 s.respondInvitation(true),
-		"POST /api/invitations/{inviteId}/decline":                s.respondInvitation(false),
-		"POST /api/workspaces/{wsId}/departments":                 s.createDepartment,
-		"PATCH /api/workspaces/{wsId}/departments/{deptId}":       s.updateDepartment,
-		"DELETE /api/workspaces/{wsId}/departments/{deptId}":      s.deleteDepartment,
-		"PUT /api/workspaces/{wsId}/departments/{deptId}/members": s.setDepartmentMember,
-		"POST /api/workspaces/{wsId}/groups":                      s.createUserGroup,
-		"PATCH /api/workspaces/{wsId}/groups/{groupId}":           s.updateUserGroup,
-		"DELETE /api/workspaces/{wsId}/groups/{groupId}":          s.deleteUserGroup,
-		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":     s.setUserGroupMember,
-		"GET /api/workspaces/{wsId}/org/sync-sources":                  s.listOrgSyncState,
-		"POST /api/workspaces/{wsId}/org/sync-sources":                 s.createOrgSyncSource,
-		"PATCH /api/workspaces/{wsId}/org/sync-sources/{sourceId}":     s.updateOrgSyncSource,
-		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":    s.deleteOrgSyncSource,
-		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run":  s.runOrgDirectorySync,
+		"GET /api/workspaces/{wsId}/org":                              s.getWorkspaceOrg,
+		"POST /api/workspaces/{wsId}/members":                         s.upsertWorkspaceMember,
+		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":        s.revokeWorkspaceInvitation,
+		"GET /api/invitations":                                        s.listMyInvitations,
+		"POST /api/invitations/{inviteId}/accept":                     s.respondInvitation(true),
+		"POST /api/invitations/{inviteId}/decline":                    s.respondInvitation(false),
+		"POST /api/workspaces/{wsId}/departments":                     s.createDepartment,
+		"PATCH /api/workspaces/{wsId}/departments/{deptId}":           s.updateDepartment,
+		"DELETE /api/workspaces/{wsId}/departments/{deptId}":          s.deleteDepartment,
+		"PUT /api/workspaces/{wsId}/departments/{deptId}/members":     s.setDepartmentMember,
+		"POST /api/workspaces/{wsId}/groups":                          s.createUserGroup,
+		"PATCH /api/workspaces/{wsId}/groups/{groupId}":               s.updateUserGroup,
+		"DELETE /api/workspaces/{wsId}/groups/{groupId}":              s.deleteUserGroup,
+		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":         s.setUserGroupMember,
+		"GET /api/workspaces/{wsId}/org/sync-sources":                 s.listOrgSyncState,
+		"POST /api/workspaces/{wsId}/org/sync-sources":                s.createOrgSyncSource,
+		"PATCH /api/workspaces/{wsId}/org/sync-sources/{sourceId}":    s.updateOrgSyncSource,
+		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":   s.deleteOrgSyncSource,
+		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run": s.runOrgDirectorySync,
 
 		// 独立知识库空间（Wiki）
-		"GET /api/workspaces/{wsId}/wiki-spaces":       s.listWikiSpaces,
-		"POST /api/workspaces/{wsId}/wiki-spaces":      s.postWikiSpace,
-		"GET /api/wiki/spaces/{spaceId}":               s.getWikiSpace,
-		"PATCH /api/wiki/spaces/{spaceId}":             s.patchWikiSpace,
-		"DELETE /api/wiki/spaces/{spaceId}":            s.deleteWikiSpace,
-		"PUT /api/wiki/spaces/{spaceId}/grants":        s.putWikiSpaceGrant,
-		"POST /api/wiki/spaces/{spaceId}/nodes":               s.postWikiNode,
-		"POST /api/wiki/spaces/{spaceId}/nodes/{id}/reorder":  s.postWikiNodeReorder,
-		"POST /api/wiki/spaces/{spaceId}/import-drive":        s.postWikiImportDrive,
-		"POST /api/wiki/spaces/{spaceId}/shortcuts":           s.postWikiShortcut,
-		"DELETE /api/wiki/spaces/{spaceId}/shortcuts/{sid}":   s.deleteWikiShortcut,
-		"POST /api/wiki/nodes/{id}/move":                      s.postWikiNodeMove,
+		"GET /api/workspaces/{wsId}/wiki-spaces":             s.listWikiSpaces,
+		"POST /api/workspaces/{wsId}/wiki-spaces":            s.postWikiSpace,
+		"GET /api/wiki/spaces/{spaceId}":                     s.getWikiSpace,
+		"PATCH /api/wiki/spaces/{spaceId}":                   s.patchWikiSpace,
+		"DELETE /api/wiki/spaces/{spaceId}":                  s.deleteWikiSpace,
+		"PUT /api/wiki/spaces/{spaceId}/grants":              s.putWikiSpaceGrant,
+		"POST /api/wiki/spaces/{spaceId}/nodes":              s.postWikiNode,
+		"POST /api/wiki/spaces/{spaceId}/nodes/{id}/reorder": s.postWikiNodeReorder,
+		"POST /api/wiki/spaces/{spaceId}/import-drive":       s.postWikiImportDrive,
+		"POST /api/wiki/spaces/{spaceId}/shortcuts":          s.postWikiShortcut,
+		"DELETE /api/wiki/spaces/{spaceId}/shortcuts/{sid}":  s.deleteWikiShortcut,
+		"POST /api/wiki/nodes/{id}/move":                     s.postWikiNodeMove,
 	} {
 		mux.Handle(pat, s.requireUser(h))
 	}

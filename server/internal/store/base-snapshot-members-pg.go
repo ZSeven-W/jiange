@@ -38,10 +38,14 @@ func pgVisibleMemberNames(ctx context.Context, db pgBaseSnapshotQueryer, workspa
 		members, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (struct {
 			id   int64
 			name string
-		}, error) { var u struct {
-			id   int64
-			name string
-		}; err := row.Scan(&u.id, &u.name); return u, err })
+		}, error) {
+			var u struct {
+				id   int64
+				name string
+			}
+			err := row.Scan(&u.id, &u.name)
+			return u, err
+		})
 		if err != nil {
 			return nil, err
 		}

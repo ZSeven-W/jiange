@@ -68,7 +68,9 @@ func runBaseScheduleUndoAPISuite(t *testing.T, st store.Store) {
 	if code != http.StatusCreated {
 		t.Fatalf("create base: %d %s", code, raw)
 	}
-	var base struct{ ID int64 `json:"id"` }
+	var base struct {
+		ID int64 `json:"id"`
+	}
 	_ = json.Unmarshal(raw, &base)
 	bPath := fmt.Sprintf("/api/bases/%d", base.ID)
 

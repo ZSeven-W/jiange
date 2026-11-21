@@ -1,23 +1,95 @@
 # @jiange/sheet-sdk
 
-Lightweight, zero-DOM, AI-native headless spreadsheet SDK for Node.js, Edge runtimes, Web Workers, and browsers. Depends only on `@jiange/ooxml` (zero third-party runtime dependencies).
+AI-native headless Spreadsheet engine (`v0.2.0`): incremental AST + DAG formula engine (**144 Excel functions** + dynamic arrays + Web Worker protocol), bounded DEFLATE XLSX / CSV / TSV I/O, data validations, conditional formatting, charts, pivot tables, and self-describing AI tools.
 
-## Capabilities
+Independently installable with zero UI, framework, or cross-domain SDK bloat.
 
-- **AI-Native `Workbook` Facade (`@jiange/sheet-sdk/workbook`, `@jiange/sheet-sdk/ai-tools`)**:
-  - `Workbook.create()`, `Workbook.fromSnapshot()`, `Workbook.fromXlsx()`, `Workbook.fromCsv()`, `Workbook.fromTsv()`.
-  - Token-budgeted semantic inspection (`wb.inspect({ detail, maxTokens, focus, cursor })`), targeted queries (`wb.query`), declarative atomic batch patching with dry-run & diff (`wb.apply(ops, { dryRun })`), deterministic auditing (`wb.verify()`), and built-in undo/redo.
-  - Self-describing JSON Schema tool definitions and executor (`createSheetTools(wb)`) ready for OpenAI, Gemini, Anthropic, and MCP tool calling.
-- **Incremental AST + DAG Formula Engine (`@jiange/sheet-sdk/formula-engine`, `/formula-ast`, `/formula-functions`, `/worker`)**:
-  - 130+ Excel functions across math, statistics, conditional aggregations (`SUMIFS`, `COUNTIFS`, `AVERAGEIFS`, `MAXIFS`, `MINIFS`, `SUMPRODUCT`), lookup & reference (`VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `XMATCH`, `OFFSET`, `INDIRECT`, `TRANSPOSE`), logic, text, date/time, financial (`PMT`, `PV`, `FV`, `NPV`, `IRR`, `RATE`, `NPER`), and dynamic arrays (`FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`) with `#SPILL!` tracking.
-  - Whole-column/row references (`A:A`, `1:1`), named ranges (`definedNames`), custom function registration (`registerFunction`), bidirectional precedent/dependent graph with range watchers for dirty-subgraph incremental recalculation, and a runtime-agnostic Worker protocol (`createFormulaWorkerHost` / `FormulaWorkerClient`).
-- **Rules, Analytics & Collaboration Primitives (`@jiange/sheet-sdk/rules`, `/analytics`, `/collab`)**:
-  - Data validation, 10-operator conditional formatting, protected range checks, chart dataset extraction, multi-dimensional pivot table computation & materialization, field-level style patches, remote delta patching, and conflict resolution helpers.
-- **Bounded OOXML XLSX, CSV & TSV I/O (`@jiange/sheet-sdk/xlsx`, `/xlsx-read`, `/workbook-xlsx`, `/csv`, `/tsv`)**:
-  - Sync `writeXlsx` (STORE) and async `writeXlsxAsync` (DEFLATE + `sharedStrings.xml` deduplication), multi-sheet cells, formulas, shared-formula expansion on read, ISO dates, styles, number formats (`numfmt`), merges, frozen panes, column widths, row heights, defined names, data validations, hyperlinks, configurable safety limits, and explicit format-loss `warnings`.
+## Install
 
-Build `@jiange/ooxml` first, then `pnpm --filter @jiange/sheet-sdk build`; `pnpm pack` emits ESM and TypeScript declarations.
+```bash
+npm install @jiange/sheet-sdk
+```
+
+- **Runtime dependencies**: `@jiange/ooxml` (0 third-party dependencies)
+- **Bundle size**: ~72.6 KB gzip
+
+## Features
+
+- **AI-Native `Workbook` Facade**: `Workbook.create`, `fromXlsx`, `fromCsv`, `fromTsv`, `fromSnapshot`, token-budgeted `inspect()`, targeted `query()`, atomic `apply(ops, { dryRun })` with diff + `undoToken`, deterministic `verify()`, and built-in `undo()`/`redo()`.
+- **Self-Describing AI Toolkit (`createSheetTools`)**: 6 JSON-Schema tools (`sheet_inspect`, `sheet_query`, `sheet_apply`, `sheet_verify`, `sheet_undo`, `sheet_export_csv`) ready for OpenAI, Gemini, Anthropic, and MCP.
+- **Incremental AST + DAG Formula Engine (`144` built-in functions)**:
+  - Math, stats, conditional aggregation (`SUMIFS`, `COUNTIFS`, `AVERAGEIFS`, `MAXIFS`, `MINIFS`, `SUMPRODUCT`), lookup & reference (`VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `XMATCH`, `OFFSET`, `INDIRECT`, `TRANSPOSE`), logic, text, date/time, financial (`PMT`, `PV`, `FV`, `NPV`, `IRR`, `RATE`, `NPER`), and dynamic arrays (`FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`) with `#SPILL!` tracking.
+  - Whole-column/row refs (`A:A`, `1:1`), `defineName()`, custom `registerFunction()`, bidirectional `getPrecedents()`/`getDependents()`, and runtime-agnostic Worker protocol (`createFormulaWorkerHost` / `FormulaWorkerClient`).
+- **OOXML XLSX, CSV & TSV**: Sync `writeXlsx` (STORE) and async `writeXlsxAsync` (DEFLATE + `sharedStrings.xml`), shared-formula expansion on read, styles, `numfmt`, merges, frozen panes, row/col sizes, defined names, data validations, conditional formats, hyperlinks, comments, and configurable safety limits.
+- **Rules, Analytics & Collaboration Helpers**: Data validation, 10-operator conditional formatting, protected ranges, chart extraction, pivot table materialization, and remote delta patching.
+
+## Quickstart
+
+```ts
+import { Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from "@jiange/sheet-sdk";
+
+const wb = Workbook.fromCsv("Item,Qty,Price\nPro,120,49\nEnterprise,25,299\n", "Sales");
+const tools = createSheetTools(wb);
+
+// Dry-run preview before mutating
+const preview = tools.execute("sheet_apply", {
+  dryRun: true,
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Sales",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+// Commit atomically, verify zero formula errors, and export DEFLATE XLSX
+tools.execute("sheet_apply", {
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Sales",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+console.log(wb.sheet("Sales").getValue("D4")); // 13355
+console.log(wb.verify().length, SUPPORTED_FORMULA_FUNCTIONS.length); // 0, 144
+const xlsxBytes = await wb.toXlsxAsync();
+void [preview, xlsxBytes];
+```
+
+## Subpath Exports
+
+| Subpath | Contents |
+| --- | --- |
+| `@jiange/sheet-sdk` | Full barrel export (`Workbook`, `createSheetTools`, formulas, XLSX, CSV/TSV, rules, analytics, worker) |
+| `@jiange/sheet-sdk/workbook` | `Workbook`, `WorksheetProxy`, `WorkbookOp`, `WorkbookInspectSummary` |
+| `@jiange/sheet-sdk/ai-tools` | `createSheetTools` |
+| `@jiange/sheet-sdk/formula-engine` | `IncrementalFormulaEngine`, `calculateWorkbook`, `evalScalarRaw`, sorting/filtering helpers |
+| `@jiange/sheet-sdk/formula-functions` | `SUPPORTED_FORMULA_FUNCTIONS` (144 Excel functions) |
+| `@jiange/sheet-sdk/formula-ast` | Formula tokenizer & AST parser |
+| `@jiange/sheet-sdk/formula` | Legacy `calculateSheet`, `translateSheetFormula` |
+| `@jiange/sheet-sdk/worker` | `createFormulaWorkerHost`, `FormulaWorkerClient` |
+| `@jiange/sheet-sdk/xlsx` / `./xlsx-read` / `./workbook-xlsx` | `writeXlsx`, `writeXlsxAsync`, `readXlsx`, `XlsxError`, `resolveXlsxLimits` *(deprecated alias: `./xlsxRead`)* |
+| `@jiange/sheet-sdk/csv` / `./tsv` / `./numfmt` / `./clipboard` | RFC 4180 CSV, TSV, Excel number formatter, clipboard codec |
+| `@jiange/sheet-sdk/rules` / `./analytics` / `./collab` / `./grid` / `./types` | Data validation, conditional format, charts, pivots, collab delta helpers, A1 grid math, types |
+
+## Documentation
+
+Full SDK documentation, benchmarks, and AI tool schemas are available at [`https://github.com/ZSeven-W/jiange`](https://github.com/ZSeven-W/jiange) (see `sdk-docs/headless-sdks.md` and `sdk-docs/ai-native-protocol.md`).
 
 ## License
 
-Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See `LICENSE` (bundled in the package archive; repository root `LICENSE`) for full terms.
+Free for personal and commercial use. If an enterprise modifies or creates derivative works from this SDK, it must publicly attribute Jiange SDK (`https://github.com/ZSeven-W/jiange`) as the source. See the bundled `LICENSE` file (repository root `LICENSE`) for full terms.
