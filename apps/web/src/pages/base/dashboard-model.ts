@@ -1,17 +1,15 @@
+import {
+  DASHBOARD_PALETTE,
+  isGroupableField,
+  isNumericField,
+  type GroupedBucket,
+} from "@jiange/base-sdk/dashboard";
 import type { BaseRecord, DashboardMetric, DashboardWidget, DashboardWidgetType, Field, User } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { displayValue, memberName, optionColor, personIDs } from "./registry";
 
-export const CHART_PALETTE = [
-  "#3370ff",
-  "#00b42a",
-  "#ff8800",
-  "#7b56d9",
-  "#f54a45",
-  "#14b8a6",
-  "#f59e0b",
-  "#6366f1",
-] as const;
+export { isGroupableField, isNumericField, type GroupedBucket };
+export const CHART_PALETTE = DASHBOARD_PALETTE;
 
 export const WIDGET_TYPE_OPTIONS: { type: DashboardWidgetType; label: string; desc: string }[] = [
   { type: "metric", label: "指标卡", desc: "关键指标大数字与占比" },
@@ -37,17 +35,6 @@ export interface MetricSummary {
   progressPct?: number;
 }
 
-export interface GroupedBucket {
-  key: string;
-  label: string;
-  count: number;
-  value: number;
-  sum: number;
-  avg: number | null;
-  sharePct: number;
-  color: string;
-}
-
 export interface GroupedSeries {
   buckets: GroupedBucket[];
   totalValue: number;
@@ -64,14 +51,6 @@ export function fmtDashNum(n: number): string {
 
 export function makeWidgetId(): string {
   return `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-export function isGroupableField(f: Field): boolean {
-  return f.type === "select" || f.type === "multi_select" || f.type === "person" || f.type === "date" || f.type === "checkbox" || f.type === "text";
-}
-
-export function isNumericField(f: Field): boolean {
-  return f.type === "number" || f.type === "rating";
 }
 
 /** Generate sensible initial widgets from the visible fields when a Base has no persisted dashboard yet. */

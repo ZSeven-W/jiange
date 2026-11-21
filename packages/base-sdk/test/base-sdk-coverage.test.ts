@@ -316,12 +316,12 @@ describe("@jiange/base-sdk full branch coverage", () => {
   });
 
   it("covers all dashboard helpers, metrics, and grouped series branches", () => {
-    // isGroupableField all types & false; isNumericField
+    // isGroupableField all types & false; isNumericField (also accepts minimal { type } descriptors)
     for (const type of ["select", "multi_select", "person", "date", "checkbox", "text"] as const) {
-      expect(isGroupableField({ id: 1, tableId: 1, name: type, type, position: 1000 })).toBe(true);
+      expect(isGroupableField({ type })).toBe(true);
     }
     expect(isGroupableField({ id: 1, tableId: 1, name: "N", type: "number", position: 1000 })).toBe(false);
-    expect(isNumericField({ id: 1, tableId: 1, name: "R", type: "rating", position: 1000 })).toBe(true);
+    expect(isNumericField({ type: "rating" })).toBe(true);
     expect(isNumericField({ id: 1, tableId: 1, name: "T", type: "text", position: 1000 })).toBe(false);
 
     // defaultDashboardWidgets without numeric field (select + date use metric: "count") and minimal table

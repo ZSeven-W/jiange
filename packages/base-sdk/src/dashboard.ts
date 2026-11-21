@@ -41,7 +41,7 @@ export interface GroupedSeries {
   metric: DashboardMetric;
 }
 
-export function isGroupableField(f: BaseField): boolean {
+export function isGroupableField(f: Pick<BaseField, "type">): boolean {
   return (
     f.type === "select" ||
     f.type === "multi_select" ||
@@ -52,7 +52,7 @@ export function isGroupableField(f: BaseField): boolean {
   );
 }
 
-export function isNumericField(f: BaseField): boolean {
+export function isNumericField(f: Pick<BaseField, "type">): boolean {
   return f.type === "number" || f.type === "rating";
 }
 
