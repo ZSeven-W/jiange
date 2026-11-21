@@ -89,6 +89,13 @@ describe("@jiange/sheet-ui (WebGPU/WebGL2 + Pooled Virtual Grid)", () => {
 
     ctrl.resizeRow(2, 42);
     ctrl.resizeCol(2, 140);
+    // Live row filtering hides non-matching rows in O(log N) Fenwick tree
+    sh.setFilter({ enabled: true, headerRow: 0, rules: { "0": { values: ["GPU"] } } });
+    ctrl.render();
+    expect(renderer.grid.rows.getSize(1)).toBe(0);
+    expect(renderer.grid.rows.getSize(2)).toBeGreaterThan(0);
+    sh.clearFilter();
+    ctrl.render();
     const scrolled = ctrl.scrollBy(120, 300);
     expect(scrolled.grid.rowStart).toBeGreaterThan(5);
 

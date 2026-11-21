@@ -25,6 +25,8 @@ import {
   evaluateSheetConditionalFormat,
   extractChartDataset,
   formatCellDisplay,
+  getVisibleRowIndices,
+  type EvalValue,
   type SheetWorksheet,
   type Workbook,
 } from "@jiange/sheet-sdk";
@@ -143,8 +145,8 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
     return Math.max(1, this.viewportHeight - this.theme.headerHeight);
   }
 
-  /** Sync variable row heights and column widths into the sparse O(log N) Fenwick trees. */
-  syncDimensions(ws: SheetWorksheet, workbookVersion: number): void {
+  /** Sync variable row heights, active filter visibility, and column widths into sparse O(log N) Fenwick trees. */
+  syncDimensions(ws: SheetWorksheet, workbookVersion: number, evalMap?: Record<string, EvalValue>): void {
     if (this.syncedSheetId === ws.id && this.syncedVersion === workbookVersion) return;
     this.syncedSheetId = ws.id;
     this.syncedVersion = workbookVersion;
@@ -158,6 +160,12 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
       if (r.size === 0) this.grid.rows.setSize(idx, 0);
       else if (r.size && r.size > 0) this.grid.rows.setSize(idx, r.size);
     });
+    if (ws.filter?.enabled && ws.filter.rules && Object.keys(ws.filter.rules).length > 0 && evalMap) {
+      const visible = new Set(getVisibleRowIndices(ws, evalMap));
+      for (let idx = 0; idx < ws.rows.length; idx++) {
+        if (!visible.has(idx)) this.grid.rows.setSize(idx, 0);
+      }
+    }
     ws.columns.forEach((c, idx) => {
       if (c.size === 0) this.grid.cols.setSize(idx, 0);
       else if (c.size && c.size > 0) this.grid.cols.setSize(idx, c.size);
@@ -198,7 +206,10 @@ export class SheetGpuRenderer<T extends PoolableElement = PoolableElement> {
   ): SheetFrameResult {
     const proxy = workbook.sheet(sheetIndexOrName);
     const ws = workbook._getWorksheetById(proxy.id)!;
-    this.syncDimensions(ws, workbook.version);
+    const filterEvalMap = ws.filter?.enabled && ws.filter.rules && Object.keys(ws.filter.rules).length > 0
+      ? workbook._getSheetEvalMap(ws.id)
+      : undefined;
+    this.syncDimensions(ws, workbook.version, filterEvalMap);
 
     const { cellByKey } = buildWorksheetGridMap(ws);
     const headerX = this.theme.rowHeaderWidth;

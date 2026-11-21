@@ -13,6 +13,7 @@ import {
   getVisibleRowIndices,
   IncrementalFormulaEngine,
   normalizePointForMerge,
+  shiftFormulaRowRefs,
 } from "../src/formula-engine.js";
 import { SUPPORTED_FORMULA_FUNCTIONS } from "../src/formula-functions.js";
 import { dateToSerial, formatCellDisplay, formatExcelNumber, parseDateToSerial } from "../src/numfmt.js";
@@ -246,6 +247,12 @@ describe("AST + DAG incremental formula engine (130+ Excel functions)", () => {
     expect(getVisibleRowIndices(ws, evalMap)).toEqual([0, 2]);
     ws.merges = [];
     expect(computeSortedRowWrites(ws, evalMap, 1, true, 0).length).toBeGreaterThan(0);
+
+    // Formula relative row shifting during sort preserves strings, locked $rows, and produces #REF! on underflow
+    expect(shiftFormulaRowRefs("plain", 2)).toBe("plain");
+    expect(shiftFormulaRowRefs("=C2*D2", 0)).toBe("=C2*D2");
+    expect(shiftFormulaRowRefs('=IF(E11>=55000,"Tier-1","Std")+SUM($E$2:$E$11)', -9)).toBe('=IF(E2>=55000,"Tier-1","Std")+SUM($E$2:$E$11)');
+    expect(shiftFormulaRowRefs("=A2+B1", -2)).toBe("=#REF!+#REF!");
 
     // Number formatting & CSV
     const s = parseDateToSerial("2026-11-21")!;

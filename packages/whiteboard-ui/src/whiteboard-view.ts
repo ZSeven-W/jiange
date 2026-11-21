@@ -104,7 +104,17 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
 
   fitToScreen(padding = 48): WhiteboardFrameResult {
     const g = this.board.toGraph();
-    if (g.nodes.length === 0) {
+    const boxes: Array<{ x: number; y: number; w: number; h: number }> = g.nodes.map((n) => ({
+      x: n.x,
+      y: n.y,
+      w: n.w,
+      h: n.h,
+    }));
+    if (g.mind && g.mind.length > 0) {
+      const positioned = layoutMindTopics(g.mind, new Set(g.mindCollapsed ?? []), g.mindStyles, g.mindDescriptions, g.mindDescriptionStyles);
+      for (const item of positioned) boxes.push({ x: item.x, y: item.y, w: item.w, h: item.h });
+    }
+    if (boxes.length === 0) {
       this.camera.x = 0;
       this.camera.y = 0;
       this.camera.zoom = 1;
@@ -114,11 +124,11 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const n of g.nodes) {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.w);
-      maxY = Math.max(maxY, n.y + n.h);
+    for (const b of boxes) {
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w);
+      maxY = Math.max(maxY, b.y + b.h);
     }
     const contentW = Math.max(1, maxX - minX);
     const contentH = Math.max(1, maxY - minY);

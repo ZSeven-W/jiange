@@ -873,6 +873,19 @@ export function getVisibleRowIndices(ws: SheetWorksheet, evalMap: Record<string,
   });
 }
 
+/** Shift relative row references in an Excel formula when a row moves by `rowDelta` (e.g. during sort). */
+export function shiftFormulaRowRefs(raw: string, rowDelta: number): string {
+  if (!raw.startsWith("=") || rowDelta === 0) return raw;
+  return raw.replace(
+    /"(?:""|[^"])*"|'(?:''|[^'])*'!|(?<![A-Za-z0-9_!])(\$?[A-Za-z]{1,3})(\$?)([1-9]\d*)(?![A-Za-z0-9_(])/g,
+    (match, colPart?: string, rowAbs?: string, rowDigits?: string) => {
+      if (!colPart || rowAbs === "$") return match;
+      const nextRow = Number(rowDigits) + rowDelta;
+      return nextRow < 1 ? "#REF!" : `${colPart}${nextRow}`;
+    },
+  );
+}
+
 export function computeSortedRowWrites(
   ws: SheetWorksheet,
   evalMap: Record<string, EvalValue>,
@@ -911,10 +924,11 @@ export function computeSortedRowWrites(
     const targetRow = dataRows[i];
     const srcRow = sortedIndices[i];
     if (targetRow === srcRow) continue;
+    const rowDelta = targetRow - srcRow;
     for (let c = 0; c < ws.columns.length; c++) {
       const targetCell = cellByKey.get(`${targetRow}:${c}`);
       const srcCell = cellByKey.get(`${srcRow}:${c}`);
-      const nextRaw = srcCell?.raw ?? "";
+      const nextRaw = shiftFormulaRowRefs(srcCell?.raw ?? "", rowDelta);
       const nextStyle = srcCell?.style ?? {};
       const curRaw = targetCell?.raw ?? "";
       const curStyle = targetCell?.style ?? {};

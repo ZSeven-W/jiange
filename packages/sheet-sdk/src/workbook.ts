@@ -27,6 +27,7 @@ import type {
   SheetConditionalFormat,
   SheetDataValidation,
   SheetDefinedName,
+  SheetFilterConfig,
   SheetHyperlink,
   SheetMerge,
   SheetPivotTable,
@@ -332,6 +333,23 @@ export class WorksheetProxy {
     ws.revision++;
     this.wb._bumpVersion();
     return this;
+  }
+
+  setFilter(filter: SheetFilterConfig): this {
+    const ws = this.ws;
+    ws.filter = {
+      enabled: Boolean(filter.enabled),
+      headerRow: filter.headerRow ?? 0,
+      rules: filter.rules ? { ...filter.rules } : {},
+      ...(filter.sort ? { sort: { ...filter.sort } } : {}),
+    };
+    ws.revision++;
+    this.wb._bumpVersion();
+    return this;
+  }
+
+  clearFilter(): this {
+    return this.setFilter({ enabled: false, headerRow: 0, rules: {} });
   }
 
   setColWidth(col: number | string, widthPx: number): this {

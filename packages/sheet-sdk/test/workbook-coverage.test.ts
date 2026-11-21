@@ -64,8 +64,13 @@ describe("workbook 100% branch coverage", () => {
     expect(() => s1.setRowHeight(-1, 20)).toThrow("Invalid row resize");
     expect(() => s1.setRowHeight(0, 0)).toThrow("Invalid row resize");
 
-    // sort invalid col
+    // sort invalid col & setFilter / clearFilter
     expect(() => s1.sort(999)).toThrow("Invalid sort column");
+    s1.setFilter({ enabled: true, rules: { "0": { query: "a" } }, sort: { col: 0, ascending: true } });
+    expect(wb._getWorksheetById(s1.id)?.filter.enabled).toBe(true);
+    s1.setFilter({ enabled: true });
+    s1.clearFilter();
+    expect(wb._getWorksheetById(s1.id)?.filter.enabled).toBe(false);
 
     // Deleted sheet proxy throws
     wb.deleteSheet("S2");

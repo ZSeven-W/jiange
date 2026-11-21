@@ -1,6 +1,12 @@
 import { GpuSurface, InstanceBatch, packColorRGBA } from "@jiange/render-gpu";
 import { GlyphAtlas } from "@jiange/render-gpu/glyph-atlas";
-import { Workbook, createSheetTools, sheetAddress } from "@jiange/sheet-sdk";
+import {
+  Workbook,
+  computePivotTable,
+  createSheetTools,
+  getVisibleRowIndices,
+  sheetAddress,
+} from "@jiange/sheet-sdk";
 import { mountSheetView } from "@jiange/sheet-ui";
 import { Document, createDocTools } from "@jiange/doc-sdk";
 import { mountDocView } from "@jiange/doc-ui";
@@ -169,45 +175,55 @@ function observeResize(target, onResize) {
   return () => ro.disconnect();
 }
 
+function downloadArtifact(data, filename, mime) {
+  const blob = data instanceof Uint8Array ? new Blob([data], { type: mime }) : new Blob([String(data)], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return blob.size;
+}
+
 // ---------------------------------------------------------------------------
 // Tab 1: Sheet (GPU + Virtual2D)
 // ---------------------------------------------------------------------------
 
 function buildDefaultWorkbook() {
   const wb = Workbook.create({
-    sheets: [{ name: "Revenue", rows: 60, cols: 12 }],
+    sheets: [
+      { name: "Revenue", rows: 60, cols: 12 },
+      { name: "KPI Summary", rows: 30, cols: 8 },
+    ],
   });
-  const s = wb.sheet(0);
+  const s = wb.sheet("Revenue");
   s.setFreeze(1, 1);
 
-  const widths = [148, 108, 86, 104, 118, 118, 108];
+  const widths = [148, 92, 80, 92, 108, 114, 90, 96, 88];
   widths.forEach((w, idx) => s.setColWidth(idx, w));
 
-  const headers = ["Product", "Region", "Seats", "Unit ($)", "Revenue", "Margin (68%)", "Status"];
+  const headers = ["Product", "Region", "Seats", "Unit ($)", "Revenue", "Margin (68%)", "Status", "Tier", "Share %"];
   headers.forEach((h, idx) => {
     s.setCell(sheetAddress({ row: 0, col: idx }), h, { bold: true, bg: "#eef3ff" });
   });
 
   const rows = [
-    ["Jiange Cloud", "NA", 145, 420, "=C2*D2", "=ROUND(E2*0.68,2)", "Closed"],
-    ["Jiange Docs", "EU", 210, 260, "=C3*D3", "=ROUND(E3*0.68,2)", "Closed"],
-    ["Jiange Sheet", "APAC", 180, 340, "=C4*D4", "=ROUND(E4*0.68,2)", "Closed"],
-    ["Jiange Base", "NA", 96, 510, "=C5*D5", "=ROUND(E5*0.68,2)", "Review"],
-    ["Jiange Slides", "EU", 130, 290, "=C6*D6", "=ROUND(E6*0.68,2)", "Closed"],
-    ["Whiteboard AI", "APAC", 160, 310, "=C7*D7", "=ROUND(E7*0.68,2)", "Open"],
-    ["Render GPU SDK", "NA", 84, 780, "=C8*D8", "=ROUND(E8*0.68,2)", "Closed"],
-    ["Collab CRDT", "LATAM", 112, 360, "=C9*D9", "=ROUND(E9*0.68,2)", "Open"],
-    ["OOXML Engine", "EU", 75, 490, "=C10*D10", "=ROUND(E10*0.68,2)", "Closed"],
-    ["AI Copilot", "NA", 240, 320, "=C11*D11", "=ROUND(E11*0.68,2)", "Closed"],
+    ["Jiange Cloud", "NA", 145, 420, "=C2*D2", "=ROUND(E2*0.68,2)", "Closed", '=IF(E2>=55000,"Tier-1","Standard")', "=ROUND(E2/SUM($E$2:$E$11)*100,1)"],
+    ["Jiange Docs", "EU", 210, 260, "=C3*D3", "=ROUND(E3*0.68,2)", "Closed", '=IF(E3>=55000,"Tier-1","Standard")', "=ROUND(E3/SUM($E$2:$E$11)*100,1)"],
+    ["Jiange Sheet", "APAC", 180, 340, "=C4*D4", "=ROUND(E4*0.68,2)", "Closed", '=IF(E4>=55000,"Tier-1","Standard")', "=ROUND(E4/SUM($E$2:$E$11)*100,1)"],
+    ["Jiange Base", "NA", 96, 510, "=C5*D5", "=ROUND(E5*0.68,2)", "Review", '=IF(E5>=55000,"Tier-1","Standard")', "=ROUND(E5/SUM($E$2:$E$11)*100,1)"],
+    ["Jiange Slides", "EU", 130, 290, "=C6*D6", "=ROUND(E6*0.68,2)", "Closed", '=IF(E6>=55000,"Tier-1","Standard")', "=ROUND(E6/SUM($E$2:$E$11)*100,1)"],
+    ["Whiteboard AI", "APAC", 160, 310, "=C7*D7", "=ROUND(E7*0.68,2)", "Open", '=IF(E7>=55000,"Tier-1","Standard")', "=ROUND(E7/SUM($E$2:$E$11)*100,1)"],
+    ["Render GPU SDK", "NA", 84, 780, "=C8*D8", "=ROUND(E8*0.68,2)", "Closed", '=IF(E8>=55000,"Tier-1","Standard")', "=ROUND(E8/SUM($E$2:$E$11)*100,1)"],
+    ["Collab CRDT", "LATAM", 112, 360, "=C9*D9", "=ROUND(E9*0.68,2)", "Open", '=IF(E9>=55000,"Tier-1","Standard")', "=ROUND(E9/SUM($E$2:$E$11)*100,1)"],
+    ["OOXML Engine", "EU", 75, 490, "=C10*D10", "=ROUND(E10*0.68,2)", "Closed", '=IF(E10>=55000,"Tier-1","Standard")', "=ROUND(E10/SUM($E$2:$E$11)*100,1)"],
+    ["AI Copilot", "NA", 240, 320, "=C11*D11", "=ROUND(E11*0.68,2)", "Closed", '=IF(E11>=55000,"Tier-1","Standard")', "=ROUND(E11/SUM($E$2:$E$11)*100,1)"],
   ];
 
   s.setRange("A2", rows);
-  s.setCell("A12", "Subtotal", { bold: true, bg: "#f7f9fc" });
-  s.setCell("C12", "=SUM(C2:C11)", { bold: true, bg: "#f7f9fc" });
-  s.setCell("D12", "=ROUND(AVERAGE(D2:D11),2)", { bold: true, bg: "#f7f9fc" });
-  s.setCell("E12", "=SUM(E2:E11)", { bold: true, bg: "#eef3ff" });
-  s.setCell("F12", "=SUM(F2:F11)", { bold: true, bg: "#eef3ff" });
-  s.setCell("G12", "Verified", { bold: true, bg: "#e8ffea" });
 
   s.addConditionalFormat({
     top: 1,
@@ -218,6 +234,33 @@ function buildDefaultWorkbook() {
     value1: "55000",
     bg: "#e8ffea",
     bold: true,
+  });
+
+  // Cross-sheet formula showcase on "KPI Summary"
+  const kpi = wb.sheet("KPI Summary");
+  kpi.setFreeze(1, 1);
+  [210, 140, 280].forEach((w, idx) => kpi.setColWidth(idx, w));
+  kpi.setCell("A1", "KPI Metric", { bold: true, bg: "#eef3ff" });
+  kpi.setCell("B1", "Live Value", { bold: true, bg: "#eef3ff" });
+  kpi.setCell("C1", "Formula Expression", { bold: true, bg: "#eef3ff" });
+  const kpiRows = [
+    ["Total Revenue", "=SUM(Revenue!E2:E11)", "=SUM(Revenue!E2:E11)"],
+    ["Total Margin (68%)", "=SUM(Revenue!F2:F11)", "=SUM(Revenue!F2:F11)"],
+    ["Total Seats", "=SUM(Revenue!C2:C11)", "=SUM(Revenue!C2:C11)"],
+    ["Average Unit Price", "=ROUND(AVERAGE(Revenue!D2:D11),2)", "=ROUND(AVERAGE(Revenue!D2:D11),2)"],
+    ["Max Deal Revenue", "=MAX(Revenue!E2:E11)", "=MAX(Revenue!E2:E11)"],
+    ["NA Region Revenue", '=SUMIF(Revenue!B2:B11,"NA",Revenue!E2:E11)', '=SUMIF(Revenue!B2:B11,"NA",Revenue!E2:E11)'],
+    ["EU Region Revenue", '=SUMIF(Revenue!B2:B11,"EU",Revenue!E2:E11)', '=SUMIF(Revenue!B2:B11,"EU",Revenue!E2:E11)'],
+    ["APAC Region Revenue", '=SUMIF(Revenue!B2:B11,"APAC",Revenue!E2:E11)', '=SUMIF(Revenue!B2:B11,"APAC",Revenue!E2:E11)'],
+    ["Closed Deals Count", '=COUNTIF(Revenue!G2:G11,"Closed")', '=COUNTIF(Revenue!G2:G11,"Closed")'],
+    ["Tier-1 Deals Count", '=COUNTIF(Revenue!H2:H11,"Tier-1")', '=COUNTIF(Revenue!H2:H11,"Tier-1")'],
+    ["VLOOKUP Jiange Sheet", '=VLOOKUP("Jiange Sheet",Revenue!A2:E11,5,FALSE)', '=VLOOKUP("Jiange Sheet",Revenue!A2:E11,5,FALSE)'],
+  ];
+  kpiRows.forEach(([label, formula, display], idx) => {
+    const r = idx + 2;
+    kpi.setCell(`A${r}`, label, { bold: idx < 2 });
+    kpi.setCell(`B${r}`, formula, { bold: idx < 2, bg: idx < 2 ? "#e8ffea" : "#ffffff" });
+    kpi.setCell(`C${r}`, `'${display}`, { color: "#64748b" });
   });
 
   return wb;
@@ -277,6 +320,8 @@ function buildStressWorkbook10k() {
 async function mountSheetTab(token) {
   let stressMode = false;
   let inlineChartVisible = false;
+  let chartType = "bar";
+  let activeSheetName = "Revenue";
   let mounted = null;
   let workbook = null;
   let tools = null;
@@ -284,26 +329,126 @@ async function mountSheetTab(token) {
   let buildMs = 0;
 
   stageEl.replaceChildren();
+
+  // 1. Live Formula Bar (fx)
+  const fxAddr = el("span", { className: "fx-addr", textContent: "A1" });
+  const fxInput = el("input", {
+    className: "fx-input",
+    type: "text",
+    placeholder: "Enter value or Excel formula, e.g. =SUM(E2:E11) or =IF(E2>=55000,\"Tier-1\",\"Std\")",
+  });
+  const fxApplyBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "Apply fx" });
+  const fxPresetSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "fx Presets…" }),
+    el("option", { value: "=SUM(E2:E11)", textContent: "SUM(E2:E11)" }),
+    el("option", { value: "=ROUND(AVERAGE(E2:E11),2)", textContent: "AVERAGE(E2:E11)" }),
+    el("option", { value: '=SUMIF(B2:B11,"NA",E2:E11)', textContent: 'SUMIF(Region="NA")' }),
+    el("option", { value: '=COUNTIF(G2:G11,"Closed")', textContent: 'COUNTIF(Status="Closed")' }),
+    el("option", { value: '=IF(E2>=55000,"Tier-1","Standard")', textContent: "IF(E2>=55000)" }),
+    el("option", { value: '=VLOOKUP("Jiange Sheet",A2:E11,5,FALSE)', textContent: 'VLOOKUP("Jiange Sheet")' }),
+    el("option", { value: "=RANK(E2,E$2:E$11)", textContent: "RANK(E2)" }),
+    el("option", { value: "=MAX(E2:E11)", textContent: "MAX(E2:E11)" }),
+  ]);
+  const fxBar = el("div", { className: "stage-toolbar" }, [
+    fxAddr,
+    el("span", { className: "fx-label", textContent: "fx" }),
+    fxInput,
+    fxApplyBtn,
+    fxPresetSelect,
+  ]);
+
+  // 2. Live Row Filter & Sort Bar
+  const filterColSelect = el("select", { className: "toolbar-select" });
+  const filterQueryInput = el("input", {
+    className: "toolbar-input",
+    type: "text",
+    placeholder: "Filter rows…",
+  });
+  const quickFilters = [
+    ["all", "All", null],
+    ["na", "Region: NA", { col: 1, values: ["NA"] }],
+    ["eu", "Region: EU", { col: 1, values: ["EU"] }],
+    ["apac", "Region: APAC", { col: 1, values: ["APAC"] }],
+    ["closed", "Status: Closed", { col: 6, values: ["Closed"] }],
+    ["tier1", "Tier-1", { col: 7, values: ["Tier-1"] }],
+  ];
+  const quickChipEls = new Map();
+  const quickWrap = el("div", { style: "display:flex;gap:4px;align-items:center;flex-wrap:wrap;" });
+  for (const [id, label, spec] of quickFilters) {
+    const chip = el("button", {
+      className: `toolbar-chip${id === "all" ? " active" : ""}`,
+      textContent: label,
+      onClick: () => applyQuickFilter(id, spec),
+    });
+    quickChipEls.set(id, chip);
+    quickWrap.appendChild(chip);
+  }
+  const sortSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "Sort by…" }),
+    el("option", { value: "4:desc", textContent: "Revenue ↓" }),
+    el("option", { value: "4:asc", textContent: "Revenue ↑" }),
+    el("option", { value: "2:desc", textContent: "Seats ↓" }),
+    el("option", { value: "2:asc", textContent: "Seats ↑" }),
+    el("option", { value: "0:asc", textContent: "Product A→Z" }),
+    el("option", { value: "1:asc", textContent: "Region A→Z" }),
+  ]);
+  const clearFilterBtn = el("button", { className: "btn btn-sm", textContent: "Reset" });
+  const filterBadge = el("span", { className: "toolbar-badge", textContent: "All rows" });
+  const filterBar = el("div", { className: "stage-toolbar subtle" }, [
+    filterColSelect,
+    filterQueryInput,
+    quickWrap,
+    el("span", { className: "toolbar-sep" }),
+    sortSelect,
+    clearFilterBtn,
+    filterBadge,
+  ]);
+
   const host = el("div", { className: "stage-mount sheet-stage-wrap", tabindex: "0" });
+  const sheetTabStrip = el("div", { className: "sheet-tab-strip" });
+
+  stageEl.appendChild(fxBar);
+  stageEl.appendChild(filterBar);
   stageEl.appendChild(host);
+  stageEl.appendChild(sheetTabStrip);
 
   createDrawerShell(
     "Spreadsheet Engine",
     "@jiange/sheet-ui",
-    "4-quadrant WebGPU/WebGL2 frozen panes + Fenwick VirtualGrid2D + incremental formula DAG.",
+    "WebGPU/WebGL2 4-quadrant frozen panes, live Excel formula DAG, row filtering, sorting, pivot tables & OOXML export.",
   );
 
+  const undoBtn = el("button", { className: "btn btn-sm", textContent: "Undo ↩" });
+  const redoBtn = el("button", { className: "btn btn-sm", textContent: "Redo ↪" });
+  const freezeSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "1,1", textContent: "Freeze 1×1" }),
+    el("option", { value: "1,0", textContent: "Freeze Row 1" }),
+    el("option", { value: "0,0", textContent: "No Freeze" }),
+  ]);
+  const chartTypeSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "bar", textContent: "Chart: Bar" }),
+    el("option", { value: "line", textContent: "Chart: Line" }),
+    el("option", { value: "pie", textContent: "Chart: Pie" }),
+  ]);
+  const chartBtn = el("button", { className: "btn btn-toggle", textContent: "Inline GPU Chart: OFF" });
+  const pivotBtn = el("button", { className: "btn", textContent: "Pivot Table (Region)" });
+  const exportXlsxBtn = el("button", { className: "btn", textContent: "Export .xlsx" });
   const stressBtn = el("button", { className: "btn btn-toggle", textContent: "10,000 Rows Stress: OFF" });
   const inspectBtn = el("button", { className: "btn", textContent: "AI sheet_inspect" });
   const applyBtn = el("button", { className: "btn btn-primary", textContent: "AI sheet_apply (=SUM)" });
-  const chartBtn = el("button", { className: "btn btn-toggle", textContent: "Inline GPU Chart: OFF" });
 
-  createCard("Interactive & AI Controls", [
-    el("div", { className: "btn-row" }, [stressBtn, chartBtn]),
+  createCard("Workbook, Filter & Export", [
+    el("div", { className: "btn-row" }, [undoBtn, redoBtn, freezeSelect]),
+    el("div", { className: "btn-row" }, [chartTypeSelect, chartBtn]),
+    el("div", { className: "btn-row" }, [pivotBtn, exportXlsxBtn]),
+  ]);
+
+  createCard("Stress & AI Tools", [
+    el("div", { className: "btn-row" }, [stressBtn]),
     el("div", { className: "btn-row" }, [inspectBtn, applyBtn]),
     el("p", {
       className: "hint-text",
-      textContent: "Wheel to scroll 10k rows smoothly; click cells or double-click / press Enter for inline IME editing.",
+      textContent: "Use the fx bar above or double-click cells to edit formulas live; switch to KPI Summary tab for cross-sheet formulas.",
     }),
   ]);
 
@@ -319,11 +464,107 @@ async function mountSheetTab(token) {
 
   const aiOut = createAiConsole();
 
+  function activeSheetProxy() {
+    if (!workbook) return null;
+    try {
+      return workbook.sheet(activeSheetName);
+    } catch {
+      activeSheetName = workbook.listSheets()[0];
+      return workbook.sheet(0);
+    }
+  }
+
+  function rebuildFilterColOptions() {
+    const proxy = activeSheetProxy();
+    if (!proxy) return;
+    const prev = filterColSelect.value;
+    filterColSelect.replaceChildren();
+    const maxCols = Math.min(proxy.colCount, 9);
+    for (let c = 0; c < maxCols; c++) {
+      const label = proxy.getCell(sheetAddress({ row: 0, col: c })).formatted || `Col ${c + 1}`;
+      filterColSelect.appendChild(el("option", { value: String(c), textContent: `Col: ${label}` }));
+    }
+    if (prev && Number(prev) < maxCols) filterColSelect.value = prev;
+  }
+
+  function rebuildSheetTabs() {
+    sheetTabStrip.replaceChildren();
+    if (!workbook || !mounted) return;
+    for (const name of workbook.listSheets()) {
+      const btn = el("button", {
+        className: `sheet-tab-btn${name === activeSheetName ? " active" : ""}`,
+        textContent: name,
+        onClick: () => {
+          activeSheetName = name;
+          mounted.controller.setActiveSheet(name);
+          mounted.controller.selectCell(0, 0);
+          rebuildFilterColOptions();
+          rebuildSheetTabs();
+          syncUi(mounted.controller.render());
+        },
+      });
+      sheetTabStrip.appendChild(btn);
+    }
+  }
+
+  function setQuickChipActive(activeId) {
+    for (const [id, chip] of quickChipEls.entries()) {
+      chip.classList.toggle("active", id === activeId);
+    }
+  }
+
+  function applyQuickFilter(id, spec) {
+    const proxy = activeSheetProxy();
+    if (!proxy || !mounted) return;
+    setQuickChipActive(id);
+    filterQueryInput.value = "";
+    if (!spec) {
+      proxy.clearFilter();
+    } else {
+      const col = stressMode && id === "closed" ? 7 : spec.col;
+      proxy.setFilter({ enabled: true, headerRow: 0, rules: { [String(col)]: { values: spec.values } } });
+    }
+    mounted.controller.renderer.setScroll(0, 0);
+    syncUi(mounted.controller.render());
+  }
+
+  function applyQueryFilter() {
+    const proxy = activeSheetProxy();
+    if (!proxy || !mounted) return;
+    const q = filterQueryInput.value.trim();
+    const col = filterColSelect.value || "0";
+    if (!q) {
+      setQuickChipActive("all");
+      proxy.clearFilter();
+    } else {
+      setQuickChipActive("");
+      proxy.setFilter({ enabled: true, headerRow: 0, rules: { [col]: { query: q } } });
+    }
+    mounted.controller.renderer.setScroll(0, 0);
+    syncUi(mounted.controller.render());
+  }
+
+  function commitFormulaBar() {
+    const proxy = activeSheetProxy();
+    if (!proxy || !mounted) return;
+    const sel = mounted.controller.getSelection();
+    const a1 = sheetAddress({ row: sel.anchorRow, col: sel.anchorCol });
+    proxy.setCell(a1, fxInput.value);
+    const frame = mounted.controller.render();
+    syncUi(frame);
+    const updated = proxy.getCell(a1);
+    aiOut.set(`Formula Bar -> ${activeSheetName}!${a1}`, {
+      raw: updated.raw,
+      evaluated: updated.formatted,
+    });
+  }
+
   function syncUi(frame) {
     if (!mounted || !workbook) return;
     const ctrl = mounted.controller;
     const sel = ctrl.getSelection();
-    const proxy = workbook.sheet(0);
+    const proxy = activeSheetProxy();
+    if (!proxy) return;
     const a1 = sheetAddress({ row: sel.anchorRow, col: sel.anchorCol });
     const cell = proxy.getCell(a1);
     const stats = frame?.gpu || ctrl.renderer.surface.stats || {
@@ -336,7 +577,20 @@ async function mountSheetTab(token) {
       frameTimeMs: 0,
     };
 
-    m.cellAddr.textContent = a1;
+    fxAddr.textContent = a1;
+    if (document.activeElement !== fxInput) {
+      fxInput.value = cell.raw || "";
+    }
+
+    const ws = workbook._getWorksheetById(proxy.id);
+    if (ws?.filter?.enabled && ws.filter.rules && Object.keys(ws.filter.rules).length > 0) {
+      const vis = getVisibleRowIndices(ws, workbook._getSheetEvalMap(ws.id));
+      filterBadge.textContent = `Filtered: ${Math.max(0, vis.length - 1)} rows`;
+    } else {
+      filterBadge.textContent = stressMode ? "10,000 rows" : "All rows";
+    }
+
+    m.cellAddr.textContent = `${activeSheetName}!${a1}`;
     m.cellValue.textContent = cell.formatted || "(empty)";
     m.cellRaw.textContent = cell.raw || "(empty)";
     m.dimensions.textContent = `${proxy.rowCount.toLocaleString()} × ${proxy.colCount}`;
@@ -354,6 +608,7 @@ async function mountSheetTab(token) {
       activeCellFormatted: cell.formatted,
       mountedTextCells: frame?.mountedTextCells ?? ctrl.renderer.grid.pool.activeCount,
       poolCreated: ctrl.renderer.grid.pool.totalCreated,
+      filterActive: Boolean(ws?.filter?.enabled),
     });
   }
 
@@ -375,9 +630,13 @@ async function mountSheetTab(token) {
     workbook = isStress ? buildStressWorkbook10k() : buildDefaultWorkbook();
     buildMs = performance.now() - t0;
     tools = createSheetTools(workbook);
+    activeSheetName = workbook.listSheets()[0];
     inlineChartVisible = false;
     chartBtn.classList.remove("active");
     chartBtn.textContent = "Inline GPU Chart: OFF";
+    setQuickChipActive("all");
+    filterQueryInput.value = "";
+    sortSelect.value = "";
 
     const view = await mountSheetView(host, workbook, {
       onSelectionChange: () => syncUi(),
@@ -395,7 +654,9 @@ async function mountSheetTab(token) {
         { id: "ai-agent", name: "Jiange AI", color: "#00b42a", row: 1, col: 4 },
       ]);
     }
-    mounted.resize(host.clientWidth || 860, host.clientHeight || 560);
+    rebuildFilterColOptions();
+    rebuildSheetTabs();
+    mounted.resize(host.clientWidth || 860, host.clientHeight || 500);
     const frame = mounted.controller.render();
     syncUi(frame);
   }
@@ -409,7 +670,7 @@ async function mountSheetTab(token) {
 
   function runApplySum() {
     if (!tools || !mounted || !workbook) return null;
-    const sheetName = workbook.sheet(0).name;
+    const sheetName = workbook.listSheets()[0];
     let targetA1;
     let ops;
     if (stressMode) {
@@ -425,15 +686,15 @@ async function mountSheetTab(token) {
         },
       ];
     } else {
-      targetA1 = "E14";
+      targetA1 = "E13";
       ops = [
         {
           op: "setCells",
           sheet: sheetName,
           cells: [
-            { a1: "A14", raw: "AI Q4 Forecast (+15%)", style: { bold: true, bg: "#fff3e5" } },
-            { a1: "E14", raw: "=SUM(E2:E11)*1.15", style: { bold: true, bg: "#fff3e5" } },
-            { a1: "F14", raw: "=SUM(F2:F11)*1.15", style: { bold: true, bg: "#fff3e5" } },
+            { a1: "A13", raw: "AI Q4 Forecast (+15%)", style: { bold: true, bg: "#fff3e5" } },
+            { a1: "E13", raw: "=SUM(E2:E11)*1.15", style: { bold: true, bg: "#fff3e5" } },
+            { a1: "F13", raw: "=SUM(F2:F11)*1.15", style: { bold: true, bg: "#fff3e5" } },
           ],
         },
       ];
@@ -443,12 +704,15 @@ async function mountSheetTab(token) {
       ops,
       reason: "AI playground SUM formula injection",
     });
-    const pt = stressMode ? { row: 1, col: 8 } : { row: 13, col: 4 };
+    activeSheetName = sheetName;
+    mounted.controller.setActiveSheet(sheetName);
+    rebuildSheetTabs();
+    const pt = stressMode ? { row: 1, col: 8 } : { row: 12, col: 4 };
     mounted.controller.selectCell(pt.row, pt.col);
     const frame = mounted.controller.render();
     syncUi(frame);
 
-    const evaluated = workbook.sheet(0).getCell(targetA1);
+    const evaluated = workbook.sheet(sheetName).getCell(targetA1);
     aiOut.set(`sheet_apply -> ${targetA1}`, {
       cell: targetA1,
       raw: evaluated.raw,
@@ -475,24 +739,23 @@ async function mountSheetTab(token) {
     );
   }
 
-  function toggleInlineChart() {
-    if (!workbook || !mounted) return;
-    const proxy = workbook.sheet(0);
+  function applyChartToActiveSheet() {
+    const proxy = activeSheetProxy();
+    if (!workbook || !mounted || !proxy) return;
     const ws = workbook._getWorksheetById(proxy.id);
     if (!ws) return;
-    inlineChartVisible = !inlineChartVisible;
     if (inlineChartVisible) {
       ws.charts = [];
       proxy.addChart({
-        title: "Revenue & Margin by Product",
-        type: "bar",
+        title: chartType === "pie" ? "Revenue Share" : "Revenue & Margin by Product",
+        type: chartType,
         top: 0,
-        left: stressMode ? 4 : 3,
+        left: stressMode ? 4 : chartType === "pie" ? 0 : 3,
         bottom: stressMode ? 8 : 10,
-        right: stressMode ? 6 : 5,
+        right: stressMode ? 6 : chartType === "pie" ? 4 : 5,
         headerRow: true,
         x: 16,
-        y: stressMode ? 320 : 356,
+        y: stressMode ? 320 : 340,
         width: 460,
         height: 210,
         showLegend: true,
@@ -502,11 +765,106 @@ async function mountSheetTab(token) {
       ws.revision++;
       workbook._bumpVersion();
     }
-    chartBtn.classList.toggle("active", inlineChartVisible);
-    chartBtn.textContent = inlineChartVisible ? "Inline GPU Chart: ON" : "Inline GPU Chart: OFF";
     const frame = mounted.controller.render();
     syncUi(frame);
   }
+
+  function toggleInlineChart() {
+    inlineChartVisible = !inlineChartVisible;
+    chartBtn.classList.toggle("active", inlineChartVisible);
+    chartBtn.textContent = inlineChartVisible ? "Inline GPU Chart: ON" : "Inline GPU Chart: OFF";
+    applyChartToActiveSheet();
+  }
+
+  function runPivotPreview() {
+    if (!workbook) return;
+    const proxy = workbook.sheet(0);
+    const ws = workbook._getWorksheetById(proxy.id);
+    if (!ws) return;
+    const evalMap = workbook._getSheetEvalMap(ws.id);
+    const pivot = computePivotTable(ws, evalMap, {
+      id: "pv-region",
+      title: "Revenue by Region",
+      top: 0,
+      left: 0,
+      bottom: stressMode ? 100 : 10,
+      right: stressMode ? 7 : 8,
+      rowFields: [1],
+      values: stressMode
+        ? [{ col: 3, agg: "sum" }, { col: 5, agg: "sum" }]
+        : [{ col: 2, agg: "sum" }, { col: 4, agg: "sum" }, { col: 5, agg: "avg" }],
+      showRowTotals: true,
+      showColTotals: true,
+      sortBy: "value_desc",
+    });
+    aiOut.set("computePivotTable (Grouped by Region)", {
+      totalRecords: pivot.totalRecords,
+      headers: pivot.headers,
+      rows: pivot.rows,
+      grandTotals: pivot.grandTotals,
+    });
+  }
+
+  fxApplyBtn.addEventListener("click", commitFormulaBar);
+  fxInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitFormulaBar();
+    }
+  });
+  fxPresetSelect.addEventListener("change", () => {
+    if (!fxPresetSelect.value) return;
+    fxInput.value = fxPresetSelect.value;
+    fxPresetSelect.value = "";
+    commitFormulaBar();
+  });
+  filterQueryInput.addEventListener("input", applyQueryFilter);
+  filterColSelect.addEventListener("change", () => {
+    if (filterQueryInput.value.trim()) applyQueryFilter();
+  });
+  sortSelect.addEventListener("change", () => {
+    const proxy = activeSheetProxy();
+    if (!proxy || !mounted || !sortSelect.value) return;
+    const [colStr, dir] = sortSelect.value.split(":");
+    proxy.sort(Number(colStr), dir === "asc", 0);
+    syncUi(mounted.controller.render());
+    aiOut.set("sheet.sort()", { sheet: proxy.name, column: Number(colStr), direction: dir });
+  });
+  clearFilterBtn.addEventListener("click", () => {
+    filterQueryInput.value = "";
+    sortSelect.value = "";
+    applyQuickFilter("all", null);
+  });
+  undoBtn.addEventListener("click", () => {
+    if (!workbook || !mounted) return;
+    const ok = workbook.undo();
+    syncUi(mounted.controller.render());
+    aiOut.set("workbook.undo()", { undone: ok });
+  });
+  redoBtn.addEventListener("click", () => {
+    if (!workbook || !mounted) return;
+    const ok = workbook.redo();
+    syncUi(mounted.controller.render());
+    aiOut.set("workbook.redo()", { redone: ok });
+  });
+  freezeSelect.addEventListener("change", () => {
+    const proxy = activeSheetProxy();
+    if (!proxy || !mounted) return;
+    const [r, c] = freezeSelect.value.split(",").map(Number);
+    proxy.setFreeze(r, c);
+    syncUi(mounted.controller.render());
+  });
+  chartTypeSelect.addEventListener("change", () => {
+    chartType = chartTypeSelect.value;
+    if (inlineChartVisible) applyChartToActiveSheet();
+  });
+  pivotBtn.addEventListener("click", runPivotPreview);
+  exportXlsxBtn.addEventListener("click", () => {
+    if (!workbook) return;
+    const bytes = workbook.toXlsx();
+    const size = downloadArtifact(bytes, "jiange-playground.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    aiOut.set("workbook.toXlsx()", { filename: "jiange-playground.xlsx", bytes: size, sheets: workbook.listSheets() });
+  });
 
   stressBtn.addEventListener("click", () => { void toggleStress(); });
   inspectBtn.addEventListener("click", runInspect);
@@ -528,6 +886,7 @@ async function mountSheetTab(token) {
       if (name === "inspect") return runInspect();
       if (name === "applySum") return runApplySum();
       if (name === "toggleChart") { toggleInlineChart(); return state.tabMetrics; }
+      if (name === "pivot") { runPivotPreview(); return state.lastAiResult; }
       return null;
     },
     dispose() {
@@ -627,24 +986,84 @@ async function mountDocTab(token) {
   let mounted = null;
   let stopResize = null;
   let buildMs = 0;
+  let searchHits = [];
+  let searchCursor = 0;
+  let pendingSuggestionId = null;
 
   stageEl.replaceChildren();
+
+  // Top Search, Filter & Quick-Insert Toolbar
+  const searchInput = el("input", {
+    className: "toolbar-input",
+    type: "text",
+    placeholder: "Search document…",
+  });
+  const typeFilterSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "All Block Types" }),
+    el("option", { value: "h1", textContent: "Heading H1" }),
+    el("option", { value: "h2", textContent: "Heading H2" }),
+    el("option", { value: "h3", textContent: "Heading H3" }),
+    el("option", { value: "paragraph", textContent: "Paragraphs" }),
+    el("option", { value: "code", textContent: "Code Blocks" }),
+    el("option", { value: "quote", textContent: "Quotes" }),
+    el("option", { value: "bullet", textContent: "Bullet Lists" }),
+  ]);
+  const nextHitBtn = el("button", { className: "btn btn-sm", textContent: "Next Hit ↓" });
+  const hitBadge = el("span", { className: "toolbar-badge", textContent: "All blocks" });
+  const addTypeSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "paragraph", textContent: "+ Paragraph" }),
+    el("option", { value: "h2", textContent: "+ Heading H2" }),
+    el("option", { value: "code", textContent: "+ Code" }),
+    el("option", { value: "quote", textContent: "+ Quote" }),
+  ]);
+  const addTextInput = el("input", {
+    className: "toolbar-input",
+    type: "text",
+    placeholder: "New block text…",
+  });
+  const addBlockBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "Insert" });
+  const docToolbar = el("div", { className: "stage-toolbar" }, [
+    searchInput,
+    typeFilterSelect,
+    nextHitBtn,
+    hitBadge,
+    el("span", { className: "toolbar-sep" }),
+    addTypeSelect,
+    addTextInput,
+    addBlockBtn,
+  ]);
+
   const shell = el("div", { className: "doc-stage-shell" });
   const paper = el("div", { className: "doc-paper", tabindex: "0" });
   shell.appendChild(paper);
+  stageEl.appendChild(docToolbar);
   stageEl.appendChild(shell);
 
   createDrawerShell(
     "Block Document View",
     "@jiange/doc-ui",
-    "O(log N) Fenwick VirtualList1D over CRDT-backed Document with outline jumps and AI inspection.",
+    "O(log N) Fenwick VirtualList1D over CRDT Document with search/filter, track-changes suggestions & DOCX/MD/HTML export.",
   );
 
+  const undoBtn = el("button", { className: "btn btn-sm", textContent: "Undo ↩" });
+  const redoBtn = el("button", { className: "btn btn-sm", textContent: "Redo ↪" });
+  const suggestBtn = el("button", { className: "btn btn-sm", textContent: "+ AI Suggestion" });
+  const acceptSugBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "Accept" });
+  const rejectSugBtn = el("button", { className: "btn btn-sm", textContent: "Reject" });
+  const exportDocxBtn = el("button", { className: "btn btn-sm", textContent: "Export .docx" });
+  const exportMdBtn = el("button", { className: "btn btn-sm", textContent: "Export .md" });
+  const exportHtmlBtn = el("button", { className: "btn btn-sm", textContent: "Export .html" });
   const stressBtn = el("button", { className: "btn btn-toggle", textContent: "5,000 Blocks Stress: OFF" });
   const inspectBtn = el("button", { className: "btn btn-primary", textContent: "AI doc_inspect" });
   const insertBtn = el("button", { className: "btn", textContent: "AI doc_apply (+Block)" });
 
-  createCard("Document & AI Controls", [
+  createCard("Authoring, Suggestions & Export", [
+    el("div", { className: "btn-row" }, [undoBtn, redoBtn]),
+    el("div", { className: "btn-row" }, [suggestBtn, acceptSugBtn, rejectSugBtn]),
+    el("div", { className: "btn-row" }, [exportDocxBtn, exportMdBtn, exportHtmlBtn]),
+  ]);
+
+  createCard("Stress & AI Tools", [
     el("div", { className: "btn-row" }, [stressBtn]),
     el("div", { className: "btn-row" }, [inspectBtn, insertBtn]),
   ]);
@@ -812,6 +1231,126 @@ async function mountDocTab(token) {
     );
   }
 
+  function runDocQuery(jumpToFirst = true) {
+    if (!docModel || !mounted) return;
+    const search = searchInput.value.trim();
+    const blockType = typeFilterSelect.value || undefined;
+    if (!search && !blockType) {
+      searchHits = [];
+      searchCursor = 0;
+      hitBadge.textContent = `${docModel.blocks().length.toLocaleString()} blocks`;
+      return;
+    }
+    const res = docModel.query({ ...(search ? { search } : {}), ...(blockType ? { blockType } : {}), limit: 200 });
+    const allBlocks = docModel.blocks();
+    const indexById = new Map(allBlocks.map((b, idx) => [b.id, idx]));
+    searchHits = (res.blocks ?? []).map((b) => ({
+      blockIndex: indexById.get(b.id) ?? 0,
+      id: b.id,
+      type: b.type,
+      text: b.text,
+    }));
+    searchCursor = 0;
+    hitBadge.textContent = `${res.totalMatched} match${res.totalMatched === 1 ? "" : "es"}`;
+    if (jumpToFirst && searchHits.length > 0) {
+      const idx = searchHits[0].blockIndex;
+      const offset = mounted.controller.list.sizes.indexToOffset(idx);
+      const frame = mounted.controller.setScrollTop(offset);
+      syncUi(frame);
+    }
+    aiOut.set("doc.query()", {
+      search: search || undefined,
+      blockType,
+      totalMatched: res.totalMatched,
+      preview: searchHits.slice(0, 5).map((hit) => ({ blockIndex: hit.blockIndex, type: hit.type, text: hit.text.slice(0, 80) })),
+    });
+  }
+
+  searchInput.addEventListener("input", () => runDocQuery(true));
+  typeFilterSelect.addEventListener("change", () => runDocQuery(true));
+  nextHitBtn.addEventListener("click", () => {
+    if (!mounted || searchHits.length === 0) return;
+    searchCursor = (searchCursor + 1) % searchHits.length;
+    const hit = searchHits[searchCursor];
+    const offset = mounted.controller.list.sizes.indexToOffset(hit.blockIndex);
+    const frame = mounted.controller.setScrollTop(offset);
+    syncUi(frame);
+    hitBadge.textContent = `Hit ${searchCursor + 1} / ${searchHits.length}`;
+  });
+  addBlockBtn.addEventListener("click", () => {
+    if (!docModel || !mounted) return;
+    const txt = addTextInput.value.trim() || `Interactive ${addTypeSelect.value} block added at v${docModel.version + 1}`;
+    const firstId = docModel.blocks()[0]?.id ?? null;
+    docModel.insertBlock({ type: addTypeSelect.value, markdown: txt, afterBlockId: firstId });
+    addTextInput.value = "";
+    const frame = mounted.controller.setScrollTop(0);
+    rebuildOutline();
+    syncUi(frame);
+    aiOut.set("doc.insertBlock()", { type: addTypeSelect.value, text: txt, blockCount: docModel.blocks().length });
+  });
+  undoBtn.addEventListener("click", () => {
+    if (!docModel || !mounted) return;
+    const ok = docModel.undo();
+    rebuildOutline();
+    syncUi(mounted.controller.render());
+    aiOut.set("doc.undo()", { undone: ok });
+  });
+  redoBtn.addEventListener("click", () => {
+    if (!docModel || !mounted) return;
+    const ok = docModel.redo();
+    rebuildOutline();
+    syncUi(mounted.controller.render());
+    aiOut.set("doc.redo()", { redone: ok });
+  });
+  suggestBtn.addEventListener("click", () => {
+    if (!docModel) return;
+    const firstId = docModel.blocks()[0]?.id;
+    if (!firstId) return;
+    const sug = docModel.addSuggestion({
+      blockId: firstId,
+      op: "insert_after",
+      blockType: "quote",
+      text: `AI Track-Changes Proposal (v${docModel.version + 1}): Click Accept to commit or Reject to discard.`,
+      author: "jiange-ai",
+    });
+    pendingSuggestionId = sug.id;
+    aiOut.set("doc.addSuggestion() [pending]", sug);
+  });
+  acceptSugBtn.addEventListener("click", () => {
+    if (!docModel || !mounted || !pendingSuggestionId) return;
+    const ok = docModel.acceptSuggestion(pendingSuggestionId);
+    const id = pendingSuggestionId;
+    pendingSuggestionId = null;
+    rebuildOutline();
+    syncUi(mounted.controller.setScrollTop(0));
+    aiOut.set("doc.acceptSuggestion()", { suggestionId: id, accepted: ok });
+  });
+  rejectSugBtn.addEventListener("click", () => {
+    if (!docModel || !pendingSuggestionId) return;
+    const ok = docModel.rejectSuggestion(pendingSuggestionId);
+    const id = pendingSuggestionId;
+    pendingSuggestionId = null;
+    aiOut.set("doc.rejectSuggestion()", { suggestionId: id, rejected: ok });
+  });
+  exportDocxBtn.addEventListener("click", () => {
+    if (!docModel) return;
+    const bytes = docModel.toDocx();
+    const size = downloadArtifact(bytes, "jiange-doc.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    aiOut.set("doc.toDocx()", { filename: "jiange-doc.docx", bytes: size });
+  });
+  exportMdBtn.addEventListener("click", () => {
+    if (!docModel) return;
+    const md = docModel.toMarkdown();
+    const size = downloadArtifact(md, "jiange-doc.md", "text/markdown;charset=utf-8");
+    aiOut.set("doc.toMarkdown()", { filename: "jiange-doc.md", bytes: size, preview: md.slice(0, 260) });
+  });
+  exportHtmlBtn.addEventListener("click", () => {
+    if (!docModel) return;
+    const html = docModel.toHtml();
+    const size = downloadArtifact(html, "jiange-doc.html", "text/html;charset=utf-8");
+    aiOut.set("doc.toHtml()", { filename: "jiange-doc.html", bytes: size, preview: html.slice(0, 260) });
+  });
+
   stressBtn.addEventListener("click", toggleStress);
   inspectBtn.addEventListener("click", runInspect);
   insertBtn.addEventListener("click", runInsertBlock);
@@ -951,8 +1490,40 @@ async function mountSlidesTab(token) {
   const tools = createSlidesTools(deck);
   let showSvg = true;
   let aiSlideSeq = 1;
+  let shapeSeq = 1;
 
   stageEl.replaceChildren();
+
+  // Top Slides Authoring, Theme & Export Toolbar
+  const addRectBtn = el("button", { className: "btn btn-sm", textContent: "+ Rect" });
+  const addEllipseBtn = el("button", { className: "btn btn-sm", textContent: "+ Ellipse" });
+  const addTextBtn = el("button", { className: "btn btn-sm", textContent: "+ Text" });
+  const addArrowBtn = el("button", { className: "btn btn-sm", textContent: "+ Arrow" });
+  const delShapeBtn = el("button", { className: "btn btn-sm", textContent: "Delete" });
+  const undoBtn = el("button", { className: "btn btn-sm", textContent: "Undo ↩" });
+  const redoBtn = el("button", { className: "btn btn-sm", textContent: "Redo ↪" });
+  const themeSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "light", textContent: "Theme: Feishu Light" }),
+    el("option", { value: "dark", textContent: "Theme: Midnight Dark" }),
+    el("option", { value: "ocean", textContent: "Theme: Ocean Slate" }),
+  ]);
+  const exportPptxBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "Export .pptx" });
+  const exportSvgBtn = el("button", { className: "btn btn-sm", textContent: "Export .svg" });
+  const slidesToolbar = el("div", { className: "stage-toolbar" }, [
+    addRectBtn,
+    addEllipseBtn,
+    addTextBtn,
+    addArrowBtn,
+    delShapeBtn,
+    el("span", { className: "toolbar-sep" }),
+    undoBtn,
+    redoBtn,
+    themeSelect,
+    el("span", { className: "toolbar-sep" }),
+    exportPptxBtn,
+    exportSvgBtn,
+  ]);
+
   const layout = el("div", { className: "slides-layout split-svg" });
   const gpuHost = el("div", { className: "slides-gpu-host", tabindex: "0" });
   const svgBox = el("div", { className: "slides-svg-box" });
@@ -970,6 +1541,7 @@ async function mountSlidesTab(token) {
   ]);
   layout.appendChild(gpuHost);
   layout.appendChild(svgPane);
+  stageEl.appendChild(slidesToolbar);
   stageEl.appendChild(layout);
 
   createDrawerShell(
@@ -1126,6 +1698,79 @@ async function mountSlidesTab(token) {
     return res;
   }
 
+  function insertShape(kind) {
+    if (!mounted) return;
+    const idx = mounted.controller.getSlideIndex();
+    const n = shapeSeq++;
+    const offset = (n % 5) * 4;
+    const palette = ["#3370ff", "#00b42a", "#ff7d00", "#722ed1"];
+    const color = palette[(n - 1) % palette.length];
+    const spec = kind === "text"
+      ? { kind: "text", x: 12 + offset, y: 82, width: 32, height: 10, color: "#1f2329", text: `Live Note #${n}`, fontSize: 18, bold: true }
+      : kind === "line-arrow"
+        ? { kind: "line-arrow", x: 35 + offset, y: 84, width: 18, height: 4, color, strokeWidth: 3 }
+        : kind === "ellipse"
+          ? { kind: "ellipse", x: 76 - offset, y: 74, width: 12, height: 18, color }
+          : { kind: "rounded-rectangle", x: 10 + offset, y: 78, width: 20, height: 14, color };
+    const created = deck.addShape(idx, spec);
+    mounted.controller.selectShape(created.id);
+    syncUi(mounted.controller.render());
+    aiOut.set("deck.addShape()", { slideIndex: idx, shape: created });
+  }
+
+  addRectBtn.addEventListener("click", () => insertShape("rounded-rectangle"));
+  addEllipseBtn.addEventListener("click", () => insertShape("ellipse"));
+  addTextBtn.addEventListener("click", () => insertShape("text"));
+  addArrowBtn.addEventListener("click", () => insertShape("line-arrow"));
+  delShapeBtn.addEventListener("click", () => {
+    if (!mounted) return;
+    const sid = mounted.controller.getSelectedShapeId();
+    if (!sid) return;
+    const idx = mounted.controller.getSlideIndex();
+    deck.deleteShape(idx, sid);
+    mounted.controller.selectShape(null);
+    syncUi(mounted.controller.render());
+    aiOut.set("deck.deleteShape()", { slideIndex: idx, shapeId: sid });
+  });
+  undoBtn.addEventListener("click", () => {
+    if (!mounted) return;
+    const ok = deck.undo();
+    syncUi(mounted.controller.render());
+    aiOut.set("deck.undo()", { undone: ok });
+  });
+  redoBtn.addEventListener("click", () => {
+    if (!mounted) return;
+    const ok = deck.redo();
+    syncUi(mounted.controller.render());
+    aiOut.set("deck.redo()", { redone: ok });
+  });
+  themeSelect.addEventListener("change", () => {
+    if (!mounted) return;
+    const idx = mounted.controller.getSlideIndex();
+    const presets = {
+      light: { background: "#ffffff", textDark: "#1f2329", accent: "#3370ff" },
+      dark: { background: "#141824", textDark: "#f1f5f9", accent: "#60a5fa" },
+      ocean: { background: "#eef6ff", textDark: "#0f172a", accent: "#0284c7" },
+    };
+    const p = presets[themeSelect.value] || presets.light;
+    deck.setTheme(p);
+    deck.updateSlide(idx, { background: p.background });
+    syncUi(mounted.controller.render());
+    aiOut.set("deck.setTheme()", p);
+  });
+  exportPptxBtn.addEventListener("click", () => {
+    const bytes = deck.toPptx();
+    const size = downloadArtifact(bytes, "jiange-deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+    aiOut.set("deck.toPptx()", { filename: "jiange-deck.pptx", bytes: size, slides: deck.slideCount });
+  });
+  exportSvgBtn.addEventListener("click", () => {
+    if (!mounted) return;
+    const idx = mounted.controller.getSlideIndex();
+    const svg = deck.renderSvg(idx);
+    const size = downloadArtifact(svg, `jiange-slide-${idx + 1}.svg`, "image/svg+xml;charset=utf-8");
+    aiOut.set("deck.renderSvg()", { filename: `jiange-slide-${idx + 1}.svg`, bytes: size });
+  });
+
   prevBtn.addEventListener("click", () => syncUi(mounted.controller.prevSlide()));
   nextBtn.addEventListener("click", () => syncUi(mounted.controller.nextSlide()));
   addSlideBtn.addEventListener("click", addSlideViaAi);
@@ -1192,17 +1837,84 @@ const DEFAULT_MERMAID_ARCH = `flowchart LR
   WebGPU --> Base[base-ui]
 `;
 
+const MINDMAP_PRESET = `mindmap
+  root((Jiange AI SDK))
+    headless(Headless SDKs)
+      sheet-sdk
+      doc-sdk
+      slides-sdk
+      whiteboard-sdk
+      base-sdk
+    gpu(GPU UI Layer)
+      webgpu[WebGPU SDF]
+      webgl2[WebGL2 Fallback]
+      zero2d[Zero Canvas 2D]
+    agent(Agent Protocol)
+      inspect[inspect & query]
+      apply[atomic apply]
+      verify[verify & undo]
+`;
+
+const PIPELINE_PRESET = `flowchart TD
+  PR([Pull Request]) --> Build[Build 13 Packages]
+  Build --> Unit[100% V8 Coverage]
+  Build --> GoRace[Go -race 100%]
+  Unit --> Pack[Tarball Pack Audit]
+  GoRace --> Pack
+  Pack -.release tag.-> Publish((Public npm & GH Release))
+`;
+
 async function mountWhiteboardTab(token) {
   let board = null;
   let tools = null;
   let mounted = null;
   let stopResize = null;
   let dragging = false;
-  let lastDragX = 0;
-  let lastDragY = 0;
+  let nodeSeq = 1;
 
   stageEl.replaceChildren();
+
+  // Top Whiteboard Authoring, Presets, Theme & Export Toolbar
+  const addRectBtn = el("button", { className: "btn btn-sm", textContent: "+ Rect" });
+  const addRoundBtn = el("button", { className: "btn btn-sm", textContent: "+ Round" });
+  const addEllipseBtn = el("button", { className: "btn btn-sm", textContent: "+ Ellipse" });
+  const delNodeBtn = el("button", { className: "btn btn-sm", textContent: "Delete" });
+  const alignBtn = el("button", { className: "btn btn-sm", textContent: "Align Mid" });
+  const distBtn = el("button", { className: "btn btn-sm", textContent: "Distribute" });
+  const undoBtn = el("button", { className: "btn btn-sm", textContent: "Undo ↩" });
+  const redoBtn = el("button", { className: "btn btn-sm", textContent: "Redo ↪" });
+  const presetSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "arch", textContent: "Preset: GPU Architecture" }),
+    el("option", { value: "mindmap", textContent: "Preset: Product Mind Map" }),
+    el("option", { value: "pipeline", textContent: "Preset: CI/CD Pipeline" }),
+  ]);
+  const themeSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "feishu", textContent: "Theme: Feishu" }),
+    el("option", { value: "classic", textContent: "Theme: Classic Blue" }),
+    el("option", { value: "minimal", textContent: "Theme: Minimal" }),
+    el("option", { value: "colorful", textContent: "Theme: Colorful" }),
+    el("option", { value: "dark", textContent: "Theme: Dark" }),
+    el("option", { value: "business", textContent: "Theme: Business" }),
+  ]);
+  const exportSvgBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "Export .svg" });
+  const wbToolbar = el("div", { className: "stage-toolbar" }, [
+    addRectBtn,
+    addRoundBtn,
+    addEllipseBtn,
+    delNodeBtn,
+    el("span", { className: "toolbar-sep" }),
+    alignBtn,
+    distBtn,
+    undoBtn,
+    redoBtn,
+    el("span", { className: "toolbar-sep" }),
+    presetSelect,
+    themeSelect,
+    exportSvgBtn,
+  ]);
+
   const host = el("div", { className: "stage-mount whiteboard-stage-wrap", tabindex: "0" });
+  stageEl.appendChild(wbToolbar);
   stageEl.appendChild(host);
 
   createDrawerShell(
@@ -1261,29 +1973,38 @@ async function mountWhiteboardTab(token) {
       glyphInstances: 0,
       frameTimeMs: 0,
     };
-    const visNodes = frame?.visibleNodes ?? g.nodes.length;
+    const mindTotal = g.mind?.length ?? 0;
+    const visNodes = (frame?.visibleNodes ?? g.nodes.length) + (frame?.visibleMindTopics ?? mindTotal);
+    const totalNodes = g.nodes.length + mindTotal;
+    const totalEdges = g.edges.length + Math.max(0, mindTotal - 1);
     const zoomPct = Math.round((frame?.zoom ?? ctrl.camera.zoom) * 100);
 
-    m.nodes.textContent = `${visNodes} / ${g.nodes.length}`;
-    m.edges.textContent = String(g.edges.length);
+    m.nodes.textContent = `${visNodes} / ${totalNodes}`;
+    m.edges.textContent = String(totalEdges);
     m.zoom.textContent = `${zoomPct}%`;
     m.gpuInst.textContent = `${stats.rectInstances}r / ${stats.lineInstances}l / ${stats.arcInstances}a`;
 
     updateTelemetry(stats, {
       visibleNodes: visNodes,
-      totalNodes: g.nodes.length,
-      edgeCount: g.edges.length,
+      totalNodes,
+      edgeCount: totalEdges,
       zoom: Number((frame?.zoom ?? ctrl.camera.zoom).toFixed(2)),
     });
   }
 
-  async function loadMermaid(code) {
+  async function loadMermaid(code, direction = "LR") {
     if (mounted) {
       mounted.dispose();
       mounted = null;
     }
-    board = Board.fromMermaid(code, { direction: "LR" });
-    board.autoLayout({ direction: "LR", gapX: 72, gapY: 44 });
+    board = Board.fromMermaid(code, { direction });
+    const g = board.toGraph();
+    if (g.nodes.length > 0) {
+      board.autoLayout({ direction, gapX: 72, gapY: 44 });
+    }
+    if (themeSelect.value && themeSelect.value !== "feishu") {
+      board.apply([{ op: "setTheme", theme: themeSelect.value }]);
+    }
     tools = createWhiteboardTools(board);
 
     const view = await mountWhiteboardView(host, board, {
@@ -1294,7 +2015,7 @@ async function mountWhiteboardTab(token) {
       return;
     }
     mounted = view;
-    mounted.resize(host.clientWidth || 860, host.clientHeight || 560);
+    mounted.resize(host.clientWidth || 860, host.clientHeight || 500);
     const frame = mounted.controller.fitToScreen(56);
     syncUi(frame);
   }
@@ -1348,6 +2069,95 @@ async function mountWhiteboardTab(token) {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   host.addEventListener("wheel", onWheelSync, { passive: true });
+
+  function addInteractiveNode(shape) {
+    if (!board || !mounted) return;
+    const n = nodeSeq++;
+    const id = `node-${Date.now().toString(36)}-${n}`;
+    const center = mounted.controller.camera.screenToWorld((host.clientWidth || 800) / 2, (host.clientHeight || 500) / 2);
+    const offset = ((n - 1) % 6) * 24;
+    const node = {
+      id,
+      shape,
+      text: `${shape === "ellipse" ? "Service" : shape === "round" ? "Module" : "Node"} #${n}`,
+      x: Math.round(center.x - 75 + offset),
+      y: Math.round(center.y - 30 + offset),
+      w: 150,
+      h: shape === "ellipse" ? 72 : 56,
+    };
+    const sel = mounted.controller.getSelectedIds();
+    const ops = [{ op: "addNode", node }];
+    if (sel.length === 1) {
+      ops.push({ op: "addEdge", edge: { id: `e-${id}`, from: sel[0], to: id } });
+    }
+    board.apply(ops);
+    mounted.controller.selectNodes([id]);
+    syncUi(mounted.controller.render());
+    aiOut.set("board.apply(addNode)", node);
+  }
+
+  addRectBtn.addEventListener("click", () => addInteractiveNode("rect"));
+  addRoundBtn.addEventListener("click", () => addInteractiveNode("round"));
+  addEllipseBtn.addEventListener("click", () => addInteractiveNode("ellipse"));
+  delNodeBtn.addEventListener("click", () => {
+    if (!board || !mounted) return;
+    const ids = mounted.controller.getSelectedIds();
+    if (ids.length === 0) return;
+    board.apply(ids.map((id) => ({ op: "deleteNode", id })));
+    mounted.controller.selectNodes([]);
+    syncUi(mounted.controller.render());
+    aiOut.set("board.apply(deleteNode)", { deleted: ids });
+  });
+  alignBtn.addEventListener("click", () => {
+    if (!board || !mounted) return;
+    const sel = mounted.controller.getSelectedIds();
+    const ids = sel.length >= 2 ? sel : board.toGraph().nodes.slice(0, 4).map((n) => n.id);
+    board.alignNodes(ids, "middle");
+    syncUi(mounted.controller.render());
+    aiOut.set("board.alignNodes(middle)", { nodeIds: ids });
+  });
+  distBtn.addEventListener("click", () => {
+    if (!board || !mounted) return;
+    const sel = mounted.controller.getSelectedIds();
+    const ids = sel.length >= 3 ? sel : board.toGraph().nodes.slice(0, 4).map((n) => n.id);
+    board.distributeNodes(ids, "horizontal");
+    syncUi(mounted.controller.render());
+    aiOut.set("board.distributeNodes(horizontal)", { nodeIds: ids });
+  });
+  undoBtn.addEventListener("click", () => {
+    if (!board || !mounted) return;
+    const ok = board.undo();
+    syncUi(mounted.controller.render());
+    aiOut.set("board.undo()", { undone: ok });
+  });
+  redoBtn.addEventListener("click", () => {
+    if (!board || !mounted) return;
+    const ok = board.redo();
+    syncUi(mounted.controller.render());
+    aiOut.set("board.redo()", { redone: ok });
+  });
+  presetSelect.addEventListener("change", () => {
+    const val = presetSelect.value;
+    const code = val === "mindmap" ? MINDMAP_PRESET : val === "pipeline" ? PIPELINE_PRESET : DEFAULT_MERMAID_ARCH;
+    const dir = val === "pipeline" ? "TB" : "LR";
+    mermaidInput.value = code;
+    void loadMermaid(code, dir).then(() => {
+      const g = board.toGraph();
+      aiOut.set(`Loaded Preset: ${val}`, { nodes: g.nodes.length, edges: g.edges.length, mindTopics: g.mind?.length ?? 0 });
+    });
+  });
+  themeSelect.addEventListener("change", () => {
+    if (!board || !mounted) return;
+    board.apply([{ op: "setTheme", theme: themeSelect.value }]);
+    syncUi(mounted.controller.render());
+    aiOut.set("board.setTheme()", { theme: themeSelect.value });
+  });
+  exportSvgBtn.addEventListener("click", () => {
+    if (!board) return;
+    const svg = board.toSvg();
+    const size = downloadArtifact(svg, "jiange-whiteboard.svg", "image/svg+xml;charset=utf-8");
+    aiOut.set("board.toSvg()", { filename: "jiange-whiteboard.svg", bytes: size });
+  });
 
   loadMermaidBtn.addEventListener("click", () => {
     void loadMermaid(mermaidInput.value).then(() => {
@@ -1454,17 +2264,39 @@ function buildBaseDataset(recordCount) {
     });
   }
 
+  const fields = [
+    { id: 1, tableId: 1, name: "Milestone", type: "text", isPrimary: true, position: 1000 },
+    { id: 2, tableId: 1, name: "Stage", type: "select", options: stages, position: 2000 },
+    { id: 3, tableId: 1, name: "Team", type: "select", options: teams, position: 3000 },
+    { id: 4, tableId: 1, name: "Progress %", type: "number", position: 4000 },
+    { id: 5, tableId: 1, name: "Budget ($)", type: "number", position: 5000 },
+    { id: 6, tableId: 1, name: "Target Date", type: "date", position: 6000 },
+  ];
+  if (recordCount <= 1000) {
+    fields.push(
+      {
+        id: 7,
+        tableId: 1,
+        name: "Earned ($)",
+        type: "formula",
+        formula: "ROUND([Budget ($)] * [Progress %] / 100, 0)",
+        position: 7000,
+      },
+      {
+        id: 8,
+        tableId: 1,
+        name: "Health",
+        type: "formula",
+        formula: 'IF([Progress %] >= 80, "On Track", IF([Progress %] >= 60, "Watch", "At Risk"))',
+        position: 8000,
+      },
+    );
+  }
+
   return Base.fromJSON({
     name: recordCount >= 10000 ? "Jiange Enterprise Base (10K)" : "Jiange Product Roadmap",
     tables: [{ id: 1, baseId: 1, name: "Milestones", position: 1000, isDefault: true }],
-    fields: [
-      { id: 1, tableId: 1, name: "Milestone", type: "text", isPrimary: true, position: 1000 },
-      { id: 2, tableId: 1, name: "Stage", type: "select", options: stages, position: 2000 },
-      { id: 3, tableId: 1, name: "Team", type: "select", options: teams, position: 3000 },
-      { id: 4, tableId: 1, name: "Progress %", type: "number", position: 4000 },
-      { id: 5, tableId: 1, name: "Budget ($)", type: "number", position: 5000 },
-      { id: 6, tableId: 1, name: "Target Date", type: "date", position: 6000 },
-    ],
+    fields,
     records,
     views: [{ id: 1, baseId: 1, tableId: 1, type: "grid", name: "All Milestones", config: {}, pos: 1000 }],
   });
@@ -1479,19 +2311,70 @@ async function mountBaseTab(token) {
   let stopResize = null;
   let buildMs = 0;
   let gridScrollLeft = 0;
+  let recordSeq = 1;
 
   stageEl.replaceChildren();
+
+  // Interactive Multi-Condition Filter, Search & Sort Bar
+  const searchInput = el("input", {
+    className: "toolbar-input",
+    type: "text",
+    placeholder: "Search records…",
+  });
+  const stageSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "Stage: All" }),
+    el("option", { value: "Backlog", textContent: "Stage: Backlog" }),
+    el("option", { value: "In Progress", textContent: "Stage: In Progress" }),
+    el("option", { value: "Review", textContent: "Stage: Review" }),
+    el("option", { value: "Done", textContent: "Stage: Done" }),
+  ]);
+  const teamSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "Team: All" }),
+    el("option", { value: "Core GPU", textContent: "Team: Core GPU" }),
+    el("option", { value: "AI SDK", textContent: "Team: AI SDK" }),
+    el("option", { value: "Sheets", textContent: "Team: Sheets" }),
+    el("option", { value: "Docs", textContent: "Team: Docs" }),
+  ]);
+  const progressSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "Progress: All" }),
+    el("option", { value: "gte:80", textContent: "Progress >= 80%" }),
+    el("option", { value: "gte:60", textContent: "Progress >= 60%" }),
+    el("option", { value: "lt:60", textContent: "Progress < 60%" }),
+  ]);
+  const sortSelect = el("select", { className: "toolbar-select" }, [
+    el("option", { value: "", textContent: "Sort: Default" }),
+    el("option", { value: "4:desc", textContent: "Progress % ↓" }),
+    el("option", { value: "4:asc", textContent: "Progress % ↑" }),
+    el("option", { value: "5:desc", textContent: "Budget ($) ↓" }),
+    el("option", { value: "5:asc", textContent: "Budget ($) ↑" }),
+    el("option", { value: "6:asc", textContent: "Target Date ↑" }),
+  ]);
+  const clearQueryBtn = el("button", { className: "btn btn-sm", textContent: "Clear" });
+  const matchBadge = el("span", { className: "toolbar-badge", textContent: "40 / 40" });
+
+  const filterBar = el("div", { className: "stage-toolbar" }, [
+    searchInput,
+    stageSelect,
+    teamSelect,
+    progressSelect,
+    el("span", { className: "toolbar-sep" }),
+    sortSelect,
+    clearQueryBtn,
+    matchBadge,
+  ]);
+
   const wrapper = el("div", { className: "stage-mount base-stage-wrap" });
   const mountHost = el("div", { className: "stage-mount" });
   const headerOverlay = el("div", { className: "base-col-headers" });
   wrapper.appendChild(mountHost);
   wrapper.appendChild(headerOverlay);
+  stageEl.appendChild(filterBar);
   stageEl.appendChild(wrapper);
 
   createDrawerShell(
     "Multidimensional Base",
     "@jiange/base-ui",
-    "Unified GPU Grid, Kanban, Gantt & Dashboard renderer over @jiange/base-sdk with 10k-record virtualization.",
+    "Unified GPU Grid, Kanban, Gantt & Dashboard with live [Field] formulas, multi-rule filters, sorting & 10k virtualization.",
   );
 
   const modes = [
@@ -1513,19 +2396,48 @@ async function mountBaseTab(token) {
     segmented.appendChild(btn);
   }
 
+  const addRecordBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "+ Record" });
+  const undoBtn = el("button", { className: "btn btn-sm", textContent: "Undo ↩" });
+  const redoBtn = el("button", { className: "btn btn-sm", textContent: "Redo ↪" });
   const stressBtn = el("button", { className: "btn btn-toggle", textContent: "10,000 Records Stress: OFF" });
-  const inspectBtn = el("button", { className: "btn btn-primary", textContent: "AI base_inspect" });
+  const inspectBtn = el("button", { className: "btn", textContent: "AI base_inspect" });
   const verifyBtn = el("button", { className: "btn", textContent: "AI base_verify" });
 
-  createCard("GPU View Mode & Stress", [
+  createCard("GPU View Mode & Mutations", [
     segmented,
+    el("div", { className: "btn-row" }, [addRecordBtn, undoBtn, redoBtn]),
     el("div", { className: "btn-row" }, [stressBtn]),
     el("div", { className: "btn-row" }, [inspectBtn, verifyBtn]),
   ]);
 
+  const formulaNameInput = el("input", {
+    className: "text-input",
+    type: "text",
+    value: "Budget (K)",
+    placeholder: "Formula field name",
+  });
+  const formulaExprInput = el("input", {
+    className: "text-input",
+    type: "text",
+    value: "ROUND([Budget ($)] / 1000, 1)",
+    placeholder: 'e.g. [Team] & " · " & [Stage]',
+  });
+  const addFormulaBtn = el("button", { className: "btn btn-sm btn-primary", textContent: "+ Add Formula Field" });
+  createCard("Live Base Formula Field", [
+    el("div", { className: "field-group" }, [
+      el("label", { className: "field-label" }, [el("span", { textContent: "Field Name" })]),
+      formulaNameInput,
+    ]),
+    el("div", { className: "field-group" }, [
+      el("label", { className: "field-label" }, [el("span", { textContent: "Expression ([Field] syntax)" })]),
+      formulaExprInput,
+    ]),
+    el("div", { className: "btn-row" }, [addFormulaBtn]),
+  ]);
+
   const { grid: metricsGrid, refs: m } = createMetricGrid([
     ["mode", "Active Mode", "grid"],
-    ["records", "Records", "0"],
+    ["records", "Visible / Total", "0 / 0"],
     ["mounted", "Mounted Pool", "0"],
     ["gpuInst", "GPU Rect/Line/Arc", "—"],
   ]);
@@ -1533,13 +2445,48 @@ async function mountBaseTab(token) {
 
   const aiOut = createAiConsole();
 
+  function buildActiveQuery() {
+    const rules = [];
+    if (stageSelect.value) rules.push({ f: 2, op: "eq", v: stageSelect.value });
+    if (teamSelect.value) rules.push({ f: 3, op: "eq", v: teamSelect.value });
+    if (progressSelect.value) {
+      const [op, val] = progressSelect.value.split(":");
+      rules.push({ f: 4, op, v: Number(val) });
+    }
+    const sorts = [];
+    if (sortSelect.value) {
+      const [fStr, dir] = sortSelect.value.split(":");
+      sorts.push({ f: Number(fStr), asc: dir === "asc" });
+    }
+    const q = {};
+    if (searchInput.value.trim()) q.search = searchInput.value.trim();
+    if (rules.length > 0) q.filters = { conj: "and", rules };
+    if (sorts.length > 0) q.sorts = sorts;
+    return q;
+  }
+
+  function applyQuery() {
+    if (!mounted) return;
+    const q = buildActiveQuery();
+    const frame = mounted.controller.setQuery(q);
+    syncUi(frame);
+    aiOut.set("base.query()", {
+      query: q,
+      matchedRecords: frame.recordCount,
+    });
+  }
+
   function renderHeaderOverlay() {
     headerOverlay.style.display = currentMode === "grid" ? "flex" : "none";
     if (!baseModel || currentMode !== "grid") return;
     const fields = baseModel.getFields();
     headerOverlay.replaceChildren(
       ...fields.map((f, idx) => {
-        const cell = el("div", { className: "base-col-header-cell", textContent: f.name });
+        const isFormula = f.type === "formula";
+        const cell = el("div", {
+          className: `base-col-header-cell${isFormula ? " is-formula" : ""}`,
+          textContent: isFormula ? `fx ${f.name}` : f.name,
+        });
         if (idx === 0) {
           cell.style.position = "sticky";
           cell.style.left = "0";
@@ -1565,11 +2512,13 @@ async function mountBaseTab(token) {
       glyphInstances: 0,
       frameTimeMs: 0,
     };
-    const recordCount = frame?.recordCount ?? baseModel.getRecords(undefined, { computed: false }).length;
+    const totalCount = baseModel.getRecords(undefined, { computed: false }).length;
+    const recordCount = frame?.recordCount ?? totalCount;
     const mountedEls = frame?.mountedElements ?? ctrl.grid.pool.activeCount;
 
+    matchBadge.textContent = `${recordCount.toLocaleString()} / ${totalCount.toLocaleString()}`;
     m.mode.textContent = currentMode;
-    m.records.textContent = recordCount.toLocaleString();
+    m.records.textContent = `${recordCount.toLocaleString()} / ${totalCount.toLocaleString()}`;
     m.mounted.textContent = String(mountedEls);
     m.gpuInst.textContent = `${stats.rectInstances}r / ${stats.lineInstances}l / ${stats.arcInstances}a`;
 
@@ -1578,6 +2527,7 @@ async function mountBaseTab(token) {
       mode: currentMode,
       stressMode,
       recordCount,
+      totalCount,
       mountedElements: mountedEls,
       buildMs: Number(buildMs.toFixed(1)),
     });
@@ -1588,6 +2538,12 @@ async function mountBaseTab(token) {
       mounted.dispose();
       mounted = null;
     }
+    searchInput.value = "";
+    stageSelect.value = "";
+    teamSelect.value = "";
+    progressSelect.value = "";
+    sortSelect.value = "";
+
     const t0 = performance.now();
     baseModel = buildBaseDataset(isStress ? 10000 : 40);
     buildMs = performance.now() - t0;
@@ -1608,7 +2564,7 @@ async function mountBaseTab(token) {
       return;
     }
     mounted = view;
-    mounted.resize(mountHost.clientWidth || 860, mountHost.clientHeight || 560);
+    mounted.resize(mountHost.clientWidth || 860, mountHost.clientHeight || 500);
     const frame = mounted.controller.render();
     syncUi(frame);
   }
@@ -1662,6 +2618,64 @@ async function mountBaseTab(token) {
     if (mounted) syncUi();
   };
   mountHost.addEventListener("wheel", onWheelSync, { passive: true });
+  searchInput.addEventListener("input", applyQuery);
+  stageSelect.addEventListener("change", applyQuery);
+  teamSelect.addEventListener("change", applyQuery);
+  progressSelect.addEventListener("change", applyQuery);
+  sortSelect.addEventListener("change", applyQuery);
+  clearQueryBtn.addEventListener("click", () => {
+    searchInput.value = "";
+    stageSelect.value = "";
+    teamSelect.value = "";
+    progressSelect.value = "";
+    sortSelect.value = "";
+    applyQuery();
+  });
+  addRecordBtn.addEventListener("click", () => {
+    if (!baseModel || !mounted) return;
+    const n = recordSeq++;
+    const rec = baseModel.addRecord(undefined, {
+      "1": `Live Milestone +${n}`,
+      "2": "In Progress",
+      "3": "AI SDK",
+      "4": 88,
+      "5": 18500,
+      "6": "2026-12-01",
+    });
+    const frame = mounted.controller.render();
+    syncUi(frame);
+    aiOut.set("base.addRecord() with live formulas", rec);
+  });
+  addFormulaBtn.addEventListener("click", () => {
+    if (!baseModel || !mounted) return;
+    const name = formulaNameInput.value.trim() || `Formula ${Date.now() % 1000}`;
+    const expr = formulaExprInput.value.trim();
+    if (!expr) return;
+    try {
+      const created = baseModel.addField(undefined, {
+        name,
+        type: "formula",
+        formula: expr,
+      });
+      const frame = mounted.controller.render();
+      syncUi(frame);
+      aiOut.set("base.addField(formula)", { field: created, sampleValue: baseModel.query({ limit: 1 }).records[0]?.cells[String(created.id)] });
+    } catch (err) {
+      aiOut.set("Formula Error", String(err?.message || err));
+    }
+  });
+  undoBtn.addEventListener("click", () => {
+    if (!baseModel || !mounted) return;
+    const ok = baseModel.undo();
+    syncUi(mounted.controller.render());
+    aiOut.set("base.undo()", { undone: ok });
+  });
+  redoBtn.addEventListener("click", () => {
+    if (!baseModel || !mounted) return;
+    const ok = baseModel.redo();
+    syncUi(mounted.controller.render());
+    aiOut.set("base.redo()", { redone: ok });
+  });
   stressBtn.addEventListener("click", () => { void toggleStress(); });
   inspectBtn.addEventListener("click", runInspect);
   verifyBtn.addEventListener("click", runVerify);
