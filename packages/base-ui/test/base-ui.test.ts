@@ -71,10 +71,11 @@ describe("@jiange/base-ui (WebGPU/WebGL2 Grid, Kanban, Gantt & Dashboard)", () =
     expect(kanban.mode).toBe("kanban");
     expect(kanban.mountedElements).toBe(2);
 
-    // Gantt mode
+    // Gantt mode (header + frozen label pane backdrops + 2 bars, plus vertical scroll clipTop)
     const gantt = ctrl.setMode("gantt");
     expect(gantt.mode).toBe("gantt");
-    expect(gantt.gpu.rectInstances).toBe(2);
+    expect(gantt.gpu.rectInstances).toBe(4);
+    ctrl.scrollBy(24, 14);
 
     // Dashboard GPU mode (metric cards, bar chart, pie arcs, trend)
     const dash = ctrl.setMode("dashboard");

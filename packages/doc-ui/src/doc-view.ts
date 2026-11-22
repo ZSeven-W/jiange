@@ -10,6 +10,7 @@ export interface DocViewOptions {
   defaultBlockHeight?: number;
   readOnly?: boolean;
   onActiveBlockChange?: (blockId: string | null) => void;
+  onDocumentChange?: () => void;
 }
 
 export interface DocFrameResult {
@@ -151,6 +152,9 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
       this.insertBlockAfterActive("paragraph", "");
       return true;
     }
+    if (key === "Backspace" && this.activeBlockId && this.doc.getBlock(this.activeBlockId)?.text === "") {
+      return this.deleteActiveBlock();
+    }
     return false;
   }
 
@@ -162,7 +166,7 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
       this.viewportWidth,
       (index, el) => {
         const block = blocks[index];
-        el.textContent = block.text;
+        if (el.textContent !== block.text) el.textContent = block.text;
         el.setAttribute?.("data-block-id", block.id);
         el.setAttribute?.("data-block-type", block.type);
       },
@@ -207,12 +211,39 @@ export function mountDocView(
       const el = domDoc.createElement("div");
       el.style.boxSizing = "border-box";
       el.style.padding = "4px 12px";
+      if (!options.readOnly) {
+        el.contentEditable = "true";
+        el.style.outline = "none";
+        el.style.cursor = "text";
+      }
       viewport.appendChild(el);
       return el;
     },
     options,
   );
 
+  const focusActiveDom = () => {
+    const activeId = controller.getActiveBlockId();
+    if (!activeId) return;
+    const match = Array.from(viewport.children).find(
+      (child) => (child as HTMLElement).getAttribute?.("data-block-id") === activeId,
+    ) as HTMLElement | undefined;
+    match?.focus?.();
+  };
+
+  const onFocusIn = (e: Event) => {
+    const target = e.target as HTMLElement | null;
+    const blockId = target?.getAttribute?.("data-block-id");
+    if (blockId) controller.focusBlock(blockId);
+  };
+  const onInput = (e: Event) => {
+    const target = e.target as HTMLElement | null;
+    const blockId = target?.getAttribute?.("data-block-id");
+    if (!target || !blockId) return;
+    controller.focusBlock(blockId);
+    controller.updateActiveText(target.textContent ?? "");
+    options.onDocumentChange?.();
+  };
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
     controller.setScrollTop(controller.getScrollTop() + e.deltaY);
@@ -220,9 +251,13 @@ export function mountDocView(
   const onKeyDown = (e: KeyboardEvent) => {
     if (controller.handleKeyDown(e.key, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })) {
       e.preventDefault();
+      focusActiveDom();
+      options.onDocumentChange?.();
     }
   };
 
+  viewport.addEventListener("focusin", onFocusIn);
+  viewport.addEventListener("input", onInput);
   container.addEventListener("wheel", onWheel, { passive: false });
   container.addEventListener("keydown", onKeyDown);
 
@@ -236,6 +271,8 @@ export function mountDocView(
       controller.render();
     },
     dispose() {
+      viewport.removeEventListener("focusin", onFocusIn);
+      viewport.removeEventListener("input", onInput);
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("keydown", onKeyDown);
       controller.dispose();

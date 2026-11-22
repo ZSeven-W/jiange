@@ -15,12 +15,15 @@ import {
 } from "@jiange/render-gpu";
 import type { Presentation, SlideShape } from "@jiange/slides-sdk";
 
+export type SlideResizeHandle = "nw" | "ne" | "sw" | "se";
+
 export interface SlidesViewOptions {
   gpu?: GpuSurfaceOptions;
   initialSlide?: number;
   presenterMode?: boolean;
   onSlideChange?: (index: number) => void;
   onSelectShape?: (shapeId: string | null) => void;
+  onShapeChange?: (shapeId: string) => void;
 }
 
 export interface SlidesFrameResult {
@@ -145,6 +148,29 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
     return null;
   }
 
+  /** Hit-test the 4 corner resize handles of the currently selected shape. */
+  hitTestResizeHandle(x: number, y: number): SlideResizeHandle | null {
+    if (!this.selectedShapeId || this.presenterMode) return null;
+    const page = this.deck.getSlide(this.slideIndex);
+    const s = page?.shapes.find((item) => item.id === this.selectedShapeId);
+    if (!s) return null;
+    const stage = this.getStageRect();
+    const sx = stage.x + (s.x / 100) * stage.w;
+    const sy = stage.y + (s.y / 100) * stage.h;
+    const sw = ((s.width ?? 16) / 100) * stage.w;
+    const sh = ((s.height ?? 20) / 100) * stage.h;
+    const handles: Array<[SlideResizeHandle, number, number]> = [
+      ["nw", sx, sy],
+      ["ne", sx + sw, sy],
+      ["sw", sx, sy + sh],
+      ["se", sx + sw, sy + sh],
+    ];
+    for (const [id, hx, hy] of handles) {
+      if (Math.abs(x - hx) <= 9 && Math.abs(y - hy) <= 9) return id;
+    }
+    return null;
+  }
+
   moveSelectedShape(dxPct: number, dyPct: number): boolean {
     if (!this.selectedShapeId) return false;
     const page = this.deck.getSlide(this.slideIndex);
@@ -155,6 +181,32 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
     const nx = Math.max(0, Math.min(100 - w, s.x + dxPct));
     const ny = Math.max(0, Math.min(100 - h, s.y + dyPct));
     this.deck.updateShape(this.slideIndex, s.id, { x: nx, y: ny });
+    this.options.onShapeChange?.(s.id);
+    this.render();
+    return true;
+  }
+
+  resizeSelectedShape(handle: SlideResizeHandle, dxPct: number, dyPct: number): boolean {
+    if (!this.selectedShapeId) return false;
+    const page = this.deck.getSlide(this.slideIndex);
+    const s = page?.shapes.find((x) => x.id === this.selectedShapeId);
+    if (!s) return false;
+    const minSize = 4;
+    let x1 = s.x;
+    let y1 = s.y;
+    let x2 = s.x + (s.width ?? 16);
+    let y2 = s.y + (s.height ?? 20);
+    if (handle === "nw" || handle === "sw") x1 = Math.max(0, Math.min(x2 - minSize, x1 + dxPct));
+    if (handle === "ne" || handle === "se") x2 = Math.min(100, Math.max(x1 + minSize, x2 + dxPct));
+    if (handle === "nw" || handle === "ne") y1 = Math.max(0, Math.min(y2 - minSize, y1 + dyPct));
+    if (handle === "sw" || handle === "se") y2 = Math.min(100, Math.max(y1 + minSize, y2 + dyPct));
+    this.deck.updateShape(this.slideIndex, s.id, {
+      x: Math.round(x1 * 100) / 100,
+      y: Math.round(y1 * 100) / 100,
+      width: Math.round((x2 - x1) * 100) / 100,
+      height: Math.round((y2 - y1) * 100) / 100,
+    });
+    this.options.onShapeChange?.(s.id);
     this.render();
     return true;
   }
@@ -495,9 +547,50 @@ export async function mountSlidesView(
     },
   );
 
+  let dragMode: "none" | "move" | SlideResizeHandle = "none";
+  let lastX = 0;
+  let lastY = 0;
+
   const onPointerDown = (e: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
-    controller.handlePointerDown(e.clientX - rect.left, e.clientY - rect.top);
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const handle = controller.hitTestResizeHandle(cx, cy);
+    if (handle) {
+      dragMode = handle;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      return;
+    }
+    const hit = controller.handlePointerDown(cx, cy);
+    dragMode = hit && !controller.isPresenterMode() ? "move" : "none";
+    lastX = e.clientX;
+    lastY = e.clientY;
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    if (dragMode === "none") {
+      const handle = controller.hitTestResizeHandle(e.clientX - rect.left, e.clientY - rect.top);
+      canvas.style.cursor = handle === "nw" || handle === "se"
+        ? "nwse-resize"
+        : handle === "ne" || handle === "sw"
+          ? "nesw-resize"
+          : "default";
+      return;
+    }
+    const stage = controller.getStageRect();
+    const dxPct = ((e.clientX - lastX) / stage.w) * 100;
+    const dyPct = ((e.clientY - lastY) / stage.h) * 100;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    if (dragMode === "move") {
+      controller.moveSelectedShape(dxPct, dyPct);
+    } else {
+      controller.resizeSelectedShape(dragMode, dxPct, dyPct);
+    }
+  };
+  const onPointerUp = () => {
+    dragMode = "none";
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (controller.handleKeyDown(e.key, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })) {
@@ -505,6 +598,9 @@ export async function mountSlidesView(
     }
   };
   canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointerleave", onPointerUp);
   container.addEventListener("keydown", onKeyDown);
 
   const w = Math.max(320, (container.clientWidth || 960) - 168);
@@ -520,6 +616,9 @@ export async function mountSlidesView(
     },
     dispose() {
       canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerUp);
       container.removeEventListener("keydown", onKeyDown);
       controller.dispose();
       rail.remove();

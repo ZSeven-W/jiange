@@ -575,8 +575,19 @@ body {
   line-height: 1.6;
   padding: 6px 28px !important;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-word;
   border-left: 3px solid transparent;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.doc-paper [data-block-type]:hover {
+  background: rgba(51, 112, 255, 0.03);
+}
+
+.doc-paper [data-block-type]:focus {
+  background: rgba(51, 112, 255, 0.06);
+  border-left-color: var(--accent);
 }
 
 .doc-paper [data-block-type="h1"] {

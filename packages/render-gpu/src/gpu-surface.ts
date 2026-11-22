@@ -77,7 +77,7 @@ interface WebGpuRenderPassLike {
   setScissorRect(x: number, y: number, w: number, h: number): void;
   setPipeline(pipeline: unknown): void;
   setBindGroup(idx: number, bg: unknown): void;
-  setVertexBuffer(slot: number, buf: WebGpuBufferLike): void;
+  setVertexBuffer(slot: number, buf: WebGpuBufferLike, offset?: number, size?: number): void;
   draw(vertexCount: number, instanceCount?: number): void;
   end(): void;
 }
@@ -341,11 +341,48 @@ export class WebGPUBackend implements GpuBackend {
     const physH = Math.max(1, Math.round(this.height * this.dpr));
     pass.setViewport(0, 0, physW, physH, 0, 1);
 
+    // Pre-size each GPU vertex buffer to hold all batches in this frame contiguously so
+    // multiple queue.writeBuffer() calls never overwrite earlier batches before queue.submit().
+    let totalRectBytes = 0;
+    let totalLineBytes = 0;
+    let totalArcBytes = 0;
+    let totalGlyphBytes = 0;
+    for (const batch of batches) {
+      totalRectBytes += batch.rects * RECT_STRIDE * 4;
+      totalLineBytes += batch.lines * LINE_STRIDE * 4;
+      totalArcBytes += batch.arcs * ARC_STRIDE * 4;
+      totalGlyphBytes += batch.glyphs * GLYPH_STRIDE * 4;
+    }
+    if (totalRectBytes > 0) {
+      const grown = this.growBuffer(this.rectBuffer, this.rectBufBytes, totalRectBytes);
+      this.rectBuffer = grown.buf;
+      this.rectBufBytes = grown.bytes;
+    }
+    if (totalLineBytes > 0) {
+      const grown = this.growBuffer(this.lineBuffer, this.lineBufBytes, totalLineBytes);
+      this.lineBuffer = grown.buf;
+      this.lineBufBytes = grown.bytes;
+    }
+    if (totalArcBytes > 0) {
+      const grown = this.growBuffer(this.arcBuffer, this.arcBufBytes, totalArcBytes);
+      this.arcBuffer = grown.buf;
+      this.arcBufBytes = grown.bytes;
+    }
+    if (totalGlyphBytes > 0) {
+      const grown = this.growBuffer(this.glyphBuffer, this.glyphBufBytes, totalGlyphBytes);
+      this.glyphBuffer = grown.buf;
+      this.glyphBufBytes = grown.bytes;
+    }
+
     let drawCalls = 0;
     let rectInstances = 0;
     let lineInstances = 0;
     let arcInstances = 0;
     let glyphInstances = 0;
+    let rectOffset = 0;
+    let lineOffset = 0;
+    let arcOffset = 0;
+    let glyphOffset = 0;
 
     for (const batch of batches) {
       batch.camera.writeUniform(this.uniformScratch, this.width, this.height, this.dpr);
@@ -363,42 +400,36 @@ export class WebGPUBackend implements GpuBackend {
 
       if (batch.rects > 0) {
         const data = batch.rectView();
-        const grown = this.growBuffer(this.rectBuffer, this.rectBufBytes, data.byteLength);
-        this.rectBuffer = grown.buf;
-        this.rectBufBytes = grown.bytes;
-        this.device.queue.writeBuffer(this.rectBuffer, 0, data);
+        this.device.queue.writeBuffer(this.rectBuffer, rectOffset, data);
         pass.setPipeline(this.rectPipeline);
         pass.setBindGroup(0, this.rectBindGroup);
-        pass.setVertexBuffer(0, this.rectBuffer);
+        pass.setVertexBuffer(0, this.rectBuffer, rectOffset, data.byteLength);
         pass.draw(6, batch.rects);
+        rectOffset += data.byteLength;
         drawCalls++;
         rectInstances += batch.rects;
       }
 
       if (batch.lines > 0) {
         const data = batch.lineView();
-        const grown = this.growBuffer(this.lineBuffer, this.lineBufBytes, data.byteLength);
-        this.lineBuffer = grown.buf;
-        this.lineBufBytes = grown.bytes;
-        this.device.queue.writeBuffer(this.lineBuffer, 0, data);
+        this.device.queue.writeBuffer(this.lineBuffer, lineOffset, data);
         pass.setPipeline(this.linePipeline);
         pass.setBindGroup(0, this.lineBindGroup);
-        pass.setVertexBuffer(0, this.lineBuffer);
+        pass.setVertexBuffer(0, this.lineBuffer, lineOffset, data.byteLength);
         pass.draw(6, batch.lines);
+        lineOffset += data.byteLength;
         drawCalls++;
         lineInstances += batch.lines;
       }
 
       if (batch.arcs > 0) {
         const data = batch.arcView();
-        const grown = this.growBuffer(this.arcBuffer, this.arcBufBytes, data.byteLength);
-        this.arcBuffer = grown.buf;
-        this.arcBufBytes = grown.bytes;
-        this.device.queue.writeBuffer(this.arcBuffer, 0, data);
+        this.device.queue.writeBuffer(this.arcBuffer, arcOffset, data);
         pass.setPipeline(this.arcPipeline);
         pass.setBindGroup(0, this.arcBindGroup);
-        pass.setVertexBuffer(0, this.arcBuffer);
+        pass.setVertexBuffer(0, this.arcBuffer, arcOffset, data.byteLength);
         pass.draw(6, batch.arcs);
+        arcOffset += data.byteLength;
         drawCalls++;
         arcInstances += batch.arcs;
       }
@@ -414,14 +445,12 @@ export class WebGPUBackend implements GpuBackend {
           this.glyphAtlas.markClean();
         }
         const data = batch.glyphView();
-        const grown = this.growBuffer(this.glyphBuffer, this.glyphBufBytes, data.byteLength);
-        this.glyphBuffer = grown.buf;
-        this.glyphBufBytes = grown.bytes;
-        this.device.queue.writeBuffer(this.glyphBuffer, 0, data);
+        this.device.queue.writeBuffer(this.glyphBuffer, glyphOffset, data);
         pass.setPipeline(this.glyphPipeline);
         pass.setBindGroup(0, this.glyphBindGroup);
-        pass.setVertexBuffer(0, this.glyphBuffer);
+        pass.setVertexBuffer(0, this.glyphBuffer, glyphOffset, data.byteLength);
         pass.draw(6, batch.glyphs);
+        glyphOffset += data.byteLength;
         drawCalls++;
         glyphInstances += batch.glyphs;
       }

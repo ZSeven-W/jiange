@@ -67,10 +67,12 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
 
     const onSlide = vi.fn();
     const onShape = vi.fn();
+    const onShapeChange = vi.fn();
     const mounted = await mountSlidesView(container as unknown as HTMLElement, deck, {
       gpu: { prefer: "headless" },
       onSlideChange: onSlide,
       onSelectShape: onShape,
+      onShapeChange,
     });
     const ctrl = mounted.controller;
     expect(ctrl.getSlideIndex()).toBe(0);
@@ -90,14 +92,39 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     directCtrl.render();
     directCtrl.dispose();
 
-    // Hit-test & move shape & delete & undo
+    // Hit-test, interactive drag-move, 4-corner resize handles, & delete & undo
     const stage = ctrl.getStageRect();
     const canvas = (container.children[1] as ReturnType<typeof makeDomNode>).children[0] as ReturnType<typeof makeDomNode>;
+    // Hover & click empty canvas first
+    canvas.dispatch("pointermove", { clientX: stage.x + 5, clientY: stage.y + 5 });
+    expect(canvas.style.cursor).toBe("default");
+    canvas.dispatch("pointerdown", { clientX: stage.x + 5, clientY: stage.y + 5 });
+    canvas.dispatch("pointerup", {});
     canvas.dispatch("pointerdown", { clientX: stage.x + stage.w * 0.2, clientY: stage.y + stage.h * 0.3 });
     expect(ctrl.getSelectedShapeId()).toBe("r1");
     expect(onShape).toHaveBeenCalledWith("r1");
-    expect(ctrl.moveSelectedShape(5, 5)).toBe(true);
-    expect(deck.getSlide(1)?.shapes[0].x).toBe(15);
+    // Interactive drag move
+    canvas.dispatch("pointermove", { clientX: stage.x + stage.w * 0.25, clientY: stage.y + stage.h * 0.35 });
+    canvas.dispatch("pointerup", {});
+    expect(deck.getSlide(1)?.shapes[0].x).toBeGreaterThan(10);
+    // Hover + drag SE & NW & NE & SW resize handles
+    const sNow = deck.getSlide(1)!.shapes[0];
+    const nwX = stage.x + (sNow.x / 100) * stage.w;
+    const nwY = stage.y + (sNow.y / 100) * stage.h;
+    const seX = nwX + ((sNow.width ?? 16) / 100) * stage.w;
+    const seY = nwY + ((sNow.height ?? 20) / 100) * stage.h;
+    canvas.dispatch("pointermove", { clientX: seX, clientY: seY });
+    expect(canvas.style.cursor).toBe("nwse-resize");
+    canvas.dispatch("pointermove", { clientX: seX, clientY: nwY });
+    expect(canvas.style.cursor).toBe("nesw-resize");
+    canvas.dispatch("pointerdown", { clientX: seX, clientY: seY });
+    canvas.dispatch("pointermove", { clientX: seX + 20, clientY: seY + 15 });
+    canvas.dispatch("pointerup", {});
+    expect(deck.getSlide(1)!.shapes[0].width).toBeGreaterThan(25);
+    expect(ctrl.resizeSelectedShape("nw", 1, 1)).toBe(true);
+    expect(ctrl.resizeSelectedShape("ne", 1, 1)).toBe(true);
+    expect(ctrl.resizeSelectedShape("sw", 1, 1)).toBe(true);
+    expect(ctrl.moveSelectedShape(2, 2)).toBe(true);
 
     container.dispatch("keydown", { key: "Delete" });
     expect(deck.getSlide(1)?.shapes.find((s) => s.id === "r1")).toBeUndefined();
@@ -188,19 +215,25 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     const thumbTexts = (rail.children as ReturnType<typeof makeDomNode>[]).map((c) => c.textContent);
     expect(thumbTexts.some((t) => t.includes("Untitled"))).toBe(true);
 
-    // Hit-test miss on empty area + moveSelectedShape guards
+    // Hit-test miss on empty area + moveSelectedShape / resizeSelectedShape guards
     expect(ctrl.moveSelectedShape(2, 2)).toBe(false);
+    expect(ctrl.resizeSelectedShape("se", 2, 2)).toBe(false);
+    expect(ctrl.hitTestResizeHandle(0, 0)).toBeNull();
     expect(ctrl.handlePointerDown(wideStage.x + wideStage.w * 0.99, wideStage.y + wideStage.h * 0.99)).toBeNull();
     expect(ctrl.getSelectedShapeId()).toBeNull();
 
-    // Select a non-existent shape id -> moveSelectedShape returns false
+    // Select a non-existent shape id -> moveSelectedShape / resizeSelectedShape / hitTestResizeHandle return falsy
     ctrl.selectShape("missing-id");
     expect(ctrl.moveSelectedShape(2, 2)).toBe(false);
+    expect(ctrl.resizeSelectedShape("se", 2, 2)).toBe(false);
+    expect(ctrl.hitTestResizeHandle(0, 0)).toBeNull();
 
-    // Hit-test shape with default width/height & move it & delete with Backspace
+    // Hit-test shape with default width/height & move BEFORE resize so omitted width/height defaults run in both
     const hitDef = ctrl.handlePointerDown(wideStage.x + wideStage.w * 0.1, wideStage.y + wideStage.h * 0.12);
     expect(hitDef?.id).toBe("def1");
+    expect(ctrl.hitTestResizeHandle(wideStage.x + wideStage.w * 0.1, wideStage.y + wideStage.h * 0.12)).toBeNull();
     expect(ctrl.moveSelectedShape(2, 3)).toBe(true);
+    expect(ctrl.resizeSelectedShape("se", 2, 2)).toBe(true);
     expect(ctrl.handleKeyDown("Backspace")).toBe(true);
     expect(deck.getSlide(1)?.shapes.find((s) => s.id === "def1")).toBeUndefined();
 

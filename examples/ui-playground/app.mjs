@@ -1171,7 +1171,12 @@ async function mountDocTab(token) {
     buildMs = performance.now() - t0;
     tools = createDocTools(docModel);
 
-    mounted = mountDocView(paper, docModel);
+    mounted = mountDocView(paper, docModel, {
+      onDocumentChange: () => {
+        rebuildOutline();
+        syncUi();
+      },
+    });
     const rt0 = performance.now();
     mounted.resize(paper.clientWidth || 760, paper.clientHeight || 560);
     const frame = mounted.controller.render();
@@ -1630,6 +1635,7 @@ async function mountSlidesTab(token) {
   const view = await mountSlidesView(gpuHost, deck, {
     onSlideChange: () => syncUi(),
     onSelectShape: () => syncUi(),
+    onShapeChange: () => syncUi(),
   });
   if (token !== mountToken) {
     view.dispose();
@@ -2311,6 +2317,7 @@ async function mountBaseTab(token) {
   let stopResize = null;
   let buildMs = 0;
   let gridScrollLeft = 0;
+  let lastRecordCount = 0;
   let recordSeq = 1;
 
   stageEl.replaceChildren();
@@ -2513,7 +2520,8 @@ async function mountBaseTab(token) {
       frameTimeMs: 0,
     };
     const totalCount = baseModel.getRecords(undefined, { computed: false }).length;
-    const recordCount = frame?.recordCount ?? totalCount;
+    if (frame?.recordCount !== undefined) lastRecordCount = frame.recordCount;
+    const recordCount = frame?.recordCount ?? lastRecordCount;
     const mountedEls = frame?.mountedElements ?? ctrl.grid.pool.activeCount;
 
     matchBadge.textContent = `${recordCount.toLocaleString()} / ${totalCount.toLocaleString()}`;

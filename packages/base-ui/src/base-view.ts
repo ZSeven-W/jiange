@@ -54,7 +54,7 @@ const ROW_FILL_COLORS: RgbaTuple[] = [
 export class BaseViewController<T extends PoolableElement = PoolableElement> {
   readonly grid: VirtualGrid2D<T>;
   private readonly batch = new InstanceBatch(1024, 1024, 128);
-  private readonly headerBatch = new InstanceBatch(8, 8, 1);
+  private readonly headerBatch = new InstanceBatch(64, 256, 1);
   private tableId: number | undefined;
   private mode: BaseRenderMode;
   private queryOptions: QueryRecordsOptions = {};
@@ -262,6 +262,8 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
     if (this.mode === "gantt") {
       const dateField = fields.find((f) => f.type === "date");
       const primary = fields.find((f) => f.isPrimary) ?? fields[0];
+      const headerH = 32;
+      const labelPaneW = 176;
       const rowH = 38;
       const poolInputs: Array<{
         key: string;
@@ -272,13 +274,26 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
         render: (el: T, newlyBound: boolean) => void;
       }> = [];
 
+      // Scissor Gantt timeline bars strictly to [labelPaneW..width, headerH..height] so bars never bleed over task labels or header
+      this.batch.scissor = {
+        x: labelPaneW,
+        y: headerH,
+        w: Math.max(1, this.width - labelPaneW),
+        h: Math.max(1, this.height - headerH),
+      };
+      this.headerBatch.reset();
+      this.headerBatch.pushRect({ x: 0, y: 0, w: this.width, h: headerH, fill: [0.96, 0.97, 0.99, 1] });
+      this.headerBatch.pushRect({ x: 0, y: headerH, w: labelPaneW, h: Math.max(1, this.height - headerH), fill: [0.985, 0.99, 1, 1] });
+      this.headerBatch.pushLine({ x1: 0, y1: headerH, x2: this.width, y2: headerH, thickness: 1, color: [0.85, 0.88, 0.93, 1] });
+      this.headerBatch.pushLine({ x1: labelPaneW, y1: 0, x2: labelPaneW, y2: this.height, thickness: 1.5, color: [0.83, 0.87, 0.92, 1] });
+
       records.forEach((rec, idx) => {
-        const y = 32 + idx * rowH - this.scrollTop;
-        if (y + rowH < 0 || y > this.height) return;
-        this.batch.pushLine({ x1: 0, y1: y + rowH, x2: this.width, y2: y + rowH, thickness: 1, color: [0.92, 0.94, 0.97, 1] });
+        const y = headerH + idx * rowH - this.scrollTop;
+        if (y + rowH <= headerH || y > this.height) return;
+        this.headerBatch.pushLine({ x1: 0, y1: y + rowH, x2: this.width, y2: y + rowH, thickness: 1, color: [0.92, 0.94, 0.97, 1] });
         const dateStr = dateField ? formatCellText(rec.cells[String(dateField.id)]) : "";
         const dayOffset = dateStr ? (Date.parse(dateStr) / 86400000) % 30 : idx * 2;
-        const barX = 180 + Math.max(0, dayOffset) * 18 - this.scrollLeft;
+        const barX = labelPaneW + 12 + Math.max(0, dayOffset) * 18 - this.scrollLeft;
         const barW = 120;
         this.batch.pushRect({
           x: barX,
@@ -288,18 +303,23 @@ export class BaseViewController<T extends PoolableElement = PoolableElement> {
           fill: [0.2, 0.44, 1, 0.88],
           radius: 5,
         });
+        const labelTop = y + 8;
+        const clipTop = Math.max(0, headerH - labelTop);
         poolInputs.push({
           key: `g:${rec.id}`,
           x: 12,
-          y: y + 8,
-          width: 156,
+          y: labelTop,
+          width: labelPaneW - 22,
           height: rowH - 12,
-          render: (el) => { el.textContent = primary ? formatCellText(rec.cells[String(primary.id)]) : `#${rec.id}`; },
+          render: (el) => {
+            el.textContent = primary ? formatCellText(rec.cells[String(primary.id)]) : `#${rec.id}`;
+            el.style.clipPath = clipTop > 0 ? `inset(${clipTop}px 0px 0px 0px)` : "";
+          },
         });
       });
 
       this.grid.pool.sync(poolInputs);
-      const gpu = this.surface.render([this.batch]);
+      const gpu = this.surface.render([this.headerBatch, this.batch]);
       return { mode: this.mode, gpu, recordCount: records.length, mountedElements: poolInputs.length };
     }
 

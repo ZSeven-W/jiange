@@ -17,11 +17,14 @@ function makeDomNode(tag: string) {
     attrs: {} as Record<string, string>,
     children: [] as unknown[],
     textContent: "",
+    contentEditable: "inherit",
     clientWidth: 760,
     clientHeight: 400,
     ownerDocument: null as unknown,
     appendChild(c: unknown) { this.children.push(c); return c; },
     setAttribute(k: string, v: string) { this.attrs[k] = v; },
+    getAttribute(k: string) { return this.attrs[k] ?? null; },
+    focus: vi.fn(),
     remove: vi.fn(),
     addEventListener(ev: string, fn: (e: unknown) => void) {
       let s = listeners.get(ev);
@@ -47,7 +50,11 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     container.ownerDocument = fakeDoc;
 
     const onFocus = vi.fn();
-    const mounted = mountDocView(container as unknown as HTMLElement, doc, { onActiveBlockChange: onFocus });
+    const onDocChange = vi.fn();
+    const mounted = mountDocView(container as unknown as HTMLElement, doc, {
+      onActiveBlockChange: onFocus,
+      onDocumentChange: onDocChange,
+    });
     const ctrl = mounted.controller;
 
     const initial = ctrl.render();
@@ -62,16 +69,37 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     ctrl.reportBlockHeight(activeId, 88);
     ctrl.reportBlockHeight("unknown-block-id", 64);
 
-    // Edit, insert, delete, keyboard shortcuts, wheel scroll
+    // Edit via live contentEditable focusin/input + insert + Backspace on empty block + undo/redo
+    const viewport = container.children[0] as ReturnType<typeof makeDomNode>;
+    const firstBlockEl = viewport.children[0] as ReturnType<typeof makeDomNode>;
+    expect(firstBlockEl.contentEditable).toBe("true");
+    viewport.dispatch("focusin", { target: firstBlockEl });
+    viewport.dispatch("focusin", { target: makeDomNode("span") }); // no data-block-id guard
+    firstBlockEl.textContent = "Updated via inline input";
+    viewport.dispatch("input", { target: firstBlockEl });
+    viewport.dispatch("input", { target: { getAttribute: () => firstBlockEl.getAttribute("data-block-id"), textContent: null } });
+    viewport.dispatch("input", { target: makeDomNode("span") }); // no data-block-id guard
+    ctrl.focusBlock(activeId);
     ctrl.updateActiveText("Updated Conclusion");
     expect(doc.getBlock(activeId)?.text).toBe("Updated Conclusion");
     const inserted = ctrl.insertBlockAfterActive("paragraph", "New note");
     expect(inserted).not.toBeNull();
-    expect(ctrl.handleKeyDown("Enter")).toBe(true);
+    container.dispatch("keydown", { key: "Enter" });
+    // Active block is now the newly created empty paragraph -> Backspace deletes it
+    container.dispatch("keydown", { key: "Backspace" });
     expect(ctrl.deleteActiveBlock()).toBe(true);
     container.dispatch("wheel", { deltaY: 120 });
+    ctrl.focusBlock(null);
     container.dispatch("keydown", { key: "z", ctrlKey: true });
     container.dispatch("keydown", { key: "z", ctrlKey: true, shiftKey: true });
+    expect(onDocChange).toHaveBeenCalled();
+    // readOnly mount disables contentEditable
+    const roContainer = makeDomNode("div");
+    roContainer.ownerDocument = fakeDoc;
+    const roMounted = mountDocView(roContainer as unknown as HTMLElement, doc, { readOnly: true });
+    const roBlockEl = (roContainer.children[0] as ReturnType<typeof makeDomNode>).children[0] as ReturnType<typeof makeDomNode>;
+    expect(roBlockEl.contentEditable).toBe("inherit");
+    roMounted.dispose();
 
     mounted.resize(900, 600);
     mounted.dispose();
