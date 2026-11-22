@@ -162,6 +162,26 @@ function sameRect(a: { top: number; left: number; bottom: number; right: number 
   return a.top === b.top && a.left === b.left && a.bottom === b.bottom && a.right === b.right;
 }
 
+function splitFormulaSegments(
+  formula: string,
+  refs: readonly { text: string; color: string }[],
+): Array<{ text: string; color: string | null }> {
+  if (!formula.startsWith("=") || refs.length === 0) return [{ text: formula, color: null }];
+  const lower = formula.toLowerCase();
+  const out: Array<{ text: string; color: string | null }> = [];
+  let cursor = 0;
+  for (const ref of refs) {
+    if (!ref.text) continue;
+    const idx = lower.indexOf(ref.text.toLowerCase(), cursor);
+    if (idx < 0) continue;
+    if (idx > cursor) out.push({ text: formula.slice(cursor, idx), color: null });
+    out.push({ text: formula.slice(idx, idx + ref.text.length), color: ref.color });
+    cursor = idx + ref.text.length;
+  }
+  if (cursor < formula.length) out.push({ text: formula.slice(cursor), color: null });
+  return out.length > 0 ? out : [{ text: formula, color: null }];
+}
+
 export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me: Me; onGlobalSearch?: () => void }) {
   const { locale } = useI18n();
   const qc = useQueryClient();
@@ -226,6 +246,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [fxMenuOpen, setFxMenuOpen] = useState(false);
@@ -1769,6 +1790,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </div>
           )}
         </div>
+
+        <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={28} title={me.user.name} />
       </header>
 
       <input
@@ -1790,6 +1813,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         activeSheetId={activeSheet.id}
         canEdit={canEdit}
         fullscreen={fullscreen}
+        toolbarCollapsed={toolbarCollapsed}
         onSelectSheet={(id) => {
           setActiveSheetId(id);
           setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
@@ -1799,9 +1823,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         onMoveSheet={(id, pos) => void handleWorksheetPatch(id, { pos })}
         onDeleteSheet={(id) => void handleDeleteSheet(id)}
         onToggleFullscreen={() => setFullscreen((v) => !v)}
+        onToggleToolbarCollapsed={() => setToolbarCollapsed(false)}
       />
 
       {/* Formatting & Data Toolbar */}
+      {!toolbarCollapsed && (
       <SheetToolbar
         canEdit={canEdit}
         canUndo={undoStack.length > 0}
@@ -1840,7 +1866,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         activePanel={activePanel}
         unresolvedCommentCount={unresolvedCommentCount}
         onTogglePanel={handleTogglePanel}
+        onCollapseToolbar={() => setToolbarCollapsed(true)}
       />
+      )}
 
       {/* Name Box + fx + Formula Bar */}
       <div className="relative flex h-7 min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px]">
@@ -1900,49 +1928,65 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </div>
           )}
         </div>
-        <input
-          ref={formulaInputRef}
-          aria-label={t("公式编辑栏")}
-          data-sheet-formula
-          readOnly={!canEdit}
-          onCopy={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
-          onCut={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
-          value={displayedFormulaValue}
-          onFocus={() => {
-            if (canEdit && !editing) {
-              beginEdit(selection.focus, focusedCell?.raw ?? "", "formula");
-            }
-          }}
-          onChange={(e) => {
-            if (!editing) {
-              beginEdit(selection.focus, e.target.value, "formula");
-            } else {
-              setEditing({ ...editing, value: e.target.value });
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing || !editing) return;
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setEditing(null);
-              gridRef.current?.focus();
-            } else if (e.key === "Enter" || e.key === "Tab") {
-              e.preventDefault();
-              void commitActiveEdit().then((ok) => {
-                if (ok) {
-                  moveSelection(e.key === "Enter" ? (e.shiftKey ? -1 : 1) : 0, e.key === "Tab" ? (e.shiftKey ? -1 : 1) : 0, false);
-                  gridRef.current?.focus();
-                }
-              });
-            }
-          }}
-          onBlur={() => {
-            if (editing?.source === "formula") {
-              void commitActiveEdit();
-            }
-          }}
-          className="h-full min-w-0 flex-1 bg-transparent pr-3 text-[#1f2329] outline-none"
-        />
+        <div className="relative flex h-full min-w-0 flex-1 items-center">
+          {displayedFormulaValue.startsWith("=") && formulaHighlights.length > 0 && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre pr-3 text-[#1f2329]"
+            >
+              {splitFormulaSegments(displayedFormulaValue, formulaHighlights).map((seg, idx) => (
+                <span key={idx} style={seg.color ? { color: seg.color } : undefined}>{seg.text}</span>
+              ))}
+            </div>
+          )}
+          <input
+            ref={formulaInputRef}
+            aria-label={t("公式编辑栏")}
+            data-sheet-formula
+            readOnly={!canEdit}
+            onCopy={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+            onCut={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
+            value={displayedFormulaValue}
+            onFocus={() => {
+              if (canEdit && !editing) {
+                beginEdit(selection.focus, focusedCell?.raw ?? "", "formula");
+              }
+            }}
+            onChange={(e) => {
+              if (!editing) {
+                beginEdit(selection.focus, e.target.value, "formula");
+              } else {
+                setEditing({ ...editing, value: e.target.value });
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || !editing) return;
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(null);
+                gridRef.current?.focus();
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                void commitActiveEdit().then((ok) => {
+                  if (ok) {
+                    moveSelection(e.key === "Enter" ? (e.shiftKey ? -1 : 1) : 0, e.key === "Tab" ? (e.shiftKey ? -1 : 1) : 0, false);
+                    gridRef.current?.focus();
+                  }
+                });
+              }
+            }}
+            onBlur={() => {
+              if (editing?.source === "formula") {
+                void commitActiveEdit();
+              }
+            }}
+            className={`h-full w-full min-w-0 bg-transparent pr-3 outline-none ${
+              displayedFormulaValue.startsWith("=") && formulaHighlights.length > 0
+                ? "text-transparent caret-[#1f2329]"
+                : "text-[#1f2329]"
+            }`}
+          />
+        </div>
       </div>
 
       <SheetConflictBar
@@ -2183,13 +2227,6 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const primaryRemote = remoteMatches[0] ?? null;
                   const remoteBadgeOwner = remoteMatches.find(({ bounds: rb }) => rowIdx === rb.top && colIdx === rb.left) ?? null;
 
-                  const refEdges: string[] = [];
-                  if (refHighlight) {
-                    if (rowIdx === refHighlight.top) refEdges.push(`inset 0 2px ${refHighlight.color}`);
-                    if (rowIdx === refHighlight.bottom) refEdges.push(`inset 0 -2px ${refHighlight.color}`);
-                    if (colIdx === refHighlight.left) refEdges.push(`inset 2px 0 ${refHighlight.color}`);
-                    if (colIdx === refHighlight.right) refEdges.push(`inset -2px 0 ${refHighlight.color}`);
-                  }
                   const remoteEdges: string[] = [];
                   for (const { collab: rc, bounds: rb } of remoteMatches) {
                     const rcColor = colorFor(rc.userId - 1);
@@ -2199,7 +2236,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     if (colIdx === rb.right) remoteEdges.push(`inset -2px 0 ${rcColor}`);
                   }
                   const selShadow = selectionOutline(selection, point);
-                  const combinedShadow = [selShadow, ...refEdges, ...remoteEdges].filter(Boolean).join(", ") || undefined;
+                  const combinedShadow = [selShadow, ...remoteEdges].filter(Boolean).join(", ") || undefined;
 
                   const displayValue = formatCellDisplay(cell?.raw ?? "", ev, style);
                   const alignClass = style.align === "center"
@@ -2214,7 +2251,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const effectiveBold = !!(condStyle?.bold || style.bold);
 
                   const cellBg = refHighlight
-                    ? `${refHighlight.color}18`
+                    ? `${refHighlight.color}12`
                     : isSel && !isFocus
                       ? "#edf3ff"
                       : primaryRemote && !effectiveBg
@@ -2294,6 +2331,18 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                           isFocus ? "outline outline-2 -outline-offset-2 outline-[#3370ff]" : ""
                         }`}
                       >
+                        {refHighlight && (
+                          <span
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0"
+                            style={{
+                              borderTop: rowIdx === refHighlight.top ? `1.5px dashed ${refHighlight.color}` : undefined,
+                              borderBottom: rowIdx === refHighlight.bottom ? `1.5px dashed ${refHighlight.color}` : undefined,
+                              borderLeft: colIdx === refHighlight.left ? `1.5px dashed ${refHighlight.color}` : undefined,
+                              borderRight: colIdx === refHighlight.right ? `1.5px dashed ${refHighlight.color}` : undefined,
+                            }}
+                          />
+                        )}
                         {isEditingCell ? (
                           <input
                             ref={cellInputRef}

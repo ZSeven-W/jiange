@@ -936,8 +936,12 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   canEditRef.current = canEditContent;
   const [referenceVisibilityBusy, setReferenceVisibilityBusy] = useState(false);
   const [referenceVisibilityUncertain, setReferenceVisibilityUncertain] = useState(false);
+  const [referencesPinnedOpen, setReferencesPinnedOpen] = useState(false);
   const referenceVisibilityLock = useRef(false);
   const referenceVisibilityBeforeFailure = useRef(0);
+  useEffect(() => {
+    setReferencesPinnedOpen(false);
+  }, [id, me.user.id]);
   const referenceVisibilityKey = ["reference-visibility", me.user.id, id] as const;
   const referenceVisibility = useQuery({ queryKey: referenceVisibilityKey, queryFn: ({ signal }) => docsApi.referenceVisibility(id, me.user.id, signal), enabled: metadataVerified && permissionsVerified, retry: false, refetchInterval: referenceVisibilityBusy ? false : 5000, refetchIntervalInBackground: false, refetchOnWindowFocus: true });
   useEffect(() => {
@@ -1502,7 +1506,21 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onImport={canEditContent ? importFile : undefined}
           onPrint={openPrintDialog}
           onOutline={() => setOutlineOpen((v) => !v)}
-          onShowReferences={canEditContent && permissionsVerified && referenceSetting?.visible === false && !referenceVisibilityBusy ? () => { void changeReferenceVisibility(true); } : undefined}
+          onShowReferences={
+            permissionsVerified && !referenceVisibilityBusy && (
+              (canEditContent && referenceSetting?.visible === false) ||
+              (referenceSetting?.visible === true && !referencesPinnedOpen)
+            )
+              ? () => {
+                  setReferencesPinnedOpen(true);
+                  if (referenceSetting?.visible === false) void changeReferenceVisibility(true);
+                  requestAnimationFrame(() => {
+                    const area = scrollArea.current;
+                    if (area) area.scrollTo({ top: area.scrollHeight, behavior: "smooth" });
+                  });
+                }
+              : undefined
+          }
           width={width}
           onWidthChange={(value) => { writeDocWidth(me.user.id, id, value); setWidth(value); }}
           readOnly={!canEditRole || sync.blocked === "history_changed"}
@@ -1568,7 +1586,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
-          <div className={cn("flex", (showTemplates || !showReferences) && "min-h-full")}>
+          <div className="flex min-h-full flex-col">
+          <div className={cn("flex flex-1", showTemplates && "min-h-full")}>
           {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history} onToggle={() => setOutlineOpen((value) => !value)} />}
           {outlineVisible && (
             <OutlinePanel
@@ -1596,7 +1615,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : showReferences ? "pb-0" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
             {downloadAllowed && printSettings.showHeader && (printSettings.headerText.trim() || title.trim()) && (
               <div data-doc-print-header className="mb-5 border-b border-[#DEE0E3] pb-2 text-[11px] text-[#646A73]">
                 <div className="flex items-center justify-between gap-4">
@@ -1735,14 +1754,15 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           </article>}</DocumentCover>
           </div>
           </div>
-          {showReferences && <div className="flex">
+          {showReferences && <div className="flex shrink-0">
             {outlineVisible && <div aria-hidden="true" className={cn("hidden xl:block xl:shrink-0", outlinePinned ? "xl:w-[248px]" : "xl:w-14", ((commentsAvailable && commentsOpen) || history) && "xl:hidden min-[1680px]:block")} />}
             <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-              <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-7 pb-40 sm:px-16", docWidthClass(width))}>
-                <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} docType={meta.data?.docType} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} onHide={canEditContent ? () => changeReferenceVisibility(false) : undefined} hiding={referenceVisibilityBusy} />
+              <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-7 pb-16 sm:px-16", docWidthClass(width))}>
+                <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} docType={meta.data?.docType} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} hideWhenEmpty={!referencesPinnedOpen} onHide={canEditContent ? async () => { const ok = await changeReferenceVisibility(false); if (ok) setReferencesPinnedOpen(false); return ok; } : undefined} hiding={referenceVisibilityBusy} />
               </div>
             </div>
           </div>}
+          </div>
           {findOpen && <div aria-hidden="true" className="h-[60dvh] min-[480px]:hidden" />}
         </div>
         {findOpen && <div ref={findPanel}>

@@ -109,6 +109,12 @@
   *::-webkit-scrollbar-thumb:hover { background: #b8bcc0; }
   *::-webkit-scrollbar-track { background: transparent; }
   * { scrollbar-width: thin; scrollbar-color: #d0d3d6 transparent; }
+  select.appearance-none {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: none;
+  }
 }
 
 /* Printing obeys the document download policy. Keep unrelated controls and

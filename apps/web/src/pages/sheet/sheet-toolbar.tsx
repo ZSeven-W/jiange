@@ -11,6 +11,7 @@ import {
   Bold,
   Brush,
   ChevronDown,
+  ChevronUp,
   Columns3,
   Download,
   Eraser,
@@ -63,12 +64,14 @@ export interface SheetTabsBarProps {
   activeSheetId: number;
   canEdit: boolean;
   fullscreen: boolean;
+  toolbarCollapsed?: boolean;
   onSelectSheet: (id: number) => void;
   onCreateSheet: () => void;
   onRenameSheet: (id: number) => void;
   onMoveSheet: (id: number, toPos: number) => void;
   onDeleteSheet: (id: number) => void;
   onToggleFullscreen: () => void;
+  onToggleToolbarCollapsed?: () => void;
 }
 
 export function SheetTabsBar({
@@ -76,12 +79,14 @@ export function SheetTabsBar({
   activeSheetId,
   canEdit,
   fullscreen,
+  toolbarCollapsed,
   onSelectSheet,
   onCreateSheet,
   onRenameSheet,
   onMoveSheet,
   onDeleteSheet,
   onToggleFullscreen,
+  onToggleToolbarCollapsed,
 }: SheetTabsBarProps) {
   const [listOpen, setListOpen] = useState(false);
   const [tabMenuId, setTabMenuId] = useState<number | null>(null);
@@ -161,7 +166,7 @@ export function SheetTabsBar({
                   onDoubleClick={() => {
                     if (canEdit) onRenameSheet(ws.id);
                   }}
-                  className={`flex h-[34px] max-w-44 items-center gap-1 rounded-t-md border px-3 text-[13px] transition-colors ${
+                  className={`group/tab flex h-[34px] max-w-44 items-center gap-1 rounded-t-md border px-3 text-[13px] transition-colors ${
                     active
                       ? "border-[#e5e6eb] border-b-white bg-white font-medium text-[#3370ff]"
                       : "border-transparent bg-transparent text-[#646a73] hover:bg-[#ebedf0]"
@@ -179,7 +184,7 @@ export function SheetTabsBar({
                         setListOpen(false);
                         setTabMenuId((cur) => (cur === ws.id ? null : ws.id));
                       }}
-                      className="grid size-4 place-items-center rounded hover:bg-[#e5e6eb]"
+                      className="grid size-4 place-items-center rounded text-[#8f959e] opacity-70 hover:bg-[#e5e6eb] hover:text-[#1f2329] group-hover/tab:opacity-100"
                     >
                       <ChevronDown size={11} />
                     </span>
@@ -211,6 +216,17 @@ export function SheetTabsBar({
         )}
       </div>
 
+      {toolbarCollapsed && onToggleToolbarCollapsed && (
+        <button
+          type="button"
+          title={t("展开工具栏")}
+          aria-label={t("展开工具栏")}
+          onClick={onToggleToolbarCollapsed}
+          className="mb-1 grid size-7 shrink-0 place-items-center rounded text-[#646a73] hover:bg-[#e9ecf1]"
+        >
+          <ChevronDown size={15} />
+        </button>
+      )}
       <button
         type="button"
         title={fullscreen ? t("退出全屏") : t("全屏显示")}
@@ -259,6 +275,7 @@ export interface SheetToolbarProps {
   activePanel: SheetPanelMode | null;
   unresolvedCommentCount: number;
   onTogglePanel: (mode: SheetPanelMode) => void;
+  onCollapseToolbar?: () => void;
 }
 
 export function SheetToolbar(props: SheetToolbarProps) {
@@ -296,9 +313,10 @@ export function SheetToolbar(props: SheetToolbarProps) {
     activePanel,
     unresolvedCommentCount,
     onTogglePanel,
+    onCollapseToolbar,
   } = props;
 
-  const [openMenu, setOpenMenu] = useState<"file" | "insert" | "color" | "bg" | "numfmt" | "freeze" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"file" | "insert" | "font" | "size" | "color" | "bg" | "numfmt" | "freeze" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -340,7 +358,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
       disabled={disabled}
       onClick={onClick}
       data-sheet-tool={dataAttr}
-      className={`flex h-12 min-w-10 shrink-0 flex-col items-center justify-center gap-0.5 rounded px-1.5 text-[11px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${active ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
+      className={`flex h-12 min-w-[34px] shrink-0 flex-col items-center justify-center gap-0.5 rounded px-1 text-[10.5px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${active ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
     >
       {children}
       <span>{label}</span>
@@ -350,7 +368,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
   const activeFmtLabel = NUM_FORMATS.find((f) => f.id === (activeStyle.numFmt || "general"))?.label.split(" ")[0] ?? t("常规");
 
   return (
-    <div ref={rootRef} className="relative flex h-14 min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-[#f7f8fa] px-2 sm:px-3" data-sheet-toolbar>
+    <div ref={rootRef} className="relative flex h-14 min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-[#f7f8fa] px-2" data-sheet-toolbar>
       <div className="relative shrink-0">
         {labeledBtn(t("菜单"), openMenu === "file", false, () => setOpenMenu((m) => (m === "file" ? null : "file")), <Menu size={15} />)}
         {openMenu === "file" && (
@@ -382,29 +400,49 @@ export function SheetToolbar(props: SheetToolbarProps) {
         )}
       </div>
 
-      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+      <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
-      <div className="flex shrink-0 flex-col gap-0.5 px-1">
+      <div className="flex shrink-0 flex-col gap-0.5 px-0.5">
         <div className="flex h-6 items-center gap-1 text-[12px] text-[#4b5058]">
-          <select
-            aria-label={t("字体")}
-            disabled={!canEdit}
-            value={activeStyle.fontFamily ?? ""}
-            onChange={(e) => onStylePatch({ fontFamily: e.target.value })}
-            className="h-6 w-24 rounded border border-transparent bg-transparent px-1 text-[12px] outline-none hover:bg-[#e9ecf1]"
-          >
-            <option value="">{t("默认字体")}</option>
-            {FONT_FAMILIES.filter(Boolean).map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-          <select
-            aria-label={t("字号")}
-            disabled={!canEdit}
-            value={activeStyle.fontSize || 12}
-            onChange={(e) => onStylePatch({ fontSize: Number(e.target.value) })}
-            className="h-6 w-12 rounded border border-transparent bg-transparent px-1 text-[12px] outline-none hover:bg-[#e9ecf1]"
-          >
-            {FONT_SIZES.map((sz) => <option key={sz} value={sz}>{sz}</option>)}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={t("字体")}
+              disabled={!canEdit}
+              onClick={() => setOpenMenu((m) => (m === "font" ? null : "font"))}
+              className="flex h-6 w-[88px] items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <span className="truncate">{activeStyle.fontFamily || t("默认字体")}</span>
+              <ChevronDown size={11} className="shrink-0 text-[#8f959e]" />
+            </button>
+            {openMenu === "font" && (
+              <div role="menu" className="fixed z-50 w-36 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
+                <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontFamily: "" }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${!activeStyle.fontFamily ? "font-medium text-[#3370ff]" : ""}`}>{t("默认字体")}</button>
+                {FONT_FAMILIES.filter(Boolean).map((f) => (
+                  <button key={f} type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontFamily: f }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${activeStyle.fontFamily === f ? "font-medium text-[#3370ff]" : ""}`} style={{ fontFamily: f }}>{f}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={t("字号")}
+              disabled={!canEdit}
+              onClick={() => setOpenMenu((m) => (m === "size" ? null : "size"))}
+              className="flex h-6 w-11 items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <span>{activeStyle.fontSize || 12}</span>
+              <ChevronDown size={11} className="shrink-0 text-[#8f959e]" />
+            </button>
+            {openMenu === "size" && (
+              <div role="menu" className="fixed z-50 w-20 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
+                {FONT_SIZES.map((sz) => (
+                  <button key={sz} type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontSize: sz }); }} className={`flex h-7 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${(activeStyle.fontSize || 12) === sz ? "font-medium text-[#3370ff]" : ""}`}>{sz}</button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-0.5">
           {iconBtn(t("粗体"), !!activeStyle.bold, !canEdit, () => onStylePatch({ bold: !activeStyle.bold }), <Bold size={14} />, "bold")}
@@ -431,7 +469,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
         </div>
       </div>
 
-      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+      <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
       <div className="flex shrink-0 flex-col gap-0.5">
         <div className="flex items-center gap-0.5">
@@ -452,19 +490,25 @@ export function SheetToolbar(props: SheetToolbarProps) {
         </button>
       </div>
 
-      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+      <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
-      <div className="relative shrink-0">
+      <div className="relative flex shrink-0 flex-col gap-0.5">
         <button
           type="button"
           disabled={!canEdit}
           data-sheet-tool="numfmt"
           onClick={() => setOpenMenu((m) => (m === "numfmt" ? null : "numfmt"))}
-          className="flex h-8 shrink-0 items-center gap-1 rounded px-2 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:opacity-45"
+          className="flex h-6 shrink-0 items-center justify-between gap-2 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:opacity-45"
         >
           <span>{t(activeFmtLabel)}</span>
-          <ChevronDown size={12} />
+          <ChevronDown size={11} className="text-[#8f959e]" />
         </button>
+        <div className="flex items-center gap-0.5">
+          {iconBtn(t("¥ 货币"), activeStyle.numFmt === "currency", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "currency" ? "general" : "currency" }), <span className="text-[12px] font-medium leading-none">¥</span>, "fmt-currency")}
+          {iconBtn(t("% 百分比"), activeStyle.numFmt === "percent", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "percent" ? "general" : "percent" }), <span className="text-[12px] font-medium leading-none">%</span>, "fmt-percent")}
+          {iconBtn(t("0.00 小数"), activeStyle.numFmt === "decimal2", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "decimal2" ? "general" : "decimal2" }), <span className="text-[11px] font-medium leading-none">.00</span>, "fmt-decimal2")}
+          {iconBtn(t("0.0 小数"), activeStyle.numFmt === "decimal1", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "decimal1" ? "general" : "decimal1" }), <span className="text-[11px] font-medium leading-none">.0</span>, "fmt-decimal1")}
+        </div>
         {openMenu === "numfmt" && (
           <div role="menu" className="fixed z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
             {NUM_FORMATS.map((fmt) => (
@@ -476,7 +520,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
         )}
       </div>
 
-      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+      <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
       <div className="relative shrink-0">
         {labeledBtn(t("冻结"), frozenRows > 0 || frozenCols > 0 || openMenu === "freeze", !canEdit, () => setOpenMenu((m) => (m === "freeze" ? null : "freeze")), <PanelTop size={15} />, "freeze")}
@@ -495,7 +539,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
       {labeledBtn(t("降序"), false, !canEdit, () => onSortCol(false), <ArrowDownAZ size={15} />, "sort-desc")}
       {labeledBtn(t("查找替换"), false, false, onOpenFind, <Search size={15} />, "find-replace")}
 
-      <span className="mx-1 h-8 w-px shrink-0 bg-[#dee0e3]" />
+      <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
       {labeledBtn(t("图表"), activePanel === "charts", false, () => onTogglePanel("charts"), <BarChart3 size={15} />, "charts")}
       {labeledBtn(t("透视表"), activePanel === "pivot", false, () => onTogglePanel("pivot"), <TableProperties size={15} />, "pivot")}
@@ -519,6 +563,17 @@ export function SheetToolbar(props: SheetToolbarProps) {
           )}
         </span>,
         "comments",
+      )}
+      {onCollapseToolbar && (
+        <button
+          type="button"
+          title={t("收起工具栏")}
+          aria-label={t("收起工具栏")}
+          onClick={onCollapseToolbar}
+          className="sticky right-0 ml-auto grid size-7 shrink-0 place-items-center rounded bg-[#f7f8fa] text-[#646a73] hover:bg-[#e9ecf1]"
+        >
+          <ChevronUp size={15} />
+        </button>
       )}
     </div>
   );

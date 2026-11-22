@@ -1616,4 +1616,6 @@ export const en: Record<string, string> = {
   "结束「{name}」": "End \"{name}\"",
   "双月": "2 Months",
   "季度": "Quarter",
+  "展开工具栏": "Expand toolbar",
+  "收起工具栏": "Collapse toolbar",
 };

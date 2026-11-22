@@ -132,6 +132,8 @@ describe("SheetPage", () => {
     expect(html).toContain("=SUM(B1:C1)+Sheet2!A1");
     expect(html).toContain(">25<");
     expect(html).toContain("#ff8800");
+    expect(html).toContain("dashed #ff8800");
+    expect(html).toContain('data-sheet-tool="fmt-currency"');
     expect(html).toContain('data-sheet-tab="Sheet2"');
     expect(html).not.toContain("data-sheet-templates");
   });

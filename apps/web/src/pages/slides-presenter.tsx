@@ -23,11 +23,18 @@ export function isDarkSlideBackground(bg: string | undefined): boolean {
 }
 
 /** Audience rendering deliberately has no access to the speaker's notes. */
-export function SlideSurface({ content }: { content: VisibleSlide }) {
+export function SlideSurface({ content, showPlaceholder = false }: { content: VisibleSlide; showPlaceholder?: boolean }) {
   const dark = isDarkSlideBackground(content.background);
   const titleTone = dark ? "text-white" : "text-[#1f2329]";
   const bodyTone = dark ? "text-[#e5e7eb]" : "text-[#1f2329]";
+  const emptyGuide = showPlaceholder && !content.title && !content.body && content.shapes.length === 0 && content.layout !== "blank";
   return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: content.background || "#fff", containerType: "inline-size" }}>
+    {emptyGuide && (
+      <div aria-hidden="true" className="pointer-events-none absolute inset-[10%] flex flex-col justify-center gap-[8%]">
+        <div className={hasLargeSlideTitle(content.layout) ? "mx-auto h-[22%] w-[78%] rounded-[2px] border border-dashed border-[#d0d3d6]" : "h-[18%] w-[62%] rounded-[2px] border border-dashed border-[#d0d3d6]"} />
+        <div className={hasLargeSlideTitle(content.layout) ? "mx-auto h-[14%] w-[56%] rounded-[2px] border border-dashed border-[#e5e6eb]" : "h-[46%] w-[88%] rounded-[2px] border border-dashed border-[#e5e6eb]"} />
+      </div>
+    )}
     <h1 aria-hidden={!content.title} className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[41.3%] w-[81%] overflow-hidden text-ellipsis whitespace-nowrap ${content.layout === "title" ? "text-center" : "text-left"} font-semibold leading-tight ${titleTone}` : `overflow-hidden text-ellipsis whitespace-nowrap font-semibold leading-tight ${titleTone}`} style={{ fontSize: hasLargeSlideTitle(content.layout) ? "5.625cqw" : "3.75cqw", minHeight: hasLargeSlideTitle(content.layout) ? undefined : "5.729cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.title}</h1>
     <div className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[60%] h-[27%] w-[81%] overflow-hidden whitespace-pre-wrap break-words leading-relaxed ${bodyTone}` : `mt-[4%] whitespace-pre-wrap break-words leading-relaxed ${bodyTone}`} style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.body}</div>
     <SlideShapes shapes={content.shapes} editable={false} selected={null}/>

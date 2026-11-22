@@ -28,6 +28,12 @@ describe("document reference list", () => {
     expect(render()).not.toContain('aria-label="隐藏文档引用"');
     expect(render(async () => true)).toContain('aria-label="隐藏文档引用"');
   });
+  it("hides the empty reference card by default when hideWhenEmpty is set", () => {
+    const client = new QueryClient();
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><DocumentReferencesPanel id={1} userId={2} enabled synced allowCopy hideWhenEmpty/></QueryClientProvider>);
+    expect(html).not.toContain("data-document-references");
+    expect(html).not.toContain("反向引用");
+  });
   it("validates multi-resource anchors, embed relations, and multi-hop graph payloads", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

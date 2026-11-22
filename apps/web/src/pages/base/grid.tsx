@@ -773,7 +773,7 @@ export function Grid({
   /** column index in `fields` for the wi-th rendered field */
   const wjSpacer = (w: number, rendered: number) => w > 0 && rendered <= nFrozen;
   const colOf = (wi: number) => (wi < nFrozen ? wi : c0 + wi - nFrozen);
-  const stickyLeft = (j: number) => 56 + (j > 0 ? colOffsets[j - 1] : 0);
+  const stickyLeft = (j: number) => 64 + (j > 0 ? colOffsets[j - 1] : 0);
   const isFrozen = (j: number) => j < nFrozen;
   const lastFrozen = (j: number) => j === nFrozen - 1;
   const allChecked = records.length > 0 && records.every((r) => checked.has(r.id));
@@ -783,12 +783,12 @@ export function Grid({
             const fill = rowFill(rec, allFields ?? fields, fills, members);
             const isChecked = checked.has(rec.id);
             return (
-            <tr key={rec.id} className={cn("group", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill} onContextMenu={(event) => { if (event.target instanceof Element && event.target.closest("input:not([type=checkbox]), textarea, [contenteditable=true]")) return; event.preventDefault(); openRecordMenu(rec, event.clientX, event.clientY, event.currentTarget.querySelector<HTMLElement>("[data-row-menu-anchor]")); }}>
-              <td tabIndex={0} data-row-menu-anchor aria-label={t("记录 {n} 操作", { n: i + 1 })} onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); openRecordMenu(rec, rect.right, rect.top, event.currentTarget); } }} className={cn("sticky left-0 z-10 w-14 border border-x-0 bg-surface px-1 text-[12px] text-subtle", tall && "align-top", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined}>
-                <div className="flex h-[31px] items-center justify-center gap-0">
-                <span className={cn("group-hover:hidden [@media(hover:none)]:hidden", isChecked && "hidden")}>{i + 1}</span>
-                <input type="checkbox" checked={isChecked} disabled={!detailAccessReady || !selectionAccessReady} onChange={() => toggleChecked(rec.id)} aria-label={t("选择记录 {n}", { n: i + 1 })} className={cn("size-3.5 cursor-pointer accent-primary group-hover:inline-block [@media(hover:none)]:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
-                <span className={cn("hidden items-center justify-center gap-0 group-hover:flex [@media(hover:none)]:flex")}>
+            <tr key={rec.id} className={cn("group/row", !tall && "h-8")} style={tall ? { height: ROW_H } : undefined} data-row-fill={fill} onContextMenu={(event) => { if (event.target instanceof Element && event.target.closest("input:not([type=checkbox]), textarea, [contenteditable=true]")) return; event.preventDefault(); openRecordMenu(rec, event.clientX, event.clientY, event.currentTarget.querySelector<HTMLElement>("[data-row-menu-anchor]")); }}>
+              <td tabIndex={0} data-row-menu-anchor aria-label={t("记录 {n} 操作", { n: i + 1 })} onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); openRecordMenu(rec, rect.right, rect.top, event.currentTarget); } }} className={cn("sticky left-0 z-10 w-16 border border-x-0 bg-surface px-1 text-[12px] text-subtle", tall && "align-top", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined}>
+                <div className="flex h-[31px] items-center justify-center gap-0.5">
+                <span className={cn("group-hover/row:hidden [@media(hover:none)]:hidden", isChecked && "hidden")}>{i + 1}</span>
+                <input type="checkbox" checked={isChecked} disabled={!detailAccessReady || !selectionAccessReady} onChange={() => toggleChecked(rec.id)} aria-label={t("选择记录 {n}", { n: i + 1 })} className={cn("size-3.5 shrink-0 cursor-pointer accent-primary group-hover/row:inline-block [@media(hover:none)]:inline-block", isChecked ? "inline-block" : "hidden")} data-row-check={rec.id} />
+                <span className={cn("hidden items-center justify-center gap-0.5 group-hover/row:flex [@media(hover:none)]:flex")}>
                   <button type="button" className="grid size-4 touch-manipulation place-items-center rounded text-subtle hover:text-primary [@media(hover:none)]:hidden" aria-label={t("展开记录 {n}", { n: i + 1 })} title={t("展开记录")} onClick={() => openDetail(rec.id, "detail")} data-expand={rec.id}>
                     <Expand size={13} strokeWidth={1.7} />
                   </button>
@@ -924,11 +924,11 @@ export function Grid({
       <table
         className="border-collapse table-fixed text-[14px]"
         data-grid
-        style={{ width: 56 + totalW + (canEdit ? 44 : 0), height: "100%" }}
+        style={{ width: 64 + totalW + (canEdit ? 44 : 0), height: "100%" }}
       >
         <thead>
           <tr className="h-9 bg-surface text-left text-[13px] text-foreground">
-            <th className="sticky left-0 top-0 z-40 w-14 border border-x-0 bg-surface px-1.5 font-normal">
+            <th className="sticky left-0 top-0 z-40 w-16 border border-x-0 bg-surface px-1.5 font-normal">
               <div className="flex items-center justify-center">
                 <input type="checkbox" checked={allChecked} disabled={!detailAccessReady || !selectionAccessReady} ref={(el) => { if (el) el.indeterminate = !allChecked && checkedCount > 0; }} onChange={() => { setSel(null); setChecked(allChecked ? new Set() : new Set(records.map((r) => r.id))); }} aria-label={t("全选记录")} className="size-3.5 cursor-pointer accent-primary" data-check-all />
               </div>

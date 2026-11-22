@@ -195,7 +195,7 @@ export async function fetchDocumentReferenceGraph(id: number, userId: number, de
 }
 
 /** Loading is deferred until the reader approaches the end of the document. */
-export function DocumentReferencesPanel({ id, userId, title = "当前文档", kind = "doc", docType, enabled, synced, syncVersion = 0, allowCopy, onHide, hiding = false }: { id: number; userId: number; title?: string; kind?: string; docType?: string; enabled: boolean; synced: boolean; syncVersion?: number; allowCopy: boolean; onHide?: () => Promise<boolean>; hiding?: boolean }) {
+export function DocumentReferencesPanel({ id, userId, title = "当前文档", kind = "doc", docType, enabled, synced, syncVersion = 0, allowCopy, onHide, hiding = false, hideWhenEmpty = false }: { id: number; userId: number; title?: string; kind?: string; docType?: string; enabled: boolean; synced: boolean; syncVersion?: number; allowCopy: boolean; onHide?: () => Promise<boolean>; hiding?: boolean; hideWhenEmpty?: boolean }) {
   const marker = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
   const [inView, setInView] = useState(false);
@@ -241,9 +241,13 @@ export function DocumentReferencesPanel({ id, userId, title = "当前文档", ki
     if (enabled && visible && inView && !graphOpen && query.isSuccess && !query.isFetching && Date.now() - query.dataUpdatedAt >= 30_000) void query.refetch();
   }, [enabled, visible, inView, graphOpen, query.isSuccess, query.isFetching, query.dataUpdatedAt, query.refetch]);
   const data = enabled && query.isSuccess && !query.isFetching && Date.now() - query.dataUpdatedAt < 30_000 ? query.data : undefined;
+  const hasReferences = Boolean(data && (data.incoming.length > 0 || data.outgoing.length > 0));
   const toggle = (key: number) => setExpanded((old) => { const next = new Set(old); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const open = (event: React.MouseEvent<HTMLAnchorElement>, hash: string) => { event.preventDefault(); navigateDocumentHash(hash); };
-  return <section ref={marker} aria-label="文档引用" data-document-references className="group/references mt-16 rounded-md bg-[#F5F6F7] px-4 pb-4 pt-1 text-[14px] text-[#1F2329] dark:bg-hover dark:text-foreground print:hidden" onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
+  if (hideWhenEmpty && !hasReferences && !graphOpen) {
+    return <section ref={marker} aria-hidden="true" className="h-px overflow-hidden print:hidden" />;
+  }
+  return <section ref={marker} aria-label="文档引用" data-document-references className="group/references mt-6 rounded-md bg-[#F5F6F7] px-4 pb-4 pt-1 text-[14px] text-[#1F2329] dark:bg-hover dark:text-foreground print:hidden" onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
     <div className="flex min-h-12 items-center gap-2 border-b border-[#DEE0E3] dark:border-border">
       <div role="tablist" aria-label="文档引用分类" className="flex shrink-0" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "incoming" : event.key === "End" ? "outgoing" : tab === "incoming" ? "outgoing" : "incoming"; setTab(next); document.getElementById(`${tabId}-${next}`)?.focus(); }}>
       <button type="button" id={`${tabId}-incoming`} role="tab" tabIndex={tab === "incoming" ? 0 : -1} aria-controls={`${tabId}-panel`} aria-selected={tab === "incoming"} onClick={() => setTab("incoming")} className={`relative h-12 shrink-0 px-1 text-[13px] sm:px-2 sm:text-[14px] ${tab === "incoming" ? "font-medium text-[#3370FF] after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[#3370FF]" : "text-foreground"}`}>反向引用{data ? ` (${data.incoming.length})` : ""}</button>
