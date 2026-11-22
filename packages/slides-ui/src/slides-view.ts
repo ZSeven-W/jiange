@@ -211,6 +211,35 @@ export class SlidesViewController<T extends PoolableElement = PoolableElement> {
     return true;
   }
 
+  /** Compute stage-local screen bounds and scale metadata for a shape. */
+  getShapeScreenRect(
+    shapeId: string,
+  ): { x: number; y: number; w: number; h: number; shape: SlideShape; scale: number } | null {
+    const page = this.deck.getSlide(this.slideIndex);
+    const s = page?.shapes.find((item) => item.id === shapeId);
+    if (!s) return null;
+    const stage = this.getStageRect();
+    return {
+      x: stage.x + (s.x / 100) * stage.w,
+      y: stage.y + (s.y / 100) * stage.h,
+      w: ((s.width ?? 16) / 100) * stage.w,
+      h: ((s.height ?? 20) / 100) * stage.h,
+      shape: s,
+      scale: stage.w / 1280,
+    };
+  }
+
+  /** Update the text content of a text shape on the active slide (undoable). */
+  updateShapeText(shapeId: string, text: string): boolean {
+    const page = this.deck.getSlide(this.slideIndex);
+    const s = page?.shapes.find((item) => item.id === shapeId);
+    if (!s || s.kind !== "text") return false;
+    this.deck.updateShape(this.slideIndex, s.id, { text });
+    this.options.onShapeChange?.(s.id);
+    this.render();
+    return true;
+  }
+
   handlePointerDown(x: number, y: number): SlideShape | null {
     const hit = this.hitTestShape(x, y);
     this.selectShape(hit?.id ?? null);
@@ -519,6 +548,21 @@ export async function mountSlidesView(
   textLayer.style.overflow = "hidden";
   stageHost.appendChild(textLayer);
 
+  const editor = doc.createElement("input");
+  editor.type = "text";
+  editor.style.position = "absolute";
+  editor.style.display = "none";
+  editor.style.zIndex = "10";
+  editor.style.boxSizing = "border-box";
+  editor.style.padding = "0 6px";
+  editor.style.border = "2px solid #3370ff";
+  editor.style.borderRadius = "4px";
+  editor.style.background = "#ffffff";
+  editor.style.color = "#1f2329";
+  editor.style.outline = "none";
+  editor.style.boxShadow = "0 2px 8px rgba(51, 112, 255, 0.2)";
+  stageHost.appendChild(editor);
+
   const surface = await GpuSurface.create(canvas, options.gpu);
   const controller = new SlidesViewController<HTMLElement>(
     deck,
@@ -550,8 +594,38 @@ export async function mountSlidesView(
   let dragMode: "none" | "move" | SlideResizeHandle = "none";
   let lastX = 0;
   let lastY = 0;
+  let editingShapeId: string | null = null;
+
+  const openEditor = (shapeId: string): boolean => {
+    if (controller.isPresenterMode()) return false;
+    const info = controller.getShapeScreenRect(shapeId);
+    if (!info || info.shape.kind !== "text") return false;
+    editingShapeId = shapeId;
+    dragMode = "none";
+    editor.value = info.shape.text ?? "";
+    editor.style.left = `${Math.round(info.x)}px`;
+    editor.style.top = `${Math.round(info.y)}px`;
+    editor.style.width = `${Math.max(80, Math.round(info.w))}px`;
+    editor.style.height = `${Math.max(24, Math.round(info.h))}px`;
+    editor.style.fontSize = `${Math.max(10, (info.shape.fontSize ?? 24) * info.scale).toFixed(1)}px`;
+    editor.style.fontWeight = info.shape.bold ? "700" : "400";
+    editor.style.textAlign = info.shape.align ?? "left";
+    editor.style.display = "block";
+    editor.focus?.();
+    editor.select?.();
+    return true;
+  };
+
+  const closeEditor = (commit: boolean) => {
+    if (!editingShapeId) return;
+    const id = editingShapeId;
+    editingShapeId = null;
+    editor.style.display = "none";
+    if (commit) controller.updateShapeText(id, editor.value);
+  };
 
   const onPointerDown = (e: PointerEvent) => {
+    if (editingShapeId) closeEditor(true);
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
@@ -566,6 +640,14 @@ export async function mountSlidesView(
     dragMode = hit && !controller.isPresenterMode() ? "move" : "none";
     lastX = e.clientX;
     lastY = e.clientY;
+  };
+  const onDblClick = (e: MouseEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const hit = controller.hitTestShape(e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit) return;
+    controller.selectShape(hit.id);
+    controller.render();
+    openEditor(hit.id);
   };
   const onPointerMove = (e: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
@@ -592,15 +674,37 @@ export async function mountSlidesView(
   const onPointerUp = () => {
     dragMode = "none";
   };
+  const onEditorKeyDown = (e: KeyboardEvent) => {
+    e.stopPropagation?.();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closeEditor(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeEditor(false);
+    }
+  };
+  const onEditorBlur = () => {
+    closeEditor(true);
+  };
   const onKeyDown = (e: KeyboardEvent) => {
+    if (editingShapeId) return;
+    const selectedId = controller.getSelectedShapeId();
+    if ((e.key === "Enter" || e.key === "F2") && selectedId && openEditor(selectedId)) {
+      e.preventDefault();
+      return;
+    }
     if (controller.handleKeyDown(e.key, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })) {
       e.preventDefault();
     }
   };
   canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("dblclick", onDblClick);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointerleave", onPointerUp);
+  editor.addEventListener("keydown", onEditorKeyDown);
+  editor.addEventListener("blur", onEditorBlur);
   container.addEventListener("keydown", onKeyDown);
 
   const w = Math.max(320, (container.clientWidth || 960) - 168);
@@ -616,9 +720,12 @@ export async function mountSlidesView(
     },
     dispose() {
       canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("dblclick", onDblClick);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointerleave", onPointerUp);
+      editor.removeEventListener("keydown", onEditorKeyDown);
+      editor.removeEventListener("blur", onEditorBlur);
       container.removeEventListener("keydown", onKeyDown);
       controller.dispose();
       rail.remove();

@@ -12,6 +12,8 @@ function makeDomNode(tag: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
   return {
     tagName: tag.toUpperCase(),
+    type: "",
+    value: "",
     style: {} as Record<string, string>,
     children: [] as unknown[],
     textContent: "",
@@ -21,6 +23,8 @@ function makeDomNode(tag: string) {
     clientHeight: 600,
     ownerDocument: null as unknown,
     appendChild(c: unknown) { this.children.push(c); return c; },
+    focus: vi.fn(),
+    select: vi.fn(),
     remove: vi.fn(),
     getContext: () => null,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 600 }),
@@ -31,7 +35,7 @@ function makeDomNode(tag: string) {
     },
     removeEventListener(ev: string, fn: (e: unknown) => void) { listeners.get(ev)?.delete(fn); },
     dispatch(ev: string, payload: Record<string, unknown> = {}) {
-      for (const fn of listeners.get(ev) ?? []) fn({ preventDefault: vi.fn(), ...payload });
+      for (const fn of listeners.get(ev) ?? []) fn({ preventDefault: vi.fn(), stopPropagation: vi.fn(), ...payload });
     },
   };
 }
@@ -54,9 +58,11 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
     container.ownerDocument = fakeDoc;
 
     const onSel = vi.fn();
+    const onChange = vi.fn();
     const mounted = await mountWhiteboardView(container as unknown as HTMLElement, board, {
       gpu: { prefer: "headless" },
       onSelectionChange: onSel,
+      onChange,
     });
     const ctrl = mounted.controller;
 
@@ -81,6 +87,60 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
     expect(board.toGraph().nodes.find((n) => n.id === "n1")?.x).toBe(60);
     expect(ctrl.dragSelected(10, 5)).toBe(true);
     expect(board.toGraph().nodes.find((n) => n.id === "n1")?.x).toBe(70);
+
+    // Inline text editing for flowchart nodes & mind map topics (dblclick, Enter/F2, Escape, blur, undoable)
+    const editor = container.children[2] as ReturnType<typeof makeDomNode>;
+    expect(editor.tagName).toBe("INPUT");
+    editor.dispatch("blur", {}); // no-op while closed
+    editor.dispatch("pointerdown", {});
+    editor.dispatch("dblclick", {});
+    container.dispatch("pointerdown", { target: editor });
+    container.dispatch("dblclick", { target: editor });
+    // Double-click flowchart node n1 (at x=70, y=55, w=140, h=60)
+    container.dispatch("dblclick", { clientX: 110, clientY: 80 });
+    expect(editor.style.display).toBe("block");
+    expect(editor.value).toBe("Start");
+    container.dispatch("keydown", { key: "Delete" }); // guarded while editing
+    editor.dispatch("keydown", { key: "a" }); // normal typing key inside editor
+    editor.value = "Start Renamed";
+    editor.dispatch("keydown", { key: "Enter" });
+    expect(editor.style.display).toBe("none");
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.text).toBe("Start Renamed");
+    expect(onChange).toHaveBeenCalled();
+    expect(board.undo()).toBe(true);
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.text).toBe("Start");
+    // Open via F2, cancel via Escape
+    ctrl.selectNodes(["n1"]);
+    container.dispatch("keydown", { key: "F2" });
+    expect(editor.style.display).toBe("block");
+    editor.value = "Cancelled";
+    editor.dispatch("keydown", { key: "Escape" });
+    expect(editor.style.display).toBe("none");
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.text).toBe("Start");
+    // Open via Enter, commit via blur, then open again and commit via canvas pointerdown
+    container.dispatch("keydown", { key: "Enter" });
+    editor.value = "Start Blurred";
+    editor.dispatch("blur", {});
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.text).toBe("Start Blurred");
+    expect(board.undo()).toBe(true);
+    container.dispatch("keydown", { key: "Enter" });
+    editor.value = "Start PointerCommit";
+    container.dispatch("pointerdown", { clientX: 700, clientY: 500 });
+    expect(board.toGraph().nodes.find((n) => n.id === "n1")?.text).toBe("Start PointerCommit");
+    expect(board.undo()).toBe(true);
+    // Double-click mind map root topic ("r1" at x=50, y=200) and commit via Enter
+    container.dispatch("dblclick", { clientX: 80, clientY: 215 });
+    expect(editor.style.display).toBe("block");
+    expect(editor.value).toBe("Root");
+    editor.value = "Root Updated";
+    editor.dispatch("keydown", { key: "Enter" });
+    expect(board.toGraph().mind?.find((m) => m.id === "r1")?.text).toBe("Root Updated");
+    expect(board.undo()).toBe(true);
+    // Double-click empty canvas -> no-op
+    container.dispatch("dblclick", { clientX: 880, clientY: 550 });
+    expect(editor.style.display).toBe("none");
+    // Restore n1 selection for subsequent shift-click test
+    ctrl.selectNodes(["n1"]);
 
     container.dispatch("pointerdown", { clientX: 310, clientY: 80, shiftKey: true });
     expect(ctrl.getSelectedIds()).toHaveLength(2);
@@ -183,9 +243,24 @@ describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)",
     zeroContainer.dispatch("pointerdown", { clientX: 800, clientY: 500, shiftKey: true });
     expect(ctrl.getSelectedIds()).toEqual(["r1"]);
 
-    // Selected ID not present in board -> dragSelected returns false
+    // Selected ID not present in board -> dragSelected, getNodeScreenRect, updateNodeText, updateMindTopicText, and Enter return falsy
     ctrl.selectNodes(["ghost-node"]);
     expect(ctrl.dragSelected(10, 10)).toBe(false);
+    expect(ctrl.getNodeScreenRect("ghost-node")).toBeNull();
+    expect(ctrl.updateNodeText("ghost-node", "nope")).toBe(false);
+    expect(ctrl.updateMindTopicText("ghost-mind", "nope")).toBe(false);
+    zeroContainer.dispatch("keydown", { key: "Enter" });
+    // Stale spatial hit (delete node externally without re-rendering before dblclick)
+    board.apply([{ op: "deleteNode", id: "t1" }]);
+    zeroContainer.dispatch("dblclick", { clientX: 250, clientY: 60 });
+    expect(board.undo()).toBe(true);
+    // Board with no mind topics -> hitTestMindTopic returns null
+    const noMindBoard = Board.create();
+    const nmContainer = makeDomNode("div");
+    nmContainer.ownerDocument = fakeDoc;
+    const nmMounted = await mountWhiteboardView(nmContainer as unknown as HTMLElement, noMindBoard, { gpu: { prefer: "headless" } });
+    expect(nmMounted.controller.hitTestMindTopic(50, 50)).toBeNull();
+    nmMounted.dispose();
 
     // Backspace deletes selected node; unhandled keys & Delete with empty selection return false
     ctrl.selectNodes(["b1"]);

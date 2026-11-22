@@ -1282,16 +1282,23 @@ async function mountDocTab(token) {
     syncUi(frame);
     hitBadge.textContent = `Hit ${searchCursor + 1} / ${searchHits.length}`;
   });
-  addBlockBtn.addEventListener("click", () => {
+  const insertQuickBlock = () => {
     if (!docModel || !mounted) return;
     const txt = addTextInput.value.trim() || `Interactive ${addTypeSelect.value} block added at v${docModel.version + 1}`;
     const firstId = docModel.blocks()[0]?.id ?? null;
-    docModel.insertBlock({ type: addTypeSelect.value, markdown: txt, afterBlockId: firstId });
+    docModel.apply([{ op: "insertBlock", type: addTypeSelect.value, markdown: txt, afterBlockId: firstId }]);
     addTextInput.value = "";
     const frame = mounted.controller.setScrollTop(0);
     rebuildOutline();
     syncUi(frame);
-    aiOut.set("doc.insertBlock()", { type: addTypeSelect.value, text: txt, blockCount: docModel.blocks().length });
+    aiOut.set("doc.apply(insertBlock)", { type: addTypeSelect.value, text: txt, blockCount: docModel.blocks().length });
+  };
+  addBlockBtn.addEventListener("click", insertQuickBlock);
+  addTextInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      insertQuickBlock();
+    }
   });
   undoBtn.addEventListener("click", () => {
     if (!docModel || !mounted) return;
@@ -1323,19 +1330,19 @@ async function mountDocTab(token) {
   });
   acceptSugBtn.addEventListener("click", () => {
     if (!docModel || !mounted || !pendingSuggestionId) return;
-    const ok = docModel.acceptSuggestion(pendingSuggestionId);
     const id = pendingSuggestionId;
+    const res = docModel.apply([{ op: "resolveSuggestion", suggestionId: id, decision: "accept" }]);
     pendingSuggestionId = null;
     rebuildOutline();
     syncUi(mounted.controller.setScrollTop(0));
-    aiOut.set("doc.acceptSuggestion()", { suggestionId: id, accepted: ok });
+    aiOut.set("doc.acceptSuggestion()", { suggestionId: id, accepted: res.ok });
   });
   rejectSugBtn.addEventListener("click", () => {
     if (!docModel || !pendingSuggestionId) return;
-    const ok = docModel.rejectSuggestion(pendingSuggestionId);
     const id = pendingSuggestionId;
+    const res = docModel.apply([{ op: "resolveSuggestion", suggestionId: id, decision: "reject" }]);
     pendingSuggestionId = null;
-    aiOut.set("doc.rejectSuggestion()", { suggestionId: id, rejected: ok });
+    aiOut.set("doc.rejectSuggestion()", { suggestionId: id, rejected: res.ok });
   });
   exportDocxBtn.addEventListener("click", () => {
     if (!docModel) return;
@@ -1541,7 +1548,7 @@ async function mountSlidesTab(token) {
     svgBox,
     el("p", {
       className: "hint-text",
-      textContent: "Generated purely via Presentation.renderSvg() — compare pixel geometry side-by-side with the WebGPU/WebGL2 SDF stage.",
+      textContent: "Generated purely via Presentation.renderSvg() — drag shapes/corners to move or resize; double-click text to edit live.",
     }),
   ]);
   layout.appendChild(gpuHost);
@@ -1952,7 +1959,7 @@ async function mountWhiteboardTab(token) {
     el("div", { className: "btn-row" }, [zoomInBtn, zoomOutBtn, fitBtn, panLeftBtn, panRightBtn]),
     el("p", {
       className: "hint-text",
-      textContent: "Drag any node to reposition freely; drag empty canvas or wheel to pan; Ctrl/Cmd + wheel to zoom.",
+      textContent: "Drag any node to move, double-click any node or mind topic to edit text; drag empty canvas or wheel to pan; Ctrl/Cmd + wheel to zoom.",
     }),
   ]);
 
@@ -2015,6 +2022,7 @@ async function mountWhiteboardTab(token) {
 
     const view = await mountWhiteboardView(host, board, {
       onSelectionChange: () => syncUi(),
+      onChange: () => syncUi(),
     });
     if (token !== mountToken) {
       view.dispose();

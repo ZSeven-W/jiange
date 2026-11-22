@@ -116,13 +116,16 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
 
   updateActiveText(text: string): DocFrameResult {
     if (this.options.readOnly || !this.activeBlockId) return this.render();
-    this.doc.updateBlock(this.activeBlockId, { text });
+    this.doc.apply([{ op: "updateBlock", blockId: this.activeBlockId, text }]);
     return this.render();
   }
 
   insertBlockAfterActive(type = "paragraph", text = ""): DocBlockSnapshot | null {
     if (this.options.readOnly) return null;
-    const inserted = this.doc.insertBlock({ type, text, afterBlockId: this.activeBlockId });
+    const res = this.doc.apply([{ op: "insertBlock", type, text, afterBlockId: this.activeBlockId }]);
+    const insertedId = res.diff.insertedBlocks[0];
+    const inserted = insertedId ? this.doc.getBlock(insertedId) : null;
+    if (!inserted) return null;
     this.focusBlock(inserted.id);
     this.render();
     return inserted;
@@ -133,7 +136,7 @@ export class DocViewController<T extends PoolableElement = PoolableElement> {
     const blocks = this.doc.blocks();
     const idx = blocks.findIndex((b) => b.id === this.activeBlockId);
     if (idx < 0) return false;
-    this.doc.deleteBlock(this.activeBlockId);
+    this.doc.apply([{ op: "deleteBlock", blockId: this.activeBlockId }]);
     const next = blocks[idx + 1] ?? blocks[idx - 1] ?? null;
     this.focusBlock(next ? next.id : null);
     this.render();

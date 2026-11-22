@@ -14,6 +14,8 @@ function makeDomNode(tag: string) {
   const listeners = new Map<string, Set<(e: unknown) => void>>();
   return {
     tagName: tag.toUpperCase(),
+    type: "",
+    value: "",
     style: {} as Record<string, string>,
     attrs: {} as Record<string, string>,
     children: [] as unknown[],
@@ -25,6 +27,8 @@ function makeDomNode(tag: string) {
     ownerDocument: null as unknown,
     appendChild(c: unknown) { this.children.push(c); return c; },
     setAttribute(k: string, v: string) { this.attrs[k] = v; },
+    focus: vi.fn(),
+    select: vi.fn(),
     remove: vi.fn(),
     getContext: () => null,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 792, height: 540 }),
@@ -35,7 +39,7 @@ function makeDomNode(tag: string) {
     },
     removeEventListener(ev: string, fn: (e: unknown) => void) { listeners.get(ev)?.delete(fn); },
     dispatch(ev: string, payload: Record<string, unknown> = {}) {
-      for (const fn of listeners.get(ev) ?? []) fn({ preventDefault: vi.fn(), ...payload });
+      for (const fn of listeners.get(ev) ?? []) fn({ preventDefault: vi.fn(), stopPropagation: vi.fn(), ...payload });
     },
   };
 }
@@ -126,15 +130,73 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     expect(ctrl.resizeSelectedShape("sw", 1, 1)).toBe(true);
     expect(ctrl.moveSelectedShape(2, 2)).toBe(true);
 
+    // Inline text editing on Slides stage (double-click, Enter/F2, blur/Escape, undoable)
+    const stageHost = container.children[1] as ReturnType<typeof makeDomNode>;
+    const editor = stageHost.children[2] as ReturnType<typeof makeDomNode>;
+    expect(editor.tagName).toBe("INPUT");
+    editor.dispatch("blur", {}); // no-op when closed
+    // Double-click empty stage -> no-op
+    canvas.dispatch("dblclick", { clientX: stage.x + 2, clientY: stage.y + 2 });
+    expect(editor.style.display).toBe("none");
+    // Double-click non-text shape ("r1") -> selects but does not open text editor
+    const r1Now = deck.getSlide(1)!.shapes.find((s) => s.id === "r1")!;
+    canvas.dispatch("dblclick", {
+      clientX: stage.x + ((r1Now.x + 2) / 100) * stage.w,
+      clientY: stage.y + ((r1Now.y + 2) / 100) * stage.h,
+    });
+    expect(editor.style.display).toBe("none");
+    // Enter on non-text selected shape does not open editor
+    container.dispatch("keydown", { key: "Enter" });
+    expect(editor.style.display).toBe("none");
+    // Double-click text shape ("tx-l") -> opens editor, ignores container keydown while open, commits on Enter
+    canvas.dispatch("dblclick", {
+      clientX: stage.x + (15 / 100) * stage.w,
+      clientY: stage.y + (76 / 100) * stage.h,
+    });
+    expect(editor.style.display).toBe("block");
+    expect(editor.value).toBe("Left");
+    container.dispatch("keydown", { key: "Delete" }); // guarded while editing
+    editor.dispatch("keydown", { key: "a" }); // non-Enter/Escape key inside editor
+    editor.value = "Left Edited";
+    editor.dispatch("keydown", { key: "Enter" });
+    expect(editor.style.display).toBe("none");
+    expect(deck.getSlide(1)?.shapes.find((s) => s.id === "tx-l")?.text).toBe("Left Edited");
+    expect(deck.undo()).toBe(true);
+    expect(deck.getSlide(1)?.shapes.find((s) => s.id === "tx-l")?.text).toBe("Left");
+    // Open via F2 on non-bold text shape ("tx-c"), cancel with Escape
+    ctrl.selectShape("tx-c");
+    container.dispatch("keydown", { key: "F2" });
+    expect(editor.style.display).toBe("block");
+    editor.value = "Cancelled";
+    editor.dispatch("keydown", { key: "Escape" });
+    expect(editor.style.display).toBe("none");
+    expect(deck.getSlide(1)?.shapes.find((s) => s.id === "tx-c")?.text).toBe("Center");
+    // Open via Enter, commit via blur, and commit via canvas pointerdown
+    container.dispatch("keydown", { key: "Enter" });
+    editor.value = "Center Blurred";
+    editor.dispatch("blur", {});
+    expect(deck.getSlide(1)?.shapes.find((s) => s.id === "tx-c")?.text).toBe("Center Blurred");
+    container.dispatch("keydown", { key: "Enter" });
+    editor.value = "Center ClickedAway";
+    canvas.dispatch("pointerdown", { clientX: stage.x + 2, clientY: stage.y + 2 });
+    expect(deck.getSlide(1)?.shapes.find((s) => s.id === "tx-c")?.text).toBe("Center ClickedAway");
+    // Reselect r1 for subsequent delete/undo assertions
+    ctrl.selectShape("r1");
+
     container.dispatch("keydown", { key: "Delete" });
     expect(deck.getSlide(1)?.shapes.find((s) => s.id === "r1")).toBeUndefined();
     container.dispatch("keydown", { key: "z", ctrlKey: true });
     expect(deck.getSlide(1)?.shapes.find((s) => s.id === "r1")).toBeDefined();
     container.dispatch("keydown", { key: "z", ctrlKey: true, shiftKey: true });
 
-    // Presenter mode + arrow nav + thumbnail scroll + resize
+    // Presenter mode blocks editor open + arrow nav + thumbnail scroll + resize
     ctrl.setPresenterMode(true);
     expect(ctrl.isPresenterMode()).toBe(true);
+    canvas.dispatch("dblclick", {
+      clientX: stage.x + (15 / 100) * stage.w,
+      clientY: stage.y + (76 / 100) * stage.h,
+    });
+    expect(editor.style.display).toBe("none");
     container.dispatch("keydown", { key: "ArrowLeft" });
     expect(ctrl.getSlideIndex()).toBe(0);
     container.dispatch("keydown", { key: " " });
@@ -222,11 +284,21 @@ describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
     expect(ctrl.handlePointerDown(wideStage.x + wideStage.w * 0.99, wideStage.y + wideStage.h * 0.99)).toBeNull();
     expect(ctrl.getSelectedShapeId()).toBeNull();
 
-    // Select a non-existent shape id -> moveSelectedShape / resizeSelectedShape / hitTestResizeHandle return falsy
+    // Select a non-existent shape id -> moveSelectedShape / resizeSelectedShape / hitTestResizeHandle / getShapeScreenRect / updateShapeText return falsy
     ctrl.selectShape("missing-id");
     expect(ctrl.moveSelectedShape(2, 2)).toBe(false);
     expect(ctrl.resizeSelectedShape("se", 2, 2)).toBe(false);
     expect(ctrl.hitTestResizeHandle(0, 0)).toBeNull();
+    expect(ctrl.getShapeScreenRect("missing-id")).toBeNull();
+    expect(ctrl.updateShapeText("missing-id", "x")).toBe(false);
+    expect(ctrl.updateShapeText("def1", "x")).toBe(false);
+    // Omitted width/height in getShapeScreenRect + omitted text/fontSize/bold/align in openEditor
+    expect(ctrl.getShapeScreenRect("def1")?.w).toBeGreaterThan(0);
+    ctrl.selectShape("txt1");
+    zeroContainer.dispatch("keydown", { key: "Enter" });
+    const zeroEditor = (zeroContainer.children[1] as ReturnType<typeof makeDomNode>).children[2] as ReturnType<typeof makeDomNode>;
+    expect(zeroEditor.value).toBe("");
+    zeroEditor.dispatch("keydown", { key: "Escape" });
 
     // Hit-test shape with default width/height & move BEFORE resize so omitted width/height defaults run in both
     const hitDef = ctrl.handlePointerDown(wideStage.x + wideStage.w * 0.1, wideStage.y + wideStage.h * 0.12);

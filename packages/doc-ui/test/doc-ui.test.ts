@@ -80,10 +80,21 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     viewport.dispatch("input", { target: { getAttribute: () => firstBlockEl.getAttribute("data-block-id"), textContent: null } });
     viewport.dispatch("input", { target: makeDomNode("span") }); // no data-block-id guard
     ctrl.focusBlock(activeId);
+    const beforeConclusion = doc.getBlock(activeId)?.text;
     ctrl.updateActiveText("Updated Conclusion");
+    expect(doc.getBlock(activeId)?.text).toBe("Updated Conclusion");
+    // Inline text updates are recorded on the undo stack and revert/restore cleanly
+    expect(doc.undo()).toBe(true);
+    expect(doc.getBlock(activeId)?.text).toBe(beforeConclusion);
+    expect(doc.redo()).toBe(true);
     expect(doc.getBlock(activeId)?.text).toBe("Updated Conclusion");
     const inserted = ctrl.insertBlockAfterActive("paragraph", "New note");
     expect(inserted).not.toBeNull();
+    expect(doc.undo()).toBe(true);
+    expect(doc.getBlock(inserted!.id)).toBeNull();
+    expect(doc.redo()).toBe(true);
+    expect(doc.getBlock(inserted!.id)?.text).toBe("New note");
+    ctrl.focusBlock(inserted!.id);
     container.dispatch("keydown", { key: "Enter" });
     // Active block is now the newly created empty paragraph -> Backspace deletes it
     container.dispatch("keydown", { key: "Backspace" });
@@ -152,9 +163,10 @@ describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
     expect(ctrl.handleKeyDown("a")).toBe(false);
     zeroContainer.dispatch("keydown", { key: "a" });
 
-    // deleteActiveBlock with unknown active block id -> returns false
+    // deleteActiveBlock / insertBlockAfterActive with unknown active block id -> returns false / null
     ctrl.focusBlock("missing-block-id");
     expect(ctrl.deleteActiveBlock()).toBe(false);
+    expect(ctrl.insertBlockAfterActive("paragraph", "orphan")).toBeNull();
 
     // Delete last block -> focuses previous block (`blocks[idx - 1]`)
     ctrl.focusBlock(blocks[1].id);

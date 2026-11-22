@@ -25,6 +25,7 @@ import {
 export interface WhiteboardViewOptions {
   gpu?: GpuSurfaceOptions;
   onSelectionChange?: (nodeIds: string[]) => void;
+  onChange?: () => void;
 }
 
 export interface WhiteboardFrameResult {
@@ -183,6 +184,61 @@ export class WhiteboardViewController<T extends PoolableElement = PoolableElemen
       }));
     if (ops.length === 0) return false;
     this.board.apply(ops);
+    this.render();
+    return true;
+  }
+
+  /** Compute container-local screen bounds for a flowchart node. */
+  getNodeScreenRect(nodeId: string): { x: number; y: number; w: number; h: number; text: string } | null {
+    const node = this.board.toGraph().nodes.find((n) => n.id === nodeId);
+    if (!node) return null;
+    const screen = this.camera.worldToScreen(node.x, node.y);
+    return {
+      x: screen.x,
+      y: screen.y,
+      w: node.w * this.camera.zoom,
+      h: node.h * this.camera.zoom,
+      text: node.text,
+    };
+  }
+
+  /** Hit-test mind map topics at container-local `(screenX, screenY)`. */
+  hitTestMindTopic(screenX: number, screenY: number): { id: string; x: number; y: number; w: number; h: number; text: string } | null {
+    const g = this.board.toGraph();
+    if (!g.mind || g.mind.length === 0) return null;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const positioned = layoutMindTopics(g.mind, new Set(g.mindCollapsed ?? []), g.mindStyles, g.mindDescriptions, g.mindDescriptionStyles);
+    for (let i = positioned.length - 1; i >= 0; i--) {
+      const p = positioned[i];
+      if (w.x >= p.x && w.x <= p.x + p.w && w.y >= p.y && w.y <= p.y + p.h) {
+        const scr = this.camera.worldToScreen(p.x, p.y);
+        return {
+          id: p.topic.id,
+          x: scr.x,
+          y: scr.y,
+          w: p.w * this.camera.zoom,
+          h: p.h * this.camera.zoom,
+          text: p.topic.text,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** Update a flowchart node's label text via undoable board.apply(). */
+  updateNodeText(nodeId: string, text: string): boolean {
+    const res = this.board.apply([{ op: "updateNode", id: nodeId, patch: { text } }]);
+    if (!res.ok) return false;
+    this.options.onChange?.();
+    this.render();
+    return true;
+  }
+
+  /** Update a mind map topic's text via undoable board.apply(). */
+  updateMindTopicText(topicId: string, text: string): boolean {
+    const res = this.board.apply([{ op: "updateMindTopic", id: topicId, patch: { text } }]);
+    if (!res.ok) return false;
+    this.options.onChange?.();
     this.render();
     return true;
   }
@@ -437,6 +493,22 @@ export async function mountWhiteboardView(
   labelLayer.style.pointerEvents = "none";
   container.appendChild(labelLayer);
 
+  const editor = doc.createElement("input");
+  editor.type = "text";
+  editor.style.position = "absolute";
+  editor.style.display = "none";
+  editor.style.zIndex = "10";
+  editor.style.boxSizing = "border-box";
+  editor.style.padding = "2px 6px";
+  editor.style.border = "2px solid #3370ff";
+  editor.style.borderRadius = "6px";
+  editor.style.background = "#ffffff";
+  editor.style.color = "#1f2329";
+  editor.style.textAlign = "center";
+  editor.style.outline = "none";
+  editor.style.boxShadow = "0 2px 8px rgba(51, 112, 255, 0.2)";
+  container.appendChild(editor);
+
   const surface = await GpuSurface.create(canvas, options.gpu);
   const controller = new WhiteboardViewController<HTMLElement>(
     board,
@@ -459,6 +531,36 @@ export async function mountWhiteboardView(
   let dragMode: "none" | "node" | "pan" = "none";
   let lastX = 0;
   let lastY = 0;
+  let editingTarget: { kind: "node" | "mind"; id: string } | null = null;
+
+  const openEditor = (
+    kind: "node" | "mind",
+    id: string,
+    rect: { x: number; y: number; w: number; h: number; text: string },
+  ) => {
+    editingTarget = { kind, id };
+    dragMode = "none";
+    editor.value = rect.text;
+    editor.style.left = `${Math.round(rect.x)}px`;
+    editor.style.top = `${Math.round(rect.y)}px`;
+    editor.style.width = `${Math.max(80, Math.round(rect.w))}px`;
+    editor.style.height = `${Math.max(28, Math.round(rect.h))}px`;
+    editor.style.fontSize = `${Math.max(10, 13 * controller.camera.zoom).toFixed(1)}px`;
+    editor.style.display = "block";
+    editor.focus?.();
+    editor.select?.();
+  };
+
+  const closeEditor = (commit: boolean) => {
+    if (!editingTarget) return;
+    const target = editingTarget;
+    editingTarget = null;
+    editor.style.display = "none";
+    if (commit) {
+      if (target.kind === "node") controller.updateNodeText(target.id, editor.value);
+      else controller.updateMindTopicText(target.id, editor.value);
+    }
+  };
 
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
@@ -470,11 +572,31 @@ export async function mountWhiteboardView(
     }
   };
   const onPointerDown = (e: PointerEvent) => {
+    if (e.target === editor) return;
+    if (editingTarget) closeEditor(true);
     const rect = container.getBoundingClientRect();
     const hit = controller.handlePointerDown(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey);
     dragMode = hit ? "node" : "pan";
     lastX = e.clientX;
     lastY = e.clientY;
+  };
+  const onDblClick = (e: MouseEvent) => {
+    if (e.target === editor) return;
+    const rect = container.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const hitId = controller.hitTest(cx, cy);
+    if (hitId) {
+      const box = controller.getNodeScreenRect(hitId);
+      if (box) {
+        controller.selectNodes([hitId]);
+        controller.render();
+        openEditor("node", hitId, box);
+      }
+      return;
+    }
+    const mindHit = controller.hitTestMindTopic(cx, cy);
+    if (mindHit) openEditor("mind", mindHit.id, mindHit);
   };
   const onPointerMove = (e: PointerEvent) => {
     if (dragMode === "none") return;
@@ -491,7 +613,33 @@ export async function mountWhiteboardView(
   const onPointerUp = () => {
     dragMode = "none";
   };
+  const onEditorStop = (e: Event) => {
+    e.stopPropagation?.();
+  };
+  const onEditorKeyDown = (e: KeyboardEvent) => {
+    e.stopPropagation?.();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closeEditor(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeEditor(false);
+    }
+  };
+  const onEditorBlur = () => {
+    closeEditor(true);
+  };
   const onKeyDown = (e: KeyboardEvent) => {
+    if (editingTarget) return;
+    const selectedId = controller.getSelectedIds()[0];
+    if ((e.key === "Enter" || e.key === "F2") && selectedId) {
+      const box = controller.getNodeScreenRect(selectedId);
+      if (box) {
+        openEditor("node", selectedId, box);
+        e.preventDefault();
+        return;
+      }
+    }
     if (controller.handleKeyDown(e.key, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })) {
       e.preventDefault();
     }
@@ -499,10 +647,15 @@ export async function mountWhiteboardView(
 
   container.addEventListener("wheel", onWheel, { passive: false });
   container.addEventListener("pointerdown", onPointerDown);
+  container.addEventListener("dblclick", onDblClick);
   container.addEventListener("pointermove", onPointerMove);
   container.addEventListener("pointerup", onPointerUp);
   container.addEventListener("pointerleave", onPointerUp);
   container.addEventListener("keydown", onKeyDown);
+  editor.addEventListener("pointerdown", onEditorStop);
+  editor.addEventListener("dblclick", onEditorStop);
+  editor.addEventListener("keydown", onEditorKeyDown);
+  editor.addEventListener("blur", onEditorBlur);
 
   controller.resize(container.clientWidth || 960, container.clientHeight || 600);
   controller.fitToScreen();
@@ -516,13 +669,19 @@ export async function mountWhiteboardView(
     dispose() {
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("dblclick", onDblClick);
       container.removeEventListener("pointermove", onPointerMove);
       container.removeEventListener("pointerup", onPointerUp);
       container.removeEventListener("pointerleave", onPointerUp);
       container.removeEventListener("keydown", onKeyDown);
+      editor.removeEventListener("pointerdown", onEditorStop);
+      editor.removeEventListener("dblclick", onEditorStop);
+      editor.removeEventListener("keydown", onEditorKeyDown);
+      editor.removeEventListener("blur", onEditorBlur);
       controller.dispose();
       canvas.remove();
       labelLayer.remove();
+      editor.remove();
     },
   };
 }
