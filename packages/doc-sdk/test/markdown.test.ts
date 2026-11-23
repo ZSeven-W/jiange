@@ -329,6 +329,12 @@ describe("markdown blocks", () => {
       { type: "embed", text: "", props: {}, spans: [] },
       { type: "reminder", text: "", props: { date: "2026-11-21", time: "09:00", label: "Standup", done: "true" }, spans: [] },
       { type: "reminder", text: "", props: {}, spans: [] },
+      { type: "toggle", text: "折叠项", props: { indent: "1" }, spans: [] },
+      { type: "toc", text: "", props: {}, spans: [] },
+      { type: "status", text: "", props: { statusItems: JSON.stringify([{ text: "P0" }, { text: "进行中" }]) }, spans: [] },
+      { type: "status", text: "", props: { statusItems: "{bad" }, spans: [] },
+      { type: "status", text: "", props: { statusItems: '"not-array"' }, spans: [] },
+      { type: "status", text: "", props: {}, spans: [] },
     ]);
     expect(miscMd).toContain("![图片]()");
     expect(miscMd).toContain("[Report.pdf](https://a.test/r.pdf)");
@@ -341,5 +347,9 @@ describe("markdown blocks", () => {
     expect(miscMd).toContain("[嵌入资源：资源]");
     expect(miscMd).toContain("- [x] ⏰ 2026-11-21 09:00 Standup");
     expect(miscMd).toContain("- [ ] ⏰ 日期提醒");
+    expect(miscMd).toContain("  - ▸ 折叠项");
+    expect(miscMd).toContain("[TOC]");
+    expect(miscMd).toContain("[P0] [进行中]");
+    expect(miscMd).toContain("[进行中]");
   });
 });

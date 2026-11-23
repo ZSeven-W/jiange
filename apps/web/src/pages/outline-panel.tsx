@@ -110,6 +110,7 @@ export function OutlineTrigger({ hostRef, buttonRef, panelId, expanded, yieldToS
 export function OutlinePanel({
   items,
   activeId,
+  headingNumbers,
   allowCopy = true,
   allowPrint = true,
   onJump,
@@ -124,6 +125,7 @@ export function OutlinePanel({
 }: {
   items: OutlineItem[];
   activeId: string | null;
+  headingNumbers?: ReadonlyMap<string, string>;
   allowCopy?: boolean;
   allowPrint?: boolean;
   onJump: (id: string) => void;
@@ -217,6 +219,7 @@ export function OutlinePanel({
                   data-outline-item={it.id}
                 >
                   {active && <span aria-hidden className="absolute inset-y-[6px] left-0 w-[2px] rounded-full bg-primary" />}
+                  {headingNumbers?.get(it.id) && <span className="mr-1.5 tabular-nums text-[#8F959E]">{headingNumbers.get(it.id)}</span>}
                   {it.text}
                 </button>
               </div>

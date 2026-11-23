@@ -73,7 +73,11 @@ import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipbo
 import { TableStructureHistory } from "./table-structure-history";
 import { MemberCard, type MemberInfo } from "./member-card";
 import { ask, askText } from "@/components/ui/ask";
-import { ArrowLeft, ArrowRight, MessageCircle, Play, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, MessageCircle, Play, Trash2 } from "lucide-react";
+import { computeFoldedBlocks, computeHeadingNumbers, headingLevel } from "./doc-outline-fold";
+import { TocBlockView } from "./toc-block";
+import { StatusBlockView } from "./status-block";
+import type { OutlineItem } from "@/pages/outline-panel";
 import { GripDots, TodoCheck } from "./menu-icons";
 import { BlockHandle, blockLink, COLORABLE, CONVERTIBLE, linkedBlock, navigateDocumentHash, REVISIT_DOCUMENT_LINK, MAX_INDENT, TEXT_BLOCKS, type BlockMenuAbilities, type BlockMenuAction } from "./block-handle";
 import { CALLOUT_COLORS, calloutStyle } from "./block-styles";
@@ -203,6 +207,10 @@ interface Props {
   onShareBlock?: (link: string) => void;
   /** 块菜单「保存为模板」：传入所选块的 Markdown。 */
   onSaveTemplate?: (markdown: string) => void;
+  /** 飞书「标题自动编号」：为 H1–H9 自动展示 1 / 1.1 / 1.1.1 编号。 */
+  autoNumberHeadings?: boolean;
+  /** 文内目录块点击跳转回调。 */
+  onJumpToBlock?: (blockId: string) => void;
 }
 
 /**
@@ -211,7 +219,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onBoardCommentCreate, onBoardCommentReply, onBoardCommentResolve, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onBoardCommentCreate, onBoardCommentReply, onBoardCommentResolve, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate, autoNumberHeadings = false, onJumpToBlock }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const pastedLinkSerial = useRef(0);
   const wrap = useRef<HTMLDivElement>(null);
@@ -2213,8 +2221,11 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       if (it.id === "divider") {
         return insertBlockAtSlashOffset(tx, b, offset, "divider").caret;
       }
-      if (it.id === "synced" || it.id === "subpages") {
+      if (it.id === "synced" || it.id === "subpages" || it.id === "toc") {
         return insertBlockAtSlashOffset(tx, b, offset, it.id).caret;
+      }
+      if (it.id === "status") {
+        return insertBlockAtSlashOffset(tx, b, offset, "status", { statusItems: JSON.stringify([{ id: "st-1", text: "进行中", color: "blue" }]) }).caret;
       }
       if (it.id === "reminder") {
         return insertBlockAtSlashOffset(tx, b, offset, "reminder", { date: formatLocalIsoDate(new Date()) }).caret;
@@ -2626,19 +2637,70 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (result.ops.length) { sync.client.push(result.ops); force((x) => x + 1); publish(); }
     return { status: result.status, count: result.count };
   };
+  const [localFoldOverrides, setLocalFoldOverrides] = useState<Map<string, boolean>>(() => new Map());
   const numbers = new Map<string, number>();
+  const outlineItems: OutlineItem[] = [];
+  const collapsedIds = new Set<string>();
+  const foldInput: { id: string; type: string; indent: number; text: string }[] = [];
   {
     const counters: number[] = [];
     for (const b of blocks) {
       const info = doc!.blockInfo(b);
+      const key = idKey(b);
       const ind = Number(info.props.indent ?? "0");
       if (info.type === "ordered") {
         counters.length = ind + 1;
         counters[ind] = (counters[ind] ?? 0) + 1;
-        numbers.set(idKey(b), counters[ind]);
+        numbers.set(key, counters[ind]);
       } else counters.length = 0;
+      const text = doc!.text(b);
+      const lv = headingLevel(info.type);
+      if (lv !== null && text.trim()) outlineItems.push({ id: key, level: lv, text: text.trim() });
+      foldInput.push({ id: key, type: info.type, indent: ind, text });
+      const localFold = localFoldOverrides.get(key);
+      const isFolded = localFold !== undefined ? localFold : info.props.collapsed === "true";
+      if (isFolded && (lv !== null || info.type === "toggle")) collapsedIds.add(key);
     }
   }
+  const headingNumbers = autoNumberHeadings ? computeHeadingNumbers(foldInput) : undefined;
+  const foldState = computeFoldedBlocks(foldInput, collapsedIds);
+
+  const toggleFold = (b: OpId) => {
+    const key = idKey(b);
+    const d = sync.client.doc;
+    if (!d) return;
+    const currentlyFolded = collapsedIds.has(key);
+    const next = !currentlyFolded;
+    if (readOnlyRef.current) {
+      setLocalFoldOverrides((prev) => {
+        const copy = new Map(prev);
+        copy.set(key, next);
+        return copy;
+      });
+      return;
+    }
+    setLocalFoldOverrides((prev) => {
+      if (!prev.has(key)) return prev;
+      const copy = new Map(prev);
+      copy.delete(key);
+      return copy;
+    });
+    const tx = new Tx(d);
+    tx.setProp(b, "collapsed", next ? "true" : "");
+    um.record(tx, sel.current, sel.current, "prop");
+    sync.client.push(tx.ops);
+    force((x) => x + 1);
+    publish();
+  };
+
+  const jumpToEditorBlock = (blockId: string) => {
+    if (onJumpToBlock) {
+      onJumpToBlock(blockId);
+      return;
+    }
+    const target = root.current?.querySelector<HTMLElement>(`[data-block="${blockId}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   const toggleTodo = (b: OpId) => {
     const d = sync.client.doc;
@@ -2980,6 +3042,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         {doc &&
           blocks.map((b) => {
             const k = idKey(b);
+            if (foldState.hidden.has(k)) return null;
             const info = doc.blockInfo(b);
             const atomicTableLocked = alignmentPending && atomicTableBusy(b);
             const version = (key: string) => { const v = doc.propVersion(b, key); return v ? idKey(v) : null; };
@@ -3160,6 +3223,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 type={info.type}
                 props={info.props}
                 number={numbers.get(k)}
+                headingNumber={headingNumbers?.get(k)}
+                isCollapsed={collapsedIds.has(k)}
+                foldedCount={foldState.hiddenCounts.get(k) ?? 0}
+                hasFoldBody={foldState.hasBody.has(k)}
+                onToggleFold={headingLevel(info.type) !== null || info.type === "toggle" ? () => toggleFold(b) : undefined}
+                tocItems={info.type === "toc" ? outlineItems : undefined}
+                tocHeadingNumbers={info.type === "toc" ? headingNumbers : undefined}
+                onJumpToBlock={info.type === "toc" ? jumpToEditorBlock : undefined}
                 spans={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.snapshot : doc.richChars(b)}
                 findRanges={composing.current?.snapshot && eqId(composing.current.sel.a.b, b) ? composing.current.findRanges : findRanges.get(k)}
                 tableFindCells={tableFindCells.get(k)}
@@ -3800,6 +3871,7 @@ const BLOCK_CLASS: Record<string, string> = {
   bullet: "text-[16px] leading-[1.75] py-[3px]",
   ordered: "text-[16px] leading-[1.75] py-[3px]",
   todo: "text-[16px] leading-[1.75] py-[3px]",
+  toggle: "text-[16px] leading-[1.75] py-[3px]",
   quote: "text-[16px] leading-[1.75] py-[3px] border-l-2 border-[#BBBFC4] dark:border-border pl-3 text-muted-foreground my-1",
   code: "my-2",
   callout: "text-[16px] leading-[1.75] py-[8px]",
@@ -3877,6 +3949,14 @@ interface BlockProps {
   type: string;
   props: Record<string, string>;
   number?: number;
+  headingNumber?: string;
+  isCollapsed?: boolean;
+  foldedCount?: number;
+  hasFoldBody?: boolean;
+  onToggleFold?: () => void;
+  tocItems?: readonly OutlineItem[];
+  tocHeadingNumbers?: ReadonlyMap<string, string>;
+  onJumpToBlock?: (blockId: string) => void;
   spans: { ch: string; marks: Record<string, string> }[];
   dropLine: "before" | "after" | null;
   onToggle?: () => void;
@@ -3890,7 +3970,7 @@ interface BlockProps {
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
 }
 
-function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onSetProps, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, headingNumber, isCollapsed, foldedCount = 0, hasFoldBody = false, onToggleFold, tocItems, tocHeadingNumbers, onJumpToBlock, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onSetProps, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -4010,9 +4090,28 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
     if (!session) return;
     try { const result = session.commit(next); if (result) void result.catch(() => {}); } catch { session.cancel(); }
   };
+  const isHeading = headingLevel(type) !== null;
   let prefix: ReactNode = null;
   if (type === "bullet") prefix = <span className="select-none text-primary">{["•", "◦", "▪"][indent % 3]}</span>;
   if (type === "ordered") prefix = <span className="select-none tabular-nums text-primary">{number}.</span>;
+  if (type === "toggle") {
+    prefix = (
+      <button
+        type="button"
+        contentEditable={false}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onToggleFold?.();
+        }}
+        className="mt-[4px] grid size-5 place-items-center rounded text-[#646a73] transition-colors hover:bg-[#eff0f1] hover:text-[#1f2329] dark:hover:bg-hover"
+        aria-label={isCollapsed ? "展开折叠列表" : "收起折叠列表"}
+        aria-expanded={!isCollapsed}
+        data-toggle-fold
+      >
+        <ChevronRight size={14} className={cn("transition-transform duration-150", !isCollapsed && "rotate-90")} />
+      </button>
+    );
+  }
   if (type === "todo")
     prefix = (
       <button
@@ -4258,6 +4357,10 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
         <SyncedBlockView syncId={props.syncId} docId={docId} readOnly={!onSetProp} onBindSyncId={onSetProp ? (nextId) => onSetProp("syncId", nextId) : undefined} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
       ) : type === "subpages" ? (
         <SubpagesBlockView docId={docId} readOnly={!onSetProp} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
+      ) : type === "toc" ? (
+        <TocBlockView items={tocItems ?? []} headingNumbers={tocHeadingNumbers} readOnly={!onSetProp} onJump={onJumpToBlock} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
+      ) : type === "status" ? (
+        <StatusBlockView raw={props.statusItems} readOnly={!onSetProp} onChange={onSetProp ? (nextRaw) => onSetProp("statusItems", nextRaw) : undefined} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} />
       ) : type === "embed" ? (
         <EmbedResourceBlock
           resourceKind={props.resourceKind}
@@ -4305,10 +4408,35 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
           {onSetProp && <CalloutColorBar color={props.color} onPick={(i) => onSetProp("color", String(i))} />}
         </div>
       ) : (
-        <div className={cn(prefix && "flex gap-2")}>
+        <div className={cn("relative", (prefix || isHeading) && "flex items-start gap-2")}>
+          {isHeading && onToggleFold && (
+            <button
+              type="button"
+              contentEditable={false}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onToggleFold();
+              }}
+              aria-label={isCollapsed ? "展开标题内容" : "折叠标题内容"}
+              aria-expanded={!isCollapsed}
+              title={isCollapsed ? "展开标题下内容" : "折叠标题下内容"}
+              data-heading-fold
+              className={cn(
+                "absolute -left-[22px] top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-[#8f959e] transition-all hover:bg-[#eff0f1] hover:text-[#1f2329] dark:hover:bg-hover",
+                isCollapsed ? "opacity-100 text-[#3370ff]" : hasFoldBody ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : "opacity-0 pointer-events-none",
+              )}
+            >
+              <ChevronRight size={14} className={cn("transition-transform duration-150", !isCollapsed && "rotate-90")} />
+            </button>
+          )}
           {prefix && (
             <span contentEditable={false} className="flex min-w-[18px] justify-center">
               {prefix}
+            </span>
+          )}
+          {isHeading && headingNumber && (
+            <span contentEditable={false} data-heading-number className="select-none font-normal tabular-nums text-[#8f959e]">
+              {headingNumber}
             </span>
           )}
           <div data-text className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", type === "todo" && checked && "text-subtle line-through")}>
@@ -4318,6 +4446,20 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
               runs.map(renderAnchoredRun)
             )}
           </div>
+          {isCollapsed && foldedCount > 0 && (
+            <button
+              type="button"
+              contentEditable={false}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onToggleFold?.();
+              }}
+              data-folded-badge
+              className="mt-0.5 inline-flex shrink-0 items-center gap-1 self-center rounded-full bg-[#f2f3f5] px-2 py-0.5 text-[11px] font-normal text-[#646a73] hover:bg-[#e1eaff] hover:text-[#3370ff] dark:bg-hover dark:text-muted-foreground"
+            >
+              已折叠 {foldedCount} 项
+            </button>
+          )}
         </div>
       )}
       {uploadNotice && <div contentEditable={false} role="status" className="my-2 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border border-dashed bg-sidebar/50 px-3.5 py-2.5 text-[13px]" data-upload-placeholder>

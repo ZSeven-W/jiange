@@ -28,8 +28,10 @@ import { BOARD_SEED, MINDMAP_SEED, hasBoard, peekBoardKind, takeBoard } from "./
 import { requestFlowOpen } from "@/editor/flowchart/open-requests";
 import { BaseIcon, docTitle, DocIcon, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { go } from "@/lib/route";
-import { docWidthClass, readDocWidth, writeDocWidth, type DocWidth } from "@/lib/doc-width";
+import { docFontFamilyClass, docFontSizeClass, docPaperBgClass, docWidthClass, readDocPrefs, readDocWidth, writeDocPrefs, writeDocWidth, type DocPagePrefs, type DocWidth } from "@/lib/doc-width";
 import { DocWidthOptions } from "./doc-width-options";
+import { DocReactionsBar } from "./doc-reactions";
+import { computeHeadingNumbers } from "@/editor/doc-outline-fold";
 import { DocumentInfoDialog } from "./document-info-dialog";
 import { documentTextStats } from "./doc-info-stats";
 import { cn } from "@/lib/utils";
@@ -87,7 +89,7 @@ import { DocumentMentionsDialog } from "./document-mentions-dialog";
 import { PendingDraftPreview } from "./pending-draft-preview";
 import { collectDocumentMentions } from "./document-mentions";
 import { useI18n } from "@/lib/i18n";
-import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileEdit, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2 } from "lucide-react";
+import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileEdit, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, Lock, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2, Unlock } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -259,6 +261,15 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   // 飞书宽屏默认在正文左侧展示目录；窄屏只在用户手动打开时以抽屉显示。
   const [width, setWidth] = useState(() => readDocWidth(me.user.id, id));
   useEffect(() => { setWidth(readDocWidth(me.user.id, id)); }, [me.user.id, id]);
+  const [prefs, setPrefs] = useState<DocPagePrefs>(() => readDocPrefs(me.user.id, id));
+  useEffect(() => { setPrefs(readDocPrefs(me.user.id, id)); }, [me.user.id, id]);
+  const updatePrefs = useCallback((patch: Partial<DocPagePrefs>) => {
+    setPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      writeDocPrefs(me.user.id, id, next);
+      return next;
+    });
+  }, [me.user.id, id]);
   const [outlineOpen, setOutlineOpen] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   const [outlineWide, setOutlineWide] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   useEffect(() => {
@@ -511,6 +522,18 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     const view = d.view();
     return outlineOf(view.blocks.map((b) => ({ id: b.id, type: b.type, spans: b.spans })));
   }, [sync.client.doc, sync.version, outlineOpen]);
+  const outlineHeadingNumbers = useMemo(
+    () => (prefs.autoNumberHeadings ? computeHeadingNumbers(outline.map((it) => ({ id: it.id, type: `h${it.level}`, text: it.text }))) : undefined),
+    [outline, prefs.autoNumberHeadings],
+  );
+  const jumpToDocBlock = useCallback((bid: string) => {
+    const area = scrollArea.current;
+    const el = area?.querySelector<HTMLElement>(`[data-block="${bid}"]`);
+    if (area && el) {
+      setOutlineActive(bid);
+      area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
+    }
+  }, []);
   // 没有标题时不占用正文左侧空间（与飞书一致）；手动打开的抽屉仍显示空态提示。
   const outlineVisible = outlineOpen && (outline.length > 0 || !outlineWide);
   const outlineFrame = useRef(0);
@@ -1523,6 +1546,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           }
           width={width}
           onWidthChange={(value) => { writeDocWidth(me.user.id, id, value); setWidth(value); }}
+          prefs={prefs}
+          onPrefsChange={updatePrefs}
+          canLock={canEditContent}
           readOnly={!canEditRole || sync.blocked === "history_changed"}
           allowContentCopy={contentCopyAllowed}
           allowDocumentPrint={downloadAllowed}
@@ -1536,6 +1562,19 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           peers={sync.peers}
           me={presence}
         />
+        {prefs.locked && (
+          <div role="status" data-doc-lock-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-[#DCE6FF] bg-[#F2F6FF] px-5 py-1.5 text-[12px] text-[#3370FF] dark:border-primary/30 dark:bg-primary/10">
+            <span className="flex items-center gap-1.5">
+              <Lock size={13} />
+              <span>当前文档已锁定，暂不可编辑，防止误操作修改内容。</span>
+            </span>
+            {canEditContent && (
+              <button type="button" onClick={() => updatePrefs({ locked: false })} data-doc-unlock-btn className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium hover:bg-[#E1EAFF]">
+                <Unlock size={12} />解除锁定
+              </button>
+            )}
+          </div>
+        )}
         {docMode === "suggest" && (
           <div role="status" data-suggest-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/80 px-5 py-2 text-[13px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
             <span className="flex items-center gap-2">
@@ -1585,7 +1624,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
-        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto", history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
+        <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto transition-colors", docPaperBgClass(prefs.paperBg), history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full flex-col">
           <div className={cn("flex flex-1", showTemplates && "min-h-full")}>
           {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history} onToggle={() => setOutlineOpen((value) => !value)} />}
@@ -1594,6 +1633,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               id={outlinePanelId}
               items={outline}
               activeId={outlineActive}
+              headingNumbers={outlineHeadingNumbers}
               hostRef={scrollArea}
               yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history}
               pinned={outlinePinned}
@@ -1604,18 +1644,13 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               title={docTitle({ title, docType: meta.data?.docType })}
               onTop={() => { setOutlineActive(null); scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" }); if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); } }}
               onJump={(bid) => {
-                const area = scrollArea.current;
-                const el = area?.querySelector<HTMLElement>(`[data-block="${bid}"]`);
-                if (area && el) {
-                  setOutlineActive(bid);
-                  area.scrollTo({ top: area.scrollTop + el.getBoundingClientRect().top - area.getBoundingClientRect().top - 24, behavior: "smooth" });
-                  if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); }
-                }
+                jumpToDocBlock(bid);
+                if (!outlineWide) { setOutlineOpen(false); focusOutlineEntry(); }
               }}
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-40")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent && !prefs.locked} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} data-doc-font={prefs.fontFamily} data-doc-fontsize={prefs.fontSize} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), docFontFamilyClass(prefs.fontFamily), docFontSizeClass(prefs.fontSize), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-36")}>
             {downloadAllowed && printSettings.showHeader && (printSettings.headerText.trim() || title.trim()) && (
               <div data-doc-print-header className="mb-5 border-b border-[#DEE0E3] pb-2 text-[11px] text-[#646A73]">
                 <div className="flex items-center justify-between gap-4">
@@ -1635,7 +1670,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               block={TITLE}
               me={presence}
               singleLine
-              readOnly={!canEditContent || !!history || presenting}
+              readOnly={!canEditContent || prefs.locked || !!history || presenting}
               placeholder="请输入标题"
               onLocalEdit={onTitle}
               findMatches={displayedMatches}
@@ -1657,7 +1692,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 activeFindMatch={activeMatch}
                 findNavigation={findNavigation}
                 me={presence}
-                readOnly={!canEditContent || !!history || presenting}
+                readOnly={!canEditContent || prefs.locked || !!history || presenting}
+                autoNumberHeadings={prefs.autoNumberHeadings}
+                onJumpToBlock={jumpToDocBlock}
                 onCopyBlock={!contentCopyAllowed}
                 disableFileDownloads={!downloadAllowed}
                 docs={mentionDocs}
@@ -1714,6 +1751,16 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
             {showTemplates && <StarterTemplates onChoose={applyStarter} onHide={() => setTemplatesHidden(true)} />}
+            {!showTemplates && !history && !presenting && metadataVerified && (
+              <DocReactionsBar
+                docId={id}
+                me={{ id: me.user.id, name: me.user.name }}
+                readers={[
+                  ...(meta.data ? [{ id: meta.data.creatorId, name: meta.data.creatorName, viewedAt: meta.data.updatedAt ? formatEditDay(meta.data.updatedAt) : undefined }] : []),
+                  ...sync.peers.map((p) => ({ id: p.clientId, name: p.state.name, viewedAt: "在线" })),
+                ]}
+              />
+            )}
             {downloadAllowed && printSettings.includeComments && printableCommentThreads.length > 0 && (
               <section data-doc-print-comments className="mt-10 border-t border-[#DEE0E3] pt-5">
                 <h2 className="mb-3 text-[15px] font-semibold text-[#1F2329]">评论附录（共 {printableCommentThreads.length} 条线程）</h2>
@@ -1941,6 +1988,9 @@ function TopBar({
   onShowReferences,
   width,
   onWidthChange,
+  prefs,
+  onPrefsChange,
+  canLock,
   readOnly,
   allowContentCopy,
   allowDocumentPrint,
@@ -1968,6 +2018,9 @@ function TopBar({
   onShowReferences?: () => void;
   width: DocWidth;
   onWidthChange: (value: DocWidth) => void;
+  prefs: DocPagePrefs;
+  onPrefsChange: (patch: Partial<DocPagePrefs>) => void;
+  canLock: boolean;
   onHistory?: () => void;
   onSavedVersions: () => void;
   onPresentation?: () => void;
@@ -2005,7 +2058,7 @@ function TopBar({
   const metaText = draftConflict ? "本地草稿待处理" : status === "synced" && directorySync ? directorySync === "blocked" ? "目录名称未同步" : "正在同步目录名称…" : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
   const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
   return (
-    <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b pl-14 pr-2 sm:gap-3 md:h-16 md:pr-5", sidebarDocked && "md:pl-5")}>
+    <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b border-[#E5E6EB] bg-surface pl-14 pr-2 sm:gap-2.5 md:pr-5 dark:border-border", sidebarDocked && "md:pl-5")}>
       <div className="min-w-0 flex-1">
       <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" data-document-print-restricted={!allowDocumentPrint ? "true" : undefined} onCopy={(event) => { if (!allowContentCopy) event.preventDefault(); }} onCut={(event) => { if (!allowContentCopy) event.preventDefault(); }}>
         <a href="#/" className="hidden truncate text-muted-foreground hover:text-foreground sm:block">
@@ -2028,14 +2081,19 @@ function TopBar({
       </nav>
       <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict || directorySync === "blocked" ? "#D83931" : directorySync === "pending" ? "#FF8800" : s.color }} />{metaText}</span>
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
         {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">只读</span>}
-        <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-9 gap-1.5 bg-[#1456f0] px-2.5 text-[14px] font-normal hover:bg-[#0f4dd6] sm:h-8 sm:w-20" onClick={onShare}>
+        {prefs.locked && (
+          <button type="button" onClick={() => canLock && onPrefsChange({ locked: false })} title={canLock ? "已锁定，点击解锁" : "文档已锁定"} data-doc-locked-pill className="hidden h-7 items-center gap-1 rounded-md border border-[#BACEFD] bg-[#EBF2FF] px-2 text-[12px] font-medium text-[#3370FF] hover:bg-[#DCE8FF] sm:inline-flex">
+            <Lock size={12} />已锁定
+          </button>
+        )}
+        <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-8 gap-1.5 bg-[#3370ff] px-3 text-[13px] font-medium text-white hover:bg-[#245bdb]" onClick={onShare}>
           <BuildingIcon className="size-4" />分享
         </Button>
         {!readOnly && <ModeMenu mode={docMode} onChange={onDocModeChange} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} onComments={onComments} onFind={onFind} onPrint={onPrint} />
+        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} prefs={prefs} onPrefsChange={onPrefsChange} canLock={canLock} onComments={onComments} onFind={onFind} onPrint={onPrint} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -2155,6 +2213,9 @@ function DocMenu({
   onShowReferences,
   width,
   onWidthChange,
+  prefs,
+  onPrefsChange,
+  canLock,
   onComments,
   onFind,
   onAI,
@@ -2176,6 +2237,9 @@ function DocMenu({
   onShowReferences?: () => void;
   width?: DocWidth;
   onWidthChange?: (value: DocWidth) => void;
+  prefs?: DocPagePrefs;
+  onPrefsChange?: (patch: Partial<DocPagePrefs>) => void;
+  canLock?: boolean;
   onPrint: () => void;
   onAI?: () => void;
   onSaveTemplate?: () => void;
@@ -2217,9 +2281,9 @@ function DocMenu({
     location.hash = "#/";
   };
   const item = "block w-full rounded px-3 py-1.5 text-left text-[13px] hover:bg-hover";
-  const row = "flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover";
+  const row = "flex h-[28px] w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover";
   const icon = "shrink-0 text-[#646A73] dark:text-muted-foreground";
-  const group = "border-t border-[#DEE0E3] py-1 first:border-t-0 dark:border-border";
+  const group = "border-t border-[#EFF0F1] py-0.5 first:border-t-0 dark:border-border";
   const duplicate = async () => {
     if (!canCopyDocument(meta) || copying.current) return;
     const sourceId = meta!.id;
@@ -2253,17 +2317,25 @@ function DocMenu({
       {open && (
         <div className="absolute right-0 top-9 z-30 w-[min(240px,calc(100vw-24px))] max-h-[calc(100dvh-4rem)] sm:w-[176px] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:max-h-none sm:overflow-visible" data-doc-more-menu>
           {/* 飞书「…」菜单分组（2026-11-11 实测）：页宽 / 查找 / 收藏与位置 / 模板、副本、下载 / 打印 / 文档信息与历史 / 删除 */}
-          {onWidthChange && width && (
-            <div className={cn(group, "relative")} data-doc-width-menu onMouseEnter={() => { if (window.matchMedia("(hover: hover)").matches) setSub("width"); }} onMouseLeave={() => setSub((value) => value === "width" ? null : value)}>
-              <button className={cn(row, sub === "width" && "bg-hover")} type="button" aria-haspopup="true" aria-expanded={sub === "width"} onClick={() => setSub("width")}>
-                <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页宽设置</span><ChevronRight size={14} className="text-subtle" />
+          <div className={group}>
+            {onWidthChange && width && (
+              <div className="relative" data-doc-width-menu onMouseEnter={() => { if (window.matchMedia("(hover: hover)").matches) setSub("width"); }} onMouseLeave={() => setSub((value) => value === "width" ? null : value)}>
+                <button className={cn(row, sub === "width" && "bg-hover")} type="button" aria-haspopup="true" aria-expanded={sub === "width"} onClick={() => setSub("width")}>
+                  <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页面设置</span><ChevronRight size={14} className="text-subtle" />
+                </button>
+                {sub === "width" && <div className="px-2 pb-2 sm:absolute sm:right-full sm:top-0 sm:z-40 sm:p-0">
+                  <DocWidthOptions width={width} onChange={(value) => onWidthChange(value)} prefs={prefs} onPrefsChange={onPrefsChange} />
+                </div>}
+              </div>
+            )}
+            {canLock && prefs && onPrefsChange && (
+              <button type="button" className={row} data-doc-lock-toggle onClick={() => { onPrefsChange({ locked: !prefs.locked }); close(); }}>
+                {prefs.locked ? <Unlock size={15} className="shrink-0 text-[#3370FF]" /> : <Lock size={15} className={icon} />}
+                <span className="flex-1">{prefs.locked ? "解除文档锁定" : "锁定文档"}</span>
               </button>
-              {sub === "width" && <div className="px-2 pb-2 sm:absolute sm:right-full sm:top-0 sm:z-40 sm:p-0">
-                <DocWidthOptions width={width} onChange={(value) => { onWidthChange(value); setSub(null); close(); }} />
-              </div>}
-            </div>
-          )}
-          {onPresentation && <div className={group}><button className={row} onClick={() => { close(); onPresentation(); }} data-document-present><Presentation size={15} className={icon} />演示模式</button></div>}
+            )}
+            {onPresentation && <button className={row} onClick={() => { close(); onPresentation(); }} data-document-present><Presentation size={15} className={icon} />演示模式</button>}
+          </div>
           <div className={group}>
             <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />查找和替换</button>
             <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>

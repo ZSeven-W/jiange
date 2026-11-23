@@ -570,6 +570,24 @@ export function toMarkdown(blocks: MdBlock[], options: MarkdownExportOptions = {
         orderedNo = 0;
         out.push(`${pad}- [${b.props.checked === "true" ? "x" : " "}] ${inline}`);
         break;
+      case "toggle":
+        orderedNo = 0;
+        out.push(`${pad}- ▸ ${inline}`);
+        break;
+      case "toc":
+        orderedNo = 0;
+        out.push("[TOC]");
+        break;
+      case "status": {
+        orderedNo = 0;
+        let labels = "";
+        try {
+          const parsed = JSON.parse(b.props.statusItems || "[]") as { text?: string }[];
+          if (Array.isArray(parsed)) labels = parsed.map((item) => item?.text?.trim()).filter(Boolean).map((t) => `[${t}]`).join(" ");
+        } catch { /* ignore malformed status json */ }
+        out.push(labels || "[进行中]");
+        break;
+      }
       case "ordered":
         orderedNo += 1;
         out.push(`${pad}${orderedNo}. ${inline}`);

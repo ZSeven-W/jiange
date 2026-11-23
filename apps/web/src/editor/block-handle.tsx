@@ -4,13 +4,13 @@ import { MENU_ICONS } from "./menu-icons";
 import { cn } from "@/lib/utils";
 
 /** 纯文本类块：可显示“+”空行入口，也可在块菜单中互相转换、缩进和设置颜色。 */
-export const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "quote"]);
+export const TEXT_BLOCKS = new Set(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "bullet", "ordered", "todo", "toggle", "quote"]);
 export const CONVERTIBLE = TEXT_BLOCKS;
 /** 块菜单可设置文字/背景颜色的块。 */
 export const COLORABLE = new Set([...TEXT_BLOCKS, "callout"]);
 export const MAX_INDENT = 5;
 
-/** 飞书块菜单顶部的“转换为”图标格（6 列，顺序与飞书一致：文本、H1–H4、有序、无序、任务、引用）。 */
+/** 飞书块菜单顶部的“转换为”图标格（6 列，顺序与飞书一致：文本、H1–H4、有序、无序、任务、折叠、引用）。 */
 export const CONVERT_TARGETS: { type: string; label: string }[] = [
   { type: "paragraph", label: "正文" },
   { type: "h1", label: "一级标题" },
@@ -20,6 +20,7 @@ export const CONVERT_TARGETS: { type: string; label: string }[] = [
   { type: "ordered", label: "有序列表" },
   { type: "bullet", label: "无序列表" },
   { type: "todo", label: "任务列表" },
+  { type: "toggle", label: "折叠列表" },
   { type: "quote", label: "引用" },
 ];
 
