@@ -26,24 +26,24 @@ describe("share permission settings", () => {
     const current = { ...doc, commentMinRole: "view" as const, permissionsRevision: 5 };
     const parsed = contentPermissions(current)!;
     const html = renderToStaticMarkup(<SharePermissions permissions={parsed} busy={false} loading={false} enabled error="" onBack={() => {}} onChange={() => {}} />);
-    const comment = html.match(/<select id="permission-commentMinRole"[^>]*>(.*?)<\/select>/)?.[1];
-    expect(comment).toContain('value="view" selected=""');
-    expect(comment).toContain('value="edit"');
-    expect(comment).not.toContain('value="manage"');
+    const comment = html.match(/<button[^>]*id="permission-commentMinRole"[^>]*>/)?.[0];
+    expect(comment).toContain('data-select-value="view"');
+    expect(comment).toContain("edit:可编辑的用户");
+    expect(comment).not.toContain("manage:");
     const write = vi.fn(async () => undefined);
     await changeContentPermission(parsed, "commentMinRole", "edit", async () => current, write, () => true);
     expect(write).toHaveBeenCalledWith({ commentMinRole: "edit" }, 5);
     await expect(changeContentPermission(parsed, "commentMinRole", "manage", async () => current, write, () => true)).rejects.toThrow("不支持");
     const legacy = renderToStaticMarkup(<SharePermissions permissions={permissions} busy={false} loading={false} enabled error="" onBack={() => {}} onChange={() => {}} />);
-    expect(legacy).toMatch(/<select id="permission-commentMinRole"[^>]*disabled=""/);
+    expect(legacy).toMatch(/<button[^>]*id="permission-commentMinRole"[^>]*disabled=""/);
     await expect(changeContentPermission(permissions, "commentMinRole", "view", async () => doc, write, () => true)).rejects.toThrow("不支持");
   });
 
   it("keeps a focusable back control while a setting update is pending", () => {
     const html = renderToStaticMarkup(<SharePermissions permissions={permissions} busy={true} loading={false} enabled={true} error="" onBack={() => {}} onChange={() => {}} />);
     expect(html).toMatch(/<button[^>]*aria-label="返回分享"[^>]*aria-disabled="true"/);
-    expect(html).not.toMatch(/<button[^>]*\sdisabled=""/);
-    expect(html).toMatch(/<select[^>]*disabled=""/);
+    expect(html).not.toMatch(/<button[^>]*aria-label="返回分享"[^>]*\sdisabled=""/);
+    expect(html).toMatch(/role="combobox"[^>]*disabled=""/);
   });
 
   it("writes the requested value only after a fresh manager check", async () => {
@@ -98,10 +98,12 @@ describe("share permission settings", () => {
 
   it("renders the selected role for each permission independently", () => {
     const html = renderToStaticMarkup(<SharePermissions permissions={{ copyMinRole: "edit", downloadMinRole: "manage", permissionsRevision: 3 }} busy={false} loading={false} enabled={true} error="" onBack={() => {}} onChange={() => {}} />);
-    const copy = html.match(/<select id="permission-copyMinRole"[^>]*>(.*?)<\/select>/)?.[1];
-    const download = html.match(/<select id="permission-downloadMinRole"[^>]*>(.*?)<\/select>/)?.[1];
-    expect(copy).toContain('<option value="edit" selected="">可编辑的用户</option>');
-    expect(download).toContain('<option value="manage" selected="">可管理的用户</option>');
+    const copy = html.match(/<button[^>]*id="permission-copyMinRole"[^>]*>.*?<\/button>/)?.[0];
+    const download = html.match(/<button[^>]*id="permission-downloadMinRole"[^>]*>.*?<\/button>/)?.[0];
+    expect(copy).toContain('data-select-value="edit"');
+    expect(copy).toContain("可编辑的用户");
+    expect(download).toContain('data-select-value="manage"');
+    expect(download).toContain("可管理的用户");
   });
 
   it("shows settings only to document managers", () => {
@@ -130,7 +132,7 @@ describe("share permission settings", () => {
     const qc = new QueryClient();
     qc.setQueryData(["shares", doc.id, 1], { role: "manage", members: [], link: { role: "none" } });
     const html = renderToStaticMarkup(<QueryClientProvider client={qc}><ShareDialog meta={doc} userId={1} onClose={() => {}} /></QueryClientProvider>);
-    expect(html).toMatch(/<select aria-label="链接分享范围"[^>]*disabled/);
+    expect(html).toMatch(/<button[^>]*aria-label="链接分享范围"[^>]*disabled/);
   });
 
   it("hides cached share details after an access error", () => {

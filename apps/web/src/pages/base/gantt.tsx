@@ -202,6 +202,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
         offset: bar.visibleStart - (first ?? 0),
         length: bar.visibleEnd - bar.visibleStart + 1,
         dragging: pointerDraft?.id === bar.rec.id,
+        milestone: bar.range.start === bar.range.end,
       })),
     [bars, first, pointerDraft],
   );
@@ -424,8 +425,9 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
           {bars.map((bar) => {
             const offset = bar.visibleStart - first, length = bar.visibleEnd - bar.visibleStart + 1;
             const totalDays = bar.range.end - bar.range.start + 1;
+            const isMilestone = bar.range.start === bar.range.end;
             const isDraggingThis = pointerDraft?.id === bar.rec.id;
-            const barDatesLabel = `${ganttDate(bar.range.start)} – ${ganttDate(bar.range.end)}`;
+            const barDatesLabel = isMilestone ? `${ganttDate(bar.range.start)}` : `${ganttDate(bar.range.start)} – ${ganttDate(bar.range.end)}`;
             return (
               <div key={bar.rec.id} className="flex items-stretch border-b" data-gantt-row={bar.rec.id}>
                 <button
@@ -436,6 +438,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
                   tabIndex={onOpen ? 0 : -1}
                   title={bar.label}
                 >
+                  {isMilestone && <span className="mr-1.5 inline-block size-2 rotate-45 rounded-[1px] bg-[#ff8800] align-middle" aria-hidden />}
                   {bar.label}
                 </button>
                 <div
@@ -479,42 +482,69 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
                     }}
                     onDragEnd={() => { dragRef.current = null; }}
                     className={cn(
-                      "group absolute top-2 flex h-6 items-center rounded text-[11px] leading-6 text-white select-none",
-                      gpuActive ? "bg-transparent" : "bg-primary/85 shadow-sm",
-                      canEdit && !busy && (gpuActive ? "cursor-grab active:cursor-grabbing" : "cursor-grab active:cursor-grabbing hover:bg-primary"),
-                      isDraggingThis && (gpuActive ? "z-20" : "z-20 bg-primary ring-2 ring-primary/35 shadow-md"),
+                      "group absolute top-2 flex h-6 items-center select-none",
+                      isMilestone
+                        ? "overflow-visible whitespace-nowrap text-[11px] font-medium text-[#1f2329]"
+                        : cn(
+                            "rounded text-[11px] leading-6 text-white",
+                            gpuActive ? "bg-transparent" : "bg-primary/85 shadow-sm",
+                            canEdit && !busy && !gpuActive && "hover:bg-primary",
+                            isDraggingThis && (gpuActive ? "z-20" : "z-20 bg-primary ring-2 ring-primary/35 shadow-md"),
+                          ),
+                      canEdit && !busy && "cursor-grab active:cursor-grabbing",
+                      isMilestone && isDraggingThis && "z-20",
                     )}
-                    style={{ left: `${(offset / days) * 100}%`, width: `${(length / days) * 100}%` }}
-                    title={`${bar.label}: ${barDatesLabel}`}
+                    style={
+                      isMilestone
+                        ? { left: `${((offset + 0.5) / days) * 100}%`, transform: "translateX(-7px)" }
+                        : { left: `${(offset / days) * 100}%`, width: `${(length / days) * 100}%` }
+                    }
+                    title={isMilestone ? `${bar.label} (${t("里程碑")}: ${barDatesLabel})` : `${bar.label}: ${barDatesLabel}`}
                     data-gantt-bar={bar.rec.id}
+                    data-gantt-milestone={isMilestone ? "true" : undefined}
                     data-gantt-range={barDatesLabel}
                   >
-                    {canEdit && !busy && !sameField && (
-                      <span
-                        data-gantt-resize-left={bar.rec.id}
-                        title={t("拖拽调整开始日期")}
-                        onPointerDown={(e) => startBarPointer("resize-start", bar, e.currentTarget.parentElement?.parentElement ?? null, e)}
-                        className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l hover:bg-white/35"
-                      />
-                    )}
-                    <span className="min-w-0 flex-1 truncate px-2">
-                      {bar.label}
-                      {totalDays > 1 && <span className="ml-1 opacity-80">({t("{n}天", { n: totalDays })})</span>}
-                    </span>
-                    {canEdit && !busy && !sameField && (
-                      <span
-                        data-gantt-resize-right={bar.rec.id}
-                        title={t("拖拽调整结束日期")}
-                        onPointerDown={(e) => startBarPointer("resize-end", bar, e.currentTarget.parentElement?.parentElement ?? null, e)}
-                        className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r hover:bg-white/35"
-                      />
+                    {isMilestone ? (
+                      <>
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "inline-block size-3.5 shrink-0 rotate-45 rounded-[2px] border border-white bg-[#ff8800] shadow-xs transition-transform group-hover:scale-110",
+                            isDraggingThis && "ring-2 ring-[#ff8800]/35",
+                          )}
+                        />
+                        <span className="ml-2 rounded bg-surface/90 px-1 text-[11px] font-medium text-[#1f2329]">{bar.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        {canEdit && !busy && !sameField && (
+                          <span
+                            data-gantt-resize-left={bar.rec.id}
+                            title={t("拖拽调整开始日期")}
+                            onPointerDown={(e) => startBarPointer("resize-start", bar, e.currentTarget.parentElement?.parentElement ?? null, e)}
+                            className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l hover:bg-white/35"
+                          />
+                        )}
+                        <span className="min-w-0 flex-1 truncate px-2">
+                          {bar.label}
+                          {totalDays > 1 && <span className="ml-1 opacity-80">({t("{n}天", { n: totalDays })})</span>}
+                        </span>
+                        {canEdit && !busy && !sameField && (
+                          <span
+                            data-gantt-resize-right={bar.rec.id}
+                            title={t("拖拽调整结束日期")}
+                            onPointerDown={(e) => startBarPointer("resize-end", bar, e.currentTarget.parentElement?.parentElement ?? null, e)}
+                            className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r hover:bg-white/35"
+                          />
+                        )}
+                      </>
                     )}
                     {isDraggingThis && (
                       <span
                         data-gantt-drag-tooltip
                         className="pointer-events-none absolute -top-7 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded bg-[#1f2329] px-2 py-0.5 font-mono text-[10px] text-white shadow"
                       >
-                        {`${barDatesLabel} · ${t("{n}天", { n: totalDays })}`}
+                        {isMilestone ? `${barDatesLabel} · ${t("里程碑")}` : `${barDatesLabel} · ${t("{n}天", { n: totalDays })}`}
                       </span>
                     )}
                   </div>

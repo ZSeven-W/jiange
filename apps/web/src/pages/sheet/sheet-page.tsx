@@ -59,6 +59,8 @@ import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
 import { computePivotTable, pivotResultToCellMatrix } from "./sheet-analytics";
 import { SheetChartOverlay } from "./sheet-chart-overlay";
 import { SheetGpuGridLayer } from "./sheet-gpu-layer";
+import { computeSheetSelectionStats } from "./sheet-selection-stats";
+import { SheetSelectionStatsBar } from "./sheet-selection-stats-bar";
 import {
   evaluateSheetConditionalFormat,
   evaluateSheetValidation,
@@ -535,22 +537,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const selectionSummary = useMemo(() => {
     if (!activeSheet) return null;
     const b = selectionBounds(selection);
-    const cellCount = (b.bottom - b.top + 1) * (b.right - b.left + 1);
-    if (cellCount <= 1) return null;
-    let numericCount = 0;
-    let sum = 0;
-    for (let r = b.top; r <= b.bottom; r++) {
-      for (let c = b.left; c <= b.right; c++) {
-        const ev = activeEvalMap[`${r}:${c}`];
-        if (ev?.kind === "number") {
-          numericCount++;
-          sum += ev.value;
-        }
-      }
-    }
-    if (numericCount === 0) return null;
-    return { count: numericCount, sum: Number(sum.toPrecision(12)), avg: Number((sum / numericCount).toPrecision(12)) };
-  }, [activeSheet, selection, activeEvalMap]);
+    return computeSheetSelectionStats(b, activeEvalMap, (row, col) => gridMap.cellByKey.get(pointKey({ row, col }))?.raw);
+  }, [activeSheet, selection, activeEvalMap, gridMap]);
 
   const applyLocalWriteResult = useCallback(
     (wid: number, nextWbRev: number, updated: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; revision: number }[]) => {
@@ -2677,11 +2665,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           {errorMessage || statusMessage || `${activeSheet.title} · ${activeSheet.rows.length}×${activeSheet.columns.length}`}
         </span>
         <div className="flex shrink-0 items-center gap-3">
-          {selectionSummary && (
-            <span data-sheet-aggregates>
-              {t("计数")}: {selectionSummary.count} &nbsp;|&nbsp; {t("求和")}: {selectionSummary.sum} &nbsp;|&nbsp; {t("平均")}: {selectionSummary.avg}
-            </span>
-          )}
+          {selectionSummary && <SheetSelectionStatsBar stats={selectionSummary} />}
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setZoom((z) => Math.max(75, z - 25))} className="px-1 hover:text-[#1f2329]">-</button>
             <span>{zoom}%</span>

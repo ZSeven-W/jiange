@@ -6,6 +6,7 @@ import { resizeSlideShape, type ResizeHandle } from "./slides-shape-resize";
 import { moveSlideLineEndpoint, type LineEndpoint } from "./slides-line-endpoints";
 import { slidePresetControlLabel, slidePresetPlaceholder } from "./slides-layout-preset";
 import { isGpuNativeSlideShape } from "./slides-gpu-layer";
+import { computeSlideShapeSnap, type SlideSnapGuide } from "./slides-snap";
 
 const clamp = (value: number, max: number) => Math.round(Math.min(max, Math.max(0, value)) * 10) / 10;
 
@@ -37,8 +38,9 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
   const resizing = useRef<{ shape: SlideShape; handle: ResizeHandle; startX: number; startY: number; width: number; height: number } | null>(null);
   const lineDrag = useRef<{ shape: SlideShape; endpoint: LineEndpoint; pointer: number; startX: number; startY: number; width: number; height: number } | null>(null);
   const [preview, setPreviewState] = useState<SlideShape | null>(null);
+  const [snapGuides, setSnapGuides] = useState<SlideSnapGuide[]>([]);
   const setPreview = (next: SlideShape | null) => { setPreviewState(next); onPreviewChange?.(next); };
-  useEffect(() => { if (!editable) { drag.current = null; resizing.current = null; lineDrag.current = null; setPreviewState(null); onPreviewChange?.(null); } }, [editable, onPreviewChange]);
+  useEffect(() => { if (!editable) { drag.current = null; resizing.current = null; lineDrag.current = null; setPreviewState(null); setSnapGuides([]); onPreviewChange?.(null); } }, [editable, onPreviewChange]);
   return <>{shapes.map((shape) => {
     const item = preview?.id === shape.id ? preview : shape;
     const placeholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
@@ -54,9 +56,9 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
     return <div key={item.id} data-slide-object className={`absolute ${editingText ? "outline outline-2 outline-[#3370ff] outline-offset-2" : ""}`} style={style}>
     <button type="button" disabled={!editable} aria-label={item.kind === "text" ? (editingText ? "移动文本框" : slidePresetControlLabel(item.id, !!item.text) ?? "文本框") : item.kind === "image" ? "幻灯片图片" : `图形 ${item.kind}`} aria-pressed={selected === item.id} className={editingText ? "absolute z-10 grid h-5 w-8 touch-none place-items-center rounded border border-[#c9cdd4] bg-white text-[#646a73]" : `h-full w-full touch-none ${selected === item.id ? "outline outline-2 outline-[#3370ff] outline-offset-2" : "hover:outline hover:outline-1 hover:outline-[#3370ff]"}`} style={editingText ? { left: "50%", top: 0, marginTop: -20 / Math.max(scale, 0.1), transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})` } : undefined}
       onPointerDown={(event) => { const canvas = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]"); if (!canvas) return; const rect = canvas.getBoundingClientRect(); if (!rect.width || !rect.height) return; event.currentTarget.setPointerCapture(event.pointerId); drag.current = { shape, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; onSelect?.(shape.id); }}
-      onPointerMove={(event) => { const d = drag.current; if (d?.shape.id !== shape.id) return; setPreview({ ...d.shape, x: clamp(d.shape.x + (event.clientX - d.startX) / d.width * 100, 100 - (d.shape.width ?? 16)), y: clamp(d.shape.y + (event.clientY - d.startY) / d.height * 100, 100 - (d.shape.height ?? 20)) }); }}
-      onPointerUp={(event) => { const d = drag.current; if (d?.shape.id === shape.id) { const moved = Math.hypot(event.clientX - d.startX, event.clientY - d.startY) > 2; if (moved) onChange?.({ ...d.shape, x: clamp(d.shape.x + (event.clientX - d.startX) / d.width * 100, 100 - (d.shape.width ?? 16)), y: clamp(d.shape.y + (event.clientY - d.startY) / d.height * 100, 100 - (d.shape.height ?? 20)) }); else if (shape.kind === "text") { const button = event.currentTarget; requestAnimationFrame(() => { if (document.activeElement !== button && document.activeElement !== document.body) return; button.closest<HTMLElement>("[data-slide-object]")?.querySelector<HTMLTextAreaElement>("textarea")?.focus(); }); } drag.current = null; setPreview(null); } }}
-      onPointerCancel={() => { drag.current = null; setPreview(null); }}
+      onPointerMove={(event) => { const d = drag.current; if (d?.shape.id !== shape.id) return; const raw: SlideShape = { ...d.shape, x: clamp(d.shape.x + (event.clientX - d.startX) / d.width * 100, 100 - (d.shape.width ?? 16)), y: clamp(d.shape.y + (event.clientY - d.startY) / d.height * 100, 100 - (d.shape.height ?? 20)) }; if (event.altKey) { setSnapGuides([]); setPreview(raw); } else { const snapped = computeSlideShapeSnap(raw, shapes); setSnapGuides(snapped.guides); setPreview(snapped.shape); } }}
+      onPointerUp={(event) => { const d = drag.current; if (d?.shape.id === shape.id) { const moved = Math.hypot(event.clientX - d.startX, event.clientY - d.startY) > 2; if (moved) { const raw: SlideShape = { ...d.shape, x: clamp(d.shape.x + (event.clientX - d.startX) / d.width * 100, 100 - (d.shape.width ?? 16)), y: clamp(d.shape.y + (event.clientY - d.startY) / d.height * 100, 100 - (d.shape.height ?? 20)) }; const finalShape = event.altKey ? raw : computeSlideShapeSnap(raw, shapes).shape; onChange?.(finalShape); } else if (shape.kind === "text") { const button = event.currentTarget; requestAnimationFrame(() => { if (document.activeElement !== button && document.activeElement !== document.body) return; button.closest<HTMLElement>("[data-slide-object]")?.querySelector<HTMLTextAreaElement>("textarea")?.focus(); }); } drag.current = null; setSnapGuides([]); setPreview(null); } }}
+      onPointerCancel={() => { drag.current = null; setSnapGuides([]); setPreview(null); }}
       onClick={(event) => { if (event.detail === 0) onSelect?.(shape.id); }}
       onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; if (move) { event.preventDefault(); onChange?.({ ...shape, x: clamp(shape.x + move[0], 100 - (shape.width ?? 16)), y: clamp(shape.y + move[1], 100 - (shape.height ?? 20)) }); } }}>{editingText ? <GripHorizontal size={14}/> : graphic}</button>
     {editingText && <textarea autoFocus readOnly={!textEditable} aria-label="文本框内容" data-slide-history maxLength={1000} value={item.text ?? ""} onChange={(event) => { if (textEditable) onTextChange?.(item.id, event.target.value); }} onBlur={onTextBlur} placeholder={placeholder ?? "输入文字"} className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[0.4cqw] py-[0.2cqw] leading-[1.3] outline-none placeholder:text-[#a3aab3]" style={textStyle}/>}
@@ -73,5 +75,19 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
       onPointerCancel={() => { resizing.current = null; setPreview(null); }}
       onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; if (!move) return; const rect = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]")?.getBoundingClientRect(); if (!rect) return; event.preventDefault(); onChange?.(resizeSlideShape(shape, handle.id, move[0] * rect.width / 100, move[1] * rect.height / 100, rect.width, rect.height)); }}><span className="size-2 rounded-full border border-[#3370ff] bg-white shadow-sm" /></button>)}
     </div>;
-  })}</>;
+  })}
+  {snapGuides.map((guide, idx) => (
+    <div
+      key={`${guide.axis}-${guide.pos}-${idx}`}
+      aria-hidden="true"
+      data-slide-snap-guide={guide.axis}
+      className="pointer-events-none absolute z-30 bg-[#f54a45]"
+      style={
+        guide.axis === "x"
+          ? { left: `${guide.pos}%`, top: 0, bottom: 0, width: `${1 / Math.max(scale, 0.25)}px` }
+          : { top: `${guide.pos}%`, left: 0, right: 0, height: `${1 / Math.max(scale, 0.25)}px` }
+      }
+    />
+  ))}
+  </>;
 }

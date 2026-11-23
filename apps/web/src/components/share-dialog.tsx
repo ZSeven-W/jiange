@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, commentsApi, docsApi, orgApi, type DocMeta, type Role, type ShareInfo } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { Avatar } from "@/components/brand";
-import { AddIcon, ArrowDownIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/feishu-icons";
+import { AddIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/feishu-icons";
+import { FeishuSelect } from "@/components/feishu-select";
 import { Check, FolderTree, QrCode, Users, X } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "@/components/share-link";
@@ -274,21 +275,21 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
               setShowMembers(true);
             }, "invite");
           }}>
-            <select
-              aria-label={t("选择部门或用户组")}
+            <FeishuSelect
+              ariaLabel={t("选择部门或用户组")}
               disabled={busy || orgDirectory.isFetching || subjectOptions.length === 0}
               value={selectedSubject?.value ?? ""}
-              onChange={(e) => setSubjectPick(e.target.value)}
-              className="h-full min-w-0 flex-1 bg-transparent px-3 text-[13px] outline-none disabled:opacity-60"
-            >
-              {orgDirectory.isPending ? (
-                <option value="">{t("正在加载组织架构…")}</option>
-              ) : subjectOptions.length === 0 ? (
-                <option value="">{t("暂无可添加的部门或用户组")}</option>
-              ) : (
-                subjectOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)
-              )}
-            </select>
+              options={
+                orgDirectory.isPending
+                  ? [{ value: "", label: t("正在加载组织架构…") }]
+                  : subjectOptions.length === 0
+                    ? [{ value: "", label: t("暂无可添加的部门或用户组") }]
+                    : subjectOptions.map((opt) => ({ value: opt.value, label: opt.label }))
+              }
+              onChange={(val) => setSubjectPick(val)}
+              className="h-full min-w-0 flex-1 rounded-none bg-transparent px-3 text-[13px] hover:bg-transparent disabled:opacity-60"
+              menuMinWidth={200}
+            />
             {selectedSubject && <RoleSelect label={t("邀请权限")} disabled={busy} value={role} options={["view", "edit", "manage"]} onChange={(r) => setRole(r as Role)} />}
             <button type="submit" disabled={!selectedSubject || busy} aria-label={t("添加部门或用户组")} className="grid h-full w-9 shrink-0 place-items-center border-l text-muted-foreground hover:bg-hover disabled:opacity-45"><AddIcon className="size-4"/></button>
           </form>}
@@ -344,5 +345,16 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   );
 }
 function RoleSelect({ label, value, onChange, options, disabled }: { label: string; value: string; onChange: (r: string) => void; options: string[]; disabled?: boolean }) {
-  return <label className="relative inline-flex shrink-0 items-center"><span className="sr-only">{label}</span><select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-5 text-[13px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40">{options.map((o) => <option key={o} value={o}>{o === "remove" ? t("移除") : t(ROLE_LABEL[o])}</option>)}</select><ArrowDownIcon className="pointer-events-none absolute right-1.5 size-2 text-subtle"/></label>;
+  return (
+    <FeishuSelect
+      ariaLabel={label}
+      value={value}
+      disabled={disabled}
+      options={options.map((o) => ({ value: o, label: o === "remove" ? t("移除") : t(ROLE_LABEL[o]) }))}
+      onChange={onChange}
+      className="h-8 bg-transparent px-2 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground"
+      chevronSize={12}
+      menuMinWidth={96}
+    />
+  );
 }

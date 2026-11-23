@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { ask, askText } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { displayValue, memberName, personIDs } from "./registry";
 import { TypeGlyph } from "./cells";
 import {
@@ -568,69 +569,67 @@ function WidgetEditorModal({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {needsGroup && (
-              <label className="grid gap-1">
+              <div className="grid gap-1">
                 <span className="text-[11px] font-medium text-[#646a73]">{t("分组字段")}</span>
-                <select
-                  aria-label={t("分组字段")}
-                  data-widget-group-select
-                  value={groupFieldId}
-                  onChange={(e) => setGroupFieldId(Number(e.target.value))}
-                  className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-                >
-                  {groupableFields.map((f) => (
-                    <option key={f.id} value={f.id}>{f.name}</option>
-                  ))}
-                </select>
-              </label>
+                <FeishuSelect
+                  ariaLabel={t("分组字段")}
+                  dataAttr={{ "data-widget-group-select": true }}
+                  value={String(groupFieldId)}
+                  options={groupableFields.map((f) => ({ value: String(f.id), label: f.name }))}
+                  onChange={(v) => setGroupFieldId(Number(v))}
+                  className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                  menuMinWidth={160}
+                />
+              </div>
             )}
 
-            <label className="grid gap-1">
+            <div className="grid gap-1">
               <span className="text-[11px] font-medium text-[#646a73]">{t("统计方式")}</span>
-              <select
-                aria-label={t("统计方式")}
-                data-widget-metric-select
+              <FeishuSelect
+                ariaLabel={t("统计方式")}
+                dataAttr={{ "data-widget-metric-select": true }}
                 value={metric}
-                onChange={(e) => setMetric(e.target.value as DashboardMetric)}
-                className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-              >
-                {METRIC_OPTIONS.filter((m) => type === "metric" || m.value !== "checked_pct").map((m) => (
-                  <option key={m.value} value={m.value}>{t(m.label)}</option>
-                ))}
-              </select>
-            </label>
+                options={METRIC_OPTIONS.filter((m) => type === "metric" || m.value !== "checked_pct").map((m) => ({ value: m.value, label: t(m.label) }))}
+                onChange={(v) => setMetric(v as DashboardMetric)}
+                className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                menuMinWidth={160}
+              />
+            </div>
 
             {(metricMeta?.needsNumeric || metricMeta?.needsCheckbox) && (
-              <label className="grid gap-1">
+              <div className="grid gap-1">
                 <span className="text-[11px] font-medium text-[#646a73]">{t("统计字段")}</span>
-                <select
-                  aria-label={t("统计字段")}
-                  data-widget-value-select
-                  value={valueFieldId}
-                  onChange={(e) => setValueFieldId(Number(e.target.value))}
-                  className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-                >
-                  {valueCandidates.length === 0 ? (
-                    <option value={0}>{t("无可用字段")}</option>
-                  ) : (
-                    valueCandidates.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)
-                  )}
-                </select>
-              </label>
+                <FeishuSelect
+                  ariaLabel={t("统计字段")}
+                  dataAttr={{ "data-widget-value-select": true }}
+                  value={String(valueFieldId)}
+                  options={
+                    valueCandidates.length === 0
+                      ? [{ value: "0", label: t("无可用字段") }]
+                      : valueCandidates.map((f) => ({ value: String(f.id), label: f.name }))
+                  }
+                  onChange={(v) => setValueFieldId(Number(v))}
+                  className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                  menuMinWidth={160}
+                />
+              </div>
             )}
 
-            <label className="grid gap-1">
+            <div className="grid gap-1">
               <span className="text-[11px] font-medium text-[#646a73]">{t("卡片宽度")}</span>
-              <select
-                aria-label={t("卡片宽度")}
-                data-widget-span-select
-                value={span}
-                onChange={(e) => setSpan(Number(e.target.value) === 2 ? 2 : 1)}
-                className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-              >
-                <option value={1}>{t("半宽（1 列）")}</option>
-                <option value={2}>{t("全宽（2 列）")}</option>
-              </select>
-            </label>
+              <FeishuSelect
+                ariaLabel={t("卡片宽度")}
+                dataAttr={{ "data-widget-span-select": true }}
+                value={String(span)}
+                options={[
+                  { value: "1", label: t("半宽（1 列）") },
+                  { value: "2", label: t("全宽（2 列）") },
+                ]}
+                onChange={(v) => setSpan(Number(v) === 2 ? 2 : 1)}
+                className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                menuMinWidth={160}
+              />
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

@@ -6,14 +6,17 @@ import { cn } from "../lib/utils";
 export interface FeishuSelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 export interface FeishuSelectProps {
+  id?: string;
   value: string;
   options: readonly FeishuSelectOption[];
   onChange: (value: string) => void;
   ariaLabel?: string;
   title?: string;
+  displayLabel?: string;
   disabled?: boolean;
   className?: string;
   chevronSize?: number;
@@ -27,11 +30,13 @@ export interface FeishuSelectProps {
  * a dark native dropdown triangle alongside our hairline chevron.
  */
 export function FeishuSelect({
+  id,
   value,
   options,
   onChange,
   ariaLabel,
   title,
+  displayLabel,
   disabled,
   className,
   chevronSize = 12,
@@ -99,6 +104,7 @@ export function FeishuSelect({
     <>
       <button
         ref={triggerRef}
+        id={id}
         type="button"
         role="combobox"
         aria-haspopup="listbox"
@@ -115,7 +121,7 @@ export function FeishuSelect({
         )}
         {...dataAttr}
       >
-        <span className="truncate">{selected?.label ?? ""}</span>
+        <span className="truncate">{displayLabel ?? selected?.label ?? ""}</span>
         <ChevronDown size={chevronSize} className="shrink-0 text-[#8f959e]" aria-hidden />
       </button>
       {open && pos && typeof document !== "undefined" && createPortal(
@@ -135,12 +141,14 @@ export function FeishuSelect({
                 type="button"
                 role="option"
                 aria-selected={active}
+                disabled={opt.disabled}
                 onClick={() => {
+                  if (opt.disabled) return;
                   onChange(opt.value);
                   setOpen(false);
                 }}
                 className={cn(
-                  "flex h-8 w-full items-center justify-between gap-2 px-2.5 text-left transition-colors hover:bg-hover",
+                  "flex h-8 w-full items-center justify-between gap-2 px-2.5 text-left transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40",
                   active ? "font-medium text-[#3370ff]" : "text-foreground",
                 )}
               >

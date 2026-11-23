@@ -1,7 +1,8 @@
 import { t } from "@/lib/i18n";
 import { ApiError, type DocMeta, type Role } from "@/lib/api";
 import { X } from "lucide-react";
-import { ArrowDownIcon, HelpIcon } from "@/components/feishu-icons";
+import { HelpIcon } from "@/components/feishu-icons";
+import { FeishuSelect } from "@/components/feishu-select";
 import type { RefObject } from "react";
 
 export type ContentPermissionKey = "copyMinRole" | "downloadMinRole" | "commentMinRole";
@@ -74,16 +75,29 @@ export function SharePermissions({
         ["copyMinRole", t("谁可以复制内容")],
         ["downloadMinRole", t("谁可以创建副本、打印和下载")],
         ["commentMinRole", t("谁可以评论")],
-      ] as const).filter(([key]) => showComment || key !== "commentMinRole").map(([key, label]) => <div key={key} className="mb-7 last:mb-0">
-        <label htmlFor={`permission-${key}`} className="block font-medium leading-5">{label}</label>
-        <span className="relative mt-2 inline-flex border-b border-border">
-          <select id={`permission-${key}`} value={permissions?.[key] ?? ""} disabled={busy || !enabled || !permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined)} onChange={(event) => onChange(key, event.target.value as Role)} className="h-9 cursor-pointer appearance-none bg-transparent pr-6 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 sm:text-[14px]">
-            {(!permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined)) && <option value="">{permissions ? t("当前服务暂不支持") : t("加载中…")}</option>}
-            {OPTIONS.filter((option) => key !== "commentMinRole" || option.value !== "manage").map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
-          </select>
-          <ArrowDownIcon className="pointer-events-none absolute right-1 top-4 size-2 text-muted-foreground" />
-        </span>
-      </div>)}
+      ] as const).filter(([key]) => showComment || key !== "commentMinRole").map(([key, label]) => {
+        const isUnavailable = !permissions || (key === "commentMinRole" && permissions.commentMinRole === undefined);
+        const selectOptions = [
+          ...(isUnavailable ? [{ value: "", label: permissions ? t("当前服务暂不支持") : t("加载中…") }] : []),
+          ...OPTIONS.filter((option) => key !== "commentMinRole" || option.value !== "manage").map((option) => ({ value: option.value, label: t(option.label) })),
+        ];
+        return <div key={key} className="mb-7 last:mb-0">
+          <label htmlFor={`permission-${key}`} className="block font-medium leading-5">{label}</label>
+          <span className="mt-2 inline-flex border-b border-border">
+            <FeishuSelect
+              id={`permission-${key}`}
+              ariaLabel={label}
+              value={permissions?.[key] ?? ""}
+              disabled={busy || !enabled || isUnavailable}
+              options={selectOptions}
+              onChange={(val) => onChange(key, val as Role)}
+              className="h-9 rounded-none bg-transparent px-0 pr-1 text-[16px] hover:bg-transparent disabled:opacity-50 sm:text-[14px]"
+              chevronSize={13}
+              menuMinWidth={168}
+            />
+          </span>
+        </div>;
+      })}
       {loading && <p role="status" className="pt-2 text-[12px] text-muted-foreground">{t("正在验证权限设置…")}</p>}
       {error && <p role="alert" className="pt-2 text-[12px] text-destructive">{error}</p>}
     </div>

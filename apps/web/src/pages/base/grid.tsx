@@ -20,6 +20,7 @@ import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } 
 import { RecordMenu } from "./record-menu";
 import { recordMenuTargets, sameRecordTargets } from "./record-menu-targets";
 import { BaseGridGpuLayer } from "./base-gpu-layer";
+import { FeishuSelect } from "@/components/feishu-select";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -1097,30 +1098,38 @@ export function Grid({
             <td className="sticky left-0 z-10 w-14 border-x-0 border-b-0 border-t bg-surface px-2.5" />
             {winFields.map((f, wi) => {
               const fn = stats[f.id] ?? "";
-              const [bg, fg] = fn && groupField && groupField.type === "select" ? (["", ""] as [string, string]) : (["", ""] as [string, string]);
-              void bg;
-              void fg;
+              const fnLabel = fn === "sum" ? t("求和") : fn === "avg" ? t("平均") : fn === "count" ? t("计数") : fn === "empty" ? t("空值") : "";
+              const fnVal = fn ? statValue(f, fn, records) : "";
+              const statOptions = [
+                { value: "", label: t("无") },
+                ...statFns(f).map((x) => ({
+                  value: x,
+                  label: x === "sum" ? t("求和") : x === "avg" ? t("平均") : x === "count" ? t("计数") : t("空值"),
+                })),
+              ];
               return (
                 <Fragment key={f.id}>
                 {wi === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border-x-0 border-b-0 border-t p-0" aria-hidden />}
-                <td className={cn("border-x-0 border-b-0 border-t px-2.5", isFrozen(colOf(wi)) && "sticky z-10 bg-surface")} style={{ width: width(f), ...(isFrozen(colOf(wi)) ? { left: stickyLeft(colOf(wi)) } : {}) }}>
-                  <div className={cn("flex items-center gap-1", f.isPrimary && "justify-end")}>
-                    {f.isPrimary && !fn && <span data-record-count>{checkedCount ? t("已选择 {n} 条记录", { n: checkedCount }) : selection && selectionCellCount(selection) > 1 && selectionAccessReady ? t("已选择 {n} 个单元格", { n: selectionCellCount(selection) }) : t("{n} 条记录", { n: records.length })}</span>}
-                    <select
+                <td className={cn("border-x-0 border-b-0 border-t px-2", isFrozen(colOf(wi)) && "sticky z-10 bg-surface")} style={{ width: width(f), ...(isFrozen(colOf(wi)) ? { left: stickyLeft(colOf(wi)) } : {}) }}>
+                  <div className={cn("flex items-center gap-1.5", f.isPrimary ? "justify-between" : "justify-end")}>
+                    {f.isPrimary && !fn && <span className="truncate tabular-nums text-[#646a73]" data-record-count>{checkedCount ? t("已选择 {n} 条记录", { n: checkedCount }) : selection && selectionCellCount(selection) > 1 && selectionAccessReady ? t("已选择 {n} 个单元格", { n: selectionCellCount(selection) }) : t("{n} 条记录", { n: records.length })}</span>}
+                    <FeishuSelect
                       value={fn}
-                      onChange={(e) => saveStat(f.id, e.target.value)}
-                      className={cn("cursor-pointer bg-transparent text-[12px] outline-none", !fn && "opacity-0 focus:opacity-100 group-hover/stats:opacity-100", f.isPrimary && !fn && "w-4")}
+                      options={statOptions}
+                      onChange={(val) => saveStat(f.id, val)}
+                      ariaLabel={`${f.name} ${t("列统计")}`}
                       title={t("列统计")}
-                      data-stat={f.id}
-                    >
-                      <option value="">—</option>
-                      {statFns(f).map((x) => (
-                        <option key={x} value={x}>
-                          {x === "sum" ? t("求和") : x === "avg" ? t("平均") : x === "count" ? t("计数") : t("空值")}
-                        </option>
-                      ))}
-                    </select>
-                    {fn && <span className="tabular-nums">{statValue(f, fn, records)}</span>}
+                      displayLabel={fn ? `${fnLabel} ${fnVal}` : t("计算")}
+                      chevronSize={11}
+                      menuMinWidth={104}
+                      dataAttr={{ "data-stat": String(f.id) }}
+                      className={cn(
+                        "h-6 max-w-full bg-transparent px-1.5 text-[12px] tabular-nums",
+                        fn
+                          ? "font-medium text-[#1f2329] hover:bg-hover"
+                          : "text-[#8f959e] opacity-0 transition-opacity focus:opacity-100 group-hover/stats:opacity-100 hover:bg-hover hover:text-[#1f2329]",
+                      )}
+                    />
                   </div>
                 </td>
                 </Fragment>

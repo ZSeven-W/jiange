@@ -10,6 +10,7 @@ import type {
   SheetWorksheet,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { FeishuSelect } from "@/components/feishu-select";
 import { parseRangeInput, type EvaluatedSheetMap } from "./workbook-engine";
 import { formatSheetRectA1, makeRuleId, type SheetRect } from "./sheet-rules";
 import {
@@ -478,16 +479,15 @@ export function SheetPivotPanel({
             />
           </div>
           <div className="space-y-1">
-            <label className="text-[11px] text-[#646a73]">{t("源工作表")}</label>
-            <select
-              value={sourceSheet.id}
-              onChange={(e) => setSourceSheetId(Number(e.target.value))}
-              className="h-8 w-full rounded border border-[#dee0e3] bg-white px-1.5 text-[12px] outline-none focus:border-[#3370ff]"
-            >
-              {sheets.map((s) => (
-                <option key={s.id} value={s.id}>{s.title}</option>
-              ))}
-            </select>
+            <span className="block text-[11px] text-[#646a73]">{t("源工作表")}</span>
+            <FeishuSelect
+              ariaLabel={t("源工作表")}
+              value={String(sourceSheet.id)}
+              options={sheets.map((s) => ({ value: String(s.id), label: s.title }))}
+              onChange={(val) => setSourceSheetId(Number(val))}
+              className="h-8 w-full border border-[#dee0e3] bg-white px-1.5 text-[12px]"
+              menuMinWidth={130}
+            />
           </div>
         </div>
 
@@ -539,32 +539,30 @@ export function SheetPivotPanel({
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-[11px] text-[#646a73]">{t("列交叉维度（可选）")}</label>
-                <select
-                  value={colField}
-                  data-pivot-col-field
-                  onChange={(e) => setColField(e.target.value === "" ? "" : Number(e.target.value))}
-                  className="h-8 w-full rounded border border-[#dee0e3] bg-white px-1.5 text-[12px] outline-none focus:border-[#3370ff]"
-                >
-                  <option value="">{t("不设列维度")}</option>
-                  {sourceHeaders.map((h, idx) => (
-                    <option key={idx} value={idx} disabled={rowFields.includes(idx)}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
+                <span className="block text-[11px] text-[#646a73]">{t("列交叉维度（可选）")}</span>
+                <FeishuSelect
+                  ariaLabel={t("列交叉维度（可选）")}
+                  value={colField === "" ? "" : String(colField)}
+                  dataAttr={{ "data-pivot-col-field": true }}
+                  options={[
+                    { value: "", label: t("不设列维度") },
+                    ...sourceHeaders.map((h, idx) => ({ value: String(idx), label: h, disabled: rowFields.includes(idx) })),
+                  ]}
+                  onChange={(val) => setColField(val === "" ? "" : Number(val))}
+                  className="h-8 w-full border border-[#dee0e3] bg-white px-1.5 text-[12px]"
+                  menuMinWidth={130}
+                />
               </div>
               <div className="space-y-1">
-                <label className="text-[11px] text-[#646a73]">{t("排序方式")}</label>
-                <select
+                <span className="block text-[11px] text-[#646a73]">{t("排序方式")}</span>
+                <FeishuSelect
+                  ariaLabel={t("排序方式")}
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SheetPivotSort)}
-                  className="h-8 w-full rounded border border-[#dee0e3] bg-white px-1.5 text-[12px] outline-none focus:border-[#3370ff]"
-                >
-                  {PIVOT_SORT_OPTIONS.map((opt) => (
-                    <option key={opt.sort} value={opt.sort}>{t(opt.label)}</option>
-                  ))}
-                </select>
+                  options={PIVOT_SORT_OPTIONS.map((opt) => ({ value: opt.sort, label: t(opt.label) }))}
+                  onChange={(val) => setSortBy(val as SheetPivotSort)}
+                  className="h-8 w-full border border-[#dee0e3] bg-white px-1.5 text-[12px]"
+                  menuMinWidth={130}
+                />
               </div>
             </div>
 
@@ -584,30 +582,30 @@ export function SheetPivotPanel({
               </div>
               {values.map((v, vi) => (
                 <div key={vi} className="flex items-center gap-1.5">
-                  <select
-                    value={v.col}
-                    data-pivot-value-col={vi}
-                    onChange={(e) =>
-                      setValues((prev) => prev.map((item, i) => (i === vi ? { ...item, col: Number(e.target.value) } : item)))
+                  <FeishuSelect
+                    ariaLabel={t("聚合值字段")}
+                    value={String(v.col)}
+                    dataAttr={{ "data-pivot-value-col": String(vi) }}
+                    options={sourceHeaders.map((h, idx) => ({ value: String(idx), label: h }))}
+                    onChange={(val) =>
+                      setValues((prev) => prev.map((item, i) => (i === vi ? { ...item, col: Number(val) } : item)))
                     }
-                    className="h-7 min-w-0 flex-1 rounded border border-[#dee0e3] bg-white px-1.5 text-[11px]"
-                  >
-                    {sourceHeaders.map((h, idx) => (
-                      <option key={idx} value={idx}>{h}</option>
-                    ))}
-                  </select>
-                  <select
+                    className="h-7 min-w-0 flex-1 border border-[#dee0e3] bg-white px-1.5 text-[11px]"
+                    chevronSize={11}
+                    menuMinWidth={120}
+                  />
+                  <FeishuSelect
+                    ariaLabel={t("聚合方式")}
                     value={v.agg}
-                    data-pivot-value-agg={vi}
-                    onChange={(e) =>
-                      setValues((prev) => prev.map((item, i) => (i === vi ? { ...item, agg: e.target.value as SheetPivotAgg } : item)))
+                    dataAttr={{ "data-pivot-value-agg": String(vi) }}
+                    options={PIVOT_AGG_OPTIONS.map((opt) => ({ value: opt.agg, label: t(opt.label) }))}
+                    onChange={(val) =>
+                      setValues((prev) => prev.map((item, i) => (i === vi ? { ...item, agg: val as SheetPivotAgg } : item)))
                     }
-                    className="h-7 w-20 rounded border border-[#dee0e3] bg-white px-1 text-[11px]"
-                  >
-                    {PIVOT_AGG_OPTIONS.map((opt) => (
-                      <option key={opt.agg} value={opt.agg}>{t(opt.label)}</option>
-                    ))}
-                  </select>
+                    className="h-7 w-20 border border-[#dee0e3] bg-white px-1 text-[11px]"
+                    chevronSize={11}
+                    menuMinWidth={88}
+                  />
                   {values.length > 1 && (
                     <button
                       type="button"

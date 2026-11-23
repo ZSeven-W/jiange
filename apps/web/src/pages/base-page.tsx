@@ -787,51 +787,51 @@ function FilterBar({ baseId, aiAllowed, fields, members, cfg, onChange }: { base
         {filters.rules.length > 1 && (
           <div className="flex items-center gap-2">
             {t("满足")}
-            <select
-              className="h-7 rounded border bg-surface px-1"
+            <FeishuSelect
+              ariaLabel={t("筛选组合方式")}
               value={filters.conj}
-              onChange={(e) => setRules(filters.rules, e.target.value as "and" | "or")}
-            >
-              <option value="and">{t("全部条件（且）")}</option>
-              <option value="or">{t("任一条件（或）")}</option>
-            </select>
+              options={[
+                { value: "and", label: t("全部条件（且）") },
+                { value: "or", label: t("任一条件（或）") },
+              ]}
+              onChange={(val) => setRules(filters.rules, val as "and" | "or")}
+              className="h-7 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+              chevronSize={11}
+              menuMinWidth={128}
+            />
           </div>
         )}
         {filters.rules.map((rule, i) => {
           const f = fields.find((x) => x.id === rule.f) ?? fields[0];
           return (
             <div key={i} className="flex items-center gap-1">
-              <select
-                className="h-7 w-24 rounded border bg-surface px-1"
-                value={rule.f}
-                onChange={(e) => {
-                  const nf = fields.find((x) => x.id === Number(e.target.value))!;
+              <FeishuSelect
+                ariaLabel={t("筛选字段")}
+                value={String(rule.f)}
+                options={fields.map((x) => ({ value: String(x.id), label: x.name }))}
+                onChange={(val) => {
+                  const nf = fields.find((x) => x.id === Number(val))!;
                   const rules = [...filters.rules];
                   rules[i] = normalized(nf, { ...rule, f: nf.id, op: opsFor(nf.type)[0] });
                   setRules(rules);
                 }}
-              >
-                {fields.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="h-7 w-24 rounded border bg-surface px-1"
+                className="h-7 w-24 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                chevronSize={11}
+                menuMinWidth={112}
+              />
+              <FeishuSelect
+                ariaLabel={t("筛选条件")}
                 value={rule.op}
-                onChange={(e) => {
+                options={opsFor(f?.type ?? "text").map((op) => ({ value: op, label: t(OP_LABEL[op]) }))}
+                onChange={(val) => {
                   const rules = [...filters.rules];
-                  rules[i] = normalized(f, { ...rule, op: e.target.value });
+                  rules[i] = normalized(f, { ...rule, op: val });
                   setRules(rules);
                 }}
-              >
-                {opsFor(f?.type ?? "text").map((op) => (
-                  <option key={op} value={op}>
-                    {t(OP_LABEL[op])}
-                  </option>
-                ))}
-              </select>
+                className="h-7 w-24 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                chevronSize={11}
+                menuMinWidth={108}
+              />
               {!noValue(rule.op) &&
                 (f?.type === "person" ? (
                   <MemberRuleValue rule={rule} members={members} onChange={(v) => { const rules = [...filters.rules]; rules[i] = { ...rule, v }; setRules(rules); }} />
@@ -878,21 +878,19 @@ function SortBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
         {sorts.map((s, i) => (
           <div key={i} className="flex items-center gap-1">
             {i > 0 && <span className="text-subtle">{t("然后")}</span>}
-            <select
-              className="h-7 flex-1 rounded border bg-surface px-1"
-              value={s.f}
-              onChange={(e) => {
+            <FeishuSelect
+              ariaLabel={t("排序字段")}
+              value={String(s.f)}
+              options={fields.map((f) => ({ value: String(f.id), label: f.name }))}
+              onChange={(val) => {
                 const next = [...sorts];
-                next[i] = { ...s, f: Number(e.target.value) };
+                next[i] = { ...s, f: Number(val) };
                 setSorts(next);
               }}
-            >
-              {fields.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+              className="h-7 min-w-0 flex-1 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+              chevronSize={11}
+              menuMinWidth={120}
+            />
             <button
               className="h-7 rounded border px-2"
               onClick={() => {
@@ -952,13 +950,22 @@ function ViewSettingsBar({ fields, cfg, onChange }: { fields: import("@/lib/api"
     <Popover label={t("视图配置")} icon={<PanelsTopLeft size={15} strokeWidth={1.7} />} width={280}>
       <div className="space-y-3 p-1" data-view-settings>
         <div className="text-[14px] text-foreground">{t("视图配置")}</div>
-        <label className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground">{t("冻结列")}</span>
-          <select className="h-8 w-36 rounded-md border bg-surface px-2" value={frozen} onChange={(e) => onChange({ ...cfg, frozen: Number(e.target.value) === 1 ? undefined : Number(e.target.value) })} data-frozen-select>
-            <option value={0}>{t("不冻结")}</option>
-            {fields.slice(0, 6).map((f, i) => <option key={f.id} value={i + 1}>{t("冻结至「{name}」", { name: f.name })}</option>)}
-          </select>
-        </label>
+          <FeishuSelect
+            ariaLabel={t("冻结列")}
+            value={String(frozen)}
+            options={[
+              { value: "0", label: t("不冻结") },
+              ...fields.slice(0, 6).map((f, i) => ({ value: String(i + 1), label: t("冻结至「{name}」", { name: f.name }) })),
+            ]}
+            onChange={(val) => onChange({ ...cfg, frozen: Number(val) === 1 ? undefined : Number(val) })}
+            className="h-8 w-36 border border-[#dee0e3] bg-surface px-2 text-[12px]"
+            chevronSize={12}
+            menuMinWidth={152}
+            dataAttr={{ "data-frozen-select": true }}
+          />
+        </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground">{t("行高")}</span>
           <div className="flex rounded-md border p-0.5">
@@ -1007,17 +1014,37 @@ function FillBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[
               <div className="flex shrink-0 gap-0.5">
                 {PALETTE.slice(0, 6).map(([bg, fg], c) => <button key={c} type="button" title={t("填充颜色")} aria-label={t("颜色 {n}", { n: c + 1 })} onClick={() => patch({ color: c })} className={cn("size-5 rounded border", rule.color === c ? "ring-2 ring-primary ring-offset-1" : "border-transparent")} style={{ background: bg, borderColor: fg + "33" }} />)}
               </div>
-              <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.f} onChange={(e) => { const nf = fields.find((x) => x.id === Number(e.target.value))!; patch({ f: nf.id, op: opsFor(nf.type)[0], v: "" }); }}>
-                {fields.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
-              <select className="h-7 w-24 rounded border bg-surface px-1" value={rule.op} onChange={(e) => patch({ op: e.target.value })}>
-                {opsFor(f?.type ?? "text").map((op) => <option key={op} value={op}>{t(OP_LABEL[op])}</option>)}
-              </select>
+              <FeishuSelect
+                ariaLabel={t("填色字段")}
+                value={String(rule.f)}
+                options={fields.map((x) => ({ value: String(x.id), label: x.name }))}
+                onChange={(val) => { const nf = fields.find((x) => x.id === Number(val))!; patch({ f: nf.id, op: opsFor(nf.type)[0], v: "" }); }}
+                className="h-7 w-24 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                chevronSize={11}
+                menuMinWidth={112}
+              />
+              <FeishuSelect
+                ariaLabel={t("填色条件")}
+                value={rule.op}
+                options={opsFor(f?.type ?? "text").map((op) => ({ value: op, label: t(OP_LABEL[op]) }))}
+                onChange={(val) => patch({ op: val })}
+                className="h-7 w-24 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                chevronSize={11}
+                menuMinWidth={108}
+              />
               {!noValue(rule.op) && (f?.type === "select" ? (
-                <select className="h-7 min-w-0 flex-1 rounded border bg-surface px-1" value={String(rule.v ?? "")} onChange={(e) => patch({ v: e.target.value })}>
-                  <option value="">{t("选择选项")}</option>
-                  {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
+                <FeishuSelect
+                  ariaLabel={t("填色选项值")}
+                  value={String(rule.v ?? "")}
+                  options={[
+                    { value: "", label: t("选择选项") },
+                    ...(f.options ?? []).map((o) => ({ value: o, label: o })),
+                  ]}
+                  onChange={(val) => patch({ v: val })}
+                  className="h-7 min-w-0 flex-1 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                  chevronSize={11}
+                  menuMinWidth={120}
+                />
               ) : (
                 <input className="h-7 min-w-0 flex-1 rounded border px-2 outline-none focus:border-primary" type={f?.type === "number" ? "number" : f?.type === "date" ? "date" : "text"} value={String(rule.v ?? "")} placeholder={t("请输入")} onChange={(e) => patch({ v: f?.type === "number" ? Number(e.target.value) : e.target.value })} />
               ))}
@@ -1048,13 +1075,22 @@ function CardConfigBar({ fields, cfg, onChange }: { fields: import("@/lib/api").
     <Popover label={t("卡片配置")} icon={<Settings2 size={15} strokeWidth={1.7} />} active={!!cfg.card} width={300}>
       <div className="space-y-3 p-1" data-card-config>
         <div className="text-[14px] text-foreground">{t("卡片配置")}</div>
-        <label className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground">{t("封面")}</span>
-          <select className="h-8 w-40 rounded-md border bg-surface px-2" value={cfg.card?.cover ?? ""} onChange={(e) => setCard({ fields: cfg.card?.fields, cover: Number(e.target.value) || null })} data-card-cover-select>
-            <option value="">{t("无封面")}</option>
-            {attachments.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
-        </label>
+          <FeishuSelect
+            ariaLabel={t("封面")}
+            value={String(cfg.card?.cover ?? "")}
+            options={[
+              { value: "", label: t("无封面") },
+              ...attachments.map((f) => ({ value: String(f.id), label: f.name })),
+            ]}
+            onChange={(val) => setCard({ fields: cfg.card?.fields, cover: Number(val) || null })}
+            className="h-8 w-40 border border-[#dee0e3] bg-surface px-2 text-[12px]"
+            chevronSize={12}
+            menuMinWidth={160}
+            dataAttr={{ "data-card-cover-select": true }}
+          />
+        </div>
         <div>
           <div className="mb-1 flex items-center justify-between text-muted-foreground"><span>{t("卡片显示字段")}</span><span className="text-[12px] text-subtle">{t("标题始终显示「{name}」", { name: primary?.name ?? t("主字段") })}</span></div>
           <div className="max-h-56 space-y-0.5 overflow-y-auto">

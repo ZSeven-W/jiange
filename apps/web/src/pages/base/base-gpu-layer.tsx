@@ -227,6 +227,7 @@ export interface GanttGpuBar {
   offset: number;
   length: number;
   dragging: boolean;
+  milestone?: boolean;
 }
 
 export interface BaseGanttGpuLayerProps {
@@ -328,6 +329,7 @@ export function BaseGanttGpuLayer({
         const bh = 24;
         if (by + bh < 0 || by > height) return;
         gridBatch.pushLine({ x1: leftEdge, y1: rowTop + rowH, x2: leftEdge + timelineW, y2: rowTop + rowH, thickness: 1, color: GRID_LINE });
+        if (bar.milestone) return;
         barBatch.pushRect({
           x: bx,
           y: by,

@@ -1,4 +1,4 @@
-import { ArrowDownIcon } from "@/components/feishu-icons";
+import { FeishuSelect } from "@/components/feishu-select";
 import { t } from "@/lib/i18n";
 
 export type ShareLinkRole = "none" | "anon" | "view" | "edit" | "workspace_view" | "workspace_edit";
@@ -18,28 +18,46 @@ export function roleForScope(scope: ShareLinkScope, current: ShareLinkRole): Sha
 
 export function ShareLinkScopeSelect({ role, allowPublic, disabled, onChange }: { role: ShareLinkRole; allowPublic: boolean; disabled: boolean; onChange: (role: ShareLinkRole) => void }) {
   const scope = shareLinkScope(role);
-  const label = scope === "restricted" ? t("仅限已有权限的人") : scope === "public" ? t("互联网上任何人") : scope === "workspace" ? t("当前空间成员") : t("已登录用户");
-  return <label className="relative inline-flex max-w-full items-center gap-1 rounded hover:bg-hover focus-within:ring-2 focus-within:ring-primary/40">
-    <span className="sr-only">{t("链接分享范围")}</span>
-    <span aria-hidden="true" className={`min-w-0 truncate text-[14px] text-foreground ${disabled ? "opacity-60" : ""}`}>{label}</span>
-    <ArrowDownIcon className="pointer-events-none size-2 shrink-0 text-subtle" />
-    <select aria-label={t("链接分享范围")} value={scope} disabled={disabled} onChange={(event) => onChange(roleForScope(event.target.value as ShareLinkScope, role))} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed">
-      <option value="restricted">{t("仅限已有权限的人")}</option>
-      <option value="workspace">{t("当前空间成员")}</option>
-      <option value="signed-in">{t("已登录用户")}</option>
-      {(allowPublic || scope === "public") && <option value="public" disabled={!allowPublic}>{t("互联网上任何人")}</option>}
-    </select>
-  </label>;
+  const options = [
+    { value: "restricted", label: t("仅限已有权限的人") },
+    { value: "workspace", label: t("当前空间成员") },
+    { value: "signed-in", label: t("已登录用户") },
+    ...((allowPublic || scope === "public") ? [{ value: "public", label: t("互联网上任何人"), disabled: !allowPublic }] : []),
+  ];
+  return (
+    <FeishuSelect
+      ariaLabel={t("链接分享范围")}
+      value={scope}
+      disabled={disabled}
+      options={options}
+      onChange={(val) => onChange(roleForScope(val as ShareLinkScope, role))}
+      className="h-7 max-w-full bg-transparent px-1 text-[14px] font-medium text-foreground hover:bg-hover disabled:opacity-60"
+      chevronSize={12}
+      menuMinWidth={168}
+    />
+  );
 }
 
 export function ShareLinkAccessSelect({ role, disabled, onChange }: { role: ShareLinkRole; disabled: boolean; onChange: (role: ShareLinkRole) => void }) {
   if (role === "none") return <span className="shrink-0 text-[13px] text-muted-foreground">{t("按协作者权限")}</span>;
   if (role === "anon") return <span className="shrink-0 px-2 text-[13px] text-muted-foreground">{t("可阅读")}</span>;
-  return <label className="relative inline-flex shrink-0 items-center rounded hover:bg-hover">
-    <span className="sr-only">{t("链接分享权限")}</span>
-    <select aria-label={t("链接分享权限")} value={role === "workspace_edit" ? "edit" : role === "workspace_view" ? "view" : role} disabled={disabled} onChange={(event) => { const next = event.target.value as "view" | "edit"; onChange(shareLinkScope(role) === "workspace" ? next === "edit" ? "workspace_edit" : "workspace_view" : next); }} className="h-8 cursor-pointer appearance-none bg-transparent pl-2 pr-5 text-[13px] text-muted-foreground outline-none disabled:cursor-not-allowed disabled:opacity-60">
-      <option value="view">{t("可阅读")}</option><option value="edit">{t("可编辑")}</option>
-    </select>
-    <ArrowDownIcon className="pointer-events-none absolute right-1.5 size-2 text-subtle" />
-  </label>;
+  const accessValue = role === "workspace_edit" ? "edit" : role === "workspace_view" ? "view" : role;
+  return (
+    <FeishuSelect
+      ariaLabel={t("链接分享权限")}
+      value={accessValue}
+      disabled={disabled}
+      options={[
+        { value: "view", label: t("可阅读") },
+        { value: "edit", label: t("可编辑") },
+      ]}
+      onChange={(val) => {
+        const next = val as "view" | "edit";
+        onChange(shareLinkScope(role) === "workspace" ? (next === "edit" ? "workspace_edit" : "workspace_view") : next);
+      }}
+      className="h-8 bg-transparent px-2 text-[13px] text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-60"
+      chevronSize={12}
+      menuMinWidth={96}
+    />
+  );
 }

@@ -12,6 +12,7 @@ import type {
   SheetWorksheet,
 } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { FeishuSelect } from "@/components/feishu-select";
 import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
 import { BarChart3, Check, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Trash2, X, ListChecks } from "lucide-react";
 import {
@@ -386,23 +387,25 @@ export function SheetSidePanel({
 
             {canEdit && (
               <form onSubmit={(e) => void handleAddValidation(e)} className="space-y-2.5 rounded-lg border border-[#e5e6eb] bg-[#fafbfc] p-3">
-                <label className="grid gap-1">
+                <div className="grid gap-1">
                   <span className="text-[11px] text-[#646a73]">{t("验证类型")}</span>
-                  <select
-                    aria-label={t("验证类型")}
-                    data-sheet-val-type
+                  <FeishuSelect
+                    ariaLabel={t("验证类型")}
+                    dataAttr={{ "data-sheet-val-type": true }}
                     value={valType}
-                    onChange={(e) => {
-                      setValType(e.target.value as SheetDataValidation["type"]);
+                    options={[
+                      { value: "list", label: t("下拉选项") },
+                      { value: "number", label: t("数字范围") },
+                      { value: "date", label: t("日期范围") },
+                    ]}
+                    onChange={(val) => {
+                      setValType(val as SheetDataValidation["type"]);
                       setValFormError("");
                     }}
-                    className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-                  >
-                    <option value="list">{t("下拉选项")}</option>
-                    <option value="number">{t("数字范围")}</option>
-                    <option value="date">{t("日期范围")}</option>
-                  </select>
-                </label>
+                    className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                    menuMinWidth={160}
+                  />
+                </div>
 
                 {valType === "list" ? (
                   <label className="grid gap-1">
@@ -529,23 +532,21 @@ export function SheetSidePanel({
 
             {canEdit && (
               <form onSubmit={(e) => void handleAddCondFormat(e)} className="space-y-2.5 rounded-lg border border-[#e5e6eb] bg-[#fafbfc] p-3">
-                <label className="grid gap-1">
+                <div className="grid gap-1">
                   <span className="text-[11px] text-[#646a73]">{t("满足条件")}</span>
-                  <select
-                    aria-label={t("满足条件")}
-                    data-sheet-cf-op
+                  <FeishuSelect
+                    ariaLabel={t("满足条件")}
+                    dataAttr={{ "data-sheet-cf-op": true }}
                     value={cfOp}
-                    onChange={(e) => {
-                      setCfOp(e.target.value as SheetCondFormatOp);
+                    options={COND_FMT_OPS.map((item) => ({ value: item.op, label: t(item.label) }))}
+                    onChange={(val) => {
+                      setCfOp(val as SheetCondFormatOp);
                       setCfFormError("");
                     }}
-                    className="h-8 rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-                  >
-                    {COND_FMT_OPS.map((item) => (
-                      <option key={item.op} value={item.op}>{t(item.label)}</option>
-                    ))}
-                  </select>
-                </label>
+                    className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                    menuMinWidth={180}
+                  />
+                </div>
 
                 {opMeta?.needsValue1 && (
                   <div className={opMeta.needsValue2 ? "grid grid-cols-2 gap-2" : ""}>

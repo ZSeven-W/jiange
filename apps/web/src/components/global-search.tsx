@@ -7,6 +7,7 @@ import { ApiError, docsApi, extrasApi, type DocMeta, type SearchFilters } from "
 import { go, nodeHref } from "@/lib/route";
 import { DocumentGlyph } from "./document-glyph";
 import { DocColorIcon, SheetColorIcon, WhiteboardIcon } from "./feishu-icons";
+import { FeishuSelect } from "./feishu-select";
 import { docTitle, isBoardDoc } from "./sidebar";
 import { SearchOpenGuard, searchKeyboardTarget } from "./global-search-actions";
 
@@ -245,10 +246,70 @@ export function GlobalSearch({ userId, onClose }: { userId: number; onClose: (re
           <span className="grid size-6 place-items-center rounded-full bg-[#3370ff] text-white"><Search size={14}/></span>{t("高级搜索")}
         </button>
         {advanced && <div className="mx-1 mb-2 grid grid-cols-2 gap-x-3 gap-y-2 rounded-md border bg-sidebar/40 px-3 py-2.5 text-[12px] text-muted-foreground sm:grid-cols-3">
-          <label className="grid gap-1">{t("文档类型")}<select aria-label={t("文档类型筛选")} value={kind} onChange={(e) => { invalidateOpen(); setKind(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground"><option value="all">{t("全部类型")}</option><option value="doc">{t("文档")}</option><option value="sheet">{t("表格")}</option><option value="board">{t("画板")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="survey">{t("问卷")}</option><option value="folder">{t("文件夹")}</option><option value="file">{t("文件")}</option></select></label>
-          <label className="grid gap-1">{t("所有者")}<select aria-label={t("所有者筛选")} value={owner} onChange={(e) => { invalidateOpen(); setOwner(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground"><option value="all">{t("所有人")}</option><option value="mine">{t("我创建的")}</option></select></label>
-          <label className="grid gap-1">{t("所在目录")}<select aria-label={t("所在目录筛选")} value={folderId} onChange={(e) => { invalidateOpen(); setFolderId(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground"><option value="">{t("全部目录")}</option>{folderOptions.map((opt) => <option key={opt.id} value={String(opt.id)}>{opt.label}</option>)}</select></label>
-          <label className="grid gap-1">{t("更新时间")}<select aria-label={t("更新时间筛选")} value={within} onChange={(e) => { invalidateOpen(); setWithin(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground"><option value="0">{t("全部时间")}</option><option value="7">{t("最近 7 天")}</option><option value="30">{t("最近 30 天")}</option></select></label>
+          <div className="grid gap-1">
+            <span>{t("文档类型")}</span>
+            <FeishuSelect
+              ariaLabel={t("文档类型筛选")}
+              value={kind}
+              options={[
+                { value: "all", label: t("全部类型") },
+                { value: "doc", label: t("文档") },
+                { value: "sheet", label: t("表格") },
+                { value: "board", label: t("画板") },
+                { value: "base", label: t("多维表格") },
+                { value: "slides", label: t("幻灯片") },
+                { value: "survey", label: t("问卷") },
+                { value: "folder", label: t("文件夹") },
+                { value: "file", label: t("文件") },
+              ]}
+              onChange={(val) => { invalidateOpen(); setKind(val); }}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[12px]"
+              menuMinWidth={130}
+            />
+          </div>
+          <div className="grid gap-1">
+            <span>{t("所有者")}</span>
+            <FeishuSelect
+              ariaLabel={t("所有者筛选")}
+              value={owner}
+              options={[
+                { value: "all", label: t("所有人") },
+                { value: "mine", label: t("我创建的") },
+              ]}
+              onChange={(val) => { invalidateOpen(); setOwner(val); }}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[12px]"
+              menuMinWidth={120}
+            />
+          </div>
+          <div className="grid gap-1">
+            <span>{t("所在目录")}</span>
+            <FeishuSelect
+              ariaLabel={t("所在目录筛选")}
+              value={folderId}
+              options={[
+                { value: "", label: t("全部目录") },
+                ...folderOptions.map((opt) => ({ value: String(opt.id), label: opt.label })),
+              ]}
+              onChange={(val) => { invalidateOpen(); setFolderId(val); }}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[12px]"
+              menuMinWidth={140}
+            />
+          </div>
+          <div className="grid gap-1">
+            <span>{t("更新时间")}</span>
+            <FeishuSelect
+              ariaLabel={t("更新时间筛选")}
+              value={within}
+              options={[
+                { value: "0", label: t("全部时间") },
+                { value: "7", label: t("最近 7 天") },
+                { value: "30", label: t("最近 30 天") },
+              ]}
+              onChange={(val) => { invalidateOpen(); setWithin(val); }}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[12px]"
+              menuMinWidth={120}
+            />
+          </div>
           <label className="grid gap-1">{t("开始日期")}<input type="date" aria-label={t("更新开始日期")} value={updatedFrom} onChange={(e) => { invalidateOpen(); setUpdatedFrom(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground" /></label>
           <label className="grid gap-1">{t("结束日期")}<input type="date" aria-label={t("更新结束日期")} value={updatedTo} onChange={(e) => { invalidateOpen(); setUpdatedTo(e.target.value); }} className="h-8 rounded border bg-surface px-2 text-foreground" /></label>
           <div className="col-span-2 flex items-center justify-between pt-0.5 sm:col-span-3">

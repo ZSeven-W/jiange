@@ -22,6 +22,8 @@ import { SlideShapes } from "./slides-shapes";
 import { SlidesGpuLayer } from "./slides-gpu-layer";
 import { isDarkSlideBackground, PresenterView, SlideSurface } from "./slides-presenter";
 import { SlideShapeControls } from "./slides-shape-controls";
+import { SlideTextControls } from "./slides-text-controls";
+import { bodyHasBullets, loadSlideTextStyles, saveSlideTextStyles, toggleBodyBullets, type SlideFieldTextStyle, type SlideTextStyleMap } from "./slides-text-style";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
 import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
@@ -135,6 +137,28 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [titleFocusPage, setTitleFocusPage] = useState<number | null>(null);
   const [bodyFocusPage, setBodyFocusPage] = useState<number | null>(null);
+  const [activeTextField, setActiveTextField] = useState<{ pageId: number; kind: "title" | "body" } | null>(null);
+  const [textStyles, setTextStyles] = useState<SlideTextStyleMap>(() => loadSlideTextStyles(deckId));
+  useEffect(() => { setTextStyles(loadSlideTextStyles(deckId)); }, [deckId]);
+  const patchFieldStyle = (pageId: number, kind: "title" | "body", patch: Partial<SlideFieldTextStyle>) => {
+    setTextStyles((prev) => {
+      const next: SlideTextStyleMap = {
+        ...prev,
+        [pageId]: { ...prev[pageId], [kind]: { ...prev[pageId]?.[kind], ...patch } },
+      };
+      saveSlideTextStyles(deckId, next);
+      return next;
+    });
+  };
+  const resetFieldStyle = (pageId: number, kind: "title" | "body") => {
+    setTextStyles((prev) => {
+      const pageEntry = { ...prev[pageId] };
+      delete pageEntry[kind];
+      const next: SlideTextStyleMap = { ...prev, [pageId]: pageEntry };
+      saveSlideTextStyles(deckId, next);
+      return next;
+    });
+  };
   const [showSlideList, setShowSlideList] = useState(true);
   const [fitZoom, setFitZoom] = useState(100);
   const [manualZoom, setManualZoom] = useState<number | null>(null);
@@ -1178,18 +1202,57 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           {draft?.state === "pending" && !canDraft && <div role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">权限尚未确认，输入仍保留在本地，未发送到服务器。<SlidesDraftRecovery queue={queue}/></div>}
           <div className="relative flex min-h-0 flex-1 flex-col">
           {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
+          {!chosenShape && canDraft && active && draft && activeTextField?.pageId === active.id && (() => {
+            const isTitle = activeTextField.kind === "title";
+            const dark = isDarkSlideBackground(draft.content.background);
+            const large = hasLargeSlideTitle(draft.content.layout);
+            const currentStyle = isTitle ? (textStyles[active.id]?.title ?? {}) : (textStyles[active.id]?.body ?? {});
+            return (
+              <SlideTextControls
+                target={activeTextField.kind}
+                style={currentStyle}
+                defaultFontSize={isTitle ? (large ? 54 : 36) : 21}
+                defaultBold={isTitle}
+                defaultAlign={isTitle && draft.content.layout === "title" ? "center" : "left"}
+                defaultColor={dark ? (isTitle ? "#ffffff" : "#e5e7eb") : "#1f2329"}
+                bulleted={!isTitle && bodyHasBullets(draft.content.body)}
+                onChange={(patch) => patchFieldStyle(active.id, activeTextField.kind, patch)}
+                onReset={() => resetFieldStyle(active.id, activeTextField.kind)}
+                onToggleBullet={!isTitle ? () => queue.edit(active, { body: toggleBodyBullets(draft.content.body) }, "body") : undefined}
+              />
+            );
+          })()}
           <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto">
             <div className="flex min-h-full min-w-full p-4">
-              {active && draft ? <div className="group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ width: SLIDE_WIDTH * zoom / 100, height: SLIDE_HEIGHT * zoom / 100, backgroundColor: gpuActive ? "transparent" : draft.content.background || "#fff" }} data-slides-canvas onPointerDown={(event) => { if (event.target instanceof Element && !event.target.closest("[data-slide-object]")) { queue.endGroup(active.id); setSelectedShape(null); } }}>
+              {active && draft ? (() => {
+                const titleStyle = textStyles[active.id]?.title;
+                const bodyStyle = textStyles[active.id]?.body;
+                const titleInlineStyle = titleStyle ? {
+                  ...(titleStyle.fontSize !== undefined ? { fontSize: `${titleStyle.fontSize}px` } : {}),
+                  ...(titleStyle.bold !== undefined ? { fontWeight: titleStyle.bold ? 700 : 400 } : {}),
+                  ...(titleStyle.italic ? { fontStyle: "italic" as const } : {}),
+                  ...(titleStyle.color ? { color: titleStyle.color } : {}),
+                  ...(titleStyle.align ? { textAlign: titleStyle.align } : {}),
+                } : undefined;
+                const bodyInlineStyle = bodyStyle ? {
+                  ...(bodyStyle.fontSize !== undefined ? { fontSize: `${bodyStyle.fontSize}px` } : {}),
+                  ...(bodyStyle.bold !== undefined ? { fontWeight: bodyStyle.bold ? 700 : 400 } : {}),
+                  ...(bodyStyle.italic ? { fontStyle: "italic" as const } : {}),
+                  ...(bodyStyle.color ? { color: bodyStyle.color } : {}),
+                  ...(bodyStyle.align ? { textAlign: bodyStyle.align } : {}),
+                } : undefined;
+                const keepTextToolbar = (related: EventTarget | null) =>
+                  related instanceof Element && (!!related.closest("[data-slides-text-controls]") || !!related.closest('[role="listbox"]'));
+                return <div className="group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ width: SLIDE_WIDTH * zoom / 100, height: SLIDE_HEIGHT * zoom / 100, backgroundColor: gpuActive ? "transparent" : draft.content.background || "#fff" }} data-slides-canvas onPointerDown={(event) => { if (event.target instanceof Element && !event.target.closest("[data-slide-object]")) { queue.endGroup(active.id); setSelectedShape(null); if (!event.target.closest("[data-slides-title]") && !event.target.closest("[data-slides-body]") && !event.target.closest("[data-slides-text-controls]")) setActiveTextField(null); } }}>
                 <SlidesGpuLayer background={draft.content.background} shapes={previewShape ? draft.content.shapes.map((s) => (s.id === previewShape.id ? previewShape : s)) : draft.content.shapes} selectedId={selectedShape} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
                 <div className="absolute left-0 top-0 z-[1]" style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, padding: hasLargeSlideTitle(draft.content.layout) ? 0 : "48px 57.6px", transform: `scale(${zoom / 100})`, transformOrigin: "top left", containerType: "inline-size" }}>
-                  {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} onFocus={() => setTitleFocusPage(active.id)} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={() => { setTitleFocusPage(null); queue.endGroup(active.id); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-white" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px]", isDarkSlideBackground(draft.content.background) ? "placeholder:text-white/80" : "placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
+                  {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} style={titleInlineStyle} onFocus={() => { setSelectedShape(null); setTitleFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "title" }); }} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={(event) => { setTitleFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "title" ? null : prev); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-white" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px]", isDarkSlideBackground(draft.content.background) ? "placeholder:text-white/80" : "placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
                   {draft.content.layout === "blank" && !draft.content.title && titleFocusPage !== active.id && !!draft.content.body && <div aria-hidden="true" className="h-[55px]"/>}
-                  {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} onFocus={() => setBodyFocusPage(active.id)} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={() => { setBodyFocusPage(null); queue.endGroup(active.id); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-[#e5e7eb]" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
-                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} scale={zoom / 100} gpuBacked={gpuActive} onPreviewChange={setPreviewShape} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
+                  {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} style={bodyInlineStyle} onFocus={() => { setSelectedShape(null); setBodyFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "body" }); }} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={(event) => { setBodyFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "body" ? null : prev); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-[#e5e7eb]" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
+                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} scale={zoom / 100} gpuBacked={gpuActive} onPreviewChange={setPreviewShape} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setActiveTextField(null); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
                 </div>
                 <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => { if (backgroundTarget.current === active.id && activePageRef.current === active.id && canEditRef.current && !pageActionCount.current) queue.edit(active, { background: event.target.value }); }} className="sr-only" aria-label="幻灯片背景颜色" />
-              </div> : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
+              </div>; })() : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
             </div>
           </div>
           </div>

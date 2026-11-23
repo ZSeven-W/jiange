@@ -55,7 +55,8 @@ describe("link sharing scope and access", () => {
     expect(edit).toContain("可编辑");
     expect(publicAccess).toContain("可阅读");
     expect(publicAccess).not.toContain("可编辑");
-    expect(renderToStaticMarkup(<ShareLinkAccessSelect role="workspace_edit" disabled={false} onChange={() => {}} />)).toContain('<option value="edit" selected="">可编辑</option>');
+    expect(renderToStaticMarkup(<ShareLinkAccessSelect role="workspace_edit" disabled={false} onChange={() => {}} />)).toContain('data-select-value="edit"');
+    expect(renderToStaticMarkup(<ShareLinkAccessSelect role="workspace_edit" disabled={false} onChange={() => {}} />)).toContain("可编辑");
     expect(renderToStaticMarkup(<ShareLinkScopeSelect role="view" allowPublic={false} disabled={false} onChange={() => {}} />)).not.toContain("互联网上任何人");
   });
 });

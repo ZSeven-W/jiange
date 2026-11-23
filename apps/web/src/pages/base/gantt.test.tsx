@@ -115,4 +115,24 @@ describe("gantt view", () => {
       expect(html).toContain("2026-11-18 – 2026-11-28");
     } finally { vi.useRealTimers(); }
   });
+
+  it("renders single-day tasks as Feishu milestone diamonds", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-23T12:00:00Z"));
+    try {
+      const html = renderToStaticMarkup(
+        <Gantt
+          baseId={1}
+          canEdit
+          fields={fields}
+          records={[record(1, "2026-11-25", "2026-11-25"), record(2, "2026-11-20", "2026-11-24")]}
+          members={[]}
+          onMutate={() => {}}
+        />,
+      );
+      expect(html).toContain('data-gantt-bar="1"');
+      expect(html).toContain('data-gantt-milestone="true"');
+      expect(html).toContain('data-gantt-bar="2"');
+      expect(html).toContain("5天");
+    } finally { vi.useRealTimers(); }
+  });
 });
