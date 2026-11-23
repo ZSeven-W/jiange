@@ -68,7 +68,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
   let r = min(in.radius, min(in.halfSize.x, in.halfSize.y));
   let q = abs(in.localPx) - (in.halfSize - vec2<f32>(r, r));
   let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
-  let aa = max(fwidth(dist), 0.5);
+  let aa = max(fwidth(dist) * 0.5, 0.25);
   let outerAlpha = 1.0 - smoothstep(-aa, aa, dist);
   if (outerAlpha <= 0.001) { discard; }
   var col = in.fill;
@@ -102,9 +102,11 @@ struct VsOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) color: vec4<f32>,
   @location(1) along: f32,
-  @location(2) across: f32,
-  @location(3) dashLen: f32,
-  @location(4) gapLen: f32,
+  @location(2) acrossPx: f32,
+  @location(3) halfThick: f32,
+  @location(4) aaPx: f32,
+  @location(5) dashLen: f32,
+  @location(6) gapLen: f32,
 };
 
 @vertex
@@ -120,8 +122,11 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: LineIn) -> VsOut {
   let segLen = max(length(delta), 0.0001);
   let dir = delta / segLen;
   let normal = vec2<f32>(-dir.y, dir.x);
-  let thick = max(inst.colorThick.x * uCam.zoom, 1.0);
-  let screen = p1 + dir * (uv.x * segLen) + normal * (uv.y * thick);
+  let halfThick = max(inst.colorThick.x * uCam.zoom, 1.0) * 0.5;
+  let dpr = max(uCam.dpr, 1.0);
+  let pad = 1.0 / dpr;
+  let expandedHalf = halfThick + pad;
+  let screen = p1 + dir * (uv.x * segLen) + normal * (uv.y * 2.0 * expandedHalf);
   let ndc = vec2<f32>(
     (screen.x / uCam.viewport.x) * 2.0 - 1.0,
     1.0 - (screen.y / uCam.viewport.y) * 2.0
@@ -130,7 +135,9 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: LineIn) -> VsOut {
   out.pos = vec4<f32>(ndc, 0.0, 1.0);
   out.color = vec4<f32>(inst.colorThick.yzw, inst.params.x);
   out.along = uv.x * segLen;
-  out.across = uv.y * 2.0;
+  out.acrossPx = uv.y * 2.0 * expandedHalf;
+  out.halfThick = halfThick;
+  out.aaPx = 0.5 / dpr;
   out.dashLen = inst.params.y * uCam.zoom;
   out.gapLen = inst.params.z * uCam.zoom;
   return out;
@@ -143,9 +150,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let phase = in.along - floor(in.along / period) * period;
     if (phase > in.dashLen) { discard; }
   }
-  let dist = abs(in.across);
-  let aa = max(fwidth(dist), 0.15);
-  let alpha = (1.0 - smoothstep(1.0 - aa, 1.0, dist)) * in.color.a;
+  let distPx = abs(in.acrossPx) - in.halfThick;
+  let alpha = (1.0 - smoothstep(-in.aaPx, in.aaPx, distPx)) * in.color.a;
+  if (alpha <= 0.001) { discard; }
   return vec4<f32>(in.color.rgb * alpha, alpha);
 }
 `;
@@ -327,7 +334,7 @@ void main() {
   float r = min(vRadius, min(vHalfSize.x, vHalfSize.y));
   vec2 q = abs(vLocalPx) - (vHalfSize - vec2(r));
   float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-  float aa = max(fwidth(dist), 0.5);
+  float aa = max(fwidth(dist) * 0.5, 0.25);
   float outerA = 1.0 - smoothstep(-aa, aa, dist);
   if (outerA <= 0.001) discard;
   vec4 col = vFill;
@@ -349,7 +356,9 @@ layout(location = 1) in vec4 aColorThick; // thickness, r, g, b
 layout(location = 2) in vec4 aParams; // a, dashLen, gapLen, flags
 out vec4 vColor;
 out float vAlong;
-out float vAcross;
+out float vAcrossPx;
+out float vHalfThick;
+out float vAaPx;
 out float vDash;
 out float vGap;
 void main() {
@@ -364,13 +373,18 @@ void main() {
   float segLen = max(length(delta), 0.0001);
   vec2 dir = delta / segLen;
   vec2 norm = vec2(-dir.y, dir.x);
-  float thick = max(aColorThick.x * uCamera1.x, 1.0);
-  vec2 screen = p1 + dir * (uv.x * segLen) + norm * (uv.y * thick);
+  float halfThick = max(aColorThick.x * uCamera1.x, 1.0) * 0.5;
+  float dpr = max(uCamera1.y, 1.0);
+  float pad = 1.0 / dpr;
+  float expandedHalf = halfThick + pad;
+  vec2 screen = p1 + dir * (uv.x * segLen) + norm * (uv.y * 2.0 * expandedHalf);
   vec2 ndc = vec2((screen.x / uCamera0.x) * 2.0 - 1.0, 1.0 - (screen.y / uCamera0.y) * 2.0);
   gl_Position = vec4(ndc, 0.0, 1.0);
   vColor = vec4(aColorThick.yzw, aParams.x);
   vAlong = uv.x * segLen;
-  vAcross = uv.y * 2.0;
+  vAcrossPx = uv.y * 2.0 * expandedHalf;
+  vHalfThick = halfThick;
+  vAaPx = 0.5 / dpr;
   vDash = aParams.y * uCamera1.x;
   vGap = aParams.z * uCamera1.x;
 }
@@ -380,7 +394,9 @@ export const GLSL300_LINE_FS = `#version 300 es
 precision highp float;
 in vec4 vColor;
 in float vAlong;
-in float vAcross;
+in float vAcrossPx;
+in float vHalfThick;
+in float vAaPx;
 in float vDash;
 in float vGap;
 out vec4 outColor;
@@ -390,9 +406,9 @@ void main() {
     float phase = mod(vAlong, period);
     if (phase > vDash) discard;
   }
-  float dist = abs(vAcross);
-  float aa = max(fwidth(dist), 0.15);
-  float a = (1.0 - smoothstep(1.0 - aa, 1.0, dist)) * vColor.a;
+  float distPx = abs(vAcrossPx) - vHalfThick;
+  float a = (1.0 - smoothstep(-vAaPx, vAaPx, distPx)) * vColor.a;
+  if (a <= 0.001) discard;
   outColor = vec4(vColor.rgb * a, a);
 }
 `;

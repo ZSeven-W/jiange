@@ -58,6 +58,7 @@ import { SheetTabsBar, SheetToolbar } from "./sheet-toolbar";
 import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
 import { computePivotTable, pivotResultToCellMatrix } from "./sheet-analytics";
 import { SheetChartOverlay } from "./sheet-chart-overlay";
+import { SheetGpuGridLayer } from "./sheet-gpu-layer";
 import {
   evaluateSheetConditionalFormat,
   evaluateSheetValidation,
@@ -247,6 +248,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [errorMessage, setErrorMessage] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const [gpuActive, setGpuActive] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [fxMenuOpen, setFxMenuOpen] = useState(false);
@@ -2000,6 +2002,27 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
       {/* Main Grid Viewport + Optional Right Drawer */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <SheetGpuGridLayer
+        scrollContainerRef={gridRef}
+        activeSheet={activeSheet}
+        visibleRows={visibleRows}
+        colWidths={colWidths}
+        rowHeights={rowHeights}
+        rowHeaderWidth={ROW_HEADER_WIDTH}
+        colHeaderHeight={COL_HEADER_HEIGHT}
+        zoom={zoom}
+        selection={selection}
+        gridCellByKey={gridMap.cellByKey}
+        activeEvalMap={activeEvalMap}
+        formulaHighlights={formulaHighlights}
+        collaborators={collaborators}
+        userId={userId}
+        role={role}
+        onBackendReady={(kind) => {
+          if (kind === "webgpu" || kind === "webgl2") setGpuActive(true);
+        }}
+      />
       <div
         ref={gridRef}
         role="grid"
@@ -2032,7 +2055,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             }
           }
         }}
-        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto outline-none"
+        className="relative z-[1] min-h-0 min-w-0 flex-1 select-none overflow-auto bg-transparent outline-none"
       >
         <div className="relative w-max min-w-full origin-top-left" style={zoom === 100 ? undefined : { zoom: `${zoom}%` }}>
           {/* Column Headers Row */}
@@ -2057,7 +2080,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     ...(isFrozenCol ? { position: "sticky", left: colLeftOffsets[cIdx], zIndex: 35 } : {}),
                   }}
                   className={`relative flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
-                    activeCol ? "bg-[#e9efff] font-medium text-[#2b5ddb]" : "bg-[#f5f6f7] text-[#646a73]"
+                    activeCol
+                      ? "bg-[#e9efff] font-medium text-[#2b5ddb]"
+                      : "bg-[#f5f6f7] text-[#646a73]"
                   } ${cIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
                 >
                   <span>{columnName(cIdx)}</span>
@@ -2148,14 +2173,16 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                     height: rh,
                     ...(isFrozenRow ? { position: "sticky", top: rowTopOffsets[rowIdx], zIndex: 25 } : {}),
                   }}
-                className={`flex bg-white ${rowIdx === activeSheet.frozenRows - 1 ? "relative shadow-[0_2px_0_#9eb7f5]" : ""}`}
+                  className={`flex ${gpuActive && !isFrozenRow ? "bg-transparent" : "bg-white"} ${rowIdx === activeSheet.frozenRows - 1 ? "relative shadow-[0_2px_0_#9eb7f5]" : ""}`}
               >
                 {/* Row Header */}
                 <div
                   role="rowheader"
                   style={{ width: ROW_HEADER_WIDTH, height: rh }}
                   className={`sticky left-0 z-20 flex shrink-0 items-center justify-center border-b border-r border-[#e5e6eb] text-[11px] ${
-                    selection.focus.row === rowIdx ? "bg-[#e9efff] font-medium text-[#2b5ddb]" : "bg-[#f5f6f7] text-[#8f959e]"
+                    selection.focus.row === rowIdx
+                      ? "bg-[#e9efff] font-medium text-[#2b5ddb]"
+                      : "bg-[#f5f6f7] text-[#8f959e]"
                   }`}
                 >
                   <span>{rowIdx + 1}</span>
@@ -2258,6 +2285,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                         ? `${colorFor(primaryRemote.collab.userId - 1)}14`
                         : effectiveBg || (protState.blocked ? "#fafbfc" : "#ffffff");
 
+                  const gpuCell = gpuActive && !isEditingCell && !isFrozenRow && !isFrozenCol && mergeInfo?.kind !== "master";
                   return (
                     <div
                       key={colAxis.id}
@@ -2278,18 +2306,18 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                         style={{
                           width: mergedW,
                           height: mergedH,
-                          backgroundColor: cellBg,
+                          backgroundColor: gpuCell ? "transparent" : cellBg,
                           color: effectiveColor,
                           fontFamily: style.fontFamily || undefined,
                           fontSize: style.fontSize ? `${style.fontSize}px` : "12px",
                           fontWeight: effectiveBold ? 600 : undefined,
                           fontStyle: style.italic ? "italic" : undefined,
                           textDecoration: [style.underline ? "underline" : "", style.strike ? "line-through" : ""].filter(Boolean).join(" ") || undefined,
-                          boxShadow: combinedShadow,
-                          borderTop: style.borders?.top ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
-                          borderRight: style.borders?.right ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
-                          borderBottom: style.borders?.bottom ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
-                          borderLeft: style.borders?.left ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          boxShadow: gpuCell ? undefined : combinedShadow,
+                          borderTop: !gpuCell && style.borders?.top ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderRight: !gpuCell && style.borders?.right ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderBottom: !gpuCell && style.borders?.bottom ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
+                          borderLeft: !gpuCell && style.borders?.left ? `1px solid ${style.borders.color || "#9aa0a6"}` : undefined,
                           zIndex: isDropdownOpen ? 30 : mergeInfo?.kind === "master" ? 3 : isFocus ? 2 : refHighlight || primaryRemote ? 1 : undefined,
                         }}
                         onPointerDown={(e) => {
@@ -2327,11 +2355,13 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                         onDoubleClick={() => {
                           if (canEdit) beginEdit(point, undefined, "cell");
                         }}
-                        className={`absolute left-0 top-0 flex items-center border-b border-r border-[#e8e9eb] px-1.5 ${
-                          isFocus ? "outline outline-2 -outline-offset-2 outline-[#3370ff]" : ""
+                        className={`absolute left-0 top-0 flex items-center border-b border-r px-1.5 ${
+                          gpuCell ? "border-transparent" : "border-[#e8e9eb]"
+                        } ${
+                          !gpuCell && isFocus ? "outline outline-2 -outline-offset-2 outline-[#3370ff]" : ""
                         }`}
                       >
-                        {refHighlight && (
+                        {!gpuCell && refHighlight && (
                           <span
                             aria-hidden="true"
                             className="pointer-events-none absolute inset-0"
@@ -2524,6 +2554,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             }}
           />
         </div>
+      </div>
       </div>
 
       {activePanel && (

@@ -4,6 +4,7 @@ import type { SlidesPage } from "@/lib/api";
 import type { SlideContent } from "./slides-draft";
 import { SlideShapes } from "./slides-shapes";
 import { hasLargeSlideTitle } from "./slides-layout";
+import { SlidesGpuLayer } from "./slides-gpu-layer";
 
 type VisibleSlide = Pick<SlideContent, "title" | "body" | "background" | "layout" | "shapes">;
 
@@ -23,21 +24,23 @@ export function isDarkSlideBackground(bg: string | undefined): boolean {
 }
 
 /** Audience rendering deliberately has no access to the speaker's notes. */
-export function SlideSurface({ content, showPlaceholder = false }: { content: VisibleSlide; showPlaceholder?: boolean }) {
+export function SlideSurface({ content, showPlaceholder = false, gpu = false }: { content: VisibleSlide; showPlaceholder?: boolean; gpu?: boolean }) {
+  const [gpuActive, setGpuActive] = useState(false);
   const dark = isDarkSlideBackground(content.background);
   const titleTone = dark ? "text-white" : "text-[#1f2329]";
   const bodyTone = dark ? "text-[#e5e7eb]" : "text-[#1f2329]";
   const emptyGuide = showPlaceholder && !content.title && !content.body && content.shapes.length === 0 && content.layout !== "blank";
-  return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: content.background || "#fff", containerType: "inline-size" }}>
+  return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: gpu && gpuActive ? "transparent" : content.background || "#fff", containerType: "inline-size" }}>
+    {gpu && <SlidesGpuLayer background={content.background} shapes={content.shapes} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />}
     {emptyGuide && (
-      <div aria-hidden="true" className="pointer-events-none absolute inset-[10%] flex flex-col justify-center gap-[8%]">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-[10%] z-[1] flex flex-col justify-center gap-[8%]">
         <div className={hasLargeSlideTitle(content.layout) ? "mx-auto h-[22%] w-[78%] rounded-[2px] border border-dashed border-[#d0d3d6]" : "h-[18%] w-[62%] rounded-[2px] border border-dashed border-[#d0d3d6]"} />
         <div className={hasLargeSlideTitle(content.layout) ? "mx-auto h-[14%] w-[56%] rounded-[2px] border border-dashed border-[#e5e6eb]" : "h-[46%] w-[88%] rounded-[2px] border border-dashed border-[#e5e6eb]"} />
       </div>
     )}
-    <h1 aria-hidden={!content.title} className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[41.3%] w-[81%] overflow-hidden text-ellipsis whitespace-nowrap ${content.layout === "title" ? "text-center" : "text-left"} font-semibold leading-tight ${titleTone}` : `overflow-hidden text-ellipsis whitespace-nowrap font-semibold leading-tight ${titleTone}`} style={{ fontSize: hasLargeSlideTitle(content.layout) ? "5.625cqw" : "3.75cqw", minHeight: hasLargeSlideTitle(content.layout) ? undefined : "5.729cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.title}</h1>
-    <div className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[60%] h-[27%] w-[81%] overflow-hidden whitespace-pre-wrap break-words leading-relaxed ${bodyTone}` : `mt-[4%] whitespace-pre-wrap break-words leading-relaxed ${bodyTone}`} style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.body}</div>
-    <SlideShapes shapes={content.shapes} editable={false} selected={null}/>
+    <h1 aria-hidden={!content.title} className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[41.3%] z-[1] w-[81%] overflow-hidden text-ellipsis whitespace-nowrap ${content.layout === "title" ? "text-center" : "text-left"} font-semibold leading-tight ${titleTone}` : `relative z-[1] overflow-hidden text-ellipsis whitespace-nowrap font-semibold leading-tight ${titleTone}`} style={{ fontSize: hasLargeSlideTitle(content.layout) ? "5.625cqw" : "3.75cqw", minHeight: hasLargeSlideTitle(content.layout) ? undefined : "5.729cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.title}</h1>
+    <div className={hasLargeSlideTitle(content.layout) ? `absolute left-[9.5%] top-[60%] z-[1] h-[27%] w-[81%] overflow-hidden whitespace-pre-wrap break-words leading-relaxed ${bodyTone}` : `relative z-[1] mt-[4%] whitespace-pre-wrap break-words leading-relaxed ${bodyTone}`} style={{ fontSize: "2.1875cqw", padding: "0.4167cqw 0.8333cqw" }}>{content.body}</div>
+    <div className="pointer-events-none absolute inset-0 z-[1]"><SlideShapes shapes={content.shapes} editable={false} selected={null} gpuBacked={gpu && gpuActive}/></div>
   </div>;
 }
 
@@ -73,7 +76,7 @@ export function PresenterView({ pages, currentId, content, contentFor, onSelect,
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 md:flex-row">
       <div className="flex min-h-0 min-w-0 flex-[3] flex-col gap-4">
-        <div className="flex min-h-0 flex-1 items-center justify-center"><div className="w-full max-w-[900px]"><SlideSurface content={content}/></div></div>
+        <div className="flex min-h-0 flex-1 items-center justify-center"><div className="w-full max-w-[900px]"><SlideSurface content={content} gpu/></div></div>
         <div className="flex shrink-0 items-center justify-center gap-4 text-[13px]"><button type="button" aria-label="上一页" disabled={index <= 0} onClick={() => onSelect(pages[index - 1].id)} className="rounded p-1 disabled:opacity-30"><ChevronLeft size={18}/></button><span>{index + 1} / {pages.length}</span><button type="button" aria-label="下一页" disabled={index < 0 || index >= pages.length - 1} onClick={() => onSelect(pages[index + 1].id)} className="rounded p-1 disabled:opacity-30"><ChevronRight size={18}/></button></div>
         <div className="flex max-h-24 shrink-0 justify-center gap-2 overflow-x-auto pb-1" aria-label="放映页面">{pages.map((page, i) => <button key={page.id} type="button" aria-label={`跳转到第 ${i + 1} 张`} aria-current={page.id === currentId ? "true" : undefined} onClick={() => onSelect(page.id)} className={`w-28 shrink-0 overflow-hidden rounded border-2 ${page.id === currentId ? "border-[#3370ff]" : "border-transparent"}`}><SlideSurface content={contentFor(page)}/></button>)}</div>
       </div>

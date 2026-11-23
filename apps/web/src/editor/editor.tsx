@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { encodeOps, eqId, idKey, Tx, UndoManager, type Doc, type OpId } from "@jiange/collab";
+import { FenwickVirtualizer } from "@jiange/render-gpu";
 import type { Comment } from "@/lib/api";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import type { Presence } from "@/lib/presence";
@@ -2803,6 +2804,25 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
   const slashAt = slashRange && slash ? { b: slash.at.b, o: slashRange.start } : slash?.at;
   const slashPos = slash && (slash.fromButton || slashRange) && slashAt && root.current && wrap.current ? caretRect(root.current, slash.insertAfter ? { b: slash.at.b, o: 0 } : slashAt) : null;
   const base = wrap.current?.getBoundingClientRect();
+  const blockFenwickRef = useRef<FenwickVirtualizer | null>(null);
+  useEffect(() => {
+    const el = root.current;
+    const count = blocks.length;
+    const fenwick = (blockFenwickRef.current ??= new FenwickVirtualizer(count, 34));
+    if (fenwick.itemCount !== count) fenwick.setCount(count);
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const children = el.querySelectorAll<HTMLElement>(":scope > [data-block]");
+      children.forEach((child, index) => {
+        const h = Math.round(child.getBoundingClientRect().height);
+        if (h > 0 && index < fenwick.itemCount) fenwick.setSize(index, h);
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [blocks.length, sync.version]);
   useEffect(() => {
     if (readOnly) { changeSlash(null); setToolbar(null); setDrag(null); pendingUpload.current = null; }
   }, [readOnly]);
@@ -2928,6 +2948,8 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         role="textbox"
         aria-multiline
         data-editor
+        data-doc-virtualizer="fenwick"
+        data-doc-blocks={blocks.length}
         data-undo-ready={um.canUndo ? "true" : "false"}
         data-redo-ready={um.canRedo ? "true" : "false"}
         className={cn("outline-none", (columnNotice || mentionNavigationNotice || alignmentPending || batchSyncNotice || tableHistoryConflict || conflictDraft) && "pt-10")}

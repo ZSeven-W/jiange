@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { calendarDate, calendarDateTime, calendarKey, formatCalendarDateTime } from "./calendar-view";
 import { recordTitle } from "./registry";
 import type { UndoCellChange, UndoStep } from "./undo";
+import { BaseGanttGpuLayer } from "./base-gpu-layer";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -190,6 +191,19 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     return out;
   }, [records, startField, endField, sameField, first, days, fields, members, pointerDraft]);
 
+  const [gpuActive, setGpuActive] = useState(false);
+  const ganttScrollRef = useRef<HTMLDivElement>(null);
+  const ganttGpuBars = useMemo(
+    () =>
+      bars.map((bar) => ({
+        id: bar.rec.id,
+        offset: bar.visibleStart - (first ?? 0),
+        length: bar.visibleEnd - bar.visibleStart + 1,
+        dragging: pointerDraft?.id === bar.rec.id,
+      })),
+    [bars, first, pointerDraft],
+  );
+
   if (!startField || !endField || first === null) {
     return (
       <div className="grid flex-1 place-items-center px-4 text-center text-[14px] text-muted-foreground">
@@ -359,7 +373,19 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
         </div>
       </div>
       {error && <div role="alert" className="border-b px-4 py-2 text-[12px] text-destructive">{error}</div>}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <BaseGanttGpuLayer
+        scrollContainerRef={ganttScrollRef}
+        firstDay={first}
+        days={days}
+        todayNum={todayNum ?? -1}
+        bars={ganttGpuBars}
+        zoom={zoom}
+        onBackendReady={(backend) => {
+          if (backend === "webgpu" || backend === "webgl2") setGpuActive(true);
+        }}
+      />
+      <div ref={ganttScrollRef} className="relative z-[1] min-h-0 flex-1 overflow-auto bg-transparent">
         <div style={{ minWidth: 192 + days * zoomCfg.dayWidth }}>
           {zoomCfg.months > 1 && (
             <div className="flex border-b bg-sidebar/80 text-center text-[11px] font-medium text-muted-foreground">
@@ -431,9 +457,10 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
                         data-gantt-day={i + 1}
                         style={{ minWidth: zoomCfg.dayWidth }}
                         className={cn(
-                          "flex-1 border-l",
-                          (weekday === 0 || weekday === 6) && "bg-sidebar/40",
-                          isToday && "bg-primary/5",
+                          "flex-1",
+                          !gpuActive && "border-l",
+                          !gpuActive && (weekday === 0 || weekday === 6) && "bg-sidebar/40",
+                          !gpuActive && isToday && "bg-primary/5",
                         )}
                       />
                     );
@@ -450,9 +477,10 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
                     }}
                     onDragEnd={() => { dragRef.current = null; }}
                     className={cn(
-                      "group absolute top-2 flex h-6 items-center rounded bg-primary/85 text-[11px] leading-6 text-white shadow-sm select-none",
-                      canEdit && !busy && "cursor-grab active:cursor-grabbing hover:bg-primary",
-                      isDraggingThis && "z-20 bg-primary ring-2 ring-primary/35 shadow-md",
+                      "group absolute top-2 flex h-6 items-center rounded text-[11px] leading-6 text-white select-none",
+                      gpuActive ? "bg-transparent" : "bg-primary/85 shadow-sm",
+                      canEdit && !busy && (gpuActive ? "cursor-grab active:cursor-grabbing" : "cursor-grab active:cursor-grabbing hover:bg-primary"),
+                      isDraggingThis && (gpuActive ? "z-20" : "z-20 bg-primary ring-2 ring-primary/35 shadow-md"),
                     )}
                     style={{ left: `${(offset / days) * 100}%`, width: `${(length / days) * 100}%` }}
                     title={`${bar.label}: ${barDatesLabel}`}
@@ -493,6 +521,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
             );
           })}
         </div>
+      </div>
       </div>
     </div>
   );

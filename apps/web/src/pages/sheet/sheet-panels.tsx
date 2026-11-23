@@ -312,8 +312,8 @@ export function SheetSidePanel({
       }`}
     >
       {/* Header + 6-mode switcher */}
-      <div className="flex items-center justify-between gap-1 border-b border-[#e5e6eb] px-2.5 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto no-scrollbar">
+      <div className="flex items-start justify-between gap-1 border-b border-[#e5e6eb] px-2.5 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {(
             [
               { id: "charts", label: t("图表"), icon: <BarChart3 size={13} /> },

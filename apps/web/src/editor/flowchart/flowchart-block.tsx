@@ -11,6 +11,7 @@ import { fitInsertedImage, pinchViewport, placeMindMenu, placeSelectionToolbar, 
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
+import { GPU_NATIVE_BOARD_SHAPES, WhiteboardGpuLayer } from "./whiteboard-gpu-layer";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
 import { canonicalMindDescription, layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
@@ -120,7 +121,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
@@ -162,6 +163,8 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   idPrefix?: string;
   /** 编辑器内使用：背景透明，露出点阵网格。 */
   transparent?: boolean;
+  /** When backed by WebGPU / WebGL2 SDF canvas, keep hit targets/text/exotic shapes while hiding GPU-drawn geometry. */
+  gpuBacked?: boolean;
   guides?: { x1: number; y1: number; x2: number; y2: number }[];
   marquee?: { x: number; y: number; w: number; h: number } | null;
   /** Node id that shows a rotation handle (single selection). */
@@ -183,7 +186,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   const vb = viewBox ?? `${b.x - 40} ${b.y - 40} ${Math.max(200, b.w + 80)} ${Math.max(120, b.h + 80)}`;
   const filter = theme.sketch ? `url(#${idPrefix}-sketch)` : theme.shadow ? `url(#${idPrefix}-shadow)` : undefined;
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} style={{ background: transparent ? "transparent" : theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
+    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} className={gpuBacked ? "relative z-[1]" : undefined} style={{ background: transparent ? "transparent" : theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
       <defs>
         <marker id={`${idPrefix}-arrow`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill={theme.edge} /></marker>
         <filter id={`${idPrefix}-sketch`} filterUnits="userSpaceOnUse" x="-20000" y="-20000" width="60000" height="60000"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3" /><feDisplacementMap in="SourceGraphic" scale="2.2" /></filter>
@@ -193,20 +196,21 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const d = stroke.points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ") + (stroke.points.length === 1 ? " l0.01,0.01" : "");
         return <g key={stroke.id} data-flow-stroke={stroke.id} opacity={erasing?.has(stroke.id) ? 0.2 : undefined}>
           <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(touchZoom ? 28 / touchZoom : 16, stroke.width + 12)} strokeLinecap="round" strokeLinejoin="round" onPointerDown={onStrokeDown && stroke !== draftStroke ? (event) => onStrokeDown(event, stroke) : undefined}/>
-          {selected?.has(stroke.id) && <path d={d} fill="none" stroke="#3370FF" strokeOpacity={0.35} strokeWidth={stroke.width + 5} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" data-ink-selection/>}
-          <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
+          {!gpuBacked && selected?.has(stroke.id) && <path d={d} fill="none" stroke="#3370FF" strokeOpacity={0.35} strokeWidth={stroke.width + 5} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" data-ink-selection/>}
+          {!gpuBacked && <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>}
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} gpuBacked={gpuBacked} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
         const { d, mid } = edgePath(e, a, t);
         const color = e.color ?? theme.edge;
         const sel = selected?.has(e.id);
+        const gpuEdge = gpuBacked && (e.kind ?? "orthogonal") !== "curve";
         return <g key={e.id} data-flow-edge={e.id}>
           <path d={d} fill="none" stroke="transparent" strokeWidth={touchZoom ? Math.max(12, 28 / touchZoom) : 12} style={{ cursor: onEdgeDown ? "pointer" : undefined }} onPointerDown={onEdgeDown ? (ev) => onEdgeDown(ev, e) : undefined} onDoubleClick={onEdgeDouble ? () => onEdgeDouble(e) : undefined} />
-          <path d={d} fill="none" stroke={sel ? "#3370FF" : color} strokeWidth={sel ? 2.2 : 1.5} strokeDasharray={e.dashed ? "6 4" : undefined} filter={theme.sketch ? filter : undefined} markerEnd={e.arrow === "none" ? undefined : `url(#${idPrefix}-arrow)`} markerStart={e.arrow === "both" ? `url(#${idPrefix}-arrow)` : undefined} pointerEvents="none" />
+          {!gpuEdge && <path d={d} fill="none" stroke={sel ? "#3370FF" : color} strokeWidth={sel ? 2.2 : 1.5} strokeDasharray={e.dashed ? "6 4" : undefined} filter={theme.sketch ? filter : undefined} markerEnd={e.arrow === "none" ? undefined : `url(#${idPrefix}-arrow)`} markerStart={e.arrow === "both" ? `url(#${idPrefix}-arrow)` : undefined} pointerEvents="none" />}
           {e.label && <g pointerEvents="none"><rect x={mid.x - measureLabel(e.label, 0) / 2 + 10} y={mid.y - 10} width={Math.max(20, measureLabel(e.label, 0) - 20)} height={20} rx={4} fill={theme.canvas} /><text x={mid.x} y={mid.y + 4} textAnchor="middle" fontSize={12} fill={theme.text}>{e.label}</text></g>}
         </g>;
       })}
@@ -214,8 +218,9 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         const c = nodeColors(n, theme);
         const sel = selected?.has(n.id);
         const peer = peerSel?.find((p) => p.ids.includes(n.id));
+        const gpuNode = gpuBacked && GPU_NATIVE_BOARD_SHAPES.has(n.shape);
         return <g key={n.id} data-flow-node={n.id} transform={n.rot ? `rotate(${n.rot} ${n.x + n.w / 2} ${n.y + n.h / 2})` : undefined} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
-          <g filter={n.shape === "image" ? undefined : filter}><ShapeOutline n={n} theme={theme} fill={c.fill} stroke={c.stroke} fileUrl={fileUrl} /></g>
+          <g filter={n.shape === "image" || gpuNode ? undefined : filter}><ShapeOutline n={n} theme={theme} fill={gpuNode ? "transparent" : c.fill} stroke={gpuNode ? "transparent" : c.stroke} fileUrl={fileUrl} /></g>
           {editing !== n.id && <NodeText n={n} fill={c.text} />}
           {sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke="#3370FF" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />}
           {sel && onPortDown && (["top", "right", "bottom", "left"] as Port[]).map((p) => {
@@ -396,6 +401,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     return () => { document.removeEventListener("keydown", trap, true); if (previous?.isConnected) previous.focus(); };
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [gpuActive, setGpuActive] = useState(false);
   const [mindSelected, setMindSelected] = useState<string | null>(null);
   // Scoped to this editor instance; do not retain a copied document across sessions.
   const recentMindClipboard = useRef<MindClip | null>(null);
@@ -1454,7 +1460,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-      <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindDescriptionEditing={mindDescriptionEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && !mindDescriptionEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing && !mindDescriptionEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
+      <WhiteboardGpuLayer graph={renderedGraph} view={view} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindCollapsed={effectiveCollapsed} mindSelected={mindSelected} mindDescriptionEditing={mindDescriptionEditing} mindBoard={mindBoard} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
+      <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} gpuBacked={gpuActive} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindDescriptionEditing={mindDescriptionEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && !mindDescriptionEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing && !mindDescriptionEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
         if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
         if (tool === "comment" && commentActions) {
           event.stopPropagation();
@@ -1691,7 +1698,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <label className="mx-4 flex h-8 items-center gap-2 rounded-md border px-2 text-subtle focus-within:border-primary"><Search size={14} /><input value={libQuery} onChange={(e) => setLibQuery(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={`${spec.label}（点击后在画布上放置，双击直接添加）`} onClick={() => { if (id === "image") imageRef.current?.click(); else { setTool(id); setHand(false); setShowStarter(false); } if (compact) setLibrary(false); }} onDoubleClick={() => id !== "image" && addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
-        {!libQuery.trim() && <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />直线</div>
+        {!libQuery.trim() && <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />连线样式</div>
           <div className="grid grid-cols-5 gap-1">{([["orthogonal", "折线", "M10,78 H48 V18 H86"], ["straight", "直线", "M10,86 L86,10"], ["curve", "曲线", "M10,80 C40,80 56,16 86,16"]] as const).map(([k, l, d]) => <button key={k} type="button" title={`新连线默认使用${l}`} onClick={() => setEdgeKind(k)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", edgeKind === k && "bg-[#E1EAFF] text-primary")} data-flow-edge-kind={k}><svg viewBox="0 0 96 96" className="size-6" fill="none" stroke="currentColor" strokeWidth={6}><path d={d} /></svg></button>)}</div>
           <p className="mt-1 text-[12px] leading-5 text-subtle">选中图形后，从四周的蓝色圆点拖到另一个图形即可连线。</p>
         </section>}

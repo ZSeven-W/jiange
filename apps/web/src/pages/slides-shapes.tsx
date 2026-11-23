@@ -5,6 +5,7 @@ import { isLineSlideShape, SlideShapeGraphic } from "./slide-shape-catalog";
 import { resizeSlideShape, type ResizeHandle } from "./slides-shape-resize";
 import { moveSlideLineEndpoint, type LineEndpoint } from "./slides-line-endpoints";
 import { slidePresetControlLabel, slidePresetPlaceholder } from "./slides-layout-preset";
+import { isGpuNativeSlideShape } from "./slides-gpu-layer";
 
 const clamp = (value: number, max: number) => Math.round(Math.min(max, Math.max(0, value)) * 10) / 10;
 
@@ -19,7 +20,7 @@ const handles: { id: ResizeHandle; label: string; left: string; top: string; cur
   { id: "w", label: "左", left: "0%", top: "50%", cursor: "ew-resize" },
 ];
 
-export function SlideShapes({ shapes, editable, textEditable = editable, selected, onSelect, onChange, onTextChange, onTextBlur, scale = 1 }: {
+export function SlideShapes({ shapes, editable, textEditable = editable, selected, onSelect, onChange, onTextChange, onTextBlur, scale = 1, gpuBacked = false, onPreviewChange }: {
   shapes: SlideShape[];
   editable: boolean;
   textEditable?: boolean;
@@ -29,17 +30,21 @@ export function SlideShapes({ shapes, editable, textEditable = editable, selecte
   onTextChange?: (id: string, value: string) => void;
   onTextBlur?: () => void;
   scale?: number;
+  gpuBacked?: boolean;
+  onPreviewChange?: (shape: SlideShape | null) => void;
 }) {
   const drag = useRef<{ shape: SlideShape; startX: number; startY: number; width: number; height: number } | null>(null);
   const resizing = useRef<{ shape: SlideShape; handle: ResizeHandle; startX: number; startY: number; width: number; height: number } | null>(null);
   const lineDrag = useRef<{ shape: SlideShape; endpoint: LineEndpoint; pointer: number; startX: number; startY: number; width: number; height: number } | null>(null);
-  const [preview, setPreview] = useState<SlideShape | null>(null);
-  useEffect(() => { if (!editable) { drag.current = null; resizing.current = null; lineDrag.current = null; setPreview(null); } }, [editable]);
+  const [preview, setPreviewState] = useState<SlideShape | null>(null);
+  const setPreview = (next: SlideShape | null) => { setPreviewState(next); onPreviewChange?.(next); };
+  useEffect(() => { if (!editable) { drag.current = null; resizing.current = null; lineDrag.current = null; setPreviewState(null); onPreviewChange?.(null); } }, [editable, onPreviewChange]);
   return <>{shapes.map((shape) => {
     const item = preview?.id === shape.id ? preview : shape;
     const placeholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
     const textStyle = { color: item.color, fontSize: `${(item.fontSize ?? 24) / 9.6}cqw`, fontWeight: item.bold ? 700 : 400, textAlign: item.align ?? "left" } as const;
-    const graphic = item.kind === "text" ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : item.kind === "table" ? <table className="h-full w-full border-collapse text-[1.1cqw]"><tbody>{(item.table?.rows ?? []).map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci} className="border border-[#d0d5dd] px-1 py-0.5">{cell}</td>)}</tr>)}</tbody></table> : item.kind === "chart" ? <div className="flex h-full w-full items-center justify-center rounded border border-[#d0d5dd] bg-[#f8fafc] text-[1.2cqw] text-[#475467]">{item.chart?.title || "Chart"}</div> : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
+    const gpuRendered = gpuBacked && isGpuNativeSlideShape(item);
+    const graphic = item.kind === "text" ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : item.kind === "table" ? <table className="h-full w-full border-collapse text-[1.1cqw]"><tbody>{(item.table?.rows ?? []).map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci} className="border border-[#d0d5dd] px-1 py-0.5">{cell}</td>)}</tr>)}</tbody></table> : item.kind === "chart" ? <div className={gpuRendered ? "flex h-full w-full items-start justify-center pt-[0.5cqw] text-[1.2cqw] text-[#475467]" : "flex h-full w-full items-center justify-center rounded border border-[#d0d5dd] bg-[#f8fafc] text-[1.2cqw] text-[#475467]"}>{item.chart?.title || "Chart"}</div> : gpuRendered ? <div className="h-full w-full" aria-hidden="true" /> : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
     const style = { left: `${item.x}%`, top: `${item.y}%`, width: `${item.width ?? 16}%`, height: `${item.height ?? 20}%`, transform: `rotate(${item.rotation ?? 0}deg)` };
     const editingText = item.kind === "text" && selected === item.id;
     const line = item.kind !== "text" && item.kind !== "image" && item.kind !== "table" && item.kind !== "chart" && isLineSlideShape(item.kind);

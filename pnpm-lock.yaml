@@ -20,24 +20,39 @@ importers:
       '@jiange/base-sdk':
         specifier: workspace:*
         version: link:../../packages/base-sdk
+      '@jiange/base-ui':
+        specifier: workspace:*
+        version: link:../../packages/base-ui
       '@jiange/collab':
         specifier: workspace:*
         version: link:../../packages/collab
       '@jiange/doc-sdk':
         specifier: workspace:*
         version: link:../../packages/doc-sdk
+      '@jiange/doc-ui':
+        specifier: workspace:*
+        version: link:../../packages/doc-ui
       '@jiange/render-gpu':
         specifier: workspace:*
         version: link:../../packages/render-gpu
       '@jiange/sheet-sdk':
         specifier: workspace:*
         version: link:../../packages/sheet-sdk
+      '@jiange/sheet-ui':
+        specifier: workspace:*
+        version: link:../../packages/sheet-ui
       '@jiange/slides-sdk':
         specifier: workspace:*
         version: link:../../packages/slides-sdk
+      '@jiange/slides-ui':
+        specifier: workspace:*
+        version: link:../../packages/slides-ui
       '@jiange/whiteboard-sdk':
         specifier: workspace:*
         version: link:../../packages/whiteboard-sdk
+      '@jiange/whiteboard-ui':
+        specifier: workspace:*
+        version: link:../../packages/whiteboard-ui
       '@radix-ui/react-label':
         specifier: ^2.1.1
         version: 2.1.17(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)

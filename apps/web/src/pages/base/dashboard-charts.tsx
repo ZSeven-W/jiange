@@ -1,5 +1,12 @@
+import { useState } from "react";
 import { t } from "@/lib/i18n";
 import { fmtDashNum, type GroupedSeries, type MetricSummary } from "./dashboard-model";
+import {
+  BaseBarChartGpuLayer,
+  BaseHBarChartGpuLayer,
+  BaseLineChartGpuLayer,
+  BasePieChartGpuLayer,
+} from "./base-gpu-layer";
 
 export function MetricWidgetView({ summary }: { summary: MetricSummary }) {
   return (
@@ -19,6 +26,7 @@ export function MetricWidgetView({ summary }: { summary: MetricSummary }) {
 }
 
 export function BarChartView({ series }: { series: GroupedSeries }) {
+  const [gpuActive, setGpuActive] = useState(false);
   if (series.buckets.length === 0) {
     return <EmptyChart />;
   }
@@ -32,13 +40,24 @@ export function BarChartView({ series }: { series: GroupedSeries }) {
 
   return (
     <div className="mt-3 overflow-x-auto" data-dashboard-viz="bar">
+      <div className="relative h-52 w-full min-w-[260px]">
+      <BaseBarChartGpuLayer
+        series={series}
+        totalW={totalW}
+        chartH={chartH}
+        topPad={topPad}
+        bottomPad={bottomPad}
+        barW={barW}
+        gap={gap}
+        onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }}
+      />
       <svg
         viewBox={`0 0 ${totalW} ${chartH + topPad + bottomPad}`}
-        className="h-52 w-full min-w-[260px]"
+        className="relative z-[1] h-52 w-full min-w-[260px]"
         role="img"
         aria-label={series.metricLabel}
       >
-        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+        {!gpuActive && [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = topPad + chartH * (1 - ratio);
           return (
             <line
@@ -65,8 +84,8 @@ export function BarChartView({ series }: { series: GroupedSeries }) {
                 width={barW}
                 height={Math.max(h, b.value > 0 ? 3 : 0)}
                 rx={4}
-                fill={b.color}
-                opacity={0.88}
+                fill={gpuActive ? "transparent" : b.color}
+                opacity={gpuActive ? 1 : 0.88}
               >
                 <title>{`${b.label}: ${fmtDashNum(b.value)}`}</title>
               </rect>
@@ -90,11 +109,13 @@ export function BarChartView({ series }: { series: GroupedSeries }) {
           );
         })}
       </svg>
+      </div>
     </div>
   );
 }
 
 export function HorizontalBarChartView({ series }: { series: GroupedSeries }) {
+  const [gpuActive, setGpuActive] = useState(false);
   if (series.buckets.length === 0) {
     return <EmptyChart />;
   }
@@ -104,12 +125,18 @@ export function HorizontalBarChartView({ series }: { series: GroupedSeries }) {
       {series.buckets.map((b, i) => (
         <div key={b.key || `empty-${i}`} className="flex items-center gap-2.5 text-[12px]">
           <span className="w-24 shrink-0 truncate text-[#4b5058]" title={b.label}>{b.label}</span>
-          <div className="h-5 min-w-0 flex-1 overflow-hidden rounded bg-[#f2f3f5]">
+          <div className={gpuActive ? "relative h-5 min-w-0 flex-1 overflow-hidden rounded" : "relative h-5 min-w-0 flex-1 overflow-hidden rounded bg-[#f2f3f5]"}>
+            <BaseHBarChartGpuLayer
+              value={b.value}
+              maxVal={maxVal}
+              color={b.color}
+              onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }}
+            />
             <div
-              className="h-5 rounded transition-all"
+              className="relative z-[1] h-5 rounded transition-all"
               style={{
                 width: `${(Math.max(0, b.value) / maxVal) * 100}%`,
-                backgroundColor: b.color,
+                backgroundColor: gpuActive ? "transparent" : b.color,
                 opacity: b.value > 0 ? 0.88 : 0,
               }}
               title={`${b.label}: ${fmtDashNum(b.value)}`}
@@ -125,6 +152,7 @@ export function HorizontalBarChartView({ series }: { series: GroupedSeries }) {
 }
 
 export function PieChartView({ series }: { series: GroupedSeries }) {
+  const [gpuActive, setGpuActive] = useState(false);
   const positive = series.buckets.filter((b) => b.value > 0);
   if (positive.length === 0) {
     return <EmptyChart />;
@@ -146,8 +174,12 @@ export function PieChartView({ series }: { series: GroupedSeries }) {
   return (
     <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-center" data-dashboard-viz="pie">
       <div className="relative size-40 shrink-0">
-        <svg viewBox="0 0 160 160" className="size-full -rotate-90" role="img" aria-label={series.metricLabel}>
-          <circle cx={80} cy={80} r={radius} fill="none" stroke="#eef0f3" strokeWidth={strokeW} />
+        <BasePieChartGpuLayer
+          series={series}
+          onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }}
+        />
+        <svg viewBox="0 0 160 160" className="relative z-[1] size-full -rotate-90" role="img" aria-label={series.metricLabel}>
+          <circle cx={80} cy={80} r={radius} fill="none" stroke={gpuActive ? "transparent" : "#eef0f3"} strokeWidth={strokeW} />
           {slices.map((s, i) => (
             <circle
               key={s.key || `slice-${i}`}
@@ -155,7 +187,7 @@ export function PieChartView({ series }: { series: GroupedSeries }) {
               cy={80}
               r={radius}
               fill="none"
-              stroke={s.color}
+              stroke={gpuActive ? "transparent" : s.color}
               strokeWidth={strokeW}
               strokeDasharray={`${Math.max(0.5, s.length - 1)} ${circumference}`}
               strokeDashoffset={s.offset}
@@ -164,7 +196,7 @@ export function PieChartView({ series }: { series: GroupedSeries }) {
             </circle>
           ))}
         </svg>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+        <div className="pointer-events-none absolute inset-0 z-[2] flex flex-col items-center justify-center text-center">
           <span className="text-[18px] font-semibold tabular-nums text-[#1f2329]">{fmtDashNum(total)}</span>
           <span className="text-[10px] text-[#8f959e]">{t("总计")}</span>
         </div>
@@ -188,6 +220,7 @@ export function PieChartView({ series }: { series: GroupedSeries }) {
 }
 
 export function LineChartView({ series }: { series: GroupedSeries }) {
+  const [gpuActive, setGpuActive] = useState(false);
   if (series.buckets.length === 0) {
     return <EmptyChart />;
   }
@@ -214,23 +247,34 @@ export function LineChartView({ series }: { series: GroupedSeries }) {
 
   return (
     <div className="mt-3 overflow-x-auto" data-dashboard-viz="line">
+      <div className="relative h-52 w-full min-w-[280px]">
+      <BaseLineChartGpuLayer
+        series={series}
+        w={w}
+        h={h}
+        padL={padL}
+        padR={padR}
+        padT={padT}
+        padB={padB}
+        onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }}
+      />
       <svg
         viewBox={`0 0 ${w} ${h + padT + padB}`}
-        className="h-52 w-full min-w-[280px]"
+        className="relative z-[1] h-52 w-full min-w-[280px]"
         role="img"
         aria-label={series.metricLabel}
       >
-        {[0, 0.5, 1].map((r) => {
+        {!gpuActive && [0, 0.5, 1].map((r) => {
           const y = padT + h * (1 - r);
           return <line key={r} x1={padL} y1={y} x2={w - padR} y2={y} stroke="#eef0f3" strokeWidth={1} />;
         })}
-        {areaPath && <path d={areaPath} fill="#3370ff" fillOpacity={0.1} />}
-        {linePath && <path d={linePath} fill="none" stroke="#3370ff" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />}
+        {areaPath && <path d={areaPath} fill="#3370ff" fillOpacity={0.08} />}
+        {!gpuActive && linePath && <path d={linePath} fill="none" stroke="#3370ff" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />}
         {pts.map((p, i) => {
           const lbl = p.label.length > 10 ? p.label.slice(5) : p.label;
           return (
             <g key={p.key || `pt-${i}`}>
-              <circle cx={p.x} cy={p.y} r={4} fill="#ffffff" stroke="#3370ff" strokeWidth={2}>
+              <circle cx={p.x} cy={p.y} r={4} fill={gpuActive ? "transparent" : "#ffffff"} stroke={gpuActive ? "transparent" : "#3370ff"} strokeWidth={2}>
                 <title>{`${p.label}: ${fmtDashNum(p.value)}`}</title>
               </circle>
               <text x={p.x} y={Math.max(13, p.y - 8)} textAnchor="middle" className="fill-[#1f2329] text-[11px] font-medium tabular-nums">
@@ -243,6 +287,7 @@ export function LineChartView({ series }: { series: GroupedSeries }) {
           );
         })}
       </svg>
+      </div>
     </div>
   );
 }

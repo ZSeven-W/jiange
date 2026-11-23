@@ -19,6 +19,7 @@ import { definedCells, emptyCell, fieldToUndoSnapshot, UNDOABLE_TYPES, type Base
 import { formatSelectionNumber, selectedRecordStatistics, selectionStatistics } from "./selection-statistics";
 import { RecordMenu } from "./record-menu";
 import { recordMenuTargets, sameRecordTargets } from "./record-menu-targets";
+import { BaseGridGpuLayer } from "./base-gpu-layer";
 
 /** Column widths per field, persisted locally so they survive refresh. */
 function loadWidths(baseId: number): Record<number, number> {
@@ -113,6 +114,7 @@ export function Grid({
   const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
   const [dragError, setDragError] = useState<string | null>(null);
   const [sel, setSel] = useState<GridSelection | null>(null);
+  const [gpuActive, setGpuActive] = useState(false);
   const dragSelection = useRef<GridSelection | null>(null);
   useEffect(() => {
     const end = () => { dragSelection.current = null; };
@@ -801,21 +803,23 @@ export function Grid({
                 const editing = edit?.rid === rec.id && edit.fid === f.id;
                 const ro = REGISTRY[f.type].readonly;
                 const selected = !editing && inRange(i, j);
+                const gpuCell = gpuActive && !groupField && !isFrozen(j) && !editing;
                 return (
                   <Fragment key={f.id}>
-                  {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
+                  {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
                   <td
-                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(fill && !isChecked && !selected && !editing ? { background: fill } : {}), ...(selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
+                    style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(!gpuCell && fill && !isChecked && !selected && !editing ? { background: fill } : {}), ...(!gpuCell && selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
                     className={cn(
                       "relative border px-2.5",
+                      gpuCell && "border-transparent bg-transparent",
                       tall && "align-top",
                       isFrozen(j) && "z-10 bg-surface",
                       j === 0 && "border-l-0",
-                      lastFrozen(j) && "border-r-[#BBBFC4]",
+                      lastFrozen(j) && "border-r-[#BBBFC4] shadow-[inset_-1px_0_0_#BBBFC4]",
                       f.type === "number" && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
-                      !editing && isChecked && "bg-sel-row",
-                      !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
+                      !gpuCell && !editing && isChecked && "bg-sel-row",
+                      !gpuCell && !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
                     )}
                     onMouseDown={(e) => {
                       if (editing || e.button !== 0 || (e.target instanceof Element && e.target.closest("button, a, input, select, textarea, [contenteditable=true]"))) return;
@@ -867,9 +871,9 @@ export function Grid({
                   </Fragment>
                 );
               })}
-              {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className="border p-0" aria-hidden />}
-              {tailW > 0 && <td style={{ width: tailW }} className="border p-0" aria-hidden />}
-              {canEdit && <td className={cn("border", isChecked && "bg-sel-row")} style={!isChecked && fill ? { background: fill } : undefined} />}
+              {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
+              {tailW > 0 && <td style={{ width: tailW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
+              {canEdit && <td className={cn("border", gpuActive && !groupField ? "border-transparent bg-transparent" : isChecked && "bg-sel-row")} style={!(gpuActive && !groupField) && !isChecked && fill ? { background: fill } : undefined} />}
             </tr>
               );
   };
@@ -884,9 +888,28 @@ export function Grid({
         <button type="button" className="ml-auto grid size-7 place-items-center rounded-md text-subtle hover:bg-white" aria-label={t("取消选择")} onClick={() => setChecked(new Set())}><X size={15} /></button>
       </div>
     )}
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+    <BaseGridGpuLayer
+      scrollContainerRef={gridRef}
+      records={records}
+      fields={fields}
+      allFields={allFields}
+      members={members}
+      fills={fills}
+      colWidths={fields.map((f) => width(f))}
+      rowHeight={ROW_H}
+      nFrozen={nFrozen}
+      checked={checked}
+      selection={selection}
+      grouped={!!groupField}
+      canEdit={canEdit}
+      onBackendReady={(backend) => {
+        if (backend === "webgpu" || backend === "webgl2") setGpuActive(true);
+      }}
+    />
     <div
       ref={gridRef}
-      className="min-h-0 flex-1 overflow-auto outline-none"
+      className="relative z-[1] min-h-0 flex-1 overflow-auto bg-transparent outline-none"
       data-grid-scroll
       tabIndex={0}
       onKeyDown={onKey}
@@ -1109,6 +1132,7 @@ export function Grid({
           </tr>
         </tfoot>
       </table>
+    </div>
     </div>
     {recordMenu && menuValid && <RecordMenu x={recordMenu.x} y={recordMenu.y} multiple={recordMenu.ids.length > 1} canEdit={canEdit} ready={detailAccessReady && selectionAccessReady} anchor={recordMenu.anchor} onClose={() => setRecordMenu(null)} onDetail={() => { openDetail(recordMenu.id, "detail"); setRecordMenu(null); }} onHistory={() => { openDetail(recordMenu.id, "history"); setRecordMenu(null); }} onComment={() => { openDetail(recordMenu.id, "detail", true); setRecordMenu(null); }} onDelete={() => { const menu = recordMenu; setRecordMenu(null); if (menu.selected) void deleteChecked(menu.ids); else void deleteOne(menu.id); }} />}
     {selectedStats && <div data-selection-statistics role="status" className="pointer-events-none absolute bottom-12 right-3 z-20 flex items-center rounded-md border border-[#dee0e3] bg-surface px-3 py-2 text-[12px] text-[#646a73] shadow-[0_2px_8px_rgba(31,35,41,0.12)] sm:right-6">

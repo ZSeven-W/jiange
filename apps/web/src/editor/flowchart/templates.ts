@@ -26,8 +26,20 @@ function make(theme: string, nodes: N[], edges: E[], layout: boolean): FlowGraph
 export const FLOW_TEMPLATES: FlowTemplate[] = [
   {
     id: "basic", label: "基础流程图", desc: "开始、处理、判断、结束",
-    build: (t) => make(t, [["s", "terminator", "开始"], ["a", "rect", "步骤一"], ["d", "diamond", "是否通过？"], ["b", "rect", "步骤二"], ["e", "terminator", "结束"]],
-      [["s", "a"], ["a", "d"], ["d", "b", { label: "是" }], ["d", "a", { label: "否", dashed: true }], ["b", "e"]], true),
+    build: (t) => {
+      const g = make(t, [["s", "terminator", "开始"], ["a", "rect", "步骤一"], ["d", "diamond", "是否通过？"], ["b", "rect", "步骤二"], ["e", "terminator", "结束"]],
+        [["s", "a"], ["a", "d"], ["d", "b", { label: "是" }], ["d", "a", { label: "否", dashed: true }], ["b", "e"]], true);
+      const stepA = g.nodes.find((n) => n.text === "步骤一");
+      const decD = g.nodes.find((n) => n.text === "是否通过？");
+      if (stepA && decD) {
+        const rightMid = Math.max(stepA.x + stepA.w, decD.x + decD.w) + 48;
+        return {
+          ...g,
+          edges: g.edges.map((e) => (e.from === decD.id && e.to === stepA.id ? { ...e, fromPort: "right", toPort: "right", mid: rightMid } : e)),
+        };
+      }
+      return g;
+    },
   },
   {
     id: "approval", label: "审批流程", desc: "提交、逐级审批、归档",
